@@ -32,11 +32,14 @@ from potpie_context_core.errors import (
     PotNameConflict,
     PotNotFound,
     PotTeardownFailed,
+    SourceNotFound,
 )
 from potpie_context_core.lifecycle import DONE, StepResult
 from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_core.ports.resource_store import ResourceStorePort
 from potpie_context_engine.domain.ports.services.pot_management import (
+    INGESTION_NOT_STARTED,
+    SOURCE_REGISTERED,
     PotAggregateStatus,
     PotInfo,
     PotRepoSource,
@@ -75,6 +78,7 @@ class LocalPotManagementService:
     def create_pot(
         self, *, name: str, repo: str | None = None, use: bool = False
     ) -> PotInfo:
+        self._require_usable_name(name)
         self._require_name_is_not_a_pot_id(name)
         return _pot(self.store.create(name=name, repo=repo, use=use))
 
@@ -87,6 +91,7 @@ class LocalPotManagementService:
 
     def rename_pot(self, *, ref: str, new_name: str) -> PotInfo:
         target = self._require_live(ref, verb="be renamed")
+        self._require_usable_name(new_name)
         self._require_name_free(new_name, allow_pot_id=target.pot_id)
         self._require_name_is_not_a_pot_id(new_name, allow_pot_id=target.pot_id)
         row = self.store.rename(ref=ref, new_name=new_name)
@@ -117,6 +122,28 @@ class LocalPotManagementService:
                 ),
             )
         return pot
+
+    def _require_usable_name(self, name: str) -> None:
+        """Refuse a name that is not a name: empty, or nothing but whitespace.
+
+        A pot's name is a ref — it is what ``pot use``, ``--pot`` and every
+        destructive command resolve against — so a blank one is a pot nobody can
+        address by name again. Both ends were open: ``pot create ''`` made a pot
+        that ``pot list`` printed as ``* ()``, and ``pot rename <ref> ''`` did
+        the same to a pot that already held a project's memory. Whitespace-only
+        is the same defect wearing a disguise: ``'   '`` is not a ref anyone can
+        retype, and two of them are indistinguishable in a listing.
+        """
+        if not name.strip():
+            blank = ValueError(
+                "A pot name cannot be empty or only whitespace — it is the ref "
+                "'potpie pot use' and '--pot' resolve against."
+            )
+            # The CLI boundary renders `ValueError` as `validation_error` and
+            # reads the repair off the instance; a refusal with no next step is
+            # the one shape this product's error contract does not allow.
+            blank.recommended_next_action = "pass a name, e.g. 'my-project'"
+            raise blank
 
     def _require_name_free(self, name: str, *, allow_pot_id: str) -> None:
         """Refuse a rename onto a name another live pot already answers to.
@@ -209,9 +236,37 @@ class LocalPotManagementService:
         self._require_live(pot_id, verb="take new sources")
         return _source(
             self.store.add_source(
-                pot_id=pot_id, kind=kind, location=location, name=name
+                pot_id=pot_id,
+                kind=kind,
+                location=self._require_usable_location(location),
+                name=(name or "").strip() or None,
             )
         )
+
+    @staticmethod
+    def _require_usable_location(location: str) -> str:
+        """The location to store, refusing one that identifies nothing.
+
+        A location is the whole content of a source row — it is what routing
+        matches, what ``source list`` prints, and what an ingesting harness is
+        handed. Blank and whitespace-only were both accepted, so
+        ``source add linear '   '`` reported a successful registration and left
+        a row naming nothing, which no later command can act on and only
+        ``source remove`` can get rid of.
+        """
+        cleaned = (location or "").strip()
+        if not cleaned:
+            blank = ValueError(
+                "A source location cannot be empty or only whitespace — it is "
+                "what the registration identifies."
+            )
+            # The CLI boundary renders `ValueError` as `validation_error` and
+            # reads the repair off the instance.
+            blank.recommended_next_action = (
+                "pass what to register, e.g. 'potpie source add repo .'"
+            )
+            raise blank
+        return cleaned
 
     def list_sources(self, *, pot_id: str) -> list[SourceInfo]:
         return [_source(r) for r in self.store.list_sources(pot_id=pot_id)]
@@ -223,7 +278,16 @@ class LocalPotManagementService:
         for row in self.store.list_sources(pot_id=pot_id):
             if row.get("source_id") == source_id:
                 return _source(row)
-        raise PotNotFound(f"No source '{source_id}' in pot '{pot_id}'.")
+        # Not ``PotNotFound``: the pot resolved, and reporting a missing *pot*
+        # sends the operator to ``pot list`` to hunt for something that was
+        # never missing while the registration sits in the pot they did not
+        # pass. Same refusal, and the same repair, as ``remove_source``.
+        raise SourceNotFound(
+            f"No source '{source_id}' in pot '{pot_id}'.",
+            recommended_next_action=(
+                f"list this pot's sources with 'potpie source list --pot {pot_id}'"
+            ),
+        )
 
     def remove_source(self, *, pot_id: str, source_id: str) -> bool:
         """Drop a source registration; report whether a row actually went away.
@@ -367,12 +431,20 @@ def _repo_source(row: dict) -> PotRepoSource:
 
 
 def _source(row: dict) -> SourceInfo:
+    """The stored row as a ``SourceInfo`` — including what it says about itself.
+
+    ``status`` used to be the literal ``"ok"``, which meant a row stored with
+    ``status: error`` came out of ``source status`` as healthy. The row's own
+    values travel; the fallbacks apply only to rows written before either field
+    existed, where "registered, never ingested" is exactly what happened.
+    """
     return SourceInfo(
         source_id=row["source_id"],
         kind=row.get("kind", "unknown"),
         name=row.get("name", row.get("location", "")),
         location=row.get("location"),
-        status="ok",
+        status=str(row.get("status") or SOURCE_REGISTERED),
+        ingestion_status=str(row.get("ingestion_status") or INGESTION_NOT_STARTED),
     )
 
 

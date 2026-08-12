@@ -15,11 +15,16 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from potpie_context_engine.domain.ports.services.pot_management import (
+    INGESTION_NOT_STARTED,
+    SOURCE_REGISTERED,
+)
 from potpie_context_engine.domain.repo_identity import repo_identity_key
 
 
@@ -47,11 +52,29 @@ class LocalPotStore:
             return {"pots": {}, "active": None, "sources": {}, "repo_defaults": {}}
 
     def _save(self, state: dict[str, Any]) -> None:
+        """Replace ``pots.json`` atomically, through a temp file of its own.
+
+        The scratch file used to be the fixed ``pots.tmp``, which two writers in
+        flight both opened: the daemon serves ``POST /ui/api/pots/use`` off a
+        threadpool and the CLI is a second process entirely, so the first
+        ``replace`` moved the shared temp out from under the second and the
+        loser raised ``FileNotFoundError`` — a bare 500 in the explorer for an
+        operation that had simply been overtaken.
+        """
         self.home.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, indent=2)
-        tmp.replace(self._path)
+        fd, temp_name = tempfile.mkstemp(
+            dir=self.home, prefix=f".{self._path.name}.", suffix=".tmp"
+        )
+        tmp = Path(temp_name)
+        try:
+            # fdopen takes ownership of the descriptor immediately, so nothing
+            # between here and the close can leak it.
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(state, fh, indent=2)
+            tmp.replace(self._path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     # --- pots ---------------------------------------------------------------
     def list_pots(self) -> list[dict[str, Any]]:
@@ -170,12 +193,24 @@ class LocalPotStore:
     def add_source(
         self, *, pot_id: str, kind: str, location: str, name: str | None = None
     ) -> dict[str, Any]:
+        """Persist one source row, including the two fields that report on it.
+
+        ``status`` and ``ingestion_status`` are written here rather than
+        synthesized when the row is read. They were literals two layers up —
+        ``source status`` printed ``ok`` / ``not started`` for every row no
+        matter what the row said — so the two fields a user consults to find out
+        whether a source is healthy or ingested could not carry an answer at
+        all. Written, they can: whatever later marks a source stale, broken, or
+        ingested updates the row, and the reader reports it.
+        """
         state = self._load()
         row = {
             "source_id": f"src_{uuid.uuid4().hex[:8]}",
             "kind": kind,
             "name": name or location,
             "location": location,
+            "status": SOURCE_REGISTERED,
+            "ingestion_status": INGESTION_NOT_STARTED,
         }
         state.setdefault("sources", {}).setdefault(pot_id, []).append(row)
         self._save(state)

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 import json
+import threading
 
 import pytest
 
@@ -202,3 +206,117 @@ def test_local_json_inbox_store_round_trips_items(tmp_path) -> None:
     assert reloaded == item
     raw = json.loads((tmp_path / "graph_inbox.json").read_text(encoding="utf-8"))
     assert item.item_id in raw["items"][POT]
+
+
+def test_second_agent_cannot_claim_an_item_another_agent_holds(tmp_path) -> None:
+    # Two agents polling the same worklist both used to "claim" the same item
+    # and do the work twice: the claim was a read-then-save with no exclusion.
+    workbench, _backend = _service(tmp_path)
+    added = workbench.inbox_add(pot_id=POT, summary="Investigate prior bug")
+    assert added.item is not None
+
+    first = workbench.inbox_claim(
+        pot_id=POT,
+        item_id=added.item.item_id,
+        claimed_by="agent:alice",
+    )
+    second = workbench.inbox_claim(
+        pot_id=POT,
+        item_id=added.item.item_id,
+        claimed_by="agent:bob",
+    )
+
+    assert first.ok is True
+    assert first.item is not None
+    assert first.item.claim_expires_at is not None
+    assert second.ok is False
+    assert "already claimed by 'agent:alice'" in (second.detail or "")
+    assert second.recommended_next_action
+    stored = LocalJsonGraphInboxStore(home=tmp_path).get(
+        pot_id=POT,
+        item_id=added.item.item_id,
+    )
+    assert stored is not None
+    assert stored.claimed_by == "agent:alice"
+
+
+def test_claim_holder_can_refresh_its_own_lease(tmp_path) -> None:
+    workbench, _backend = _service(tmp_path)
+    added = workbench.inbox_add(pot_id=POT, summary="Long running item")
+    assert added.item is not None
+
+    first = workbench.inbox_claim(
+        pot_id=POT,
+        item_id=added.item.item_id,
+        claimed_by="agent:alice",
+        lease_seconds=60,
+    )
+    renewed = workbench.inbox_claim(
+        pot_id=POT,
+        item_id=added.item.item_id,
+        claimed_by="agent:alice",
+        lease_seconds=600,
+    )
+
+    assert first.item is not None and renewed.item is not None
+    assert renewed.ok is True
+    assert renewed.item.claim_expires_at > first.item.claim_expires_at
+
+
+def test_an_expired_claim_can_be_taken_over(tmp_path) -> None:
+    # A worker that dies mid-item must not strand it forever.
+    workbench, _backend = _service(tmp_path)
+    store = LocalJsonGraphInboxStore(home=tmp_path)
+    added = workbench.inbox_add(pot_id=POT, summary="Abandoned item")
+    assert added.item is not None
+    workbench.inbox_claim(
+        pot_id=POT,
+        item_id=added.item.item_id,
+        claimed_by="agent:alice",
+        lease_seconds=60,
+    )
+    held = store.get(pot_id=POT, item_id=added.item.item_id)
+    assert held is not None
+    store.save(
+        replace(
+            held,
+            claim_expires_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        )
+    )
+
+    taken = workbench.inbox_claim(
+        pot_id=POT,
+        item_id=added.item.item_id,
+        claimed_by="agent:bob",
+    )
+
+    assert taken.ok is True
+    assert taken.item is not None
+    assert taken.item.claimed_by == "agent:bob"
+
+
+def test_concurrent_claims_produce_exactly_one_winner(tmp_path) -> None:
+    workbench, _backend = _service(tmp_path)
+    added = workbench.inbox_add(pot_id=POT, summary="Contended item")
+    assert added.item is not None
+    barrier = threading.Barrier(4)
+
+    def claim(actor: str):
+        barrier.wait(timeout=5)
+        return workbench.inbox_claim(
+            pot_id=POT,
+            item_id=added.item.item_id,
+            claimed_by=actor,
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(claim, [f"agent:{i}" for i in range(4)]))
+
+    winners = [result for result in results if result.ok]
+    assert len(winners) == 1
+    stored = LocalJsonGraphInboxStore(home=tmp_path).get(
+        pot_id=POT,
+        item_id=added.item.item_id,
+    )
+    assert stored is not None
+    assert stored.claimed_by == winners[0].item.claimed_by

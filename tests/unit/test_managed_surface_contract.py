@@ -14,7 +14,10 @@ Three properties are pinned here, in the layer each one actually lives in:
   do not own;
 * a host refusing a surface answers ``not_implemented`` — including when it is
   an older host that still says ``invalid RPC surface``, which the client
-  translates, because we cannot deploy into that repository;
+  translates, because we cannot deploy into that repository. That translation is
+  now the *fallback*: a host that publishes its surfaces is judged against what
+  it published, and ``tests/unit/test_host_surface_negotiation.py`` owns that
+  half;
 * ``doctor`` reports a gap per section and exits 0 with a report, and never
   loses the local blocks (daemon, install, host label) to a remote that did not
   answer.

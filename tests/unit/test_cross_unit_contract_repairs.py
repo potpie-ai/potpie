@@ -4,7 +4,8 @@ Every case here passed inside the unit that introduced it and failed once the
 four P1 branches shared a working tree, or was a hole that no single unit owned
 because the fix straddled two of them:
 
-- the misplaced-global-flag hint (error contract) reconstructed its advice from
+- a global flag typed after the command is hoisted and honoured, and the hint
+  left for the one shape that cannot be hoisted reconstructed its advice from
   raw argv, so it printed the secret that ``config set`` redacts one line later;
 - ``setup`` moved in-process (cold-start deadline fix) and stopped consulting
   the origin, turning ``--host managed setup`` from a refusal into a silent
@@ -65,19 +66,41 @@ def _run_cli(argv: list[str], capsys) -> tuple[int, str, str]:
     return code, captured.out, captured.err
 
 
-# --- the re-run hint must not echo what the caller typed ---------------------
+# --- a trailing global flag, and the hint that survives it -------------------
 
 SECRET = "ghp_thisisasecrettokenvalue"
 
 
 @pytest.mark.parametrize("flag", ["--json", "--verbose"])
-def test_misplaced_flag_hint_never_echoes_argument_values(flag, capsys) -> None:
-    """The whole point of redacting the echo is lost if the parse error prints it.
+def test_a_trailing_flag_never_echoes_the_value_it_followed(flag, capsys) -> None:
+    """The whole point of redacting the echo is lost if the parse layer prints it.
 
-    This fires *before* the config catalog gate, so it leaked values for keys
-    the gate would have refused outright.
+    A trailing global is now hoisted and honoured, so this command line reaches
+    the config catalog gate instead of the position refusal — and neither of
+    them may repeat the value back. The gate fires *before* the write, so the
+    key is named and the secret is not.
     """
     code, out, err = _run_cli(["config", "set", "github_token", SECRET, flag], capsys)
+
+    assert code == _common.exit_code_for("validation_error")
+    assert SECRET not in out
+    assert SECRET not in err
+    assert "github_token" in (out + err), "the refusal must still name the key"
+
+
+def test_the_unhoistable_hint_still_names_the_command_without_its_values(
+    capsys,
+) -> None:
+    """A value-taking global with no value is the one shape still refused by position.
+
+    It is also the shape that reaches `_reordered_invocation`, whose first
+    version echoed every remaining token — turning a parse error into a
+    next-action line that printed the secret `config set` redacts one step
+    later.
+    """
+    code, out, err = _run_cli(
+        ["config", "set", "github_token", SECRET, "--host"], capsys
+    )
 
     assert code == _common.exit_code_for("usage_error")
     assert SECRET not in out
@@ -85,22 +108,21 @@ def test_misplaced_flag_hint_never_echoes_argument_values(flag, capsys) -> None:
     assert "config set" in (out + err), "the hint must still name the command"
 
 
-def test_misplaced_flag_hint_still_names_the_full_command(capsys) -> None:
-    """Safety must not cost the hint its usefulness: a bare command re-runs exactly."""
-    _, out, _ = _run_cli(["pot", "list", "--json"], capsys)
+def test_a_trailing_global_flag_runs_the_command_it_was_typed_after(capsys) -> None:
+    """`potpie pot list --json` answers with the listing, not with advice about it."""
+    code, out, _ = _run_cli(["pot", "list", "--json"], capsys)
     payload = json.loads(out)
 
-    assert payload["recommended_next_action"] == "re-run as: potpie --json pot list"
+    assert code == 0
+    assert "pots" in payload
 
 
-def test_misplaced_flag_hint_recovers_a_subcommand_left_in_argv(capsys) -> None:
-    """Click stops resolving at the group, but a declared subcommand is safe to name."""
+def test_a_global_flag_between_a_group_and_its_subcommand_is_honoured(capsys) -> None:
+    """Click stops resolving at the group; the flag still belongs to the root."""
     _, out, _ = _run_cli(["graph", "--json", "catalog"], capsys)
     payload = json.loads(out)
 
-    assert (
-        payload["recommended_next_action"] == "re-run as: potpie --json graph catalog"
-    )
+    assert payload["command"] == "graph.catalog"
 
 
 # --- setup targets this machine, and says so ---------------------------------
@@ -172,6 +194,45 @@ def test_auth_errors_use_the_shared_envelope_on_stdout(capsys) -> None:
 def test_narrow_unavailability_codes_are_in_the_table(code) -> None:
     """`potpie ui` reported a dead daemon as 1 while `potpie status` reported 2."""
     assert _common.exit_code_for(code) == _common.EXIT_UNAVAILABLE
+
+
+def test_no_fail_call_site_passes_an_exit_code_the_table_disagrees_with() -> None:
+    """``exit_code=`` stays an override, never a second table.
+
+    The parameter exists for paths that mean something the code alone does not
+    say, which makes it the one way a number could quietly acquire a second
+    meaning — the exact drift ``exit_code_for`` was introduced to end. Read off
+    the source rather than exercised, because the point is that no such call
+    site may exist, not that the ones we happened to test agree.
+    """
+    import ast
+    import pathlib
+
+    cli_root = pathlib.Path(_common.__file__).resolve().parents[1]
+    offenders: list[str] = []
+    for path in sorted(cli_root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name != "fail":
+                continue
+            kwargs = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+            code, override = kwargs.get("code"), kwargs.get("exit_code")
+            if override is None or not isinstance(code, ast.Constant):
+                continue
+            if isinstance(override, ast.Name):
+                value = getattr(_common, override.id, None)
+            elif isinstance(override, ast.Constant):
+                value = override.value
+            else:
+                continue
+            if value is not None and value != _common.exit_code_for(code.value):
+                offenders.append(f"{path.name}:{node.lineno} {code.value} -> {value}")
+
+    assert not offenders, offenders
 
 
 def test_no_cli_call_site_hardcodes_an_exit_code_the_table_disagrees_with() -> None:

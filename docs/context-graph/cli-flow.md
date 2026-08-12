@@ -38,14 +38,28 @@ flowchart LR
 |---|---|
 | `--json` | machine-readable output for scripts/agents (stable, additive fields) |
 | `--verbose` / `-v` | verbose diagnostics |
+| `--host local\|managed` | route this one invocation at a host, without changing the active one |
 | `--version` | print version and exit (JSON under `--json`) |
 
-These are **root-only**: they belong to the root callback and no subcommand
-redeclares them, because two places deciding output mode is exactly how a
-`--json` request came to be silently downgraded. Putting one after the command
-(`potpie pot list --json`) is therefore a `usage_error` at exit 1 — but the
-refusal is rendered in the format the misplaced flag asked for, and its
-`recommended_next_action` is the corrected command line.
+These are **root-only in declaration**: they belong to the root callback and no
+subcommand redeclares them, because two places deciding output mode is exactly
+how a `--json` request came to be silently downgraded.
+
+They are **not** root-only in position. `potpie pot list --json` means the same
+thing as `potpie --json pot list`: `run_cli` catches Click's `NoSuchOption` —
+which is itself proof that the command declares no option of that name — moves
+the flag (and its value) in front of the command, and parses again. One accepted
+position was a coin flip every agent consumer had to win on the first try, and
+the losing side got Click's prose on stderr from a command line that had just
+said it could only read JSON. The only shape still refused by position is a
+value-taking global with no value left to take (`potpie status --host`), which
+fails as `usage_error` at exit 1 with the corrected line in
+`recommended_next_action`.
+
+A command must therefore never declare an option that collides with one of
+these. `status` used to declare a boolean `--host` no-op, which swallowed the
+root flag and left `potpie status --host managed` failing with "Got unexpected
+extra argument(s) (managed)".
 
 ## Shared plumbing (`commands/_common.py`)
 
@@ -69,7 +83,9 @@ uniformly across the surface.
   | bad argument / bad value / unresolvable ref | `validation_error` | `1` |
   | mistyped flag, missing argument, unknown command | `usage_error` | `1` |
   | pot (or something the pot should hold) not found | `pot_not_found` | `1` |
+  | the pot resolved, the source id in it did not | `source_not_found` | `1` |
   | ref matches a pot on more than one host | `ambiguous_pot` | `1` |
+  | cwd is a workspace root holding projects from several pots | `workspace_root_ambiguous` | `1` |
   | ref resolved, but the pot is archived | `pot_archived` | `1` |
   | a pot name is taken, or shadows a pot id | `pot_name_conflict` | `1` |
   | nothing to scope the command to | `no_active_pot` | `1` |
@@ -104,6 +120,14 @@ uniformly across the surface.
   explicit `--pot` **>** repo-default binding **>** registered-repo match (active
   pot wins ties, else `ambiguous_pot`) **>** active pot, else `no_active_pot`.
   `source add` passes `infer_from_repo=False` (registration never infers a pot).
+
+  A registered-repo match is one of two relations, and they are not the same
+  fact. The cwd *is* (or sits inside) the registered project → `linked_repo`.
+  The registered project sits *underneath* the cwd — a workspace root — →
+  `contained_repo`, which is reported rather than passed off as standing in the
+  repo; more than one such child, with no self-match, is
+  `workspace_root_ambiguous` rather than `ambiguous_pot`, because the cwd is
+  registered in no pot at all.
 
 `emit()`/`fail()` render the human and `--json` shapes. All commands support
 human output by default and `--json` for scripts/agents.
@@ -144,12 +168,12 @@ graph internals as the workbench; they are not a "legacy V1 surface waiting on V
 
 ```bash
 potpie resolve <task> [--intent feature] [--include <csv>] [--mode fast|balanced|verify|deep] [--pot <ref>]
-potpie search  <query> [--include <csv>] [--pot <ref>]
-potpie record  --type <kind> --summary <text> [--scope <k:v>] [--pot <ref>]
+potpie search  <query> [--include <csv>] [--intent <name>] [--pot <ref>]
+potpie record  --type <kind> --summary <text> [--detail <k>=<v>]… [--scope <k:v>] [--pot <ref>]
 potpie status  [--intent <name>] [--harness claude] [--pot <ref>]
 
 potpie setup   [--repo .] [--pot default] [--agent claude] [--backend <profile>] \
-               [--scan] [--dry-run] [--yes/-y] [--daemon | --in-process]
+               [--embeddings <mode>] [--dry-run] [--yes/-y] [--daemon | --in-process]
 potpie doctor
 potpie whoami
 potpie use     <ref> [--local | --managed]
@@ -163,18 +187,36 @@ potpie ui      [--open/--no-open] [--pot <ref>]
 - **`resolve` / `search` / `record`** → `host.agent_context.{resolve,search,record}`.
   `record --type` accepts the structured record types (preference/policy/bug_pattern/
   fix/verification/decision) plus free-form; it goes through semantic validation and
-  the record→semantic bridge ([writing.md](./writing.md)). `--mode`/`--include` ride
-  in metadata only — they do not change the read path in V1.5 ([querying.md](./querying.md)).
+  the record→semantic bridge ([writing.md](./writing.md)). Those schemas validate
+  fields that `--summary` cannot carry — `decision` needs `rationale`, `preference`
+  needs `policy_kind` — so `--detail <key>=<value>` supplies them; repeat the flag,
+  and repeat a key to build a list field (`alternatives_rejected`, `affects_refs`).
+  A record the graph service **refuses** exits non-zero and reports
+  `accepted: false` with the store's reason in `detail`. `--mode`/`--include` ride
+  in metadata only — they do not change the read path in V1.5 ([querying.md](./querying.md)),
+  but both they and `--intent` are checked against their closed vocabularies:
+  an unrecognised value is refused rather than normalised, because normalising it
+  changes the depth of the read or which reader families answer, silently.
 - **`status`** — host/pot **readiness** (`agent_context.status`): daemon, backend,
-  pot, and skill state. `--host` is a deprecated no-op (readiness is the default).
-  `--verify` is rejected here — it moved to `potpie auth status --verify`, the
-  explicit integration-auth report.
+  pot, quality and skill state. It declares no `--host` of its own (readiness is
+  the default, and the boolean no-op that used to sit here shadowed the root
+  flag); `potpie status --host managed` is the global option, reporting the
+  managed host's readiness. `--verify` is rejected here — it moved to
+  `potpie auth status --verify`, the explicit integration-auth report.
 - **`setup`** — idempotent first-run that builds a `SetupPlan`
   (config/storage/daemon/active `default` pot/source registration/skills). `--backend`
-  picks the GraphBackend profile (default `falkordb_lite`); `--scan` is an **opt-in**
-  working-tree scan (**default off**); `--daemon`/`--in-process` selects host mode
+  picks the GraphBackend profile (default `falkordb_lite`);
+  `--daemon`/`--in-process` selects host mode
   (daemon mode calls `host.daemon.ensure()` first); `--dry-run` returns a preview
   without executing. `--pot` only overrides the initial pot name.
+  Every option is checked against the registry the runtime reads — `--backend`
+  against the profile registry, `--agent` against `AGENT_TYPES`, `--embeddings`
+  against the embedder aliases, `--repo` against the filesystem for a local path
+  — **before** the first step writes anything, so a typo cannot leave a
+  half-provisioned home behind. `--scan` is **rejected**: setup never ran a
+  working-tree scan, and repository knowledge is written by harness-led
+  ingestion (`potpie graph propose`/`commit`, the `potpie-repo-baseline` skill),
+  not by this command.
 - **`doctor`** — local diagnostics composed from `backend.capabilities()` +
   `backend.mutation.readiness()` + `daemon.status()` + `ledger.status()` +
   `resources.status()`; also reports `effective_current_repo_pot` and

@@ -103,6 +103,37 @@ def _isolated_harness_home(
 
 
 @pytest.fixture(autouse=True)
+def _isolated_embedding_env() -> Generator[None, None, None]:
+    """Never let one test's ``setup`` choose the next test's embedder.
+
+    ``_apply_setup_embedding_env`` writes ``CONTEXT_ENGINE_EMBEDDER`` and
+    ``CONTEXT_ENGINE_EMBEDDING_MODEL`` straight into ``os.environ`` so the
+    components built later in the same process see the choice. In a CLI process
+    that is right and ends at exit; in a suite it is a permanent write, and
+    ``monkeypatch.delenv(..., raising=False)`` does not undo it because a
+    variable that was absent records nothing to restore.
+
+    The cost was a real, order-dependent failure: one test set the model to a
+    name that does not exist, a later one set the mode to
+    ``sentence-transformers``, and the first test after both to run a genuine
+    ``setup`` tried to download that name from HuggingFace mid-suite.
+
+    ``CONTEXT_ENGINE_HOST_MODE`` — the third variable written that way — is
+    already pinned per test by ``_default_in_process_cli_host`` above.
+    """
+    import os
+
+    names = ("CONTEXT_ENGINE_EMBEDDER", "CONTEXT_ENGINE_EMBEDDING_MODEL")
+    before = {name: os.environ.get(name) for name in names}
+    yield
+    for name, value in before.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
+@pytest.fixture(autouse=True)
 def _reset_cli_state():
     """Reset process-wide injected CLI state after each test."""
     yield

@@ -1,0 +1,66 @@
+{
+  "contract": 1,
+  "note": [
+    "The RPC surface set the Potpie daemon serves at POST /rpc and POST /attr.",
+    "This file is the pinned copy: tests/unit/test_rpc_surface_manifest.py asserts",
+    "potpie.daemon.surfaces.RPC_SURFACES equals it, so widening or narrowing the",
+    "allowlist cannot happen without a deliberate edit here — and a reviewer sees",
+    "the served API change as a change to a contract file rather than as one word",
+    "inside a frozenset.",
+    "The set is maintained twice. The managed service (github.com/potpie-ai/pie)",
+    "runs its own build of this daemon with its own copy, they drifted once, and",
+    "the drift was invisible until 'potpie doctor' turned out to be dead against",
+    "managed because 'resources' was missing there. That repo does not import this",
+    "one (it depends on potpie-context-engine, not on the potpie product package),",
+    "so the copies are compared by reading its source: the same test parses",
+    "managed_copy.symbol out of managed_copy.path when a checkout is reachable, and",
+    "skips with a reason when it is not.",
+    "At runtime the daemon publishes this same set at GET /surfaces, and the CLI",
+    "reads it once per connection (potpie/daemon/negotiation.py) so a refusal is",
+    "classified against what a host says it serves rather than against the wording",
+    "of its error. The managed service has no such route yet — until it does, a",
+    "surface it omits is still recognised only by its sentence."
+  ],
+  "surfaces": [
+    "agent_context",
+    "auth",
+    "backend",
+    "backend.analytics",
+    "backend.claim_query",
+    "backend.inspection",
+    "backend.mutation",
+    "backend.semantic",
+    "backend.snapshot",
+    "config",
+    "graph",
+    "graph_workbench",
+    "installer",
+    "ledger",
+    "nudge",
+    "pots",
+    "resources",
+    "setup",
+    "skills"
+  ],
+  "denied": [
+    "daemon",
+    "profile"
+  ],
+  "managed_copy": {
+    "repo": "github.com/potpie-ai/pie",
+    "checkout_env": "POTPIE_MANAGED_REPO",
+    "sibling_dir": "pie",
+    "sources": [
+      {
+        "path": "services/context-graph/src/pie_context_graph/application/authorization.py",
+        "symbol": "DEFAULT_POLICY",
+        "what": "the surfaces the managed service actually serves (ALLOWED_RPC_SURFACES = frozenset(DEFAULT_POLICY))"
+      },
+      {
+        "path": "services/context-graph/tests/test_authorization.py",
+        "symbol": "DAEMON_SURFACES",
+        "what": "that repo's hand-transcribed copy of this daemon's allowlist"
+      }
+    ]
+  }
+}

@@ -9,6 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
+    locked_json_store,
+)
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 from potpie_context_core.graph_inbox import GraphInboxItem
 
@@ -24,17 +27,40 @@ class LocalJsonGraphInboxStore:
         return self.home / "graph_inbox.json"
 
     def save(self, item: GraphInboxItem) -> None:
-        state = self._load()
-        items = state.setdefault("items", {})
-        by_pot = items.setdefault(item.pot_id, {})
-        by_pot[item.item_id] = item.to_dict()
-        self._save(state)
+        with locked_json_store(self._path):
+            state = self._load()
+            items = state.setdefault("items", {})
+            by_pot = items.setdefault(item.pot_id, {})
+            by_pot[item.item_id] = item.to_dict()
+            self._save(state)
 
     def get(self, *, pot_id: str, item_id: str) -> GraphInboxItem | None:
         raw = self._load().get("items", {}).get(pot_id, {}).get(item_id)
         if not isinstance(raw, dict):
             return None
         return GraphInboxItem.from_dict(raw)
+
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool:
+        """Swap one item under the store lock; the claim lease depends on it."""
+        key = (expected.pot_id, expected.item_id)
+        if key != (replacement.pot_id, replacement.item_id):
+            raise ValueError("inbox compare-and-set cannot change item identity")
+        with locked_json_store(self._path):
+            state = self._load()
+            by_pot = state.setdefault("items", {}).setdefault(expected.pot_id, {})
+            raw = by_pot.get(expected.item_id)
+            if not isinstance(raw, dict):
+                return False
+            if GraphInboxItem.from_dict(raw) != expected:
+                return False
+            by_pot[replacement.item_id] = replacement.to_dict()
+            self._save(state)
+            return True
 
     def list(
         self,

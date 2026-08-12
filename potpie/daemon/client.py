@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -13,6 +14,7 @@ from potpie_context_core.errors import (
     ContextEngineDisabled,
     PotNotFound,
 )
+from potpie.daemon import negotiation
 from potpie.daemon.lifecycle import Daemon
 from potpie.daemon.rpc import decode, encode
 
@@ -39,15 +41,27 @@ _CREDENTIAL_REFUSED: Final[frozenset[int]] = frozenset({401, 403})
 #: that genuinely need it.
 _SURFACE_DEADLINES: Final[dict[str, float | None]] = {"setup": None}
 
-#: How a host that predates ``not_implemented`` for surfaces refuses one.
+#: How a host that publishes *nothing* about itself refuses an unserved surface.
 #:
-#: The managed service runs its own build of this daemon with its own copy of
-#: the RPC allowlist, and a surface missing from that copy comes back as
-#: ``validation_error: invalid RPC surface: resources`` — the caller-was-wrong
-#: code, at exit 1, with no next action, for a caller that asked a perfectly
-#: reasonable question. We cannot deploy the fix into that repository, so the
-#: translation happens on this side; see :func:`_raise_remote_error`.
+#: This is the last piece of prose-matching in the client and it is on its way
+#: out. It applies to exactly one kind of host: one that answers no
+#: ``GET /surfaces`` (:mod:`potpie.daemon.negotiation`), so there is no
+#: negotiated set to decide with and the only evidence left is the sentence. A
+#: host that *does* publish its surfaces never reaches this line — served or
+#: not, the answer comes from what the host said it serves, whatever words the
+#: refusal happens to arrive in.
+#:
+#: Deleting it needs one thing from the managed service: a ``GET /surfaces``
+#: route returning ``{"contract": 1, "surfaces": [...]}`` from its own
+#: ``ALLOWED_RPC_SURFACES``. Once no supported deployment answers 404 there,
+#: this constant and its branch go.
 _LEGACY_SURFACE_REFUSAL: Final = "invalid RPC surface: "
+
+#: Both spellings of "the caller got it wrong" on the wire. The service sends
+#: ``validation_error``; ``value_error`` is accepted from older peers.
+_VALIDATION_CODES: Final[frozenset[str]] = frozenset(
+    {"validation_error", "value_error"}
+)
 
 
 @dataclass(slots=True)
@@ -88,6 +102,7 @@ class DaemonRpcClient:
                 timeout=self._deadline_for(surface),
             ),
             url,
+            surface=surface,
         )
 
     def attr(self, surface: str, name: str) -> Any:
@@ -102,6 +117,7 @@ class DaemonRpcClient:
                 timeout=self._deadline_for(surface),
             ),
             url,
+            surface=surface,
         )
 
     def _deadline_for(self, surface: str) -> float | None:
@@ -145,7 +161,7 @@ class DaemonRpcClient:
             # failure here used to be reported as.
             raise ContextEngineDisabled(f"{self.label} is unavailable: {exc}") from exc
 
-    def _result(self, response: httpx.Response, url: str) -> Any:
+    def _result(self, response: httpx.Response, url: str, *, surface: str) -> Any:
         """The decoded result, or the error the response carries.
 
         The credential check runs *before* the body is parsed. A managed host
@@ -153,6 +169,9 @@ class DaemonRpcClient:
         turn that into "returned a non-JSON response" — technically true, and it
         buries the only fact worth reporting: the endpoint is up and does not
         accept this key.
+
+        ``surface`` rides along so a refusal can be checked against what this
+        host said it serves, rather than against the shape of its prose.
         """
         if response.status_code in _CREDENTIAL_REFUSED:
             raise _credential_refused(
@@ -168,8 +187,29 @@ class DaemonRpcClient:
                 status_code=response.status_code,
                 endpoint=url,
                 label=self.label,
+                surface=surface,
+                host_serves=self._host_serves,
             )
         return decode(data.get("result"))
+
+    def _host_serves(self, surface: str) -> bool | None:
+        """Does this endpoint say it serves ``surface``? ``None`` = it does not say.
+
+        Passed as a callable rather than a value so the question is only asked
+        when the answer would change what the caller is told: a healthy session,
+        and every refusal the envelope already classifies, costs nothing. The
+        answer itself is negotiated once per endpoint-and-credential and cached
+        for the life of the process.
+        """
+        try:
+            discovery = self.daemon.discovery() or {}
+            if not isinstance(discovery, dict):
+                return None
+            base_url = str(discovery.get("base_url") or "")
+            token = str(discovery.get("token") or "")
+        except Exception:  # noqa: BLE001 - classifying an error may not raise one
+            return None
+        return negotiation.serves(base_url, token, surface)
 
     def _rpc_discovery(self) -> dict[str, str]:
         discovery = self.daemon.discovery()
@@ -352,12 +392,32 @@ def _credential_refused(
     return exc
 
 
+def _surface_not_served(surface: str, label: str) -> CapabilityNotImplemented:
+    """The one wording for "this host does not implement that surface".
+
+    Shared by both routes to that conclusion — the negotiated contract and the
+    legacy sentence — so retiring the second one cannot change what a user
+    reads. It is a capability answer (exit 2, with a repair), never a validation
+    error (exit 1, "you got it wrong", no repair), because the caller did not
+    get anything wrong.
+    """
+    return CapabilityNotImplemented(
+        surface,
+        detail=f"{label} does not implement the '{surface}' surface",
+        recommended_next_action=(
+            "run this command against a host that does, e.g. 'potpie --host local ...'"
+        ),
+    )
+
+
 def _raise_remote_error(
     data: dict[str, Any],
     *,
     status_code: int | None = None,
     endpoint: str | None = None,
     label: str = "Potpie daemon",
+    surface: str | None = None,
+    host_serves: Callable[[str], bool | None] | None = None,
 ) -> None:
     """Re-raise a remote failure as the domain error it started out as.
 
@@ -369,6 +429,14 @@ def _raise_remote_error(
     managed-host token was reported as the local daemon failing a request:
     wrong machine, wrong problem, and nothing left in the exception for a caller
     to notice the difference with.
+
+    ``host_serves`` is the negotiated contract, as a question this function may
+    ask about the surface the envelope answers: ``True`` it serves it, ``False``
+    it does not, ``None`` it did not say. It is what turns "is this a capability
+    gap?" from a guess about someone else's wording into a fact that host
+    published about itself — see :mod:`potpie.daemon.negotiation`. Both are
+    optional so a caller decoding a recorded envelope (tests, replay) gets the
+    un-negotiated behaviour rather than a new required argument.
     """
     if status_code is not None and status_code in _CREDENTIAL_REFUSED:
         raise _credential_refused(
@@ -399,25 +467,31 @@ def _raise_remote_error(
         if next_action is not None:
             setattr(exc, "recommended_next_action", next_action)
         raise exc
-    if code in {"validation_error", "value_error"} and message.startswith(
-        _LEGACY_SURFACE_REFUSAL
-    ):
-        # Compatibility, not policy: this host has not adopted the
-        # ``not_implemented`` answer that ``_validate_rpc_target`` now sends, so
-        # the only place the truth can be recovered is here, in the one table
-        # that decodes the wire envelope into domain errors. Splitting this row
-        # out into a wrapper would leave the next reader with two tables to find.
-        # Delete the branch once every deployment answers for itself.
-        surface = message[len(_LEGACY_SURFACE_REFUSAL) :].strip()
-        raise CapabilityNotImplemented(
-            surface,
-            detail=f"{label} does not implement the '{surface}' surface",
-            recommended_next_action=(
-                "run this command against a host that does, e.g. "
-                "'potpie --host local ...'"
-            ),
-        )
-    if code in {"validation_error", "value_error"}:
+    if code in _VALIDATION_CODES:
+        # "The caller got it wrong" is the wrong answer for a caller who asked a
+        # host for something that host does not implement, and the two arrive
+        # under the same code. Which one this is comes from the host's own
+        # published surface list first, and only from its prose when it publishes
+        # nothing.
+        served = host_serves(surface) if host_serves is not None and surface else None
+        if served is False:
+            # Structural: this host said it does not serve that surface, so
+            # nothing it can say about the call changes what happened.
+            raise _surface_not_served(surface or "", label)
+        if served is None and message.startswith(_LEGACY_SURFACE_REFUSAL):
+            # Compatibility, not policy, and only for a host that publishes no
+            # contract to check instead: this deployment has not adopted the
+            # ``not_implemented`` answer ``_validate_rpc_target`` now sends, and
+            # the sentence is the only evidence left. See
+            # :data:`_LEGACY_SURFACE_REFUSAL` for what retires the branch.
+            #
+            # Note the guard: on a host that *did* publish its surfaces and does
+            # serve this one, a validation error worded like a surface refusal
+            # stays a validation error. The prose can no longer overrule the
+            # contract.
+            raise _surface_not_served(
+                message[len(_LEGACY_SURFACE_REFUSAL) :].strip(), label
+            )
         exc = ValueError(message)
         # Re-attach structured guidance so the CLI error boundary can surface
         # detail/recommended_next_action exactly as with an in-process service.
@@ -431,6 +505,12 @@ def _raise_remote_error(
         if error.get("error_code"):
             setattr(exc, "code", str(error["error_code"]))
         raise exc
+    if surface and host_serves is not None and host_serves(surface) is False:
+        # An envelope this table does not recognise, from a surface the host
+        # published as one it does not serve. Whatever it says, the fact the
+        # caller needs is the capability gap — reporting it as "the daemon is
+        # broken" sends someone to check a service that is working correctly.
+        raise _surface_not_served(surface, label)
     exc = ContextEngineDisabled(message)
     # Anything the envelope did not classify still keeps the status it arrived
     # with, so "the endpoint answered" survives the trip even here.

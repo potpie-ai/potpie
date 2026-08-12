@@ -13,10 +13,11 @@ has no bearing on where your agent reads its skills from.
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import typer
 
-from potpie.cli.commands._common import contract, emit, get_host_for
+from potpie.cli.commands._common import contract, emit, fail, get_host_for
 from potpie.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
     elapsed_ms,
@@ -212,7 +213,12 @@ def skills_remove(
                 "removed": list(res.changed),
                 "metadata": dict(res.metadata),
             },
-            human=_format_skill_remove(agent=res.agent, removed=res.changed),
+            human=_format_skill_remove(
+                agent=res.agent,
+                removed=res.changed,
+                support_files=res.metadata.get("support_files"),
+                not_installed=res.metadata.get("not_installed"),
+            ),
         )
 
 
@@ -251,7 +257,7 @@ def skills_status(
 @skills_app.command("add")
 def skills_add(source: str) -> None:
     with contract():
-        res = _skills().add(source=source)
+        res = _skills().add(source=_resolve_source(source))
         emit({"detail": res.detail}, human=res.detail or "added")
 
 
@@ -297,10 +303,33 @@ def _format_skill_operation(
     return line
 
 
-def _format_skill_remove(*, agent: str, removed: tuple[str, ...]) -> str:
+def _format_skill_remove(
+    *,
+    agent: str,
+    removed: tuple[str, ...],
+    support_files: list[str] | None = None,
+    not_installed: list[str] | None = None,
+) -> str:
+    """Say what was actually removed, including the files nobody named.
+
+    ``removed: []`` on its own is the same answer this command gives after it
+    has just removed the last skill, so a caller who typed an id that was never
+    installed read "already removed" and moved on. The support files are named
+    for the mirror-image reason ``install`` names them: they are files the
+    command touched that no id in ``removed`` accounts for.
+    """
+    lines: list[str] = []
     if removed:
-        return f"removed Potpie skills for {agent}: {', '.join(removed)}"
-    return f"Potpie skills for {agent} are already removed"
+        lines.append(f"removed Potpie skills for {agent}: {', '.join(removed)}")
+    if support_files:
+        lines.append(f"removed support files: {', '.join(support_files)}")
+    if not_installed:
+        lines.append(
+            f"not installed for {agent}, nothing to remove: {', '.join(not_installed)}"
+        )
+    if not lines:
+        lines.append(f"Potpie skills for {agent} are already removed")
+    return "\n".join(lines)
 
 
 def _effective_scope(*, scope: str, path: str | None) -> str:
@@ -311,7 +340,7 @@ def _effective_scope(*, scope: str, path: str | None) -> str:
 
 
 def _resolve_path(path: str | None) -> str | None:
-    """Absolutise ``--path`` here, in the caller's process.
+    """Absolutise ``--path`` here, in the caller's process, and check it exists.
 
     Every one of these commands crosses an RPC to the daemon, which runs with
     whatever working directory it was launched from — often ``/`` or the
@@ -323,12 +352,51 @@ def _resolve_path(path: str | None) -> str | None:
 
     The caller's cwd is the only one that can be meant, and this process is the
     only one that knows it.
+
+    Existence is checked for the same reason, one step later: the installer
+    creates whatever it is pointed at, so a mistyped ``--path ~/porject``
+    silently grew a whole skills tree in a directory nobody meant, reported the
+    install as done, and left the real project untouched. A directory that is
+    not there is a typo far more often than it is a request, so it is refused
+    rather than materialised — ``mkdir`` is one command away when it really was
+    a request.
     """
     if path is None:
         return None
     text = path.strip()
     if not text:
         return path
+    resolved = Path(text).expanduser().resolve()
+    if not resolved.exists():
+        fail(
+            code="validation_error",
+            message=f"No such directory: {resolved}",
+            next_action=(
+                f"create it first with 'mkdir -p {resolved}', or pass the path "
+                f"you meant to '--path'"
+            ),
+        )
+    if not resolved.is_dir():
+        fail(
+            code="validation_error",
+            message=f"--path expects a directory, but {resolved} is a file.",
+            next_action="pass the directory that holds it",
+        )
+    return str(resolved)
+
+
+def _resolve_source(source: str) -> str:
+    """Absolutise a *local* ``skills add`` source, for the reason above.
+
+    Whether the source exists is the manager's question — it is the layer that
+    knows what makes a directory a skill — but it has to be asked about the
+    right directory. ``skills add ./my-skill`` would otherwise be answered
+    against the daemon's working directory, so a source sitting right beside the
+    caller comes back as one that is not there. A URL is left exactly as typed.
+    """
+    text = (source or "").strip()
+    if not text or urlsplit(text).scheme:
+        return source
     return str(Path(text).expanduser().resolve())
 
 

@@ -127,6 +127,20 @@ class InMemoryGraphInboxStore:
     def get(self, *, pot_id: str, item_id: str) -> GraphInboxItem | None:
         return self._items.get((pot_id, item_id))
 
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool:
+        key = (expected.pot_id, expected.item_id)
+        if key != (replacement.pot_id, replacement.item_id):
+            raise ValueError("inbox compare-and-set cannot change item identity")
+        if self._items.get(key) != expected:
+            return False
+        self._items[key] = replacement
+        return True
+
     def list(
         self,
         *,
@@ -161,6 +175,14 @@ class InMemoryGraphInboxStore:
 
     async def get_async(self, *, pot_id: str, item_id: str) -> GraphInboxItem | None:
         return self.get(pot_id=pot_id, item_id=item_id)
+
+    async def compare_and_set_async(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool:
+        return self.compare_and_set(expected=expected, replacement=replacement)
 
     async def list_async(self, **kwargs):
         return self.list(**kwargs)

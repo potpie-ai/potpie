@@ -192,3 +192,81 @@ def test_index_rows_that_are_not_repo_sources_never_reach_matching(
 
     assert _common._pots_matching_current_repo(_Host(service)) == []
     assert _common.resolve_pot_scope(_Host(service)) == ("p1", "active_pot")
+
+
+# --- a workspace root is not the project it contains -------------------------
+
+
+def _workspace(tmp_path, monkeypatch, children: dict[str, str]) -> _Host:
+    """cwd = a plain directory that merely *holds* registered projects."""
+    for child in children.values():
+        (tmp_path / child).mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(_common, "_current_git_remote", lambda cwd: None)
+    pots = [_Pot(pot_id, pot_id) for pot_id in children]
+    sources = {
+        pot_id: [_Source(str(tmp_path / child))] for pot_id, child in children.items()
+    }
+    return _Host(_Pots(pots, sources, active=None))
+
+
+def test_a_single_registered_child_is_reported_as_a_contained_match(
+    tmp_path, monkeypatch
+) -> None:
+    """Scoping to a child project is stated, not silent.
+
+    From a workspace root, one registered child scoped every command to that
+    child's pot and reported ``linked_repo`` — as though the cwd were the repo.
+    """
+    host = _workspace(tmp_path, monkeypatch, {"p1": "alpha"})
+
+    assert _common.resolve_pot_scope(host) == ("p1", "contained_repo")
+    assert (
+        _common.pot_scope_resolution_human("contained_repo")
+        == "via a registered project inside this directory"
+    )
+
+
+def test_two_registered_children_refuse_in_the_workspace_root_s_own_words(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """ "Current repo is registered in multiple pots" names the wrong thing.
+
+    The cwd is registered in *no* pot, so that message sends the reader hunting
+    for a duplicate registration that does not exist.
+    """
+    import json
+
+    import typer
+
+    host = _workspace(tmp_path, monkeypatch, {"p1": "alpha", "p2": "beta"})
+    _common.set_json(True)
+    try:
+        with pytest.raises(typer.Exit) as exc_info:
+            _common.resolve_pot_scope(host)
+    finally:
+        _common.set_json(False)
+
+    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["code"] == "workspace_root_ambiguous"
+    assert "not a registered project" in payload["message"]
+    assert "p1" in payload["message"] and "p2" in payload["message"]
+    assert "cd into the project" in payload["recommended_next_action"]
+
+
+def test_standing_inside_the_project_is_still_a_self_match(
+    tmp_path, monkeypatch
+) -> None:
+    """The distinction must not cost the ordinary case its answer."""
+    host = _workspace(tmp_path, monkeypatch, {"p1": "alpha", "p2": "beta"})
+    monkeypatch.chdir(tmp_path / "alpha")
+
+    assert _common.resolve_pot_scope(host) == ("p1", "linked_repo")
+
+
+def test_the_candidate_list_still_holds_both_relations(tmp_path, monkeypatch) -> None:
+    """Every other caller of the helper keeps today's candidate set."""
+    host = _workspace(tmp_path, monkeypatch, {"p1": "alpha", "p2": "beta"})
+
+    assert _common._pots_matching_current_repo(host) == [("p1", "p1"), ("p2", "p2")]

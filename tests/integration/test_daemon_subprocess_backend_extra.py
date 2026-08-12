@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import shlex
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,6 +14,19 @@ from potpie.daemon.managed_services.subprocess_backend import SubprocessBackend
 from potpie.daemon.ports.shell import HealthStatus, ReadyProbe, ServiceSpec
 from potpie.daemon.runtime.context import ShellContext
 
+#: The interpreter to spawn stub services with. Never the bare name ``python``:
+#: that is a PATH lookup, and a machine whose only interpreter is ``python3`` —
+#: or a virtualenv invoked by absolute path — has no such entry, so every test
+#: here died in ``Popen`` with ``FileNotFoundError: 'python'`` before the
+#: backend under test had done anything. ``sys.executable`` exists wherever the
+#: suite is running.
+PYTHON = sys.executable
+
+#: The same interpreter inside a ``cmd`` probe target, which the backend splits
+#: with :func:`shlex.split` — so a path containing a space has to survive the
+#: round trip.
+PYTHON_ARG = shlex.quote(PYTHON)
+
 
 @pytest.mark.anyio
 async def test_probe_returns_stopped_when_no_proc():
@@ -19,7 +34,7 @@ async def test_probe_returns_stopped_when_no_proc():
     spec = ServiceSpec(
         name="missing",
         backend="subprocess",
-        config={"command": ["python", "-c", "pass"]},
+        config={"command": [PYTHON, "-c", "pass"]},
         ready=ReadyProbe(kind="tcp", target="127.0.0.1:1"),
         endpoint="tcp://127.0.0.1:1",
     )
@@ -33,7 +48,7 @@ async def test_probe_returns_degraded_after_exit(
     spec = ServiceSpec(
         name="exit0",
         backend="subprocess",
-        config={"command": ["python", "-c", "import sys; sys.exit(0)"]},
+        config={"command": [PYTHON, "-c", "import sys; sys.exit(0)"]},
         ready=ReadyProbe(kind="tcp", target="127.0.0.1:1"),
         endpoint="tcp://127.0.0.1:1",
     )
@@ -57,7 +72,7 @@ async def test_probe_http_kind_returns_starting_on_no_server(
     spec = ServiceSpec(
         name="httptest",
         backend="subprocess",
-        config={"command": ["python", "-c", "import time; time.sleep(60)"]},
+        config={"command": [PYTHON, "-c", "import time; time.sleep(60)"]},
         ready=ReadyProbe(
             kind="http", target="http://127.0.0.1:1/health", interval_s=0.1
         ),
@@ -80,9 +95,11 @@ async def test_probe_cmd_kind_returns_ready_on_success(
     spec = ServiceSpec(
         name="cmdtest",
         backend="subprocess",
-        config={"command": ["python", "-c", "import time; time.sleep(60)"]},
+        config={"command": [PYTHON, "-c", "import time; time.sleep(60)"]},
         ready=ReadyProbe(
-            kind="cmd", target="python -c 'import sys; sys.exit(0)'", interval_s=2.0
+            kind="cmd",
+            target=f"{PYTHON_ARG} -c 'import sys; sys.exit(0)'",
+            interval_s=2.0,
         ),
         endpoint="tcp://127.0.0.1:1",
     )
@@ -103,9 +120,11 @@ async def test_probe_cmd_kind_returns_starting_on_failure(
     spec = ServiceSpec(
         name="cmdfail",
         backend="subprocess",
-        config={"command": ["python", "-c", "import time; time.sleep(60)"]},
+        config={"command": [PYTHON, "-c", "import time; time.sleep(60)"]},
         ready=ReadyProbe(
-            kind="cmd", target="python -c 'import sys; sys.exit(1)'", interval_s=2.0
+            kind="cmd",
+            target=f"{PYTHON_ARG} -c 'import sys; sys.exit(1)'",
+            interval_s=2.0,
         ),
         endpoint="tcp://127.0.0.1:1",
     )
@@ -126,7 +145,7 @@ async def test_probe_unknown_kind_returns_degraded(
     spec = ServiceSpec(
         name="unknown",
         backend="subprocess",
-        config={"command": ["python", "-c", "import time; time.sleep(60)"]},
+        config={"command": [PYTHON, "-c", "import time; time.sleep(60)"]},
         ready=ReadyProbe(kind="unknown", target="whatever"),
         endpoint="tcp://127.0.0.1:1",
     )
@@ -144,7 +163,7 @@ async def test_probe_tcp_failure_returns_starting(daemon_ctx: ShellContext):
     spec = ServiceSpec(
         name="tcpfail",
         backend="subprocess",
-        config={"command": ["python", "-c", "import time; time.sleep(60)"]},
+        config={"command": [PYTHON, "-c", "import time; time.sleep(60)"]},
         ready=ReadyProbe(kind="tcp", target="127.0.0.1:1", interval_s=0.1),
         endpoint="tcp://127.0.0.1:1",
     )
@@ -164,7 +183,7 @@ async def test_stop_already_exited_proc(
     spec = ServiceSpec(
         name="quickexit",
         backend="subprocess",
-        config={"command": ["python", "-c", "pass"]},
+        config={"command": [PYTHON, "-c", "pass"]},
         ready=ReadyProbe(kind="tcp", target="127.0.0.1:1"),
         endpoint="tcp://127.0.0.1:1",
     )
@@ -187,7 +206,7 @@ async def test_start_closes_parent_log_file_after_spawn(
     spec = ServiceSpec(
         name="fdtest",
         backend="subprocess",
-        config={"command": ["python", "-c", "pass"]},
+        config={"command": [PYTHON, "-c", "pass"]},
         ready=ReadyProbe(kind="tcp", target="127.0.0.1:1"),
         endpoint="tcp://127.0.0.1:1",
     )

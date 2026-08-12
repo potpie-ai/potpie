@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import threading
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -15,6 +18,7 @@ from potpie.daemon.http.ui.router import (
     _slice_to_graph,
     build_ui_api_router,
 )
+from potpie_context_core.graph_workbench import GRAPH_WORKBENCH_COMMANDS
 from potpie_context_core.ports.graph.inspection import (
     GraphEdge,
     GraphNode,
@@ -113,7 +117,25 @@ def test_slice_to_graph_shape() -> None:
 def test_parse_scope() -> None:
     assert _parse_scope("repo:o/r,path:src/a.py") == {"repo": "o/r", "path": "src/a.py"}
     assert _parse_scope(None) == {}
-    assert _parse_scope("bad,key:val") == {"key": "val"}
+    # A trailing (or doubled) comma is an empty entry, not a malformed one —
+    # same tolerance the CLI's --scope parser has.
+    assert _parse_scope("repo:o/r,") == {"repo": "o/r"}
+
+
+@pytest.mark.parametrize(
+    "scope",
+    ["bad", "bad,key:val", "key:val,bad", ":val", "key:"],
+)
+def test_a_malformed_scope_pair_is_refused_not_dropped(scope: str) -> None:
+    """The dropped pair is the dangerous one.
+
+    Silently discarding ``bad`` from ``bad,key:val`` left the caller with a
+    confident answer computed against a *narrower* filter than the one it asked
+    for, and nothing in the request or the response said so. The CLI raises on
+    exactly these five shapes; so does this.
+    """
+    with pytest.raises(ValueError, match="invalid scope entry"):
+        _parse_scope(scope)
 
 
 def test_pots_api_includes_counts_for_selector() -> None:
@@ -487,3 +509,199 @@ def test_the_in_process_host_is_never_budgeted(two_hosts, monkeypatch) -> None:
     local_rows = [p for p in body["pots"] if p["origin"] == "local"]
 
     assert all("counts" in p for p in local_rows)
+
+
+# --- the API answers the way the CLI answers --------------------------------
+#
+# From here down the host's graph is the *real* ``DefaultGraphService`` over an
+# in-memory backend, not a stand-in. The defects below are all disagreements
+# between what the workbench said and what this router passed on — a fake graph
+# would have been free to agree with whichever side the test was written from.
+
+
+@pytest.fixture
+def real_graph_client(monkeypatch, tmp_path):
+    """A client whose host answers reads from the real graph service."""
+    from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (  # noqa: E501
+        InMemoryGraphBackend,
+    )
+    from potpie_context_engine.application.services.graph_service import (
+        DefaultGraphService,
+    )
+
+    host = _FakeHost("local", _Pots([_Pot("pot_l1", "default", active=True)]))
+    host.graph = DefaultGraphService(backend=InMemoryGraphBackend())
+    app = FastAPI()
+    app.include_router(build_ui_api_router(host))
+    return _client(app)
+
+
+def test_catalog_serves_the_workbench_contract_the_cli_serves(real_graph_client):
+    """One graph, one advertised contract.
+
+    The route handed back the raw V1.5 data-plane body — four commands — while
+    `potpie graph catalog` normalizes the same result into the twelve-command V2
+    workbench. The catalog is the route whose entire job is to say what the
+    graph supports, so two answers to that question is the worst place for a
+    drift: an agent discovering the contract through the daemon concluded that
+    `propose`, `commit`, `history` and the rest did not exist.
+    """
+    body = real_graph_client.get("/api/catalog").json()
+
+    assert body["commands"] == list(GRAPH_WORKBENCH_COMMANDS)
+    assert body["workbench_graph_contract_version"]
+    assert body["data_plane_graph_contract_version"]
+    # Still a UI-API body: every other route here reports `ok`.
+    assert body["ok"] is True
+
+
+def test_a_refused_read_is_not_a_200(real_graph_client):
+    """`ok: false` under a 200 is a failure no client sees.
+
+    `features.feature_context` requires a scope key; asked without one the
+    workbench refuses. The SPA's `jget` — and curl, and anything else scripting
+    this API — branches on the status line, so the refusal arrived as a
+    successful response holding zero items and rendered as an empty graph: "this
+    pot knows nothing" instead of "name a feature or a repo".
+    """
+    response = real_graph_client.get(
+        "/api/read", params={"subgraph": "features", "view": "feature_context"}
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["ok"] is False
+    assert body["status"] == "missing_required_scope"
+    # The whole workbench body still travels — `unsupported` names the filter to
+    # fix — and `detail` is where this router puts every other failure message.
+    assert body["unsupported"][0]["reason"] == "missing_required_scope"
+    assert "requires one of" in body["detail"]
+
+
+def test_a_read_the_workbench_answers_is_still_a_200(real_graph_client):
+    """The other half of the rule: an empty *answer* is an answer."""
+    response = real_graph_client.get(
+        "/api/read",
+        params={"subgraph": "features", "view": "feature_context", "scope": "repo:o/r"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+
+@pytest.mark.parametrize("route", ["/api/read", "/api/search"])
+def test_a_malformed_scope_is_refused_by_the_routes_that_take_one(
+    real_graph_client, route: str
+):
+    """The narrowed-filter answer, end to end.
+
+    `bad,repo:o/r` used to lose `bad` on the way in, so the read ran against
+    half the scope it was given and came back confident. The CLI raises on that
+    string; so must the API, or the two surfaces disagree about what was even
+    asked.
+    """
+    params = {"scope": "bad,repo:o/r", "q": "anything"}
+    if route == "/api/read":
+        params |= {"subgraph": "features", "view": "feature_context"}
+
+    response = real_graph_client.get(route, params=params)
+
+    assert response.status_code == 400
+    assert "invalid scope entry 'bad'" in response.json()["detail"]
+
+
+# --- two pot switches in flight ---------------------------------------------
+
+
+@pytest.fixture
+def real_pots_client(tmp_path):
+    """A client whose host runs the real pot control plane over a real store."""
+    from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (  # noqa: E501
+        InMemoryGraphBackend,
+    )
+    from potpie_context_engine.adapters.outbound.pots.local_pot_store import (
+        LocalPotStore,
+    )
+    from potpie_context_engine.application.services.pot_management import (
+        LocalPotManagementService,
+    )
+
+    store = LocalPotStore(home=tmp_path / "pot-home")
+    pots = LocalPotManagementService(store=store, backend=InMemoryGraphBackend())
+    pots.create_pot(name="alpha", use=True)
+    pots.create_pot(name="beta")
+
+    host = _FakeHost("local", _Pots([]))
+    host.pots = pots
+    app = FastAPI()
+    app.include_router(build_ui_api_router(host))
+    return _client(app), store
+
+
+def test_two_pot_switches_in_flight_both_succeed(real_pots_client, monkeypatch):
+    """The explorer is served off a threadpool, so two clicks overlap.
+
+    Both writers built the *same* scratch file — `pots.tmp` — and the first
+    `replace` moved it out from under the second, whose rename then raised
+    `FileNotFoundError`. Nothing mapped it, so Starlette answered a plain-text
+    "Internal Server Error" the SPA cannot even parse. The interleave is forced
+    with a barrier rather than hoped for: both saves finish writing before
+    either renames, which is exactly the window that lost the file.
+    """
+    from potpie_context_engine.adapters.outbound.pots import local_pot_store
+
+    client, store = real_pots_client
+    both_written = threading.Barrier(2, timeout=10)
+    real_dump = json.dump
+
+    def gated_dump(obj, fh, **kwargs):
+        real_dump(obj, fh, **kwargs)
+        fh.flush()
+        both_written.wait()
+
+    monkeypatch.setattr(local_pot_store.json, "dump", gated_dump)
+
+    results: list[object] = []
+
+    def switch(ref: str) -> None:
+        try:
+            response = client.post("/api/pots/use", json={"ref": ref})
+            results.append((response.status_code, response.json()))
+        except BaseException as exc:  # noqa: BLE001 - the crash is the finding
+            results.append(exc)
+
+    threads = [
+        threading.Thread(target=switch, args=(ref,)) for ref in ("alpha", "beta")
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=15)
+
+    assert [r[0] for r in results] == [200, 200], results
+    # One of the two won — either is correct, an error is not — and the registry
+    # is intact rather than half-written.
+    assert store.active()["name"] in {"alpha", "beta"}
+    assert sorted(p.name for p in store.home.iterdir()) == ["pots.json"]
+
+
+def test_a_control_plane_write_that_fails_is_a_structured_error(tmp_path):
+    """...and when the disk really does refuse, it says so in JSON.
+
+    An `OSError` out of the pot store escaped the router untouched, and the
+    browser got Starlette's plain-text 500 — `jget` parses the body as JSON,
+    fails, and shows the user nothing.
+    """
+
+    class _Unwritable(_Pots):
+        def use_pot(self, *, ref: str):
+            raise OSError(28, "No space left on device")
+
+    host = _FakeHost("local", _Unwritable([_Pot("pot_l1", "default", active=True)]))
+    app = FastAPI()
+    app.include_router(build_ui_api_router(host))
+
+    response = _client(app).post("/api/pots/use", json={"ref": "default"})
+
+    assert response.status_code == 500
+    assert "No space left on device" in response.json()["detail"]

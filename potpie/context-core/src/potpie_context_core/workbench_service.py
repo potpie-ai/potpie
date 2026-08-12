@@ -89,6 +89,9 @@ from potpie_context_core.semantic_mutations import (
 
 _DEFAULT_PLAN_TTL_SECONDS = 3600
 _DEFAULT_COMMIT_CLAIM_TIMEOUT_SECONDS = 300
+# How long one worker owns a claimed inbox item before another may take over.
+_DEFAULT_INBOX_LEASE_SECONDS = 1800
+_MAX_INBOX_LEASE_SECONDS = 86400
 _LOG = logging.getLogger(__name__)
 _QUALITY_SCAN_MAX = 5000
 _DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.5
@@ -1055,9 +1058,20 @@ class GraphWorkbenchService:
         pot_id: str,
         item_id: str,
         claimed_by: str,
+        lease_seconds: int | None = None,
     ) -> GraphInboxResult:
-        """Claim a pending inbox item for processing."""
+        """Take an exclusive, time-boxed lease on a pending inbox item.
+
+        A claim only means something if it excludes: the previous read-then-save
+        let two agents claim the same item and do the same work twice, each
+        believing it owned the item. The claim is now a lease — held by one
+        actor until ``claim_expires_at``, refreshable by that actor, and
+        reclaimable by anyone once it lapses so a dead worker cannot strand the
+        item — and it is taken with an atomic swap, so the loser of a race is
+        told it lost instead of overwriting the winner.
+        """
         store = self._inbox_store()
+        actor = _required_clean(claimed_by, "claimed_by")
         item = store.get(
             pot_id=pot_id,
             item_id=_required_clean(item_id, "item_id"),
@@ -1068,18 +1082,40 @@ class GraphWorkbenchService:
         if terminal is not None:
             return terminal
         now = datetime.now(timezone.utc)
+        holder = _active_inbox_claim_holder(item, now=now)
+        if holder is not None and holder != actor:
+            return _inbox_claim_conflict_result(item)
+        lease = _inbox_lease_seconds(lease_seconds)
         claimed = replace(
             item,
             status=GraphInboxStatus.claimed.value,
-            claimed_by=_required_clean(claimed_by, "claimed_by"),
+            claimed_by=actor,
             claimed_at=now,
+            claim_expires_at=now + timedelta(seconds=lease),
         )
-        store.save(claimed)
+        if not store.compare_and_set(expected=item, replacement=claimed):
+            return GraphInboxResult(
+                ok=False,
+                pot_id=pot_id,
+                action="claim",
+                item=store.get(pot_id=pot_id, item_id=item.item_id) or item,
+                detail=(
+                    "inbox item changed while the claim was being taken; "
+                    "another worker got there first"
+                ),
+                recommended_next_action=(
+                    "Re-read the item with graph inbox show --json, or pick another "
+                    "pending item with graph inbox list --status pending --json."
+                ),
+            )
         return GraphInboxResult(
             ok=True,
             pot_id=pot_id,
             action="claim",
             item=claimed,
+            detail=(
+                f"claim leased to {actor} until {_dt_iso(claimed.claim_expires_at)}"
+            ),
             recommended_next_action=(
                 "Use graph catalog/describe/read/search-entities before proposing a write."
             ),
@@ -1733,6 +1769,18 @@ def _verify_ingestion_commit(
         warnings.append(f"graph quality status is {after_quality['status']}")
         recommended = (
             "Review graph quality summary before relying on newly committed memory."
+        )
+    elif not claim_keys:
+        # Entity-only (or retraction-only) plans have nothing to read back, and
+        # reporting the plain "ok" for them made verification read as proof the
+        # write landed when no claim was ever checked. Say what was actually
+        # verified; the commit itself still succeeded, so ``ok`` stays true.
+        status = "no_claims"
+        detail = "plan committed no claim keys; claim readback verified nothing"
+        warnings.append("verification read back no claims: the plan asserted none")
+        recommended = (
+            "Read the affected entities back with graph search-entities, or add the "
+            "claims that make this write findable."
         )
 
     return GraphIngestionVerificationResult(
@@ -3324,6 +3372,45 @@ def _inbox_missing_result(
         action=action,
         detail=f"inbox item {item_id!r} was not found for this pot",
         recommended_next_action="Run graph inbox list --json and use an item_id from the result.",
+    )
+
+
+def _inbox_lease_seconds(lease_seconds: int | None) -> int:
+    if lease_seconds is None:
+        return _DEFAULT_INBOX_LEASE_SECONDS
+    seconds = int(lease_seconds)
+    if seconds <= 0:
+        raise ValueError("inbox claim lease must be positive")
+    return min(seconds, _MAX_INBOX_LEASE_SECONDS)
+
+
+def _active_inbox_claim_holder(item: GraphInboxItem, *, now: datetime) -> str | None:
+    """Return the actor whose claim lease is still running, if any."""
+    if item.status != GraphInboxStatus.claimed.value or not item.claimed_by:
+        return None
+    expires_at = item.claim_expires_at
+    if expires_at is None:
+        # Claims taken before leases existed never expire on their own; treat
+        # them as held so an in-flight worker is not undercut, and let the
+        # holder or an explicit close release them.
+        return item.claimed_by
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return item.claimed_by if expires_at > now else None
+
+
+def _inbox_claim_conflict_result(item: GraphInboxItem) -> GraphInboxResult:
+    until = _dt_iso(item.claim_expires_at) or "an unbounded lease"
+    return GraphInboxResult(
+        ok=False,
+        pot_id=item.pot_id,
+        action="claim",
+        item=item,
+        detail=(f"inbox item is already claimed by {item.claimed_by!r} until {until}"),
+        recommended_next_action=(
+            "Pick another pending item with graph inbox list --status pending --json, "
+            "or wait for the lease to expire."
+        ),
     )
 
 

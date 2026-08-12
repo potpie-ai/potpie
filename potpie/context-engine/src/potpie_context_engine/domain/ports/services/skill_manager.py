@@ -70,6 +70,19 @@ class AgentTargetPort(Protocol):
         """Installed skill id -> version for this harness."""
         ...
 
+    def available(self) -> frozenset[str]:
+        """Catalog ids this harness's bundle can actually install.
+
+        Optional, like ``matches_bundle``: a target that does not implement it
+        is taken to carry whatever the catalog lists. Implementing it is what
+        keeps "in the catalog" from being read as "installable here" — the
+        Claude Code plugin ships ten of the eleven skills, and without this the
+        manager reported the eleventh as installed on every run. The manager
+        asks it *before* the catalog, so it answers only about ids the catalog
+        has; an unknown id is the catalog's refusal to make, not this one's.
+        """
+        ...
+
     def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
         """Is the installed skill byte-identical to what ``install`` would write?
 
@@ -86,6 +99,26 @@ class AgentTargetPort(Protocol):
     ) -> None: ...
 
     def remove(self, *, skill_id: str) -> None: ...
+
+    def install_support_files(self, *, path: str | None = None) -> Any:
+        """Write the harness's own files — instruction file, slash commands.
+
+        Optional, and separate from ``install`` because they belong to the
+        bundle rather than to any one skill id: only a sweep writes them, and
+        the result names them so a command cannot edit a user-authored
+        ``CLAUDE.md`` without saying so.
+        """
+        ...
+
+    def remove_support_files(self, *, path: str | None = None) -> Any:
+        """Take those same files back out; the mirror of the method above.
+
+        Also optional — but a target that implements one and not the other is
+        a target whose ``remove --all`` leaves the harness loading Potpie's
+        instruction file and slash commands after every skill they refer to is
+        gone.
+        """
+        ...
 
 
 class SkillManager(Protocol):

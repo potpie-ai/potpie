@@ -687,7 +687,7 @@ def test_an_overridden_origin_is_a_target_rather_than_a_preference(home) -> None
 
     assert hosts.current_origin() == hosts.MANAGED
     # Exactly the chain `_common._ActiveHost` walks on the next attribute read.
-    with pytest.raises(ContextEngineDisabled, match="No managed host configured"):
+    with pytest.raises(ContextEngineDisabled, match="No managed host is configured"):
         hosts.build_host(hosts.current_origin())
 
 
@@ -717,6 +717,36 @@ def test_an_unusable_environment_override_is_reported_not_counted_as_configured(
     assert "POTPIE_MANAGED_URL" in _run("host", "list").output
 
 
+def test_an_unusable_managed_host_is_still_a_targeting_candidate(
+    home, monkeypatch
+) -> None:
+    """The two candidate sets answer two different questions.
+
+    "Worth talking to" excludes a managed address that will not parse, and has
+    to: nothing may route at it. "Has to be accounted for before a bare ref is
+    resolved" does not, because dropping it there asserts that no *other* host
+    holds a pot by that name — which a host nobody can enumerate cannot be shown
+    to say. Collapsed into one answer, the stray character in the port below
+    turned every bare ref into a confident local selection.
+    """
+    monkeypatch.setenv("POTPIE_MANAGED_URL", "http://127.0.0.1:8090x")
+
+    assert hosts.configured_origins() == (hosts.LOCAL,)
+    assert hosts.targeting_origins() == hosts.ORIGINS
+
+
+def test_a_usable_and_an_absent_managed_host_agree_across_both_sets(
+    home, monkeypatch
+) -> None:
+    """Only the unusable middle state differs; the two ends must not drift."""
+    assert hosts.configured_origins() == hosts.targeting_origins() == (hosts.LOCAL,)
+
+    monkeypatch.setenv("POTPIE_MANAGED_URL", "http://127.0.0.1:8099")
+    monkeypatch.setenv("POTPIE_MANAGED_TOKEN", "tok")
+
+    assert hosts.configured_origins() == hosts.targeting_origins() == hosts.ORIGINS
+
+
 def test_a_usable_environment_override_still_wins_over_the_file(
     home, configured, monkeypatch
 ) -> None:
@@ -726,6 +756,97 @@ def test_a_usable_environment_override_still_wins_over_the_file(
     monkeypatch.setenv("POTPIE_MANAGED_TOKEN", "scratch-token")
 
     assert hosts.managed_endpoint() == ("http://scratch.example:9000", "scratch-token")
+    assert hosts.managed_endpoint_problem() is None
+
+
+# --- POTPIE_MANAGED_URL without POTPIE_MANAGED_TOKEN ------------------------
+
+
+def test_an_address_only_override_keeps_the_token_stored_for_that_address(
+    home, configured, monkeypatch
+) -> None:
+    """The override names the address; it does not revoke the credential.
+
+    ``POTPIE_MANAGED_URL`` alone dropped the stored token on the floor and the
+    endpoint came back with ``""``, which the transport turns into the
+    auth-disabled placeholder: every command went out as ``Bearer no-auth``
+    against a service holding a real key, and the 401 that came back read as the
+    managed host refusing a login the CLI had never made.
+    """
+    monkeypatch.setenv("POTPIE_MANAGED_URL", f"{_STORED_URL}/")
+
+    assert hosts.managed_endpoint() == (_STORED_URL, _STORED_TOKEN)
+    assert hosts.managed_endpoint_problem() is None
+    # Through the transport seam, because that is where the placeholder is
+    # applied and where the wrong credential would actually have gone out.
+    discovery = hosts.build_host(hosts.MANAGED).rpc.daemon.discovery()
+    assert discovery == {"base_url": _STORED_URL, "token": _STORED_TOKEN}
+    assert discovery["token"] != hosts.NO_AUTH_TOKEN
+
+
+def test_an_address_only_override_for_another_host_refuses_to_guess(
+    home, configured, monkeypatch
+) -> None:
+    """A key pasted in for one service is not a key handed to whatever else the
+    environment names, and the placeholder is not a credential to fall back on.
+
+    So neither of the two silent answers is available: the endpoint is reported
+    unusable, nothing routes at it, and the message names both addresses and the
+    variable that settles it.
+    """
+    monkeypatch.setenv("POTPIE_MANAGED_URL", "http://scratch.example:9000")
+
+    assert hosts.managed_endpoint() is None
+    problem = hosts.managed_endpoint_problem()
+    assert problem is not None
+    assert "http://scratch.example:9000" in problem
+    assert _STORED_URL in problem
+    assert "POTPIE_MANAGED_TOKEN" in problem
+    # The token is still in the file: this refuses to *send* it, not to keep it.
+    assert (home / "cli_hosts.json").read_bytes() == configured
+
+    # Enumeration degrades — `host list` is the command you run to find this out.
+    listing = _run("--json", "host", "list")
+    assert listing.exit_code == 0, listing.output
+    assert json.loads(listing.output)["problem"] == problem
+
+    # Targeting fails loud, and not with "run 'potpie host set <url>'": writing
+    # the file is exactly what the environment override makes irrelevant.
+    refused = _run("--json", "host", "use", "managed")
+    assert refused.exit_code == _common.EXIT_VALIDATION, refused.output
+    error = json.loads(refused.output)
+    assert error["code"] == "validation_error"
+    assert problem in error["message"]
+    assert "potpie host set" not in error["recommended_next_action"]
+
+
+def test_an_explicit_empty_environment_token_is_the_auth_disabled_setup(
+    home, configured, monkeypatch
+) -> None:
+    """Set-to-empty is a statement about the credential; unset is not one.
+
+    This is the escape hatch the refusal above points at, so it has to work
+    without touching the stored pair.
+    """
+    monkeypatch.setenv("POTPIE_MANAGED_URL", "http://scratch.example:9000")
+    monkeypatch.setenv("POTPIE_MANAGED_TOKEN", "")
+
+    assert hosts.managed_endpoint() == ("http://scratch.example:9000", "")
+    assert hosts.managed_endpoint_problem() is None
+    assert (
+        hosts.build_host(hosts.MANAGED).rpc.daemon.discovery()["token"]
+        == hosts.NO_AUTH_TOKEN
+    )
+
+
+def test_an_address_only_override_with_nothing_stored_stays_the_scratch_setup(
+    home, monkeypatch
+) -> None:
+    """Regression guard for the refusal: with no stored token there is nothing
+    to discard, and pointing at an auth-disabled service must stay a one-liner."""
+    monkeypatch.setenv("POTPIE_MANAGED_URL", "http://scratch.example:9000")
+
+    assert hosts.managed_endpoint() == ("http://scratch.example:9000", "")
     assert hosts.managed_endpoint_problem() is None
 
 
@@ -740,6 +861,11 @@ def test_host_set_says_when_the_environment_shadows_what_it_just_wrote(
     write is not the lie; saying nothing about the override is.
     """
     monkeypatch.setenv("POTPIE_MANAGED_URL", "http://env.example:9000")
+    # The environment names the credential as well as the address: an override
+    # that names only the address is a different situation with its own refusal
+    # (see the POTPIE_MANAGED_TOKEN block below), and this test is about the
+    # write landing somewhere nothing will read.
+    monkeypatch.setenv("POTPIE_MANAGED_TOKEN", "env-token")
 
     result = _run(
         "--json", "host", "set", "http://svc.example:8090", "--no-check", "--token", "t"
@@ -773,3 +899,41 @@ def test_host_set_stays_quiet_when_nothing_shadows_the_write(home) -> None:
         "host", "set", "http://svc.example:8090", "--no-check", "--token", "t"
     ).output
     assert "POTPIE_MANAGED_URL" not in human
+
+
+# --- `--host managed` with no usable managed host ---------------------------
+
+
+def test_host_override_refuses_an_unconfigured_managed_host(home) -> None:
+    """The registry is empty, so ``host set`` is the repair and it is named."""
+    result = _run("--json", "--host", "managed", "host", "list")
+
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "validation_error"
+    assert payload["message"] == "No managed host is configured."
+    assert "host set" in payload["recommended_next_action"]
+
+
+def test_host_override_names_an_unusable_override_instead_of_the_file(
+    home, monkeypatch
+) -> None:
+    """There are two ways to have no usable managed host; only one is a file.
+
+    A configured-but-unusable ``POTPIE_MANAGED_URL`` reads as *absent* to every
+    router by design, and this door answered it with "run 'potpie host set
+    <url>'" — telling a caller whose environment override outranks the file to
+    go and write the file, which the next command would ignore for the same
+    reason. ``host use managed`` and ``build_host`` already take their text from
+    the shared helper; this was the last call site that did not.
+    """
+    monkeypatch.setenv("POTPIE_MANAGED_URL", "http://127.0.0.1:8090x")
+
+    result = _run("--json", "--host", "managed", "host", "list")
+
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "validation_error"
+    assert "unusable" in payload["message"]
+    assert "POTPIE_MANAGED_URL" in payload["message"]
+    assert "host set" not in payload["recommended_next_action"]

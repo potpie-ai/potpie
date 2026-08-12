@@ -692,6 +692,21 @@ def test_mutation_template_command_emits_json() -> None:
     assert any(op.get("predicate") == "PROVIDES" for op in ops)
 
 
+def test_mutation_template_next_action_points_at_the_write_flow() -> None:
+    # The next action told agents to wait for `describe` to be implemented. It
+    # has been implemented for some time, so the advice sent them nowhere.
+    _common.set_json(True)
+    result = CliRunner().invoke(
+        graph.graph_app, ["mutation-template", "--kind", "repo-baseline"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    next_action = payload["recommended_next_action"]
+    assert "once" not in next_action
+    assert "graph propose" in next_action
+    assert "graph describe" in next_action
+
+
 def test_mutation_template_unknown_kind_fails_with_next_action() -> None:
     _common.set_json(True)
     result = CliRunner().invoke(

@@ -11,8 +11,11 @@ depended on who was reading it:
 - ``graph`` errors and every other error shared no JSON key, so ``resp['code']``
   raised ``KeyError`` on exactly the commands agents call most;
 - ``--json`` after the subcommand was rejected in prose, at exit 2, to a caller
-  that had just said it could only read JSON;
-- ``potpie --json --version`` answered a machine with two lines of prose.
+  that had just said it could only read JSON — it is now hoisted and honoured,
+  so the position a caller guesses cannot change the answer;
+- ``potpie --json --version`` answered a machine with two lines of prose;
+- a missing *source* was reported as a missing *pot*, because the error type
+  subclasses the one above it in the boundary.
 
 Everything here drives ``run_cli`` (the shipped entrypoint) or the real error
 boundary. ``CliRunner`` invokes the app in Click's standalone mode and never
@@ -154,49 +157,103 @@ def test_usage_errors_exit_the_same_in_both_output_modes(
     assert payload["recommended_next_action"]
 
 
-# --- a global flag in the wrong position ------------------------------------
+# --- a global flag after the command means the same thing --------------------
 
 
-@pytest.mark.parametrize("command", [["pot", "list"], ["graph", "catalog"]])
-def test_a_trailing_json_flag_is_refused_in_the_envelope_it_asked_for(
+def _drive(argv: list[str]) -> int:
+    """Run the shipped entrypoint and return its exit code."""
+    try:
+        host_cli.run_cli(list(argv))
+    except typer.Exit as exc:
+        return int(exc.exit_code or 0)
+    return 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["pot", "list"],  # succeeds
+        ["graph", "catalog"],  # the workbench envelope
+        ["pot", "create"],  # fails, before the command body
+    ],
+    ids=lambda c: "-".join(c),
+)
+def test_a_global_flag_means_the_same_thing_in_either_position(
     command: list[str], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with pytest.raises(typer.Exit) as exc_info:
-        host_cli.run_cli([*command, "--json"])
+    """One accepted position is a coin flip every agent consumer has to win.
 
-    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["code"] == "usage_error"
-    assert "--json" in payload["message"]
-    assert "potpie --json" in payload["message"]
-    assert payload["recommended_next_action"] == "re-run as: potpie --json " + " ".join(
-        command
-    )
+    The losing side got Click's prose on stderr from a command line that had
+    just said it could only read JSON, so both spellings are driven here and
+    required to answer with the same exit code and the same envelope keys.
+    """
+    leading = _drive(["--json", *command])
+    leading_out = capsys.readouterr().out
+    trailing = _drive([*command, "--json"])
+    trailing_out = capsys.readouterr().out
+
+    assert trailing == leading
+    # json.loads is the assertion that matters: Click's refusal is not JSON.
+    assert sorted(json.loads(trailing_out)) == sorted(json.loads(leading_out))
 
 
 @pytest.mark.parametrize("flag", ["--verbose", "-v"])
-def test_a_trailing_verbose_flag_is_refused_by_name(
+def test_a_trailing_verbose_flag_is_applied_rather_than_rejected(
     flag: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    with pytest.raises(typer.Exit) as exc_info:
-        host_cli.run_cli(["pot", "list", flag])
-
-    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
+    assert _drive(["pot", "list", flag]) == 0
     captured = capsys.readouterr()
-    assert captured.out == ""
-    assert flag in captured.err
-    assert "global flag" in captured.err
+    assert captured.err == ""
+    assert _common.is_verbose()
+
+
+def test_a_trailing_host_flag_keeps_its_value(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Hoisting a value-taking flag has to move the value with it.
+
+    ``potpie status --host managed`` used to reach the caller as "Got unexpected
+    extra argument(s) (managed)" — a message naming neither the flag nor the
+    fix — because ``status`` declared a boolean ``--host`` of its own that ate
+    the flag and left the value stranded.
+    """
+    assert (
+        _drive(["--json", "pot", "list", "--host", "bogus"]) == _common.EXIT_VALIDATION
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["code"] == "validation_error"
+    assert "bogus" in payload["message"]
+
+
+def test_a_value_taking_global_with_no_value_still_names_the_position(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The one shape that cannot be hoisted keeps the old refusal, with a metavar."""
+    assert _drive(["--json", "pot", "list", "--host"]) == _common.EXIT_VALIDATION
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["code"] == "usage_error"
+    assert "global flag" in payload["message"]
+    assert "--host <local|managed>" in payload["recommended_next_action"]
 
 
 def test_a_command_flag_is_not_mistaken_for_a_misplaced_global(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``--host`` is a real option on several commands; it must never match."""
+    """The match is keyed on Click's ``NoSuchOption``, not on a scan of argv.
+
+    ``gitbucket login`` owns a ``--host`` of its own, so Click never raises
+    ``NoSuchOption`` for it there and the root flag cannot shadow it.
+    """
     from typer._click.exceptions import NoSuchOption
 
-    assert host_cli._misplaced_root_flag(NoSuchOption("--host")) is None
     assert host_cli._misplaced_root_flag(NoSuchOption("--pot")) is None
     assert host_cli._misplaced_root_flag(NoSuchOption("--json")) == "--json"
+    assert host_cli._misplaced_root_flag(NoSuchOption("--host")) == "--host"
+
+    from typer.testing import CliRunner
+
+    result = CliRunner().invoke(host_cli.app, ["gitbucket", "login", "--help"])
+    assert "--host" in result.output
 
     with pytest.raises(typer.Exit):
         host_cli.run_cli(["--json", "host", "list", "--nope"])
@@ -212,12 +269,21 @@ def test_the_root_callback_does_not_downgrade_an_argv_json_request(
     _common.bootstrap_output_flags_from_argv(["pot", "list", "--json"])
     assert _common.argv_requested_json()
 
-    with pytest.raises(typer.Exit):
-        host_cli.run_cli(["pot", "list", "--json"])
+    assert _drive(["pot", "list", "--json"]) == 0
 
     # The root callback ran (it is what parses `pot`), and JSON survived it.
     assert _common.is_json()
     json.loads(capsys.readouterr().out)
+
+
+def test_a_trailing_version_flag_still_answers_in_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The eager callback fires on the *second* parse, after the scan is spent."""
+    assert _drive(["pot", "list", "--version", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["name"] == "potpie-context-engine"
 
 
 # --- a host that answered and refused the credential ------------------------
@@ -466,3 +532,48 @@ def test_human_version_is_unchanged(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert "potpie-context-engine " in out
     assert f"python {platform.python_version()} ({sys.executable})" in out
+
+
+# --- a missing source is not a missing pot ----------------------------------
+
+
+def test_the_boundary_reports_a_missing_source_as_one(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``SourceNotFound`` subclasses ``PotNotFound``, so order decides the noun.
+
+    The subclassing exists so a boundary that has not learned the type still
+    degrades to a sensible refusal rather than "unexpected internal error".
+    Without a branch of its own here, every command that has not mapped the
+    error itself sends the operator to ``pot list`` to hunt for a pot that was
+    never missing.
+    """
+    from potpie_context_core.errors import SourceNotFound
+
+    _common.set_json(True)
+    with pytest.raises(typer.Exit) as exc_info:
+        with _common.contract():
+            raise SourceNotFound(
+                "No source 'src-typo' in pot 'p1'.",
+                recommended_next_action="list them with 'potpie source list'",
+            )
+
+    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["code"] == "source_not_found"
+    assert payload["recommended_next_action"] == "list them with 'potpie source list'"
+
+
+def test_the_boundary_still_reports_a_missing_pot_as_one(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from potpie_context_core.errors import PotNotFound
+
+    _common.set_json(True)
+    with pytest.raises(typer.Exit):
+        with _common.contract():
+            raise PotNotFound("No pot matching 'nope'.")
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["code"] == "pot_not_found"
+    assert "pot list" in payload["recommended_next_action"]

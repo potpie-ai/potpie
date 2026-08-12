@@ -109,8 +109,12 @@ def test_in_process_cli_invocations_share_install_and_daemon_session_ids(
     second = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
     second_ctx = current_telemetry_context()
 
-    assert first.exit_code == 0, first.stdout
-    assert second.exit_code == 0, second.stdout
+    # `daemon status` is a vehicle here, not the subject: this asserts about
+    # telemetry identity. No daemon runs against this home, and that is now a
+    # `daemon_unavailable` at EXIT_UNAVAILABLE — the command still ran and still
+    # emitted, which is all this test needs of it.
+    assert first.exit_code == _common.EXIT_UNAVAILABLE, first.stdout
+    assert second.exit_code == _common.EXIT_UNAVAILABLE, second.stdout
     assert first_ctx is not None
     assert second_ctx is not None
     assert first_ctx.anonymous_install_id == second_ctx.anonymous_install_id
@@ -154,7 +158,9 @@ def test_cli_root_configures_sentry_errors_and_metrics_with_one_settings_load(
 
     result = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
 
-    assert result.exit_code == 0, result.output
+    # See above: the probe reports no daemon at EXIT_UNAVAILABLE. What is under
+    # test is that the root callback loaded settings exactly once on the way in.
+    assert result.exit_code == _common.EXIT_UNAVAILABLE, result.output
     assert loaded == [None]
     assert error_settings == [settings]
     assert metric_settings == [settings]
@@ -293,7 +299,10 @@ def test_cli_telemetry_identity_write_failure_is_nonfatal(
     result = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
 
     assert install_id.startswith("install_")
-    assert result.exit_code == 0, result.output
+    # Non-fatal means "the command still answered", not "it answered yes": the
+    # probe reports no daemon at EXIT_UNAVAILABLE, and the identity write
+    # failure adds nothing to that.
+    assert result.exit_code == _common.EXIT_UNAVAILABLE, result.output
     assert "NotADirectoryError" not in result.output
 
 

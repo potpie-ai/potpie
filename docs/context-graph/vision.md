@@ -182,11 +182,11 @@ So "v2" survives solely as the envelope version on workbench responses. What shi
   bundled local embedder, installed skills, and the zero-token nudge hooks — all
   with no mandatory Docker, Neo4j, Postgres, or cloud service.
 
-The canonical local first-run is one command (note `--scan` is **opt-in**, off by
-default — `setup` does not scan the working tree unless asked):
+The canonical local first-run is one command (`setup` registers the repo as a
+source; it never scans the working tree — the harness fills the graph):
 
 ```bash
-potpie setup --repo . --agent claude   # add --scan to ingest the working tree
+potpie setup --repo . --agent claude
 potpie status
 ```
 

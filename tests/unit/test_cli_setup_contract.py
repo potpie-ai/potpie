@@ -37,6 +37,7 @@ from potpie_context_core.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
+from potpie_context_engine.adapters.outbound.skills.agent_installer import AGENT_TYPES
 from potpie_context_engine.application.services import setup_orchestrator
 from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 
@@ -409,3 +410,128 @@ def test_a_repeat_json_setup_keeps_one_source_end_to_end(tmp_path, monkeypatch) 
     ]
     assert len(rows) == 1, rows
     assert Path(rows[0]["location"]) == repo.resolve()
+
+
+# --- S1-17/18/23/25/27: options are checked before anything is provisioned ---
+
+
+@pytest.fixture()
+def cold_home(tmp_path, monkeypatch) -> Path:
+    """A machine with no Potpie on it, and nothing running."""
+    home = tmp_path / "ce"
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(home))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("POTPIE_HARNESS_HOME", str(tmp_path / "harness"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(setup_orchestrator, "_current_git_remote", lambda cwd: None)
+    monkeypatch.setattr(
+        Daemon,
+        "ensure",
+        lambda self, plan=None: StepResult("daemon", DONE, "stubbed"),
+    )
+    return home
+
+
+@pytest.mark.parametrize(
+    "option,message_fragment",
+    [
+        # An unregistered harness: the skills step failed *softly*, so the run
+        # reported ok and exit 0 having installed nothing anywhere.
+        (["--agent", "cursur"], "agent harness"),
+        # Persisted verbatim into config.json, where `build_embedder` reads it
+        # back as "unknown" and silently falls through to hashing — for good.
+        (["--embeddings", "sentence-transfomers"], "embedding mode"),
+        # Refused eleven steps in, by the pot service, after config.json, the
+        # backend store and the state store already existed.
+        (["--pot", ""], "pot name"),
+        (["--pot", "   "], "pot name"),
+        # Registered as a source and as the repo default regardless, so every
+        # later repo-scoped command routed through a directory nobody has.
+        (["--repo", "/no/such/directory"], "No such directory"),
+        # Accepted and inert: there is no scan step in the plan, and never was.
+        (["--scan"], "--scan"),
+    ],
+    ids=["agent", "embeddings", "empty-pot", "blank-pot", "missing-repo", "scan"],
+)
+def test_a_bad_setup_option_is_refused_before_the_first_write(
+    cold_home, option, message_fragment
+) -> None:
+    """Refusing late is most of the damage: a half-provisioned home is left behind.
+
+    The assertion that matters is the second one. Exit 1 alone would be
+    satisfied by a check anywhere in the twelve steps; ``config.json`` is
+    written by the *first* of them, so its absence is what says nothing was
+    provisioned on the way to the refusal.
+    """
+    result = runner.invoke(
+        cli_main.app,
+        ["--json", "setup", "--backend", "in_memory", *option],
+    )
+
+    assert result.exit_code == 1, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "validation_error"
+    assert message_fragment in payload["message"]
+    assert payload["recommended_next_action"]
+    assert not (cold_home / "config.json").exists()
+
+
+def test_a_bad_setup_option_is_refused_by_dry_run_too(cold_home) -> None:
+    """``--dry-run`` is where a caller checks a command line before running it.
+
+    It answered a plan for every one of the values above — a preview of a run
+    that could not happen, which is the one thing a preview must never be.
+    """
+    result = runner.invoke(
+        cli_main.app,
+        ["--json", "setup", "--backend", "in_memory", "--dry-run", "--agent", "cursur"],
+    )
+
+    assert result.exit_code == 1, result.stdout
+    assert json.loads(result.stdout)["code"] == "validation_error"
+
+
+@pytest.mark.parametrize(
+    "option",
+    [
+        ["--agent", "cursor"],
+        ["--agent", "default"],
+        ["--agent", "claude-plugin"],
+        ["--embeddings", "none"],
+        ["--embeddings", "auto"],
+        ["--embeddings", "sentence-transformers"],
+        # A remote ref names something this machine cannot check; it is left to
+        # the ingestion that can reach it, exactly as `source add` leaves it.
+        ["--repo", "github.com/acme/shop"],
+        ["--repo", "git@github.com:acme/shop.git"],
+        ["--repo", "."],
+    ],
+    ids=lambda opt: "-".join(opt),
+)
+def test_a_supported_setup_option_still_plans(cold_home, option) -> None:
+    """The other half of a gate: it must not refuse what the runtime supports.
+
+    Every value here is one the runtime dispatches on — ``AGENT_TYPES`` for the
+    harnesses, the embedder aliases for the modes — so this is what stops the
+    validation drifting into a second, narrower vocabulary of its own.
+    """
+    result = runner.invoke(
+        cli_main.app,
+        ["--json", "setup", "--backend", "in_memory", "--dry-run", *option],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["dry_run"] is True
+
+
+def test_an_unknown_agent_is_refused_with_the_harnesses_that_exist(cold_home) -> None:
+    result = runner.invoke(
+        cli_main.app,
+        ["--json", "setup", "--backend", "in_memory", "--agent", "cursur"],
+    )
+
+    payload = json.loads(result.stdout)
+    assert set(payload["detail"]["known_agents"]) == set(AGENT_TYPES)
+    assert "cursor" in payload["recommended_next_action"]

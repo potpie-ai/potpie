@@ -100,9 +100,12 @@ def test_removing_a_source_id_the_pot_never_held_fails(service) -> None:
 
     assert result.exit_code == _common.EXIT_VALIDATION, result.output
     payload = json.loads(result.output)
-    assert payload["code"] == "pot_not_found"
+    # The *source* is missing, not the pot: `pot_not_found` here sent the
+    # operator to `pot list` to hunt for a pot that resolved perfectly well.
+    assert payload["code"] == "source_not_found"
     assert "src_deadbeef" in payload["message"]
     assert pot.pot_id in payload["message"]
+    assert "potpie source list" in payload["recommended_next_action"]
     assert "removed" not in payload
 
 
@@ -119,7 +122,7 @@ def test_removing_a_real_source_id_under_the_wrong_pot_fails(service) -> None:
 
     assert result.exit_code == _common.EXIT_VALIDATION, result.output
     payload = json.loads(result.output)
-    assert payload["code"] == "pot_not_found"
+    assert payload["code"] == "source_not_found"
     assert other.pot_id in payload["message"]
     assert [s.source_id for s in service.list_sources(pot_id=owner.pot_id)] == [
         source.source_id
@@ -467,3 +470,107 @@ def test_removing_everything_installed_stays_lenient() -> None:
 
     assert sorted(result.changed) == sorted((packaged, RETIRED))
     assert sorted(target.removes) == sorted([packaged, RETIRED])
+
+
+# --- the refusal has to be true, too ----------------------------------------
+#
+# Every refusal above is pinned with ``_FakeTarget``, which does not implement
+# ``available()`` — the optional method a real harness target uses to say which
+# catalog ids its bundle actually carries. The manager asks it *before* the
+# catalog, so with a real target a typo took the availability branch instead and
+# was answered "Skill '<typo>' is in the catalog but this build's claude bundle
+# does not carry it … install it for another harness, e.g. '… --agent claude'".
+# Exit 1, so the tests here were satisfied, and not one clause of it true: the
+# id is in no catalog, no harness has it, and the harness named as the way out
+# is the one that just refused.
+
+
+class _BundledTarget(_FakeTarget):
+    """A fake that says what its bundle carries, the way the real ones do."""
+
+    def __init__(self, carries: frozenset[str] | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._carries = frozenset(catalog_by_id()) if carries is None else carries
+
+    def available(self) -> frozenset[str]:
+        return self._carries
+
+
+@pytest.mark.parametrize("operation", ["install", "update"])
+def test_a_typo_is_still_a_typo_to_a_target_that_knows_its_bundle(
+    operation: str,
+) -> None:
+    target = _BundledTarget()
+    manager = DefaultSkillManager(targets={"claude": target})
+
+    with pytest.raises(ValueError) as exc:
+        getattr(manager, operation)(agent="claude", skill_id="potpie-does-not-exist")
+
+    message = str(exc.value)
+    assert "potpie-does-not-exist" in message
+    # The catalog's refusal, which lists what does exist — not the bundle's,
+    # which opens by asserting the id is in the catalog.
+    assert "is in the catalog" not in message
+    assert sorted(catalog_by_id())[0] in message
+    assert target.installs == []
+
+
+def test_a_skill_this_bundle_lacks_names_a_harness_that_has_it() -> None:
+    """The genuine gap the branch is for, still answered — and answered with a
+    harness that can actually install the skill. The way out was spelled
+    ``--agent claude`` whatever was asked, so the caller already on claude was
+    told to re-run the command that had just been refused."""
+    packaged = sorted(catalog_by_id())[0]
+    manager = DefaultSkillManager(
+        targets={
+            "claude": _BundledTarget(frozenset(catalog_by_id()) - {packaged}),
+            "codex": _BundledTarget(),
+        }
+    )
+
+    with pytest.raises(ValueError) as exc:
+        manager.install(agent="claude", skill_id=packaged)
+
+    message = str(exc.value)
+    assert "is in the catalog" in message
+    assert "--agent codex" in message
+    assert "--agent claude" not in message
+
+
+def test_a_skill_no_registered_harness_carries_invents_no_way_out() -> None:
+    packaged = sorted(catalog_by_id())[0]
+    without = frozenset(catalog_by_id()) - {packaged}
+    manager = DefaultSkillManager(
+        targets={"claude": _BundledTarget(without), "codex": _BundledTarget(without)}
+    )
+
+    with pytest.raises(ValueError) as exc:
+        manager.install(agent="claude", skill_id=packaged)
+
+    message = str(exc.value)
+    assert "No harness bundle in this build carries it" in message
+    # Naming any harness here would send the caller to a command that fails the
+    # same way for the same reason.
+    assert "--agent" not in message
+
+
+def test_the_human_refusal_says_nothing_untrue_about_the_typo(monkeypatch) -> None:
+    """Asserted through the prose, because the prose is the defect.
+
+    ``skills install <typo>`` first said "installed Potpie skills for claude:
+    <typo>" at exit 0; the refusal that replaced it then described the same typo
+    as a skill the catalog has. A person reading either one stops looking.
+    """
+    target = _BundledTarget()
+    _skills_cli(monkeypatch, target)
+    _common.set_json(False)
+
+    result = CliRunner().invoke(skills.skills_app, ["install", "potpie-does-not-exist"])
+
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
+    # Rich wraps the message to the terminal width; the words survive.
+    prose = " ".join(result.output.split())
+    assert "installed Potpie skills" not in prose
+    assert "is in the catalog" not in prose
+    assert "Unknown skill 'potpie-does-not-exist'" in prose
+    assert target.installs == []

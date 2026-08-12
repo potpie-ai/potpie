@@ -59,6 +59,26 @@ class PotNotFound(ContextEngineError):
     """Host could not resolve pot_id."""
 
 
+class SourceNotFound(PotNotFound):
+    """The pot resolved; the source id it was asked about is not in it.
+
+    The wrong noun is the whole defect. ``source status src-typo`` raised
+    ``PotNotFound``, so the CLI reported ``pot_not_found`` and told the operator
+    to run ``pot list`` — a repair that cannot succeed, because no pot is
+    missing. The registration is usually alive in the pot they did not pass, and
+    the listing that would show them is ``source list``.
+
+    Subclassing :class:`PotNotFound` is deliberate: an inbound boundary that has
+    not learned this type yet still renders a sensible refusal carrying
+    ``recommended_next_action`` rather than collapsing it into "unexpected
+    internal error". Boundaries that have learned it report ``source_not_found``.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
 class PotArchived(ContextEngineError):
     """The pot exists, but archiving it was the end of its life.
 

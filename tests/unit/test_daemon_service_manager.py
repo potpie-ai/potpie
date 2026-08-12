@@ -1,5 +1,6 @@
 import asyncio
 import pathlib
+import sys
 
 import pytest
 
@@ -20,6 +21,18 @@ from potpie.daemon.ports.shell import (
 from potpie.daemon.runtime.context import ShellContext
 from potpie.daemon.runtime.registry import Registry
 from tests.conftest import free_port
+
+
+#: The interpreter to spawn managed services with.
+#:
+#: Not the bare name ``python``: that is a PATH lookup, and it resolves to
+#: nothing at all on a machine whose only interpreter is ``python3`` or whose
+#: virtualenv is invoked by absolute path (``.venv/bin/python -m pytest`` never
+#: puts ``.venv/bin`` on PATH). These tests then failed in ``asyncio``'s
+#: ``Popen`` with ``FileNotFoundError: 'python'`` — a fixture problem wearing
+#: the costume of a backend bug. ``sys.executable`` is the interpreter already
+#: running the suite, so it exists by construction.
+PYTHON = sys.executable
 
 
 def _spec(
@@ -129,7 +142,7 @@ async def test_up_waits_for_ready_and_registers_endpoint(
         "while True:\n"
         "    c, _ = s.accept(); c.close()\n"
     )
-    spec = _spec("a", ["python", str(script), str(port)], port)
+    spec = _spec("a", [PYTHON, str(script), str(port)], port)
     mgr = ServiceManager(specs={spec.name: spec}, backends=_backends(), ctx=daemon_ctx)
     try:
         await mgr.up("a")
@@ -149,8 +162,8 @@ async def test_dependency_order(tmp_path: pathlib.Path, daemon_ctx: ShellContext
         "while True:\n"
         "    c, _ = s.accept(); c.close()\n"
     )
-    a = _spec("a", ["python", str(script), str(p1)], p1)
-    b = _spec("b", ["python", str(script), str(p2)], p2, deps=["a"])
+    a = _spec("a", [PYTHON, str(script), str(p1)], p1)
+    b = _spec("b", [PYTHON, str(script), str(p2)], p2, deps=["a"])
     mgr = ServiceManager(specs={"a": a, "b": b}, backends=_backends(), ctx=daemon_ctx)
     try:
         await mgr.up("b")  # transitively brings up "a" first

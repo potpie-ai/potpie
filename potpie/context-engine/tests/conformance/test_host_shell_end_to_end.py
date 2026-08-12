@@ -101,6 +101,52 @@ def test_setup_record_resolve_status_journey(host):
     assert report.skills is not None and not report.skills.missing
 
 
+def test_status_quality_reports_open_graph_quality_findings(host):
+    # The backend's analytics projection only counts claims, so status reported
+    # a healthy graph no matter what `graph quality` had open.
+    pot = host.pots.create_pot(name="default", repo="potpie", use=True)
+    for team in ("team:platform", "team:product"):
+        proposal = host.graph_workbench.propose(_owner_payload(team), pot_id=pot.pot_id)
+        assert proposal.ok, proposal.issues
+        assert host.graph_workbench.commit(proposal.plan_id, pot_id=pot.pot_id).ok
+
+    quality = host.graph_workbench.quality(
+        pot_id=pot.pot_id,
+        report="conflicting-claims",
+        subgraph=None,
+        limit=20,
+        confidence_threshold=0.5,
+    )
+    assert quality.findings
+
+    report = host.agent_context.status(
+        StatusRequest(pot_id=pot.pot_id, harness="claude", intent="feature")
+    )
+
+    block = report.data_plane["quality"]
+    assert block["source"] == "quality_summary"
+    assert block["open_findings"] >= len(quality.findings)
+    assert block["quality_counts"]["conflicting_claims"] >= 1
+    assert "graph quality summary" in (report.recommended_next_action or "")
+
+
+def _owner_payload(team: str) -> dict:
+    return {
+        "operations": [
+            {
+                "op": "link_entities",
+                "subgraph": "owners",
+                "subject": {"key": "service:payments-api", "type": "Service"},
+                "predicate": "OWNED_BY",
+                "object": {"key": team, "type": "Team"},
+                "truth": "source_observation",
+                "evidence": [{"source_ref": "repo:owners"}],
+                "description": f"payments-api is owned by {team}",
+            }
+        ]
+    }
+
+
 def test_context_record_rejects_malformed_known_record_details(host):
     pot = host.pots.create_pot(name="default", repo="potpie", use=True)
 

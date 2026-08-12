@@ -97,6 +97,16 @@ from potpie_context_core.semantic_mutations import (
 
 _COMMANDS = ("catalog", "read", "search-entities", "mutate")
 
+# The operator/visualization include: every live predicate is in scope, so its
+# view declares no inline-relation list and the entity projection accepts them
+# all instead.
+_RAW_GRAPH_INCLUDE = "raw_graph"
+
+# Score given to the entity whose key the search query spells out exactly. It
+# tops the semantic-similarity range so an exact identity match cannot be
+# outranked by another entity's better-matching claim text.
+_EXACT_KEY_SCORE = 1.0
+
 
 @dataclass(slots=True)
 class DefaultGraphService:
@@ -421,11 +431,13 @@ class DefaultGraphService:
                 "inline_relations": list(spec.inline_relations),
             },
         )
-        if spec.inline_relations:
+        if spec.inline_relations or spec.v1_include == _RAW_GRAPH_INCLUDE:
             enriched = _assemble_inline_relation_items(
                 enriched,
                 claim_query=self.backend.claim_query,
                 inline_relations=spec.inline_relations,
+                any_predicate=spec.v1_include == _RAW_GRAPH_INCLUDE,
+                max_items=request.limit,
             )
         return _read_result_from_envelope(
             enriched,
@@ -476,6 +488,17 @@ class DefaultGraphService:
                 bucket["score"] = max(bucket["score"], score)
                 bucket["claims"].append(row)
 
+        # Identity resolution before a write is what this command is for, so an
+        # exact entity key must resolve to that entity — even when it carries no
+        # claim at all (claims are how the aggregate above discovers keys, so an
+        # entity written by upsert_entity alone was unreachable), and even when
+        # some other entity's claim text scores higher against the same string.
+        exact_key = _exact_entity_key(
+            request, claim_query=cq, known_keys=frozenset(agg)
+        )
+        if exact_key is not None:
+            agg.setdefault(exact_key, {"score": 0.0, "claims": []})
+
         labels_map = cq.entity_labels(pot_id=request.pot_id, entity_keys=list(agg))
         entity_props = getattr(cq, "entity_properties", None)
 
@@ -507,7 +530,7 @@ class DefaultGraphService:
                     name=props.get("name") or _humanize(key),
                     summary=props.get("summary"),
                     description=props.get("description"),
-                    score=bucket["score"],
+                    score=(_EXACT_KEY_SCORE if key == exact_key else bucket["score"]),
                     supporting_claims=tuple(
                         _claim_brief(c)
                         for c in bucket["claims"][
@@ -516,7 +539,7 @@ class DefaultGraphService:
                     ),
                 )
             )
-        candidates.sort(key=lambda c: c.score, reverse=True)
+        candidates.sort(key=lambda c: (c.key == exact_key, c.score), reverse=True)
         return GraphEntitySearchResult(
             entities=tuple(candidates[: request.limit]),
             match_mode=self._match_mode(),
@@ -1415,6 +1438,45 @@ def _scope_needles(scope: Mapping[str, Any]) -> list[str]:
     return needles
 
 
+def _exact_entity_key(
+    request: GraphEntitySearchRequest,
+    *,
+    claim_query,
+    known_keys: frozenset[str],
+) -> str | None:
+    """Return the entity key the query names exactly, if the pot has one.
+
+    A search that spells out an entity key is identity resolution, not text
+    retrieval: it must resolve to that entity whatever the claim text scores.
+    Keys the claim aggregate already found count as present; anything else is
+    probed against stored entity labels/properties so an entity with no claims
+    is still reachable.
+    """
+    raw = (request.query or "").strip()
+    if not raw:
+        return None
+    for candidate in dict.fromkeys((raw, raw.lower())):
+        if candidate in known_keys:
+            return candidate
+        if _entity_exists(claim_query, pot_id=request.pot_id, entity_key=candidate):
+            return candidate
+    return None
+
+
+def _entity_exists(claim_query, *, pot_id: str, entity_key: str) -> bool:
+    labels = _safe(
+        lambda: claim_query.entity_labels(pot_id=pot_id, entity_keys=[entity_key]),
+        {},
+    )
+    if labels.get(entity_key):
+        return True
+    entity_props = getattr(claim_query, "entity_properties", None)
+    if not callable(entity_props):
+        return False
+    props = _safe(lambda: entity_props(pot_id=pot_id, entity_key=entity_key), {})
+    return bool(props)
+
+
 def _matches_external_id(
     entity_key: str,
     properties: Mapping[str, Any],
@@ -1510,8 +1572,21 @@ def _assemble_inline_relation_items(
     *,
     claim_query,
     inline_relations: tuple[str, ...],
+    any_predicate: bool = False,
+    max_items: int | None = None,
 ) -> AgentEnvelope:
-    """Project flat ranked claim items into entity payloads with relations."""
+    """Project flat ranked claim items into entity payloads with relations.
+
+    ``any_predicate`` is for the operator/raw view, whose subject is the whole
+    canonical graph rather than one use case's predicate set: it has no
+    declared inline-relation list, and without the projection every claim came
+    back as its own item, so a hub entity was repeated once per edge and no row
+    carried a relation count.
+
+    ``max_items`` is the caller's item budget. The projection fans N claims out
+    to up to 2N entities, so a star-shaped neighbourhood answered ``--limit N``
+    with N+1 rows until the budget was applied to what is actually returned.
+    """
     allowed = {p.upper() for p in inline_relations}
     relation_groups: dict[str, list[dict[str, Any]]] = {}
     relation_keys: dict[str, set[tuple[Any, ...]]] = {}
@@ -1522,12 +1597,9 @@ def _assemble_inline_relation_items(
         predicate = _str_or_none(payload.get("predicate"))
         subject_key = _str_or_none(payload.get("subject_key"))
         object_key = _str_or_none(payload.get("object_key"))
-        if (
-            predicate is None
-            or subject_key is None
-            or object_key is None
-            or predicate.upper() not in allowed
-        ):
+        if predicate is None or subject_key is None or object_key is None:
+            continue
+        if not any_predicate and predicate.upper() not in allowed:
             continue
 
         out_rel = _relation_payload(
@@ -1641,6 +1713,8 @@ def _assemble_inline_relation_items(
         )
 
     items.sort(key=lambda item: item.score, reverse=True)
+    if max_items is not None and max_items >= 0:
+        items = items[:max_items]
     return dataclasses.replace(
         env,
         items=tuple(items),

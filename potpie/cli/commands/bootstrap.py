@@ -8,7 +8,7 @@ from all three services via ``context_status``.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +32,7 @@ from potpie.cli.commands._common import (
     origin_from_use_flags,
     repo_default_pot_id,
     repo_effective_pot_info,
+    require_text,
     resolve_pot_id,
     use_pot_selection,
 )
@@ -59,7 +60,12 @@ from potpie_context_engine.application.services.config_service import (
     public_config_value,
 )
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
-from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
+from potpie_context_engine.domain.embedding_modes import (
+    DISABLED_EMBEDDER_ALIASES,
+    HASHING_EMBEDDER_ALIASES,
+    SEMANTIC_EMBEDDER_ALIASES,
+    normalize_embedding_mode,
+)
 from potpie_context_core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
@@ -344,7 +350,15 @@ def register(root: typer.Typer) -> None:
             "--backend",
             help="Graph backend profile (defaults to the active backend).",
         ),
-        scan: bool = typer.Option(False, "--scan"),
+        # Kept declared, and hidden, so the flag can be *explained* rather than
+        # met with Click's "No such option": there are command lines and scripts
+        # out there passing it, and every one of them believes a scan happened.
+        scan: bool = typer.Option(
+            False,
+            "--scan",
+            help="Rejected: setup has no working-tree scan.",
+            hidden=True,
+        ),
         dry_run: bool = typer.Option(
             False, "--dry-run", help="Show the steps without executing."
         ),
@@ -374,6 +388,20 @@ def register(root: typer.Typer) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         with contract():
             _refuse_remote_setup_target()
+            # Every option this run was given, checked against the registry the
+            # runtime itself reads, before a single byte is written. Setup is
+            # twelve steps deep and only the middle of it validated anything, so
+            # a typo was discovered — when it was discovered at all — after
+            # config.json, the backend store and the daemon already existed:
+            # `--agent cursur` exited 0 having installed no skills, `--pot ''`
+            # burned a hard step on a name the pot service was always going to
+            # refuse, and `--embeddings semantic-transformers` persisted itself
+            # into config.json, where every later process silently read it as
+            # "unknown, fall back to hashing" — a durable downgrade of semantic
+            # search that nothing ever reports.
+            _validate_setup_options(
+                pot=pot, agent=agent, embeddings=embeddings, repo=repo, scan=scan
+            )
             json_output = is_json()
             human_output = not json_output
             interactive_onboarding = (
@@ -570,6 +598,13 @@ def register(root: typer.Typer) -> None:
             if not report.ok:
                 raise typer.Exit(code=EXIT_DEGRADED)
 
+    # There is no `--host` here, and adding one back would be a regression. The
+    # root callback owns `--host local|managed`; the boolean no-op this command
+    # used to declare shadowed it, so `potpie status --host managed` consumed
+    # the flag, left `managed` unclaimed, and failed with "Got unexpected extra
+    # argument(s) (managed)" — a message naming neither the flag nor the fix.
+    # Readiness is reported by default, so the no-op had nothing to do but break
+    # the one spelling a caller would reach for.
     @root.command()
     def status(
         verify: bool = typer.Option(
@@ -577,29 +612,23 @@ def register(root: typer.Typer) -> None:
             "--verify",
             help="Moved to `potpie auth status --verify`.",
         ),
-        host: bool = typer.Option(
-            False,
-            "--host",
-            help="Deprecated no-op; status reports host/pot readiness by default.",
-        ),
         intent: str = typer.Option(
             "feature",
             "--intent",
-            help="Intent for host status (use with --host or non-default harness/pot).",
+            help="Intent to report readiness for.",
         ),
         harness: str = typer.Option(
             "claude",
             "--harness",
-            help="Harness for host status (use with --host or non-default intent/pot).",
+            help="Harness to report skill readiness for.",
         ),
         pot: str = typer.Option(
             None,
             "--pot",
-            help="Pot for host status (use with --host or non-default intent/harness).",
+            help="Pot to report on (defaults to the resolved scope for this repo).",
         ),
     ) -> None:
-        """context_status — host, pot, backend, and skill readiness."""
-        _ = host  # Backward-compatible flag; readiness is now the default.
+        """context_status — host, pot, backend, quality, and skill readiness."""
         if verify:
             fail(
                 code="validation_error",
@@ -952,6 +981,10 @@ def register(root: typer.Typer) -> None:
             if key is None:
                 _emit_config_list()
                 return
+            # Distinct from the omitted argument above: `config get ''` is a
+            # read of a key that cannot exist, and it answered `{"": null}` —
+            # indistinguishable from a real key that happens to be unset.
+            key = require_text(key, argument="key", example="potpie config get backend")
             value = get_host().config.get(key)
             value = public_config_value(key, value)
             emit({key: value}, human=f"{key}={value}")
@@ -1035,6 +1068,12 @@ def register(root: typer.Typer) -> None:
         for.
         """
         with contract():
+            # Ungated on the *catalog*, not on emptiness: `config unset ''`
+            # cannot clear anything, and answering "'' was not set (nothing
+            # removed)" at exit 0 reads as a checked, negative answer.
+            key = require_text(
+                key, argument="key", example="potpie config unset github_token"
+            )
             removed = get_host().config.unset(key)
             emit(
                 {"key": key, "removed": removed},
@@ -1094,9 +1133,13 @@ def _status_human(report) -> str:
         f"profile={report.profile} daemon={'up' if report.daemon_up else 'down'} "
         f"pot={report.active_pot} backend_ready={report.backend_ready}",
     ]
-    counts = dict(report.data_plane).get("counts") or {}
+    data_plane = dict(report.data_plane)
+    counts = data_plane.get("counts") or {}
     if counts:
         lines.append(f"  graph: {counts}")
+    quality_line = _quality_line(data_plane.get("quality"))
+    if quality_line:
+        lines.append(quality_line)
     if report.skills and (report.skills.missing or report.skills.outdated):
         lines.append(
             f"  skills: missing={list(report.skills.missing)} → {report.skills.install_command}"
@@ -1104,6 +1147,27 @@ def _status_human(report) -> str:
     if report.recommended_next_action:
         lines.append(f"  next: {report.recommended_next_action}")
     return "\n".join(lines)
+
+
+def _quality_line(quality: Any) -> str | None:
+    """The graph-quality summary as one human line, or ``None`` if there is none.
+
+    ``status`` grew a real quality block — the open findings ``graph quality``
+    reports, not just the backend's projection — and only ``--json`` could see
+    it. The human view showed counts and then, one line later, a next-action
+    telling the reader to go and count the findings themselves. Whatever the
+    envelope knows, the prose says.
+    """
+    if not isinstance(quality, Mapping):
+        return None
+    status = quality.get("findings_status") or quality.get("status")
+    if quality.get("findings_status") == "unavailable":
+        detail = quality.get("detail")
+        return f"  quality: unavailable{f' — {detail}' if detail else ''}"
+    if "open_findings" not in quality:
+        return f"  quality: {status}" if status else None
+    open_findings = int(quality.get("open_findings") or 0)
+    return f"  quality: {status or 'unknown'} ({open_findings} open findings)"
 
 
 def _emit_setup_run_metric(plan: SetupPlan, *, result: str, dry_run: bool) -> None:
@@ -1129,6 +1193,132 @@ def _emit_setup_step_metrics(report: SetupReport) -> None:
                 "hard": step.hard,
             },
         )
+
+
+#: The embedding modes ``--embeddings`` documents, in the order its help lists
+#: them. Acceptance is still derived from the runtime's alias sets; this is only
+#: what a refusal offers back.
+_CANONICAL_EMBEDDING_MODES: tuple[str, ...] = (
+    "sentence-transformers",
+    "auto",
+    "local",
+    "none",
+)
+
+
+def _validate_setup_options(
+    *, pot: str, agent: str, embeddings: str | None, repo: str, scan: bool
+) -> None:
+    """Refuse every setup option this machine cannot honour, before it writes.
+
+    Each check names the registry the *runtime* reads, never a second list kept
+    here: ``AGENT_TYPES`` is what ``install_agent_bundle`` dispatches on and what
+    the post-setup wizard already filters by, and the embedding aliases are the
+    exact sets ``build_embedder`` branches on. A parallel copy would drift, and a
+    drifted allow-list is worse than none — it refuses harnesses that work.
+
+    ``--backend`` is absent on purpose: ``build_backend`` already raises for an
+    unknown profile, with the full profile list, before the host is built.
+    """
+    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+        AGENT_TYPES,
+    )
+
+    if scan:
+        fail(
+            code="validation_error",
+            message=(
+                "'--scan' does nothing: setup has no working-tree scan, and never "
+                "ran one. Repository knowledge is written by harness-led ingestion."
+            ),
+            next_action=(
+                "drop --scan; setup already registers this repo as a source, and "
+                "the harness fills the graph from it (see the potpie-repo-baseline "
+                "skill, or 'potpie graph propose'/'potpie graph commit')"
+            ),
+        )
+
+    # Not `require_text`: the failure this closes is a *pot* that cannot be
+    # named, and the pot service's own refusal (which arrives eleven steps
+    # later) is the wording to keep.
+    if not pot.strip():
+        fail(
+            code="validation_error",
+            message=(
+                "A pot name cannot be empty or only whitespace — it is the ref "
+                "'potpie pot use' and '--pot' resolve against."
+            ),
+            next_action="pass a name, e.g. --pot my-project",
+        )
+
+    normalized_agent = agent.strip().lower()
+    if normalized_agent not in AGENT_TYPES:
+        fail(
+            code="validation_error",
+            message=f"Unknown agent harness {agent!r}.",
+            detail={"agent": agent, "known_agents": list(AGENT_TYPES)},
+            next_action=(
+                f"use one of: {', '.join(AGENT_TYPES)} — or '--agent default' to "
+                "write AGENTS.md only and install no harness skills"
+            ),
+        )
+
+    if embeddings is not None and _setup_embeddings_choice(embeddings) not in (
+        DISABLED_EMBEDDER_ALIASES | HASHING_EMBEDDER_ALIASES | SEMANTIC_EMBEDDER_ALIASES
+    ):
+        fail(
+            code="validation_error",
+            message=f"Unknown embedding mode {embeddings!r}.",
+            # The canonical four, not the alias set the check accepts: the
+            # aliases exist for back-compat and half of them ("1", "off") do not
+            # read as embedding modes at all.
+            detail={
+                "embeddings": embeddings,
+                "known_modes": list(_CANONICAL_EMBEDDING_MODES),
+            },
+            next_action=(
+                f"use one of: {', '.join(_CANONICAL_EMBEDDING_MODES)} — an "
+                "unrecognised mode is persisted to config.json and read back as "
+                "the hashing embedder by every later run, which downgrades "
+                "semantic search for good without ever saying so"
+            ),
+        )
+
+    _validate_setup_repo(repo)
+
+
+def _validate_setup_repo(repo: str) -> None:
+    """Refuse a ``--repo`` this machine cannot resolve to a real repository.
+
+    Only *local* refs are checkable: a path is either there or it is not, and a
+    path that is not there was registered anyway — as a source, and as the repo
+    default — so every later repo-scoped command routed through a pot bound to a
+    directory nobody has. A remote ref (``github.com/acme/shop``,
+    ``git@github.com:acme/shop.git``) names something this command cannot reach
+    and is left to the ingestion that will, exactly as ``source add`` leaves it.
+    """
+    raw = (repo or "").strip()
+    if not raw:
+        fail(
+            code="validation_error",
+            message="--repo cannot be empty.",
+            next_action="pass a path or a remote ref, e.g. --repo . or --repo github.com/acme/shop",
+        )
+    if raw.lower() in (".", "current"):
+        return
+    if not raw.startswith((".", "~", "/")):
+        return
+    path = Path(raw).expanduser()
+    if path.is_dir():
+        return
+    fail(
+        code="validation_error",
+        message=f"No such directory for --repo: {path}.",
+        next_action=(
+            "pass a directory that exists (e.g. --repo . for this one), or a "
+            "remote ref like 'github.com/acme/shop'"
+        ),
+    )
 
 
 def _setup_embeddings_choice(raw: str | None) -> str:

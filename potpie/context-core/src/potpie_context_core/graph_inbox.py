@@ -46,6 +46,9 @@ class GraphInboxItem:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     claimed_by: str | None = None
     claimed_at: datetime | None = None
+    claim_expires_at: datetime | None = None
+    """Lease end for an active claim. Past it, another worker may take over."""
+
     closed_by: str | None = None
     closed_at: datetime | None = None
     linked_plan_id: str | None = None
@@ -67,6 +70,9 @@ class GraphInboxItem:
             "created_at": self.created_at.isoformat(),
             "claimed_by": self.claimed_by,
             "claimed_at": self.claimed_at.isoformat() if self.claimed_at else None,
+            "claim_expires_at": (
+                self.claim_expires_at.isoformat() if self.claim_expires_at else None
+            ),
             "closed_by": self.closed_by,
             "closed_at": self.closed_at.isoformat() if self.closed_at else None,
             "linked_plan_id": self.linked_plan_id,
@@ -96,6 +102,7 @@ class GraphInboxItem:
             or datetime.now(timezone.utc),
             claimed_by=str(raw.get("claimed_by") or "") or None,
             claimed_at=_parse_datetime(raw.get("claimed_at")),
+            claim_expires_at=_parse_datetime(raw.get("claim_expires_at")),
             closed_by=str(raw.get("closed_by") or "") or None,
             closed_at=_parse_datetime(raw.get("closed_at")),
             linked_plan_id=str(raw.get("linked_plan_id") or "") or None,

@@ -18,7 +18,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
+    embedding_cache_override,
+)
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie_context_engine.domain.embedding_modes import (
+    EMBEDDING_MODEL_PREP_SKIPPED_ALIASES,
+    normalize_embedding_mode,
+)
 from potpie_context_core.lifecycle import SetupPlan
 
 KNOWN_CONFIG_KEYS: tuple[str, ...] = (
@@ -167,10 +174,9 @@ class LocalConfigService:
         data.setdefault("home", str(self.home))
         data.setdefault("embedder", plan.embeddings)
         data.setdefault("embedding_model", plan.embedding_model)
-        data.setdefault(
-            "embedding_cache",
-            str(self.home / "models" / "sentence-transformers"),
-        )
+        cache = _embedding_cache_location(plan, home=self.home)
+        if cache is not None:
+            data.setdefault("embedding_cache", cache)
         self._save(data)
         return self._path
 
@@ -236,6 +242,31 @@ class LocalConfigService:
         tmp.chmod(stat.S_IRUSR | stat.S_IWUSR)
         tmp.replace(self._path)
         self._path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _embedding_cache_location(plan: SetupPlan, *, home: Path) -> str | None:
+    """Where this plan's model weights will actually land, or ``None``.
+
+    Both answers used to be wrong, and both surfaced through ``config list`` —
+    the one place a user looks to find out where the model went.
+
+    ``None`` for the modes that cache nothing. The key was written
+    unconditionally, so a home set up with ``--embeddings none`` (or the bundled
+    hashing embedder, which holds no weights at all) still advertised a
+    sentence-transformers cache directory that nothing would ever create.
+
+    The env override otherwise, because that is what wins at runtime:
+    ``default_sentence_transformer_cache`` reads ``CONTEXT_ENGINE_EMBEDDING_CACHE``
+    ahead of this file, so recording the home-relative path while the model was
+    being written somewhere else reported a location that was not merely
+    hypothetical but contradicted.
+    """
+    if (
+        normalize_embedding_mode(plan.embeddings)
+        in EMBEDDING_MODEL_PREP_SKIPPED_ALIASES
+    ):
+        return None
+    return embedding_cache_override() or str(home / "models" / "sentence-transformers")
 
 
 __all__ = [

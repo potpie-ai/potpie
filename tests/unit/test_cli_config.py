@@ -597,3 +597,59 @@ def test_local_config_service_unset_keeps_owner_only_permissions(tmp_path) -> No
 
     mode = stat_module.S_IMODE((tmp_path / "config.json").stat().st_mode)
     assert mode == 0o600, oct(mode)
+
+
+@pytest.mark.parametrize("key", ["", "   "])
+def test_config_get_refuses_an_empty_key(
+    key: str, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``{"": null}`` is not a reading — it is a key that cannot exist.
+
+    Distinct from the *omitted* argument, which lists everything: the empty
+    string answered as though it were a real key that happened to be unset, so
+    a caller reading a config value out of a variable that came back blank got
+    a plausible null instead of an error.
+    """
+    _real_config_host(tmp_path, monkeypatch)
+    from potpie.cli.commands import _common
+
+    _common.set_json(True)
+
+    result = runner.invoke(cli_main.app, ["--json", "config", "get", key])
+
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "validation_error"
+    assert "cannot be empty" in payload["message"]
+
+
+def test_config_get_with_no_key_still_lists(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal above must not swallow the documented list shorthand."""
+    service = _real_config_host(tmp_path, monkeypatch)
+    service.set("profile", "local")
+    from potpie.cli.commands import _common
+
+    _common.set_json(True)
+
+    result = runner.invoke(cli_main.app, ["--json", "config", "get"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["config"] == {"profile": "local"}
+
+
+@pytest.mark.parametrize("key", ["", "   "])
+def test_config_unset_refuses_an_empty_key(
+    key: str, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "'' was not set (nothing removed)" reads as a checked, negative answer."""
+    _real_config_host(tmp_path, monkeypatch)
+    from potpie.cli.commands import _common
+
+    _common.set_json(True)
+
+    result = runner.invoke(cli_main.app, ["--json", "config", "unset", key])
+
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
+    assert json.loads(result.output)["code"] == "validation_error"

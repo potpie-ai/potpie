@@ -48,7 +48,7 @@ from potpie_context_engine.adapters.outbound.cli_auth.integration_session import
 from potpie_context_engine.adapters.outbound.cli_auth.integration_verify import (
     verify_integration_access,
 )
-from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
+from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, fail, get_store
 from potpie.cli.telemetry.onboarding_events import (
     capture_integration_auth_event,
     current_entrypoint,
@@ -498,10 +498,45 @@ def run_integration_login(provider: str, *, force: bool = False) -> None:
     )
 
 
+def _refuse_remote_integration_auth(command: str) -> None:
+    """Refuse ``--host managed auth status``: these credentials are this machine's.
+
+    Integration auth is inbound-adapter credential acquisition — OAuth tokens and
+    API keys in local credential files — so it does not route through
+    ``HostShell`` and there is nothing on a managed host for it to read. That is
+    fine right up until someone *names* a host: ``potpie --host managed auth
+    status`` listened to the flag not at all and printed this laptop's GitHub and
+    Linear logins under it, at exit 0. Reporting one host's answer for another's
+    is worse than either honouring the flag or rejecting it, because nothing in
+    the output says which host answered.
+
+    Keyed to an explicit override rather than to the resolved origin, exactly as
+    ``setup`` is: someone whose *persisted* pointer is managed still has to be
+    able to see and fix the credentials on the machine they are typing on.
+    """
+    from potpie.cli import hosts
+
+    if hosts.origin_overridden() and hosts.selected_origin() != hosts.LOCAL:
+        label = hosts.origin_label(hosts.selected_origin())
+        fail(
+            code="validation_error",
+            message=(
+                f"'{command}' reports the integration credentials stored on this "
+                f"machine and cannot target {label}: provider logins are local "
+                "OAuth and API-token files, not host state."
+            ),
+            next_action=(
+                f"run 'potpie {command}' without --host to see this machine's "
+                "integrations"
+            ),
+        )
+
+
 def integration_status(
     verify: bool = False,
 ) -> None:
     """Show local integration auth status."""
+    _refuse_remote_integration_auth("auth status")
     ensure_runtime_environment_loaded()
     j, _ = _flags()
     rows: list[dict[str, Any]] = []

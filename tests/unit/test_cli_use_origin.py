@@ -299,7 +299,7 @@ def test_managed_without_a_configured_host_reports_the_configured_error(
     assert result.exit_code == _common.EXIT_UNAVAILABLE
     payload = json.loads(result.output)
     assert payload["code"] == "unavailable"
-    assert "No managed host configured" in payload["message"]
+    assert "No managed host is configured" in payload["message"]
     assert "HU3" not in result.output
     assert "Traceback" not in result.output
 
@@ -314,6 +314,43 @@ def test_a_bare_ref_on_both_hosts_is_refused_naming_both(registry) -> None:
     assert "managed:shared" in payload["message"]
     assert registry[hosts.LOCAL].pots.used == []
     assert registry[hosts.MANAGED].pots.used == []
+
+
+def test_the_ambiguity_refusal_names_the_candidates_the_way_pot_list_does(
+    monkeypatch, tmp_path
+) -> None:
+    """Both resolution paths share one refusal, so both name pots the same way.
+
+    ``potpie use`` used to qualify the string the caller *typed*, which for a
+    ref that matched by id answered ``local:pot_a, managed:pot_a`` — two lines
+    that both work and neither of which can be matched against a pot anyone
+    knows by name. ``--pot`` had always qualified by name. One helper now, so
+    the wording cannot drift apart again the way the guards themselves did.
+    """
+    _common.set_host(None)
+    hosts.reset_for_tests()
+    monkeypatch.setattr(hosts, "home_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        hosts, "managed_endpoint", lambda: ("http://svc.example", "tok")
+    )
+    # The same string is an id on one host and a name on the other.
+    built = {
+        hosts.LOCAL: _Host(_Pots([_Pot("twin", "left")])),
+        hosts.MANAGED: _Host(_Pots([_Pot("pot_m", "twin")])),
+    }
+    monkeypatch.setattr(hosts, "build_host", lambda origin: built[origin])
+    try:
+        used = _run("--json", "use", "twin")
+        flagged = _run("--json", "graph", "catalog", "--pot", "twin")
+    finally:
+        hosts.reset_for_tests()
+
+    for payload in (json.loads(used.output), json.loads(flagged.output)["error"]):
+        assert payload["code"] == "ambiguous_pot"
+        assert "local:left" in payload["message"]
+        assert "managed:twin" in payload["message"]
+    assert built[hosts.LOCAL].pots.used == []
+    assert built[hosts.MANAGED].pots.used == []
 
 
 def test_a_bare_ref_refuses_when_a_configured_host_cannot_be_enumerated(
@@ -390,6 +427,105 @@ def test_a_refused_selection_leaves_the_pointer_alone(registry) -> None:
     assert registry[hosts.LOCAL].pots.used == []
     assert registry[hosts.MANAGED].pots.used == []
     assert hosts.persisted_origin() == "managed"
+
+
+# --- a host that cannot even be built -------------------------------------
+
+
+@pytest.fixture
+def unusable_managed(monkeypatch, tmp_path):
+    """A managed host that is configured and whose address will not parse.
+
+    The interesting state, because it is *not* the same as no managed host: the
+    user configured one, and the CLI cannot ask it anything. Every router reads
+    it as absent on purpose — nothing may route at an address that cannot be
+    parsed — which is exactly how it went missing from the candidate set of a
+    bare ref one step before the unreachable-host refusal could see it.
+    """
+    _common.set_host(None)
+    hosts.reset_for_tests()
+    monkeypatch.setattr(hosts, "home_dir", lambda: tmp_path)
+    monkeypatch.setenv("POTPIE_MANAGED_URL", "http://svc.example:80x90")
+    monkeypatch.setenv("POTPIE_MANAGED_TOKEN", "tok")
+    local = _Host(_Pots([_Pot("pot_l_shared", "shared", active=True)]))
+    # Only the local origin is faked: building the managed one has to fail the
+    # way it really fails, which is before a socket exists.
+    real_build_host = hosts.build_host
+    monkeypatch.setattr(
+        hosts,
+        "build_host",
+        lambda origin: local if origin == hosts.LOCAL else real_build_host(origin),
+    )
+    yield local
+    _common.set_host(None)
+    hosts.reset_for_tests()
+
+
+def test_a_bare_ref_refuses_while_a_configured_host_cannot_be_built(
+    unusable_managed,
+) -> None:
+    """The reported invariant, reached a step earlier than an unreachable host.
+
+    A managed address with a stray character in its port drops out of the
+    candidate set before anything tries to read it, so the ambiguity check sees
+    one candidate and ``potpie use shared`` selected the *local* ``shared`` at
+    exit 0 — a confident targeting decision made from an incomplete candidate
+    set, with the host that was never asked named nowhere in the output.
+    """
+    result = _run("--json", "use", "shared")
+
+    assert result.exit_code == _common.EXIT_UNAVAILABLE, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "unavailable"
+    assert "managed host" in payload["message"]
+    # The repair is the address, and no socket was opened, so the message must
+    # not claim the host could not be *reached*.
+    assert "port" in payload["message"]
+    assert "Cannot reach" not in payload["message"]
+    assert ".." not in payload["message"]
+    # Escapable, or a typo in one url blocks all local work.
+    assert "potpie use local:shared" in payload["recommended_next_action"]
+    assert unusable_managed.pots.used == []
+    assert hosts.persisted_origin() == "local"
+
+
+def test_a_qualified_ref_still_escapes_a_host_that_cannot_be_built(
+    unusable_managed,
+) -> None:
+    """The refusal above must be escapable, or a stray character in one url
+    locks the caller out of the local graph until they find the file."""
+    result = _run("--json", "use", "local:shared")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["id"] == "pot_l_shared"
+    assert payload["origin"] == "local"
+    assert unusable_managed.pots.used == ["shared"]
+
+
+def test_the_same_refusal_reaches_the_pot_flag(unusable_managed) -> None:
+    """``--pot`` resolves through the same candidate set, so it must not keep
+    silently answering from the one host that happens to be readable."""
+    result = _run("--json", "graph", "catalog", "--pot", "shared")
+
+    assert result.exit_code == _common.EXIT_UNAVAILABLE, result.output
+    payload = json.loads(result.output)
+    # `potpie graph` nests errors inside its own envelope.
+    assert payload["error"]["code"] == "unavailable"
+    assert "managed host" in payload["error"]["message"]
+    assert "--pot local:shared" in payload["recommended_next_action"]
+
+
+def test_pot_list_still_enumerates_around_a_host_that_cannot_be_built(
+    unusable_managed,
+) -> None:
+    """Regression guard for the fix above, on the other side of the invariant:
+    the targeting candidate set grew, the enumeration one did not."""
+    result = _run("--json", "pot", "list")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert {row["origin"] for row in payload["pots"]} == {"local"}
 
 
 # --- targeting a host that is down ----------------------------------------

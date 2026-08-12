@@ -37,6 +37,7 @@ from potpie.cli.commands._common import (
     get_host,
     is_json,
     json_error_formatter,
+    parse_scope_pairs,
     pot_scope_human,
     pot_scope_info,
     resolve_pot_id,
@@ -540,8 +541,16 @@ def graph_catalog(
         )
         payload = normalize_catalog_result(result.to_dict(), task=task)
         payload = _catalog_payload_for_profile(payload, profile=profile)
+        support = _admin_command_support(host) if "admin_commands" in payload else {}
+        if support:
+            payload["admin_command_support"] = support
         human = _catalog_human(payload, format_=format_)
-        _emit_graph_result(ctx, payload, human=human)
+        _emit_graph_result(
+            ctx,
+            payload,
+            human=human,
+            unsupported=_unsupported_admin_commands(host, support),
+        )
 
 
 @graph_app.command("read")
@@ -1297,8 +1306,9 @@ def graph_mutation_template(
                     "graph.mutation-template", "graph.describe mutation examples"
                 ),
                 recommended_next_action=(
-                    "Use `potpie graph describe <subgraph> --examples --json` once "
-                    "describe is implemented."
+                    "Fill the placeholders, then `potpie graph propose --file "
+                    "<mutation.json> --json`; run `potpie graph describe <subgraph> "
+                    "--examples --json` for the backed examples."
                 ),
             ).to_dict(),
             human=rendered,
@@ -1867,6 +1877,12 @@ def graph_inbox_show(
 def graph_inbox_claim(
     item_id: str = typer.Argument(None),
     claimed_by: str = typer.Option(None, "--by", "--claimed-by"),
+    lease: str = typer.Option(
+        None,
+        "--lease",
+        help="How long the claim is held before another worker may take it "
+        "over, such as 30m, 2h (default 30m).",
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.inbox.claim") as ctx:
@@ -1879,6 +1895,7 @@ def graph_inbox_claim(
             pot_id=pot_id,
             item_id=item_id,
             claimed_by=claimed_by,
+            lease_seconds=_parse_lease_seconds(lease),
         )
         _emit_inbox_result(ctx, result)
 
@@ -2477,30 +2494,14 @@ def _require_backend_capability(
 
 
 def _parse_scope(scope: str | None) -> dict[str, str]:
-    if not scope:
-        return {}
-    out: dict[str, str] = {}
-    for pair in scope.split(","):
-        pair = pair.strip()
-        if not pair:
-            continue
-        if ":" not in pair:
-            raise ValueError(
-                f"invalid --scope entry {pair!r}; expected key:value pairs"
-            )
-        key, value = pair.split(":", 1)
-        key = key.strip()
-        if not key:
-            raise ValueError(
-                f"invalid --scope entry {pair!r}; scope keys must not be empty"
-            )
-        value = value.strip()
-        if not value:
-            raise ValueError(
-                f"invalid --scope entry {pair!r}; scope values must not be empty"
-            )
-        out[key] = value
-    return out
+    """The shared strict parser; see ``_common.parse_scope_pairs``.
+
+    Kept as a name in this module because ``--scope`` appears on three graph
+    commands, but not as a second implementation: the copy that lived here and
+    the copy on the record path drifted, and the lenient one silently wrote
+    unscoped claims.
+    """
+    return parse_scope_pairs(scope)
 
 
 def _parse_created_by(value: str | None) -> dict[str, Any]:
@@ -2893,6 +2894,47 @@ def _neighborhood_human(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# Admin commands are contract-level names, but each one only works when the
+# active backend implements the capability behind it. The catalog used to list
+# all three unconditionally, so `export`/`import` read as available on the OSS
+# default (falkordb_lite implements no snapshot port) right up to the moment
+# they refused.
+_ADMIN_COMMAND_CAPABILITIES: dict[str, str] = {
+    "repair": "analytics",
+    "export": "snapshot",
+    "import": "snapshot",
+}
+
+
+def _admin_command_support(host: Any) -> dict[str, bool]:
+    """Map each admin command to whether the active backend can run it."""
+    caps = _safe(lambda: host.backend.capabilities(), None)
+    if caps is None:
+        return {}
+    return {
+        command: bool(getattr(caps, capability, False))
+        for command, capability in _ADMIN_COMMAND_CAPABILITIES.items()
+    }
+
+
+def _unsupported_admin_commands(
+    host: Any, support: Mapping[str, bool]
+) -> tuple[GraphUnsupported, ...]:
+    profile = _safe(lambda: host.backend.profile, None) or "unknown"
+    return tuple(
+        GraphUnsupported(
+            name=f"graph.{command}",
+            reason="capability_not_implemented",
+            detail=(
+                f"the active {profile!r} backend does not implement the "
+                f"{_ADMIN_COMMAND_CAPABILITIES[command]} capability"
+            ),
+        )
+        for command in sorted(support)
+        if not support[command]
+    )
+
+
 def _catalog_payload_for_profile(
     payload: Mapping[str, Any], *, profile: str
 ) -> dict[str, Any]:
@@ -3003,15 +3045,25 @@ def _catalog_human(payload: Mapping[str, Any], *, format_: str) -> str:
             )
         return "\n".join(lines)
 
-    return (
+    lines = [
         f"graph contract v2 / ontology {ONTOLOGY_VERSION} "
-        f"(data-plane={payload['data_plane_graph_contract_version']}, match={payload['match_mode']})\n"
-        f"commands: {', '.join(payload['commands'])}\n"
-        f"views: {', '.join(v['name'] for v in payload['views'])}\n"
-        f"mutation ops: {', '.join(payload['mutation_operations'])}\n"
-        f"review-required: {', '.join(payload['review_required_operations'])}\n"
-        f"deferred: {', '.join(payload['deferred_operations'])}"
-    )
+        f"(data-plane={payload['data_plane_graph_contract_version']}, match={payload['match_mode']})",
+        f"commands: {', '.join(payload['commands'])}",
+        f"views: {', '.join(v['name'] for v in payload['views'])}",
+        f"mutation ops: {', '.join(payload['mutation_operations'])}",
+        f"review-required: {', '.join(payload['review_required_operations'])}",
+        f"deferred: {', '.join(payload['deferred_operations'])}",
+    ]
+    support = payload.get("admin_command_support")
+    if isinstance(support, Mapping) and support:
+        lines.append(
+            "admin: "
+            + ", ".join(
+                command if support[command] else f"{command} (unavailable)"
+                for command in sorted(support)
+            )
+        )
+    return "\n".join(lines)
 
 
 def _emit_graph_read(
@@ -3155,14 +3207,22 @@ def _read_payload(
     event_limit: int | None = None,
 ) -> dict:
     payload = result.to_dict()
-    if format_ in ("events", "table"):
-        events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
-        if payload.get("detail") != "full":
-            payload.pop("items", None)
-        payload["read_shape"] = "events"
-        payload["events"] = events
-        payload["event_count"] = len(events)
-        payload["freshness"] = _timeline_freshness(events)
+    if format_ not in ("events", "table"):
+        return payload
+    if not _is_timeline_view(payload.get("view")):
+        # Only the timeline view has an event projection. Dropping ``items`` for
+        # every other view turned `--format table --json` into an empty body:
+        # the rows existed, the renderer drew them, and the machine-readable
+        # half of the same command answered with nothing. Outside the timeline
+        # `--format` is a rendering choice over the same items, so they stay.
+        return payload
+    events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
+    if payload.get("detail") != "full":
+        payload.pop("items", None)
+    payload["read_shape"] = "events"
+    payload["events"] = events
+    payload["event_count"] = len(events)
+    payload["freshness"] = _timeline_freshness(events)
     return payload
 
 
@@ -3490,6 +3550,20 @@ def _parse_ttl_seconds(value: str) -> int:
     seconds = int(ttl.total_seconds())
     if seconds <= 0:
         raise ValueError("--ttl must be positive")
+    return seconds
+
+
+def _parse_lease_seconds(value: str | None) -> int | None:
+    """Parse ``--lease`` for an inbox claim; ``None`` keeps the service default."""
+    if not value:
+        return None
+    try:
+        lease = _parse_duration(value)
+    except ValueError as exc:
+        raise ValueError("--lease must look like 30m, 2h, or 1d") from exc
+    seconds = int(lease.total_seconds())
+    if seconds <= 0:
+        raise ValueError("--lease must be positive")
     return seconds
 
 

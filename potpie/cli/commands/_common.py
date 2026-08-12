@@ -26,6 +26,8 @@ import click
 import typer
 
 from potpie.cli.repo_location import (
+    REPO_MATCH_CONTAINED,
+    classify_repo_source_match,
     current_git_remote as shared_current_git_remote,
     normalize_repo_ref as shared_normalize_repo_ref,
     repo_identity_key,
@@ -36,6 +38,7 @@ from potpie_context_core.errors import (
     PotArchived,
     PotNameConflict,
     PotNotFound,
+    SourceNotFound,
 )
 from potpie_context_engine.domain.ports.cli_auth.credentials import CredentialStore
 
@@ -411,6 +414,20 @@ def contract() -> Iterator[None]:
             message=str(exc),
             next_action=getattr(exc, "recommended_next_action", None),
         )
+    except SourceNotFound as exc:
+        # Above `PotNotFound`, which it subclasses. The subclassing exists so an
+        # inbound boundary that has not learned this type still degrades to a
+        # sensible refusal rather than "unexpected internal error"; this branch
+        # is what stops the *pot* repair being offered for a missing source by
+        # any command that has not mapped the error itself. Naming it here is
+        # also what lets the subclassing be dropped later.
+        result = "source_not_found"
+        error_code = "source_not_found"
+        fail(
+            code="source_not_found",
+            message=str(exc),
+            next_action=getattr(exc, "recommended_next_action", None),
+        )
     except PotNotFound as exc:
         result = "pot_not_found"
         error_code = "pot_not_found"
@@ -530,13 +547,18 @@ def _searchable_origins() -> list[str]:
     An injected host stands in for the whole registry, so single-host mode is
     preserved: searching "both" would ask the same fake twice and report every
     pot as ambiguous with itself.
+
+    :func:`hosts.targeting_origins` rather than ``configured_origins`` because
+    this is the *targeting* candidate set: a configured host that cannot be
+    enumerated at all must still be in it, so the refusal comes from
+    :func:`_find_pot_in` instead of the candidate quietly going missing.
     """
     from potpie.cli import hosts
 
     if _state["host"] is not None:
         return [hosts.current_origin()]
     current = hosts.current_origin()
-    return [current, *(o for o in hosts.configured_origins() if o != current)]
+    return [current, *(o for o in hosts.targeting_origins() if o != current)]
 
 
 def _qualify_hint(prefix: str, origin: str, ref: str) -> str:
@@ -627,6 +649,35 @@ class _PotMatch:
     archived: bool
 
 
+def _refuse_ambiguous_pot(
+    live: Sequence[_PotMatch], *, ref: str, qualify_hint: str
+) -> None:
+    """Refuse a ref that resolved on more than one host, naming both candidates.
+
+    One refusal shared by both resolution paths — ``--pot`` through
+    :func:`_resolve_match` and ``potpie use`` through
+    :func:`_select_origin_for_use` — because those two drifting apart is the
+    documented history of this invariant rather than a hypothetical: ``--pot``
+    kept picking a host silently for a round after ``potpie use`` stopped.
+
+    Candidates are named the way ``pot list`` prints them, ``<origin>:<name>``,
+    which is also the syntax the hint tells the caller to type. Qualifying the
+    ref the caller *typed* instead answered a pot id with
+    ``local:pot_37ab7f7fe4ef, managed:pot_37ab7f7fe4ef`` — two lines that both
+    work and neither of which anyone can match against a pot they know by name.
+    """
+    if len(live) < 2:
+        return
+    from potpie.cli import hosts
+
+    qualified = ", ".join(hosts.qualify(m.origin, m.name) for m in live)
+    fail(
+        code="ambiguous_pot",
+        message=f"'{ref}' matches a pot on more than one host: {qualified}.",
+        next_action=qualify_hint,
+    )
+
+
 def _resolve_match(
     matches: list[_PotMatch],
     *,
@@ -641,16 +692,8 @@ def _resolve_match(
     still answering to a name is precisely how a dead pot shadows a live one, so
     it must not make a ref ambiguous either.
     """
-    from potpie.cli import hosts
-
     live = [match for match in matches if not match.archived]
-    if len(live) > 1:
-        qualified = ", ".join(hosts.qualify(m.origin, m.name) for m in live)
-        fail(
-            code="ambiguous_pot",
-            message=f"'{ref}' matches a pot on more than one host: {qualified}.",
-            next_action=qualify_hint,
-        )
+    _refuse_ambiguous_pot(live, ref=ref, qualify_hint=qualify_hint)
     if live:
         return live[0]
     if matches:
@@ -688,9 +731,24 @@ def _find_pot_in(
     was not asked. Callers that merely enumerate leave it unset and keep
     degrading, because a listing that dies when a remote is down is useless
     exactly when you need to see what is local.
+
+    A host that cannot even be *built* is refused in the same breath but not in
+    the same words: no socket was opened, so "cannot reach" would be the one
+    fact that is not true of a managed address with a stray character in its
+    port — the failure the caller has to fix is the address, not the network.
     """
     try:
-        pots = get_host_for(origin).pots.list_pots()
+        host = get_host_for(origin)
+    except Exception as exc:  # noqa: BLE001 - see docstring: degrade or refuse
+        if unreachable_hint is None:
+            return None
+        fail(
+            code="unavailable",
+            message=f"Cannot use the {origin} host to resolve '{ref}': {exc}",
+            next_action=unreachable_hint,
+        )
+    try:
+        pots = host.pots.list_pots()
     except Exception as exc:  # noqa: BLE001 - see docstring: degrade or refuse
         if unreachable_hint is None:
             return None
@@ -793,8 +851,9 @@ def resolve_pot_scope(
 ) -> tuple[str, str]:
     """Resolve pot id and how it was chosen for CLI scope hints.
 
-    ``resolved_via`` is one of ``explicit``, ``repo_default``, ``linked_repo``, or
-    ``active_pot``. See :func:`resolve_pot_id` for resolution order.
+    ``resolved_via`` is one of ``explicit``, ``repo_default``, ``linked_repo``,
+    ``contained_repo``, or ``active_pot``. See :func:`resolve_pot_id` for
+    resolution order.
 
     ``infer_from_repo=False`` skips current-repo inference and goes straight to
     the active pot. Source registration uses this: ``source add repo .`` is the
@@ -810,13 +869,35 @@ def resolve_pot_scope(
     default_pot = _repo_default_pot_id(host, repo_identity)
     if default_pot:
         return default_pot, "repo_default"
-    matches = _pots_matching_current_repo(host) if infer_from_repo else []
+    selves, contained = _current_repo_matches(host) if infer_from_repo else ([], [])
+    matches = selves + contained
     active = pots.active_pot()
     if len(matches) == 1:
+        # Which relation matched is part of the answer. Scoping to a project
+        # that happens to live *inside* the cwd used to be reported as
+        # `linked_repo` — as though the caller were standing in the repo — so
+        # every command silently ran against a child project's pot with nothing
+        # in the output saying which project, or that a choice had been made.
+        if contained:
+            return contained[0][0], "contained_repo"
         return matches[0][0], "linked_repo"
     if len(matches) > 1:
         if active is not None and any(active.pot_id == pid for pid, _ in matches):
             return active.pot_id, "active_pot"
+        # A workspace root is not an ambiguous repo, and saying so mattered:
+        # "Current repo is registered in multiple pots" names something that is
+        # not true of a directory registered in none of them, so the reader goes
+        # looking for a duplicate registration that does not exist.
+        if not selves and len(contained) > 1:
+            names = ", ".join(f"{name} ({pid})" for pid, name in contained)
+            fail(
+                code="workspace_root_ambiguous",
+                message=(
+                    "This directory is not a registered project; it contains registered "
+                    f"projects in more than one pot: {names}."
+                ),
+                next_action="cd into the project you mean, or pass '--pot <id-or-name>'",
+            )
         names = ", ".join(f"{name} ({pid})" for pid, name in matches)
         fail(
             code="ambiguous_pot",
@@ -981,6 +1062,8 @@ def pot_scope_resolution_human(resolved_via: str, *, repo: str | None = None) ->
         return f"via repo default for {repo}" if repo else "via repo default"
     if resolved_via == "linked_repo":
         return f"via linked repo {repo}" if repo else "via linked repo"
+    if resolved_via == "contained_repo":
+        return "via a registered project inside this directory"
     return "via active pot"
 
 
@@ -1095,6 +1178,64 @@ def enrich_with_pot_guidance(
     )
 
 
+def parse_scope_pairs(scope: str | None) -> dict[str, str]:
+    """``key:value[,key:value]`` → dict, refusing anything that is not that.
+
+    One parser for the whole surface, because the two that existed disagreed
+    about the failure case and the lenient one was on the *write* path:
+    ``potpie record --scope service`` dropped the malformed pair on the floor
+    and wrote an unscoped claim at exit 0, so the caller's narrowing silently
+    became no narrowing at all and the wrong data is now in the graph. A scope
+    the CLI cannot read is a refusal, never a smaller filter.
+
+    Raised as ``ValueError`` so the shared ``contract()`` renders it as
+    ``validation_error`` in whichever envelope the caller asked for.
+    """
+    if not scope:
+        return {}
+    out: dict[str, str] = {}
+    for pair in scope.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if ":" not in pair:
+            raise ValueError(
+                f"invalid --scope entry {pair!r}; expected key:value pairs"
+            )
+        key, value = pair.split(":", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(
+                f"invalid --scope entry {pair!r}; scope keys must not be empty"
+            )
+        value = value.strip()
+        if not value:
+            raise ValueError(
+                f"invalid --scope entry {pair!r}; scope values must not be empty"
+            )
+        out[key] = value
+    return out
+
+
+def require_text(value: str | None, *, argument: str, example: str) -> str:
+    """The trimmed ``value``, refusing one that says nothing.
+
+    An empty or whitespace-only argument is not a narrower request, it is an
+    absent one — and the commands that took it answered anyway: ``potpie search
+    ''`` returned a ranked envelope with a confidence score attached to a query
+    nobody made, and ``config get ''`` answered ``{"": null}`` as though the
+    empty key were a setting that happens to be unset. Both read as results.
+    """
+    cleaned = (value or "").strip()
+    if cleaned:
+        return cleaned
+    fail(
+        code="validation_error",
+        message=f"{argument} cannot be empty.",
+        next_action=f"pass a value, e.g. {example}",
+    )
+
+
 def origin_from_use_flags(*, local: bool, managed: bool) -> str | None:
     """Map ``--local`` / ``--managed`` to a requested origin, or ``None``.
 
@@ -1197,15 +1338,13 @@ def _select_origin_for_use(
         is not None
     ]
     live = [match for match in matches if not match.archived]
-    if len(live) > 1:
-        qualified = ", ".join(hosts.qualify(m.origin, ref) for m in live)
-        fail(
-            code="ambiguous_pot",
-            message=f"'{ref}' matches a pot on more than one host: {qualified}.",
-            next_action=(
-                "qualify it, e.g. 'potpie use managed:<name>', or pass --local / --managed"
-            ),
-        )
+    _refuse_ambiguous_pot(
+        live,
+        ref=ref,
+        qualify_hint=(
+            "qualify it, e.g. 'potpie use managed:<name>', or pass --local / --managed"
+        ),
+    )
     # Not found anywhere — or found only as an archived pot: hand it to the host
     # that holds it (or the current one) so the failure comes from the host,
     # with its own wording, exactly as it did before. The host's ``use_pot``
@@ -1319,6 +1458,45 @@ def _pot_summary(host: Any, pot_id: str | None) -> dict[str, Any] | None:
     }
 
 
+def _current_repo_matches(
+    host: Any,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """``(self_matches, contained_matches)`` for the cwd.
+
+    Two relations, kept apart. A pot is a *self* match when the cwd is (or sits
+    inside) a repository that pot has registered — the pot that owns this tree.
+    It is a *contained* match when the registered repository sits underneath the
+    cwd, which is what standing in a workspace root looks like: the directory is
+    registered nowhere and merely holds projects that are. Collapsed into one
+    boolean, one registered child silently scoped every command to that child's
+    pot and two of them failed with "Current repo is registered in multiple
+    pots" — a sentence about a repo that is not registered at all.
+    """
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return [], []
+    remote = _current_git_remote(cwd)
+    selves: list[tuple[str, str]] = []
+    contained: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for pot_id, pot_name, refs in _repo_source_index(host):
+        if pot_id in seen:
+            continue
+        kinds = {
+            match
+            for ref in refs
+            if (match := classify_repo_source_match(ref, cwd=cwd, remote=remote))
+        }
+        if not kinds:
+            continue
+        seen.add(pot_id)
+        (contained if kinds == {REPO_MATCH_CONTAINED} else selves).append(
+            (pot_id, pot_name)
+        )
+    return selves, contained
+
+
 def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
     """Return ``(pot_id, name)`` for every pot whose repo source matches cwd.
 
@@ -1328,16 +1506,13 @@ def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
     across all repositories attached to the pot. The caller decides how to
     disambiguate multiple matches (active pot wins; otherwise a structured
     ``ambiguous_pot`` error).
-    """
 
-    try:
-        cwd = Path.cwd().resolve()
-    except OSError:
-        return []
-    remote = _current_git_remote(cwd)
-    return _pots_matching_repo_source(
-        host, lambda ref: _repo_source_matches_cwd(ref, cwd=cwd, remote=remote)
-    )
+    Both relations, in one list, because that is the candidate set every caller
+    here has always had; :func:`resolve_pot_scope` is the one place that has to
+    tell them apart.
+    """
+    selves, contained = _current_repo_matches(host)
+    return selves + contained
 
 
 def _pots_matching_repo_identity(
@@ -1476,28 +1651,6 @@ def _safe_call(fn, default):
         return default
 
 
-def _repo_source_matches_cwd(
-    source_name: str, *, cwd: Path, remote: str | None
-) -> bool:
-    if not source_name:
-        return False
-    source_path = Path(source_name).expanduser()
-    if source_path.is_absolute() or source_name.startswith((".", "~")):
-        try:
-            resolved = source_path.resolve(strict=False)
-        except OSError:
-            resolved = source_path.absolute()
-        if (
-            cwd == resolved
-            or cwd.is_relative_to(resolved)
-            or resolved.is_relative_to(cwd)
-        ):
-            return True
-
-    normalized_source = _normalize_repo_ref(source_name)
-    return bool(remote and normalized_source and normalized_source == remote)
-
-
 def _current_git_remote(cwd: Path) -> str | None:
     return shared_current_git_remote(cwd)
 
@@ -1538,6 +1691,7 @@ __all__ = [
     "is_json",
     "is_verbose",
     "origin_from_use_flags",
+    "parse_scope_pairs",
     "pot_graph_counts",
     "pot_scope_human",
     "pot_scope_info",
@@ -1549,6 +1703,7 @@ __all__ = [
     "repo_effective_pot_human",
     "repo_effective_pot_info",
     "repo_pot_candidates",
+    "require_text",
     "resolve_pot_id",
     "resolve_pot_scope",
     "set_host",

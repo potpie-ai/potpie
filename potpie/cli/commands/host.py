@@ -180,10 +180,14 @@ def host_use(origin: str = typer.Argument(..., metavar="local|managed")) -> None
                 next_action="run 'potpie host list'",
             )
         if origin == hosts.MANAGED and hosts.managed_endpoint() is None:
+            # Not written out here: there are two ways to have nothing to point
+            # at, and only one of them is fixed by `host set`. See
+            # hosts.managed_unconfigured_refusal().
+            message, next_action = hosts.managed_unconfigured_refusal()
             fail(
                 code="validation_error",
-                message="No managed host is configured.",
-                next_action="run 'potpie host set <url>'",
+                message=message,
+                next_action=next_action,
             )
         hosts.set_persisted_origin(origin)
         emit({"active_origin": origin}, human=f"active host → {origin}")

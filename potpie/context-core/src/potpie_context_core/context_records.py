@@ -21,12 +21,27 @@ from typing import Any, Iterable, Mapping
 
 
 class ContextRecordValidationError(ValueError):
-    """Raised when a structured payload does not match its record_type schema."""
+    """Raised when a structured payload does not match its record_type schema.
+
+    Carries the repair as well as the complaint. Every message here names the
+    field that is wrong or absent, and for a long time there was no way to
+    supply one from the CLI at all — so the refusal read as "this record type
+    cannot be written" rather than "pass one more argument". The next action
+    survives the daemon RPC, which re-raises a remote validation failure as a
+    plain ``ValueError`` with ``detail``/``recommended_next_action`` re-attached,
+    so an in-process host and a daemon host give the same advice.
+    """
+
+    RECOMMENDED_NEXT_ACTION = (
+        "supply the field named above with `potpie record --detail <field>=<value>` "
+        "(repeat --detail for more fields)"
+    )
 
     def __init__(self, record_type: str, message: str) -> None:
         super().__init__(f"{record_type}: {message}")
         self.record_type = record_type
         self.message = message
+        self.recommended_next_action = self.RECOMMENDED_NEXT_ACTION
 
 
 # ---------------------------------------------------------------------------

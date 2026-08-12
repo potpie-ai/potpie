@@ -1398,7 +1398,7 @@ def test_graph_inbox_claim_passes_actor() -> None:
 
     result = CliRunner().invoke(
         graph.graph_app,
-        ["inbox", "claim", "graph-inbox:test", "--by", "user:alice"],
+        ["inbox", "claim", "graph-inbox:test", "--by", "user:alice", "--lease", "2h"],
     )
 
     assert result.exit_code == 0, result.output
@@ -1412,6 +1412,7 @@ def test_graph_inbox_claim_passes_actor() -> None:
                 "pot_id": "p",
                 "item_id": "graph-inbox:test",
                 "claimed_by": "user:alice",
+                "lease_seconds": 7200,
             },
         )
     ]
@@ -1980,6 +1981,42 @@ def test_graph_catalog_json_advertises_v2_workbench_commands() -> None:
     assert body["data_plane_graph_contract_version"] == "v1.5"
 
 
+def test_graph_catalog_declares_admin_commands_the_backend_cannot_run() -> None:
+    # export/import are dead on any backend without a snapshot port (the OSS
+    # default among them). The catalog listed all three admin commands flat, so
+    # the only way to learn that was to run one and have it refuse.
+    _common.set_json(True)
+    _common.set_host(_Host(_Graph(), backend=_Backend()))
+
+    result = CliRunner().invoke(graph.graph_app, ["catalog"])
+
+    assert result.exit_code == 0
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.catalog")
+    assert body["admin_commands"] == ["repair", "export", "import"]
+    assert body["admin_command_support"] == {
+        "repair": False,
+        "export": False,
+        "import": False,
+    }
+    unsupported = {item["name"]: item for item in emitted["unsupported"]}
+    assert unsupported["graph.export"]["reason"] == "capability_not_implemented"
+    assert "snapshot" in unsupported["graph.export"]["detail"]
+    assert "graph.import" in unsupported
+
+
+def test_graph_catalog_human_output_flags_unavailable_admin_commands() -> None:
+    _common.set_json(False)
+    _common.set_host(_Host(_Graph(), backend=_Backend()))
+
+    result = CliRunner().invoke(graph.graph_app, ["catalog"])
+
+    assert result.exit_code == 0
+    output = _plain_cli_output(result.output)
+    assert "export (unavailable)" in output
+    assert "import (unavailable)" in output
+
+
 def test_graph_catalog_task_ranks_relevant_views() -> None:
     _common.set_json(True)
     _common.set_host(_Host(_Graph()))
@@ -2369,6 +2406,92 @@ def test_graph_read_table_format_renders_pipe_table() -> None:
     ]
     assert data_lines
     assert not any(line.lstrip().startswith("•") for line in data_lines)
+
+
+def _non_timeline_env() -> GraphReadResult:
+    return GraphReadResult(
+        graph_contract_version="v1.5",
+        ontology_version="2026-06-graph",
+        view="infra_topology.service_neighborhood",
+        subgraph="infra_topology",
+        read_shape="entity_relations",
+        coverage=(
+            {"view": "infra_topology.service_neighborhood", "status": "complete"},
+        ),
+        quality={"status": "ok"},
+        items=(
+            {
+                "entity_key": "service:payments-api",
+                "entity_type": "Service",
+                "score": 0.8,
+                "summary": "payments API",
+                "source_refs": ["repo:manifest"],
+                "relations": [
+                    {
+                        "predicate": "DEPENDS_ON",
+                        "from_key": "service:payments-api",
+                        "to_key": "service:ledger-api",
+                        "related_key": "service:ledger-api",
+                        "fact": "payments depends on ledger",
+                    }
+                ],
+            },
+        ),
+    )
+
+
+@pytest.mark.parametrize("format_", ["table", "events"])
+def test_graph_read_json_keeps_items_for_non_timeline_formats(format_: str) -> None:
+    # Only the timeline has an event projection. Every other view had its items
+    # dropped for the events shape, so `--format table --json` printed rows to a
+    # human and an empty body to a machine.
+    _common.set_json(True)
+    graph_service = _Graph(read_result=_non_timeline_env())
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "infra_topology",
+            "--view",
+            "service_neighborhood",
+            "--scope",
+            "service:payments-api",
+            "--format",
+            format_,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.read")
+    assert body["items"], f"--format {format_} --json returned no data"
+    assert body["items"][0]["entity_key"] == "service:payments-api"
+
+
+def test_graph_read_rejects_an_unknown_format() -> None:
+    _common.set_json(True)
+    _common.set_host(_Host(_Graph(read_result=_non_timeline_env())))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "infra_topology",
+            "--view",
+            "service_neighborhood",
+            "--format",
+            "csv",
+        ],
+    )
+
+    assert result.exit_code == _common.EXIT_VALIDATION
+    emitted = json.loads(result.output)
+    assert emitted["error"]["code"] == "validation_error"
+    assert "--format must be one of" in emitted["error"]["message"]
 
 
 def test_graph_read_events_format_uses_bullets_not_table() -> None:

@@ -10,8 +10,10 @@ generic pointer at ``potpie doctor``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 
 import httpx
 import pytest
@@ -52,6 +54,206 @@ def test_daemon_rpc_rejects_non_domain_class_references() -> None:
                 "value": {},
             }
         )
+
+
+# --- S2-36: a malformed request is not a broken daemon ----------------------
+#
+# ``payload["surface"]`` on a body without one raised ``KeyError``, which fell
+# into the final branch of ``_error_payload``: the client was told
+# ``daemon_error: 'surface'`` — a bare quoted word — while the daemon logged a
+# traceback and raised a Sentry event tagged as an unexpected fault. Every part
+# of that is wrong about who made the mistake.
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        ({}, "missing required field 'surface'"),
+        ({"method": "list_pots"}, "missing required field 'surface'"),
+        ({"surface": "pots"}, "missing required field 'method'"),
+        ({"surface": 7, "method": "list_pots"}, "'surface' must be a string"),
+        ({"surface": "pots", "method": ["list_pots"]}, "'method' must be a string"),
+    ],
+    ids=["empty", "no-surface", "no-method", "surface-type", "method-type"],
+)
+def test_a_malformed_rpc_body_is_a_validation_error(
+    payload: dict, expected: str
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        daemon_main._required_field(payload, "surface")
+        daemon_main._required_field(payload, "method")
+
+    envelope = daemon_main._error_payload(raised.value)["error"]
+    assert envelope["code"] == "validation_error"
+    assert expected in envelope["message"]
+    # The field it could not find, not a bare quoted word.
+    assert envelope["message"] != "'surface'"
+
+
+def test_malformed_args_and_kwargs_are_named_rather_than_splatted() -> None:
+    with pytest.raises(ValueError, match="'args' must be a sequence"):
+        daemon_main._positional({"pot_id": "p1"})
+    with pytest.raises(ValueError, match="'kwargs' must be an object"):
+        daemon_main._keyword(["p1"])
+
+
+def test_the_shapes_the_real_client_sends_still_pass() -> None:
+    """The control. ``encode`` turns the client's argument *tuple* into a marker
+    object, so a check written against the raw JSON body would reject every
+    real call."""
+    assert daemon_main._positional(encode(("p1", 7))) == ("p1", 7)
+    assert daemon_main._positional(None) == ()
+    assert daemon_main._keyword(encode({"pot_id": "p1"})) == {"pot_id": "p1"}
+    assert daemon_main._keyword(None) == {}
+
+
+def test_a_malformed_body_raises_no_alert(monkeypatch, caplog) -> None:
+    """It was reported to Sentry as an unexpected daemon fault; it is neither."""
+    captured: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        sentry_runtime,
+        "capture_unexpected_daemon_error",
+        lambda exc, **kwargs: captured.append(kwargs),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=daemon_main.__name__):
+        daemon_main._error_payload(ValueError("rpc payload is missing 'surface'"))
+
+    assert captured == []
+    assert [record for record in caplog.records if record.exc_info] == []
+
+
+# --- the same two findings, over the real endpoint --------------------------
+
+
+TOKEN = "test-daemon-token"  # noqa: S105 - non-secret test fixture
+BEARER = {"Authorization": f"Bearer {TOKEN}"}
+
+
+class _RecordingHost:
+    """A host with one real read and one real write, both of which take time.
+
+    Real enough that ``/rpc`` resolves a surface, calls a method in the
+    threadpool and encodes the result — the parts that decide whether the lock
+    is applied at all.
+    """
+
+    profile = "in_memory"
+
+    def __init__(self) -> None:
+        self.backend = self
+        self.pots = self
+        self.inside: list[str] = []
+        self.overlapped = False
+        self._depth = 0
+
+    def list_pots(self) -> list[str]:  # declared read-only
+        return self._work("read")
+
+    def create_pot(self, *, name: str) -> list[str]:  # not declared: exclusive
+        return self._work(f"write:{name}")
+
+    def _work(self, label: str) -> list[str]:
+        self._depth += 1
+        self.overlapped = self.overlapped or self._depth > 1
+        self.inside.append(label)
+        time.sleep(0.15)
+        self._depth -= 1
+        return list(self.inside)
+
+
+@pytest.fixture
+def rpc_host(monkeypatch, tmp_path):
+    from potpie.cli import hosts
+
+    hosts.reset_for_tests()
+    host = _RecordingHost()
+    monkeypatch.setattr(hosts, "home_dir", lambda: tmp_path)
+    monkeypatch.setattr(daemon_main, "build_host_shell", lambda: host)
+    # No `with TestClient(...)`/lifespan: it writes this machine's real
+    # pid/discovery files.
+    host.app = daemon_main.create_app(
+        token=TOKEN,
+        base_url="http://127.0.0.1:1",
+        pid=123,
+        log_file=str(tmp_path / "daemon.log"),
+    )
+    yield host
+    hosts.reset_for_tests()
+
+
+async def _rpc(app, payload: dict) -> dict:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://daemon", headers=BEARER
+    ) as client:
+        response = await client.post("/rpc", json=payload, timeout=30)
+        return response.json()
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        ({}, "missing required field 'surface'"),
+        ({"surface": "pots"}, "missing required field 'method'"),
+        ({"surface": 7, "method": "list_pots"}, "'surface' must be a string"),
+        (
+            {"surface": "pots", "method": "list_pots", "kwargs": ["name"]},
+            "'kwargs' must be an object",
+        ),
+    ],
+    ids=["empty", "no-method", "surface-type", "kwargs-type"],
+)
+async def test_the_endpoint_answers_a_malformed_body_as_a_caller_mistake(
+    rpc_host, payload: dict, expected: str
+) -> None:
+    """Over the wire this arrived as ``daemon_error: 'surface'`` — the class the
+    CLI reads as "the daemon is broken", carrying a bare quoted word."""
+    body = await _rpc(rpc_host.app, payload)
+
+    assert body["ok"] is False
+    assert body["error"]["code"] == "validation_error"
+    assert expected in body["error"]["message"]
+
+
+async def test_two_reads_are_served_at_once(rpc_host) -> None:
+    """One process-wide lock made the shipped default host answer one call at a
+    time, so a slow ``resolve`` stopped every other terminal on the machine."""
+    call = {"surface": "pots", "method": "list_pots"}
+
+    await asyncio.gather(_rpc(rpc_host.app, call), _rpc(rpc_host.app, call))
+
+    assert rpc_host.overlapped is True
+
+
+async def test_two_writes_are_not(rpc_host) -> None:
+    """The control the narrowing has to earn: read-modify-write on the local
+    JSON stores still runs alone."""
+
+    def _write(name: str) -> dict:
+        return {
+            "surface": "pots",
+            "method": "create_pot",
+            "kwargs": {"name": name},
+        }
+
+    await asyncio.gather(
+        _rpc(rpc_host.app, _write("a")), _rpc(rpc_host.app, _write("b"))
+    )
+
+    assert rpc_host.overlapped is False
+
+
+async def test_a_write_is_not_served_beside_a_read(rpc_host) -> None:
+    await asyncio.gather(
+        _rpc(rpc_host.app, {"surface": "pots", "method": "list_pots"}),
+        _rpc(
+            rpc_host.app,
+            {"surface": "pots", "method": "create_pot", "kwargs": {"name": "a"}},
+        ),
+    )
+
+    assert rpc_host.overlapped is False
 
 
 # --- an unavailable backend is an answer, not a daemon fault ----------------

@@ -32,6 +32,9 @@ from potpie_context_core.errors import ContextEngineDisabled
 #: Verbatim from the reproduction: what `build_host` raises for a stopped daemon.
 _DAEMON_DOWN = "Potpie daemon is not running; run 'potpie daemon start'."
 _SERVICE_DOWN = "Managed host refused the connection."
+#: What building an origin with nothing behind it raises — the registry owns the
+#: exact wording, so the listing is asserted against this constant, not its text.
+_MANAGED_UNCONFIGURED = "No managed host is configured."
 
 
 class _Pot:
@@ -245,6 +248,65 @@ def test_the_human_listing_reports_the_failure_on_the_structured_surface(
     assert "Traceback" not in result.output
 
 
+# --- a flag combination answered by half ----------------------------------
+
+
+def test_naming_both_origins_lists_both_of_them(both_hosts) -> None:
+    """``--local --managed`` names two hosts. It used to fall through to the
+    *configured* origins — an answer that happens to be right only when both
+    are configured, and silently local-only when they are not."""
+    result = _list("--local", "--managed")
+
+    assert result.exit_code == 0, result.output
+    assert [row["id"] for row in json.loads(result.output)["pots"]] == [
+        "pot_l",
+        "pot_m",
+    ]
+    assert both_hosts[hosts.LOCAL].pots.list_calls == 1
+    assert both_hosts[hosts.MANAGED].pots.list_calls == 1
+
+
+def test_all_with_one_origin_named_twice_is_still_all(both_hosts) -> None:
+    """``--all --local`` is ``--all`` with one of its origins spelled again, not
+    a narrowing of it; the first-matching-branch selection read it as ``--local``
+    and dropped the managed section."""
+    result = _list("--all", "--local")
+
+    assert result.exit_code == 0, result.output
+    assert [row["id"] for row in json.loads(result.output)["pots"]] == [
+        "pot_l",
+        "pot_m",
+    ]
+
+
+def test_naming_managed_on_an_install_without_it_states_the_missing_host(
+    monkeypatch,
+) -> None:
+    """The same missing host was fatal or invisible depending on how the request
+    was spelled: ``--managed`` refused, ``--local --managed`` printed a
+    local-only listing at exit 0. Asked for, it is now *stated* — the listing
+    still degrades, because the local half is a real answer."""
+    monkeypatch.setattr(hosts, "managed_endpoint", lambda: None)
+    built = {hosts.LOCAL: _Host(_Pots([_Pot("pot_l", "notes", active=True)]))}
+
+    def _build(origin: str) -> _Host:
+        # What `hosts.build_host` does for an origin with nothing behind it.
+        # Asserted by identity rather than by wording, because the wording is
+        # the host registry's to own, not this listing's.
+        if origin not in built:
+            raise ContextEngineDisabled(_MANAGED_UNCONFIGURED)
+        return built[origin]
+
+    monkeypatch.setattr(hosts, "build_host", _build)
+
+    result = _list("--local", "--managed")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert [row["id"] for row in payload["pots"]] == ["pot_l"]
+    assert payload["unavailable"] == {"managed": _MANAGED_UNCONFIGURED}
+
+
 # --- S6: the wrong repair on the right message ----------------------------
 
 
@@ -284,7 +346,10 @@ def test_a_source_the_pot_never_held_repairs_by_listing_that_pots_sources() -> N
 
     assert result.exit_code == _common.EXIT_VALIDATION, result.output
     payload = json.loads(result.output)
-    assert payload["code"] == "pot_not_found"
+    # The code says the same thing the repair does: a *source* is missing, not
+    # a pot. It used to say `pot_not_found` with a source-shaped repair bolted
+    # on, so a `--json` consumer branching on the code still saw the wrong noun.
+    assert payload["code"] == "source_not_found"
     assert payload["message"] == "No source 'src_9' in pot 'p1'."
     assert payload["recommended_next_action"] == (
         "list this pot's sources with 'potpie source list --pot p1'"

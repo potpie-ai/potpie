@@ -69,7 +69,14 @@ def _version_callback(value: bool) -> None:
     # is what stops `potpie --json --version` from answering a machine with two
     # lines of prose — a parse failure the caller only discovers downstream of
     # the pipe, because the exit code says 0.
-    if argv_requested_json():
+    #
+    # `is_json()` first, because the scan is retired the moment the root
+    # callback applies it (see `set_json`), and `potpie pot list --version
+    # --json` reaches this eager callback on the *second* parse — after the
+    # first one already consumed the scan. The applied mode is the one that
+    # survives a re-parse; the scan is what covers a command line that never
+    # got that far.
+    if is_json() or argv_requested_json():
         typer.echo(
             json.dumps(
                 {
@@ -136,10 +143,17 @@ def _apply_host_override(raw: str) -> None:
                 exit_code=EXIT_VALIDATION,
             )
         if origin == hosts.MANAGED and hosts.managed_endpoint() is None:
+            # The text comes from the registry, not from here: there are two
+            # ways to have no usable managed host and only one of them is fixed
+            # by `host set`. A `POTPIE_MANAGED_URL` that is set but unusable
+            # reads as *absent* to every router by design, and answering it with
+            # "run 'potpie host set <url>'" tells the caller to write a file
+            # their own environment override makes irrelevant.
+            message, next_action = hosts.managed_unconfigured_refusal()
             fail(
                 code="validation_error",
-                message="No managed host is configured.",
-                next_action="run 'potpie host set <url>'",
+                message=message,
+                next_action=next_action,
                 exit_code=EXIT_VALIDATION,
             )
         hosts.set_current_origin(origin)
@@ -252,10 +266,23 @@ def _click_error_message(exc: Exception) -> str:
 
 #: Options the root callback owns. Deliberately not re-declared per command:
 #: two places deciding output mode is what produced the bug below in the first
-#: place, and ~100 commands would each be a chance to forget one.
+#: place, and ~100 commands would each be a chance to forget one. Being declared
+#: in one place is not the same as being *typeable* in one place — see
+#: :func:`_hoist_root_flag`.
 _ROOT_ONLY_FLAGS: Final[frozenset[str]] = frozenset(
-    {"--json", "--verbose", "-v", "--version"}
+    {"--json", "--verbose", "-v", "--version", "--host"}
 )
+
+#: The root flags that consume the token after them. Hoisting one has to carry
+#: its value along or ``potpie status --host managed`` becomes ``potpie --host
+#: status`` — a different, and silently wrong, command line.
+_ROOT_VALUE_FLAGS: Final[frozenset[str]] = frozenset({"--host"})
+
+#: How a value-taking root flag is spelled back to the caller. Only the
+#: invocations that supplied *no* value reach the hint (the rest are hoisted
+#: value and all), so repeating the bare flag would echo the mistake instead of
+#: naming the fix.
+_ROOT_FLAG_SPELLING: Final[dict[str, str]] = {"--host": "--host <local|managed>"}
 
 
 def _misplaced_root_flag(exc: Exception) -> str | None:
@@ -264,7 +291,7 @@ def _misplaced_root_flag(exc: Exception) -> str | None:
     Keyed off Click's own ``NoSuchOption`` rather than a scan of argv: Click
     raising it is itself the proof that the command on that path declares no
     such option, so this cannot misfire on the commands that legitimately own a
-    flag of their own name (``potpie status --host``, the auth logins).
+    flag of their own name (``potpie gitbucket login --host <url>``).
     """
     from typer._click.exceptions import NoSuchOption
 
@@ -272,6 +299,45 @@ def _misplaced_root_flag(exc: Exception) -> str | None:
         return None
     name = str(getattr(exc, "option_name", "") or "")
     return name if name in _ROOT_ONLY_FLAGS else None
+
+
+def _hoist_root_flag(flag: str, args: Sequence[str]) -> list[str] | None:
+    """``args`` with a misplaced global ``flag`` moved in front of the command.
+
+    Root-only is a statement about where the flag is *declared*, not about where
+    a caller may type it. One accepted position is a coin flip every agent
+    consumer has to win on the first try, and the losing side got Click's prose
+    on stderr from a command line that had just said it could only read JSON.
+    Click has already raised ``NoSuchOption``, which is proof the command
+    declares no option of this name, so moving the token to the front cannot
+    change what the command means — it can only make it parse.
+
+    Only the region before a ``--`` separator is touched: everything after it is
+    the caller's data, and a token there never produced the ``NoSuchOption``
+    that got us here in the first place.
+
+    ``None`` when there is nothing safe to move — the flag is not in argv, or it
+    takes a value and the next token is another option (or missing). Click's own
+    "requires an argument" is the better error for that, and the refusal in
+    :func:`run_cli` still covers it.
+    """
+    rest = list(args)
+    end = rest.index("--") if "--" in rest else len(rest)
+    for index in range(end):
+        token = rest[index]
+        if token.startswith(f"{flag}="):
+            del rest[index]
+            return [token, *rest]
+        if token != flag:
+            continue
+        del rest[index]
+        if flag not in _ROOT_VALUE_FLAGS:
+            return [flag, *rest]
+        if index >= len(rest) or rest[index].startswith("-"):
+            return None
+        value = rest.pop(index)
+        return [flag, value, *rest]
+    return None
 
 
 def _reordered_invocation(flag: str, exc: Exception, args: Sequence[str]) -> str:
@@ -284,7 +350,12 @@ def _reordered_invocation(flag: str, exc: Exception, args: Sequence[str]) -> str
     parse-error earlier, the very leak `config set` redacts on its own success
     path. Command names are safe to repeat back; the values typed after them
     are not, so they collapse to an ellipsis the caller can refill themselves.
+
+    A value-taking flag is spelled with its metavar rather than bare: the only
+    invocation that still reaches this hint is one that left the value out, and
+    ``re-run as: potpie --host status`` would hand back the same broken line.
     """
+    spelling = _ROOT_FLAG_SPELLING.get(flag, flag)
     ctx = getattr(exc, "ctx", None)
     # Walked off the context chain rather than read off `ctx.command_path`: that
     # string is prefixed with the program name Click took from argv[0], which is
@@ -298,7 +369,7 @@ def _reordered_invocation(flag: str, exc: Exception, args: Sequence[str]) -> str
         node = node.parent
     path.reverse()
     if not path:
-        return f"put '{flag}' before the command: potpie {flag} <command> ..."
+        return f"put '{flag}' before the command: potpie {spelling} <command> ..."
     rest = [a for a in args if a != flag]
     tail = rest[rest.index(path[-1]) + 1 :] if path[-1] in rest else []
     # Click stops resolving at the group that owns the offending flag, so
@@ -307,7 +378,7 @@ def _reordered_invocation(flag: str, exc: Exception, args: Sequence[str]) -> str
     subcommands = getattr(getattr(ctx, "command", None), "commands", {}) or {}
     if tail and tail[0] in subcommands:
         path.append(tail.pop(0))
-    return f"re-run as: potpie {flag} {' '.join(path)}{' ...' if tail else ''}"
+    return f"re-run as: potpie {spelling} {' '.join(path)}{' ...' if tail else ''}"
 
 
 def run_cli(argv: list[str] | None = None) -> None:
@@ -327,21 +398,42 @@ def run_cli(argv: list[str] | None = None) -> None:
     configure_cli_logging(is_verbose())
 
     try:
-        exit_code = app(args, standalone_mode=False)
+        # A global flag typed after the command is *honoured*, not refused.
+        # `NoSuchOption` is raised while Click is still parsing, so no command
+        # body has run and nothing has been emitted: hoisting the flag in front
+        # of the command and invoking the app again is the same command line,
+        # spelled the one way the parser accepts. Bounded by the number of
+        # global flags there are, because each pass fixes exactly the one Click
+        # named and Click names them one at a time.
+        attempts = len(_ROOT_ONLY_FLAGS)
+        while True:
+            try:
+                exit_code = app(args, standalone_mode=False)
+                break
+            except ClickException as exc:
+                flag = _misplaced_root_flag(exc)
+                hoisted = _hoist_root_flag(flag, args) if flag is not None else None
+                if hoisted is None or attempts <= 0:
+                    raise
+                attempts -= 1
+                args = hoisted
     except (Abort, click.Abort):
         raise typer.Exit(code=1) from None
     except ClickException as exc:
         flag = _misplaced_root_flag(exc)
         if flag is not None:
-            # Routed through `fail` in *both* modes, unlike the usage errors
-            # below: this is the one where Click's own text ("No such option:
-            # --json") names the symptom and hides the cause — the flag exists,
-            # one position to the left.
+            # Only the shapes `_hoist_root_flag` refuses to move reach here — a
+            # value-taking global with no value left to take. Routed through
+            # `fail` in *both* modes, unlike the usage errors below: this is the
+            # one where Click's own text ("No such option: --host") names the
+            # symptom and hides the cause — the flag exists, one position to the
+            # left.
             fail(
                 code="usage_error",
                 message=(
                     f"'{flag}' is a global flag and must come before the "
-                    f"command: potpie {flag} <command> ..."
+                    f"command: potpie {_ROOT_FLAG_SPELLING.get(flag, flag)} "
+                    "<command> ..."
                 ),
                 next_action=_reordered_invocation(flag, exc, args),
             )

@@ -113,7 +113,98 @@ def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> No
     assert req.harness == "claude"
 
 
-def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "quality, expected",
+    [
+        (
+            {"status": "attention", "open_findings": 3, "source": "quality_summary"},
+            "quality: attention (3 open findings)",
+        ),
+        (
+            {"status": "ok", "open_findings": 0, "source": "quality_summary"},
+            "quality: ok (0 open findings)",
+        ),
+        (
+            {"findings_status": "unavailable", "detail": "workbench refused"},
+            "quality: unavailable — workbench refused",
+        ),
+    ],
+    ids=["findings", "clean", "unavailable"],
+)
+def test_status_human_output_states_the_quality_it_reports_as_json(
+    quality: dict, expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The prose must know what the envelope knows.
+
+    ``status`` grew a real quality block — the open findings ``graph quality``
+    reports, not just the backend's projection — and only ``--json`` could see
+    it, while the human view printed a next-action telling the reader to go and
+    count the findings themselves.
+    """
+    report = StatusReport(
+        pot_id="foo-pot",
+        profile="local",
+        daemon_up=True,
+        active_pot="foo-pot",
+        backend_ready=True,
+        data_plane={"counts": {"claims": 2}, "quality": quality},
+    )
+    mock_host = MagicMock()
+    mock_host.agent_context.status.return_value = report
+
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+    )
+
+    result = runner.invoke(cli_main.app, ["status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert expected in " ".join(result.stdout.split())
+
+
+def test_status_human_output_omits_the_quality_line_when_there_is_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = StatusReport(
+        pot_id="foo-pot",
+        profile="local",
+        daemon_up=True,
+        active_pot="foo-pot",
+        backend_ready=True,
+        data_plane={"counts": {"claims": 2}},
+    )
+    mock_host = MagicMock()
+    mock_host.agent_context.status.return_value = report
+
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+    )
+
+    result = runner.invoke(cli_main.app, ["status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert "quality" not in result.stdout
+
+
+def test_status_declares_no_host_option_of_its_own() -> None:
+    """The boolean no-op that used to sit here shadowed the root ``--host``.
+
+    ``potpie status --host managed`` consumed the flag as a boolean, left
+    ``managed`` unclaimed and failed with "Got unexpected extra argument(s)
+    (managed)" — a message naming neither the flag nor the fix.
+    """
+    result = runner.invoke(cli_main.app, ["status", "--help"])
+
+    assert result.exit_code == 0
+    assert "--host" not in result.output
+
+
+def test_status_host_flag_routes_the_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The root flag reaches ``status`` with its value, through ``run_cli``."""
     report = StatusReport(
         pot_id="foo-pot",
         profile="local",
@@ -129,11 +220,27 @@ def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) ->
         bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
     )
 
-    result = runner.invoke(cli_main.app, ["status", "--host"])
+    cli_main.run_cli(["status", "--host", "local"])
 
-    assert result.exit_code == 0, result.stdout
-    assert "profile=local" in result.stdout
     mock_host.agent_context.status.assert_called_once()
+
+
+def test_status_host_managed_refuses_by_name_when_none_is_configured(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The refusal must be about the host, not about an "extra argument"."""
+    import typer
+
+    monkeypatch.delenv("POTPIE_MANAGED_URL", raising=False)
+    monkeypatch.setattr("potpie.cli.hosts.managed_endpoint", lambda: None)
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli_main.run_cli(["--json", "status", "--host", "managed"])
+
+    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["code"] == "validation_error"
+    assert "managed" in payload["message"]
 
 
 def test_status_non_default_pot_triggers_host_path(
@@ -420,6 +527,7 @@ def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_setup_success_emits_run_and_step_metrics(
+    tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     metrics = _FakeSetupMetrics()
@@ -444,17 +552,23 @@ def test_setup_success_emits_run_and_step_metrics(
     )
     monkeypatch.setattr(bootstrap, "sentry_metrics_runtime", metrics, raising=False)
 
+    # Every value here is one setup will actually accept — the option gate runs
+    # before any of this — while staying distinctive enough to be found in an
+    # attribute bag. A refused command line emits no run metric at all, so the
+    # canaries have to be real to test anything.
+    private_project = tmp_path / "private-project"
+    private_project.mkdir()
+
     result = runner.invoke(
         cli_main.app,
         [
             "setup",
             "--repo",
-            "/private/project",
+            str(private_project),
             "--pot",
             "customer-pot",
             "--agent",
-            "gpt-9",
-            "--scan",
+            "codex",
             "--yes",
         ],
     )
@@ -467,7 +581,7 @@ def test_setup_success_emits_run_and_step_metrics(
                 "result": "ok",
                 "backend": "falkordb",
                 "host_mode": "daemon",
-                "scan": True,
+                "scan": False,
                 "dry_run": False,
             },
         ),
@@ -484,9 +598,9 @@ def test_setup_success_emits_run_and_step_metrics(
         assert "repo" not in call.attributes
         assert "pot" not in call.attributes
         assert "agent" not in call.attributes
-        assert "/private/project" not in call.attributes.values()
+        assert str(private_project) not in call.attributes.values()
         assert "customer-pot" not in call.attributes.values()
-        assert "gpt-9" not in call.attributes.values()
+        assert "codex" not in call.attributes.values()
 
 
 def test_setup_degraded_report_preserves_exit_code_and_emits_metrics(

@@ -10,9 +10,13 @@ from __future__ import annotations
 import typer
 
 from potpie.cli.commands._common import (
+    EXIT_VALIDATION,
     contract,
     emit,
+    fail,
     get_host,
+    parse_scope_pairs,
+    require_text,
     resolve_pot_id,
 )
 from potpie.cli.telemetry.onboarding_events import (
@@ -30,6 +34,7 @@ from potpie_context_core.ports.agent_context import (
     ResolveRequest,
     SearchRequest,
 )
+from potpie_context_core.source_references import RESOLVE_MODES
 
 # Spelled out in --help because the values are not guessable: an agent with no
 # list in front of it reaches for the subgraph names it saw in `graph catalog`
@@ -39,6 +44,13 @@ _INCLUDE_HELP = "Comma-separated include families: " + ", ".join(
     sorted(READER_BACKED_INCLUDES - {"raw_graph"})
 )
 _INTENT_HELP = "One of: " + ", ".join(sorted(CONTEXT_INTENTS))
+_MODE_HELP = "Retrieval depth. One of: " + ", ".join(sorted(RESOLVE_MODES))
+_DETAIL_HELP = (
+    "Structured field for --type, as key=value (repeatable; repeat a key to "
+    "build a list). Some record types require one, e.g. "
+    "`--type decision --detail rationale=...`, "
+    "`--type preference --detail policy_kind=...`."
+)
 
 
 def _split(value: str | None) -> tuple[str, ...]:
@@ -47,19 +59,100 @@ def _split(value: str | None) -> tuple[str, ...]:
     return tuple(v.strip() for v in value.split(",") if v.strip())
 
 
+def _require_choice(
+    value: str, *, argument: str, allowed: frozenset[str], example: str
+) -> str:
+    """The canonical spelling of ``value``, refusing anything outside ``allowed``.
+
+    Both vocabularies this guards *normalize* an unknown value rather than
+    reject it, and both normalizations are silent-wrong-answer bugs at a
+    keyboard: ``--mode blanced`` becomes ``fast`` and reports a shallower read
+    as though it were the deep one that was asked for, and ``--intent debuging``
+    becomes ``unknown``, which queries a different set of reader families
+    entirely. The service keeps normalizing — it is the compatibility rule for
+    the managed HTTP surface, where the caller is another program — but a typo
+    typed at this CLI has no compatible meaning to preserve.
+    """
+    cleaned = (value or "").strip().lower()
+    if cleaned in allowed:
+        return cleaned
+    fail(
+        code="validation_error",
+        message=f"unknown {argument} {value!r}.",
+        detail={"argument": argument, "allowed": sorted(allowed)},
+        next_action=f"use one of: {', '.join(sorted(allowed))} — e.g. {example}",
+    )
+
+
+def _parse_detail_pairs(pairs: list[str] | None) -> dict[str, object]:
+    """``--detail key=value`` entries → the ``details`` payload of a record.
+
+    Repeating a key builds a list, which is how the list-shaped fields
+    (``alternatives_rejected``, ``affects_refs``, ``fix_steps``) are reachable
+    from a shell. Split on the *first* ``=`` only: a rationale or a prescription
+    routinely contains one, and so does every URL.
+
+    Raised as ``ValueError`` so the shared ``contract()`` renders it as
+    ``validation_error``, the same way ``--scope`` does.
+    """
+    out: dict[str, object] = {}
+    for raw in pairs or ():
+        entry = raw.strip()
+        if not entry:
+            continue
+        key, sep, value = entry.partition("=")
+        if not sep:
+            raise ValueError(
+                f"invalid --detail entry {entry!r}; expected key=value pairs"
+            )
+        key = key.strip()
+        if not key:
+            raise ValueError(
+                f"invalid --detail entry {entry!r}; detail keys must not be empty"
+            )
+        value = value.strip()
+        if not value:
+            raise ValueError(
+                f"invalid --detail entry {entry!r}; detail values must not be empty"
+            )
+        existing = out.get(key)
+        if existing is None:
+            out[key] = value
+        elif isinstance(existing, list):
+            existing.append(value)
+        else:
+            out[key] = [existing, value]
+    return out
+
+
 def register(root: typer.Typer) -> None:
     @root.command()
     def resolve(
         task: str = typer.Argument(..., help="The task to pull context for."),
         intent: str = typer.Option("feature", "--intent", help=_INTENT_HELP),
         include: str = typer.Option(None, "--include", help=_INCLUDE_HELP),
-        mode: str = typer.Option(
-            "fast", "--mode", help="fast | balanced | verify | deep"
-        ),
+        mode: str = typer.Option("fast", "--mode", help=_MODE_HELP),
         pot: str = typer.Option(None, "--pot"),
     ) -> None:
         """context_resolve — a bounded context wrap for a task."""
         with contract():
+            task = require_text(
+                task,
+                argument="task",
+                example="potpie resolve 'add rate limiting to the API'",
+            )
+            intent = _require_choice(
+                intent,
+                argument="--intent",
+                allowed=CONTEXT_INTENTS,
+                example="--intent debugging",
+            )
+            mode = _require_choice(
+                mode,
+                argument="--mode",
+                allowed=RESOLVE_MODES,
+                example="--mode balanced",
+            )
             host = get_host()
             pot_id = resolve_pot_id(host, pot)
             env = host.agent_context.resolve(
@@ -72,7 +165,7 @@ def register(root: typer.Typer) -> None:
                 )
             )
             _capture_context_activation(command="resolve", item_count=len(env.items))
-            emit(_envelope_payload(env), human=_envelope_human(env))
+            emit(env.to_dict(), human=_envelope_human(env))
 
     @root.command()
     def search(
@@ -87,6 +180,20 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_search — narrow follow-up lookup."""
         with contract():
+            query = require_text(
+                query, argument="query", example="potpie search 'rate limiter'"
+            )
+            # Unset stays unset — normalization is the service's job — but a
+            # value the caller *did* type is held to the same vocabulary
+            # ``resolve`` holds it to; the silent downgrade to ``unknown``
+            # changes which reader families answer.
+            if intent is not None:
+                intent = _require_choice(
+                    intent,
+                    argument="--intent",
+                    allowed=CONTEXT_INTENTS,
+                    example="--intent docs",
+                )
             host = get_host()
             pot_id = resolve_pot_id(host, pot)
             env = host.agent_context.search(
@@ -98,7 +205,7 @@ def register(root: typer.Typer) -> None:
                 )
             )
             _capture_context_activation(command="search", item_count=len(env.items))
-            emit(_envelope_payload(env), human=_envelope_human(env))
+            emit(env.to_dict(), human=_envelope_human(env))
 
     @root.command()
     def record(
@@ -106,13 +213,31 @@ def register(root: typer.Typer) -> None:
             ..., "--type", help="Record type (fix, decision, preference, …)."
         ),
         summary: str = typer.Option(..., "--summary"),
+        detail: list[str] = typer.Option(None, "--detail", help=_DETAIL_HELP),
         scope: str = typer.Option(
             None, "--scope", help="key:value scope, e.g. service:inventory-svc"
         ),
         pot: str = typer.Option(None, "--pot"),
     ) -> None:
-        """context_record — write a durable project learning."""
+        """context_record — write a durable project learning.
+
+        ``--detail`` is what makes the structured record types reachable. Two of
+        the three types this command's own ``--type`` help advertises validate a
+        field that lives nowhere else: ``decision`` requires ``rationale`` and
+        ``preference`` requires ``policy_kind``, so before this flag existed the
+        two headline uses were impossible to execute from the CLI at all — every
+        attempt came back as a validation error naming a field with no way to
+        supply it.
+        """
         with contract():
+            # Refused before the pot is even resolved: this command *writes*, and
+            # a blank type or summary is a durable row nothing can retrieve.
+            type = require_text(type, argument="--type", example="--type fix")
+            summary = require_text(
+                summary,
+                argument="--summary",
+                example="--summary 'retries need a jittered backoff'",
+            )
             host = get_host()
             pot_id = resolve_pot_id(host, pot)
             receipt = host.agent_context.record(
@@ -120,54 +245,54 @@ def register(root: typer.Typer) -> None:
                     pot_id=pot_id,
                     record_type=type,
                     summary=summary,
-                    scope=_parse_scope(scope),
+                    details=_parse_detail_pairs(detail),
+                    scope=parse_scope_pairs(scope),
                 )
             )
-            capture_usage_command_succeeded(
-                command="record",
-                result_kind="record_result",
-                item_count=receipt.mutations_applied,
-            )
+            if receipt.accepted:
+                # Gated on the receipt for the same reason the exit code is: a
+                # "command succeeded" event for a refused write is the same lie
+                # as exit 0, told to the usage funnel instead of the caller.
+                capture_usage_command_succeeded(
+                    command="record",
+                    result_kind="record_result",
+                    item_count=receipt.mutations_applied,
+                )
+            # ``accepted`` and ``detail`` are the two fields that say whether the
+            # write actually landed, and dropping them made a *refused* record
+            # indistinguishable from a stored one: the graph service answers
+            # `status="rejected"` with the reason attached, and this printed
+            # "rejected: <id> (0 mutations)" at exit 0 — a receipt, for nothing.
+            # `ok` mirrors `accepted` so a consumer can branch on the same key
+            # the error envelope uses without knowing which shape it got.
             emit(
                 {
+                    "ok": receipt.accepted,
+                    "accepted": receipt.accepted,
                     "status": receipt.status,
                     "record_id": receipt.record_id,
                     "mutations_applied": receipt.mutations_applied,
+                    "detail": receipt.detail,
                 },
-                human=f"{receipt.status}: {receipt.record_id} ({receipt.mutations_applied} mutations)",
+                human=_record_human(receipt),
             )
+            if not receipt.accepted:
+                raise typer.Exit(code=EXIT_VALIDATION)
 
 
-def _parse_scope(scope: str | None) -> dict[str, str]:
-    if not scope:
-        return {}
-    out: dict[str, str] = {}
-    for pair in scope.split(","):
-        if ":" in pair:
-            k, v = pair.split(":", 1)
-            out[k.strip()] = v.strip()
-    return out
+def _record_human(receipt) -> str:
+    line = (
+        f"{receipt.status}: {receipt.record_id} ({receipt.mutations_applied} mutations)"
+    )
+    return f"{line}\n  ! {receipt.detail}" if receipt.detail else line
 
 
-def _envelope_payload(env) -> dict[str, object]:
-    return {
-        "pot_id": env.pot_id,
-        "intent": env.intent,
-        "overall_confidence": env.overall_confidence,
-        "items": [
-            {"include": i.include, "score": i.score, "payload": dict(i.payload)}
-            for i in env.items
-        ],
-        "coverage": [
-            # graph_view is the canonical workbench name serving this include
-            # family — the pointer to follow when moving to `graph read`.
-            {"include": c.include, "status": c.status, "graph_view": c.graph_view}
-            for c in env.coverage
-        ],
-        "unsupported_includes": [
-            {"name": u.name, "reason": u.reason} for u in env.unsupported_includes
-        ],
-    }
+# NOTE: both read commands emit ``AgentEnvelope.to_dict()`` rather than a
+# payload assembled here. The hand-rolled one this replaced silently dropped six
+# fields the envelope carries — ``candidate_key``, ``coverage_status``,
+# ``breakdown``, ``candidate_pool``, ``as_of`` and ``metadata`` — and the first
+# is the one an agent dedupes on, so repeated calls could not tell the same
+# evidence item from a new one. Serialisation belongs to the shape, once.
 
 
 def _envelope_human(env) -> str:

@@ -170,7 +170,13 @@ def build_host_shell(
             }
         )
         agent_context = AgentContextService(
-            graph=graph, pots=pots, skills=skills, profile=profile
+            graph=graph,
+            pots=pots,
+            skills=skills,
+            profile=profile,
+            # So `potpie status` reports the same graph health `graph quality`
+            # does, instead of the backend's count-only projection.
+            workbench=graph_workbench,
         )
 
         ledger = LedgerFacade(

@@ -12,9 +12,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Mapping, Protocol
+from typing import Any, Final, Mapping, Protocol
 
 from potpie_context_core.lifecycle import StepResult
+
+#: A source that has been registered and not assessed since. The honest
+#: starting value for :attr:`SourceInfo.status` — registration is all that has
+#: happened to it, which is a fact about the row rather than a health claim.
+SOURCE_REGISTERED: Final = "registered"
+
+#: No ingestion has run for a source. The starting value for
+#: :attr:`SourceInfo.ingestion_status`.
+INGESTION_NOT_STARTED: Final = "not_started"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +65,15 @@ class PotTeardownResult:
 
 @dataclass(frozen=True, slots=True)
 class SourceInfo:
-    """A source registered to a pot (repo, integration binding, …)."""
+    """A source registered to a pot (repo, integration binding, …).
+
+    ``status``, ``ingestion_status`` and the ``registration_only`` derived from
+    them are the three things a caller asks a source row about, and all three
+    were literals at the CLI boundary: ``source status`` reported ``ok`` /
+    ``not started`` / registration-only for every row, including one whose
+    stored status said ``error``. They travel on the row now, so a row that has
+    something to say can say it.
+    """
 
     source_id: str
     kind: str  # repo | github | linear | ...
@@ -66,7 +83,24 @@ class SourceInfo:
     path-or-remote mismatch against the current working tree."""
     last_sync_at: datetime | None = None
     sync_mode: str | None = None
-    status: str = "unknown"  # ok | stale | error | unknown
+    status: str = SOURCE_REGISTERED  # registered | ok | stale | error | unknown
+    #: How far ingestion has got for this source: ``not_started`` until
+    #: something ingests it, then whatever that reports (``running``,
+    #: ``completed``, ``failed``, …).
+    ingestion_status: str = INGESTION_NOT_STARTED
+
+    @property
+    def registration_only(self) -> bool:
+        """True while nothing has ingested this source.
+
+        Derived rather than stored: "registration only" is not an independent
+        fact, it is what ``ingestion_status == not_started`` *means*, and as a
+        hardcoded ``True`` it kept labelling ingested sources registration-only.
+        """
+        return (self.ingestion_status or INGESTION_NOT_STARTED) in (
+            "",
+            INGESTION_NOT_STARTED,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,8 +190,21 @@ class PotManagementService(Protocol):
 
     def source_status(self, *, pot_id: str, source_id: str) -> SourceInfo: ...
 
-    def remove_source(self, *, pot_id: str, source_id: str) -> None:
-        """Drop a source registration. Does not touch graph or resource data."""
+    def remove_source(self, *, pot_id: str, source_id: str) -> bool:
+        """Drop a source registration; say whether a row actually went away.
+
+        Does not touch graph or resource data — a source's ``location`` is not a
+        foreign key into the resource store, so remove cannot know which
+        documents came from it.
+
+        The boolean is the contract, not an implementation detail: an id that is
+        not in this pot removes nothing, and a caller that cannot tell that from
+        a real removal tells the user their registration is gone when it is
+        still there, in the pot they did not look in. The port said ``None``
+        while every implementation and the CLI already traded in the boolean,
+        which is exactly the drift a hosted implementation typed against this
+        port would have inherited.
+        """
         ...
 
     # --- repo-local routing defaults ----------------------------------------
@@ -185,6 +232,8 @@ class PotManagementService(Protocol):
 
 
 __all__ = [
+    "INGESTION_NOT_STARTED",
+    "SOURCE_REGISTERED",
     "PotAggregateStatus",
     "PotInfo",
     "PotManagementService",

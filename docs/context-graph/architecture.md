@@ -327,8 +327,10 @@ Two corrections worth stating here:
   `redislite` file), not `embedded` or `neo4j`. `postgres`/`chroma`/`hosted`
   cannot be provisioned — `StubGraphBackend.provision()` raises (the prior
   "postgres creates the DB, enables pgvector, runs DDL" claim was aspirational).
-- `--scan` is **opt-in** (default off): `setup` registers the repo as a source
-  but does not scan or ingest the working tree.
+- There is no working-tree scan. `setup` registers the repo as a source and
+  stops there; the graph is filled by harness-led ingestion. `--scan` was an
+  accepted flag with no step behind it and is now **rejected** with a pointer
+  at that path.
 
 The full `setup` flag set and the canonical local journey live in
 [cli-flow.md](./cli-flow.md).

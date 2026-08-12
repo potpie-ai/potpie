@@ -65,8 +65,8 @@ potpie setup
 potpie status
 ```
 
-`setup` also registers your repo as a source. A working-tree scan is **opt-in**
-via `--scan` (default off). The OSS/CLI default backend is **`falkordb_lite`** —
+`setup` also registers your repo as a source. It does not scan the working tree
+— harness-led ingestion writes the graph. The OSS/CLI default backend is **`falkordb_lite`** —
 an embedded FalkorDB over a local file, with **no Docker, server, Neo4j, or cloud
 key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
 (precedence: `CONTEXT_ENGINE_BACKEND` > legacy `GRAPH_DB_BACKEND` >
@@ -92,6 +92,7 @@ key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
 | [`skills.md`](./skills.md) | Harness-owned intelligence; the bundled CLI skills (potpie-graph teaches propose/commit); the Claude Code plugin + hooks; the separate server-side reconciliation skill surface (not the same thing). |
 | [`cli-flow.md`](./cli-flow.md) | The full `potpie` command reference, grouped, with flags, exit-code contract, and the canonical journey. |
 | [`resources.md`](./resources.md) | Where document payloads live: the pot-scoped chunk store behind `ResourceStorePort`, the `Document`/`DocumentSection` structure the graph keeps, and the `potpie resource` commands (graph integration still roadmap). |
+| [`retrieval-tuning.md`](./retrieval-tuning.md) | What the `--include resources` ranker was measured against and why its constants are what they are: `SIMILARITY_BLEND`, `BM25_COLUMN_WEIGHTS`, the prefix rule — plus the knobs that turned out to be inert. |
 | [`observability.md`](./observability.md) | What logs, traces, metrics, and readiness report; span names. |
 | [`bench-plan.md`](./bench-plan.md) | How graph quality is validated across backends (invariant judge, `run-light`). |
 

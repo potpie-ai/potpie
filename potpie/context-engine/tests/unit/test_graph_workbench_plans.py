@@ -352,6 +352,53 @@ def _link_payload(
     }
 
 
+def _entity_only_payload() -> dict:
+    return {
+        "operations": [
+            {
+                "op": "upsert_entity",
+                "subject": {
+                    "key": "feature:widget-cache",
+                    "type": "Feature",
+                    "name": "Widget cache",
+                    "summary": "caches rendered widgets",
+                    "description": "retrieval card for the widget cache feature",
+                },
+            }
+        ]
+    }
+
+
+def _bare_event_payload() -> dict:
+    return {
+        "operations": [
+            {
+                "op": "append_event",
+                "verb": "merged_pr",
+                "occurred_at": "2026-08-01T10:00:00Z",
+                "description": "merged PR 42 fixing the widget cache",
+                "evidence": [{"source_ref": "github:acme/widgets#pr/42"}],
+            }
+        ]
+    }
+
+
+def _timeline_event_payload() -> dict:
+    return {
+        "operations": [
+            {
+                "op": "append_event",
+                "verb": "merged_pr",
+                "occurred_at": "2026-08-01T10:00:00Z",
+                "description": "merged PR 42 fixing the widget cache",
+                "actor": {"key": "person:alice", "type": "Person"},
+                "targets": [{"key": "service:payments-api", "type": "Service"}],
+                "evidence": [{"source_ref": "github:acme/widgets#pr/42"}],
+            }
+        ]
+    }
+
+
 def _owner_payload(team: str) -> dict:
     return {
         "operations": [
@@ -595,6 +642,55 @@ def test_commit_verify_reads_back_claim_and_quality_summary() -> None:
     assert result.verification.missing_claim_keys == ()
     assert result.verification.quality_status == "ok"
     assert result.to_dict()["verification"]["readback_count"] == 1
+
+
+def test_commit_verify_says_when_a_plan_asserted_no_claims() -> None:
+    # An entity-only plan reads nothing back, so the plain "ok" it used to
+    # report was verification of nothing at all.
+    workbench, backend, _store = _service()
+    proposal = workbench.propose(_entity_only_payload(), pot_id=POT)
+    assert proposal.claim_keys == ()
+
+    result = workbench.commit(proposal.plan_id, pot_id=POT, verify=True)
+
+    assert result.ok is True
+    assert result.verification is not None
+    assert result.verification.status == "no_claims"
+    assert result.verification.readback_count == 0
+    assert "no claim keys" in (result.verification.detail or "")
+    assert result.verification.warnings
+    assert result.recommended_next_action
+    assert backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT)) == []
+
+
+def test_propose_rejects_an_event_that_would_write_nothing() -> None:
+    # append_event lowers to one claim per actor/target/mention. With none it
+    # lowered to zero, committed clean, verified ok — and never reached the
+    # timeline. The write is refused at the door instead.
+    workbench, backend, _store = _service()
+
+    proposal = workbench.propose(_bare_event_payload(), pot_id=POT)
+
+    assert proposal.ok is False
+    assert proposal.status == "invalid"
+    assert any(issue.get("code") == "empty_event" for issue in proposal.issues)
+    assert backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT)) == []
+
+
+def test_commit_verify_reads_back_a_timeline_event(tmp_path) -> None:
+    del tmp_path
+    workbench, backend, _store = _service()
+    proposal = workbench.propose(_timeline_event_payload(), pot_id=POT)
+    assert proposal.ok is True
+    assert proposal.claim_keys
+
+    result = workbench.commit(proposal.plan_id, pot_id=POT, verify=True)
+
+    assert result.ok is True
+    assert result.verification is not None
+    assert result.verification.status == "ok"
+    assert result.verification.readback_count == len(proposal.claim_keys)
+    assert backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
 
 
 def test_commit_verify_flags_quality_regression() -> None:

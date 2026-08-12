@@ -318,6 +318,86 @@ def test_the_host_flag_refuses_a_managed_host_that_is_not_configured(
     assert "pots" not in payload
 
 
+# --- integration auth is this machine's ------------------------------------
+
+
+@pytest.fixture
+def local_integrations(monkeypatch):
+    """Fake the one adapter that reads the machine's credential files.
+
+    Only the outermost read is stubbed: the command, its flag handling and the
+    host registry are the real ones, because the defect was that the *command*
+    ignored the host it was pointed at, not that the store answered wrongly.
+    """
+    asked: list[str] = []
+
+    def _status(provider: str) -> dict[str, Any]:
+        asked.append(provider)
+        return {"provider": provider, "authenticated": provider == "github"}
+
+    from potpie.cli.auth import auth_commands
+
+    monkeypatch.setattr(auth_commands, "get_integration_status", _status)
+    return asked
+
+
+def test_auth_status_refuses_to_report_this_machine_under_another_host(
+    registry, local_integrations
+) -> None:
+    """Silent wrong-host reporting is the worst of the three options.
+
+    ``potpie --host managed auth status`` listened to the flag not at all: it
+    read this laptop's GitHub and Linear logins and printed them at exit 0 under
+    a managed target, with nothing in the output naming which host answered.
+    Integration credentials are local OAuth/API-token files and a managed host
+    holds none, so naming one is refused rather than answered from elsewhere.
+    """
+    result = _run("--json", "--host", "managed", "auth", "status")
+
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "validation_error"
+    assert "cannot target" in payload["message"]
+    # Refused *before* the credential store was touched: a refusal that still
+    # reads the keychain has already done the thing it is refusing to report.
+    assert local_integrations == []
+
+
+def test_auth_status_still_answers_for_the_machine_it_is_run_on(
+    registry, local_integrations
+) -> None:
+    """Regression guard for the refusal above: no flag is not a managed target,
+    and neither is naming the local host."""
+    for args in (
+        ("--json", "auth", "status"),
+        ("--json", "--host", "local", "auth", "status"),
+    ):
+        result = _run(*args)
+
+        assert result.exit_code == 0, result.output
+        providers = [
+            row["provider"] for row in json.loads(result.output)["integrations"]
+        ]
+        assert "github" in providers
+
+
+def test_auth_status_keeps_working_for_a_persisted_managed_pointer(
+    registry, local_integrations, monkeypatch
+) -> None:
+    """Only an *explicit* target refuses.
+
+    Someone whose active host is managed still has to be able to see and repair
+    the credentials on the machine they are typing on — the same rule ``setup``
+    already follows.
+    """
+    monkeypatch.setattr(hosts, "persisted_origin", lambda: hosts.MANAGED)
+
+    result = _run("--json", "auth", "status")
+
+    assert result.exit_code == 0, result.output
+    assert local_integrations != []
+
+
 # --- configuring the managed endpoint -------------------------------------
 
 

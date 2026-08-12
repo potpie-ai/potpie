@@ -248,3 +248,37 @@ def test_naming_a_skill_the_plugin_cannot_carry_is_refused(
 
     assert SKILL in str(exc.value)
     assert "--agent claude" in str(exc.value)
+
+
+# --- a typo is not a packaging gap -------------------------------------------
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+@pytest.mark.parametrize("operation", ["install", "update"])
+def test_an_id_no_catalog_carries_is_answered_as_the_typo_it_is(
+    monkeypatch, tmp_path: Path, agent: str, operation: str
+) -> None:
+    """The refusal above is the one a *real* target reaches first, for anything.
+
+    ``available()`` is asked before the catalog — a bundle is what can actually
+    install — so an id that is in neither got the bundle's message: "Skill
+    'potpie-nope' is in the catalog but this build's claude bundle does not
+    carry it … install it for another harness, e.g. 'potpie skills install
+    potpie-nope --agent claude'." Every clause of that is false for an id that
+    does not exist, and the last one hands back the command that just failed.
+
+    Only the real targets answer ``available()``; every manager-level test fakes
+    a target that does not, and so saw the catalog's correct refusal while the
+    product printed this one.
+    """
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
+    host = build_host_shell(backend=InMemoryGraphBackend())
+
+    with pytest.raises(ValueError) as exc:
+        getattr(host.skills, operation)(agent=agent, skill_id="potpie-nope")
+
+    message = str(exc.value)
+    assert "Unknown skill 'potpie-nope'" in message
+    assert "is in the catalog" not in message
+    # And the ids that do exist, which is what makes a typo fixable.
+    assert SKILL in message

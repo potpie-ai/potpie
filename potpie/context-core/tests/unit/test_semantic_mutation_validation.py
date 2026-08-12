@@ -319,6 +319,26 @@ def test_append_event_validates_entity_refs_and_endpoints() -> None:
     assert any(i.code == "unknown_entity_type" for i in plan.errors)
 
 
+def test_append_event_without_endpoints_is_rejected() -> None:
+    # The lowerer emits one claim per actor/target/mention, so an event with
+    # none writes nothing at all; accepting it produced a clean commit and an
+    # empty timeline.
+    plan = validate_semantic_request(
+        _req(
+            {
+                "op": "append_event",
+                "verb": "merged_pr",
+                "occurred_at": "2026-06-08T00:00:00Z",
+                "description": "merged PR #42",
+            }
+        )
+    )
+
+    assert not plan.ok
+    assert plan.decision == "rejected"
+    assert any(i.code == "empty_event" for i in plan.errors)
+
+
 def test_end_relation_validity_requires_exact_object() -> None:
     plan = validate_semantic_request(
         _req(

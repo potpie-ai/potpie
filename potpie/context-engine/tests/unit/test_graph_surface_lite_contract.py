@@ -949,6 +949,124 @@ def test_search_entities_can_include_bounded_supporting_claims(service) -> None:
     assert len(by_key["feature:payments"]["supporting_claims"]) == 1
 
 
+def _hub_topology_request(*, count: int = 4) -> SemanticMutationRequest:
+    """One hub service depending on ``count`` others — a star neighbourhood."""
+    return SemanticMutationRequest.parse(
+        {
+            "pot_id": "p",
+            "operations": [
+                {
+                    "op": "link_entities",
+                    "subgraph": "infra_topology",
+                    "subject": {"key": "service:payments-api", "type": "Service"},
+                    "predicate": "DEPENDS_ON",
+                    "object": {"key": f"service:dep-{index}", "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [
+                        {
+                            "source_ref": f"repo:manifest#{index}",
+                            "authority": "repository_metadata",
+                        }
+                    ],
+                    "description": f"payments depends on dep {index}",
+                }
+                for index in range(count)
+            ],
+        }
+    )
+
+
+def test_read_limit_bounds_items_after_relation_assembly(service) -> None:
+    # The entity projection fans each claim out to both endpoints, so a star
+    # neighbourhood answered --limit N with N+1 rows: the budget was spent on
+    # claims, never on what the caller actually receives.
+    service.mutate(_hub_topology_request(count=4))
+
+    for limit in (1, 2, 3):
+        env = service.read(
+            GraphReadRequest(
+                pot_id="p",
+                subgraph="infra_topology",
+                view="service_neighborhood",
+                scope={"service": "payments-api"},
+                limit=limit,
+            )
+        )
+        assert len(env.items) == limit, f"--limit {limit} returned {len(env.items)}"
+
+
+def test_admin_inspection_slice_returns_distinct_nodes_with_relations(service) -> None:
+    # The operator/raw view declares no inline relations, so every claim came
+    # back as its own item: the hub was repeated once per edge and no row
+    # carried its relations at all.
+    service.mutate(_hub_topology_request(count=3))
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p", subgraph="admin", view="inspection_slice", limit=10
+        )
+    )
+
+    keys = [item["entity_key"] for item in env.items]
+    assert len(keys) == len(set(keys))
+    assert set(keys) == {
+        "service:payments-api",
+        "service:dep-0",
+        "service:dep-1",
+        "service:dep-2",
+    }
+    by_key = {item["entity_key"]: item for item in env.items}
+    assert len(by_key["service:payments-api"]["relations"]) == 3
+    assert all(len(by_key[f"service:dep-{i}"]["relations"]) == 1 for i in range(3))
+
+
+def test_search_entities_ranks_an_exact_entity_key_first(service) -> None:
+    service.mutate(_hub_topology_request(count=4))
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(pot_id="p", query="service:dep-3", limit=5)
+    ).to_dict()
+
+    # Identity resolution, not text retrieval: the hub's claims mention every
+    # dependency, so without an exact-key rule the hub outranked the entity the
+    # caller spelled out.
+    assert result["entities"][0]["key"] == "service:dep-3"
+
+
+def test_search_entities_finds_an_entity_with_no_claims(service) -> None:
+    service.mutate(
+        SemanticMutationRequest.parse(
+            {
+                "pot_id": "p",
+                "operations": [
+                    {
+                        "op": "upsert_entity",
+                        "subject": {
+                            "key": "feature:lonely-widget",
+                            "type": "Feature",
+                            "name": "Lonely widget",
+                            "summary": "written without any claim",
+                            "description": "retrieval card for the lonely widget",
+                        },
+                    }
+                ],
+            }
+        )
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(pot_id="p", query="feature:lonely-widget", limit=5)
+    ).to_dict()
+
+    # Candidates are aggregated from claim rows, so an entity written by
+    # upsert_entity alone used to be unreachable — you could not resolve its
+    # identity before writing the claim that would have made it findable.
+    by_key = {entity["key"]: entity for entity in result["entities"]}
+    assert "feature:lonely-widget" in by_key
+    assert by_key["feature:lonely-widget"]["name"] == "Lonely widget"
+    assert result["entities"][0]["key"] == "feature:lonely-widget"
+
+
 def test_read_projects_canonical_labels_from_key_prefix(service) -> None:
     store = service.backend.claim_query
     store.add(

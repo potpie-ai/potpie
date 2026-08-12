@@ -422,8 +422,18 @@ def _validate_event_op(op, *, err, warn) -> None:
         err("missing_verb", "append_event requires a 'verb' (verb_class)")
     if op.occurred_at and not _parses_iso(op.occurred_at):
         err("bad_timestamp", f"occurred_at {op.occurred_at!r} is not valid ISO 8601")
-    # An event with no target / actor / mention is allowed (it can still anchor
-    # a timeline entry), but description aids recall.
+    # An event is its edges: the lowerer emits one claim per actor / target /
+    # mention and nothing else, and the timeline reads those claims. An event
+    # carrying none used to be accepted as a bare "anchor" — it lowered to zero
+    # claims, committed clean, verified ok, and never appeared in any read. That
+    # is a silently dropped write, so it is rejected at the door instead.
+    if op.actor is None and not op.targets and not op.mentions:
+        err(
+            "empty_event",
+            "append_event requires at least one of 'actor', 'targets', or "
+            "'mentions'; an event with none writes no claim and would never "
+            "appear on the timeline",
+        )
     if not (op.description and op.description.strip()):
         warn(
             "missing_description",

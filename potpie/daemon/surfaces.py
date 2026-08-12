@@ -23,12 +23,16 @@ Two defences live here, and neither is a protocol worth the name:
   someone else's machine;
 * :func:`surface_contract` is served at ``GET /surfaces`` so a client can ask a
   host what it implements rather than assume its own copy applies to it.
+  :mod:`potpie.daemon.negotiation` is the other end of that: the CLI reads a
+  host's answer once per connection and classifies refusals against it, so
+  "does this host implement that surface" stops being a guess about the wording
+  of someone else's error message.
 
 What this deliberately does *not* claim: the cross-repo half cannot be enforced
 from here, because we do not control the other build and cannot fail its CI. The
 enforceable substitutes are the declaration tests above plus a client that
 degrades correctly against a host which does not answer — which is why
-:func:`potpie.cli.hosts.advertised_surfaces` reports silence as ``None`` and
+:func:`potpie.daemon.negotiation.negotiate` reports silence as ``UNKNOWN`` and
 never as "implements nothing".
 """
 
@@ -86,6 +90,87 @@ RPC_SURFACES: Final[frozenset[str]] = frozenset(
 DENIED_SURFACES: Final[frozenset[str]] = frozenset({"daemon", "profile"})
 
 
+#: Surfaces where *every* member is a read, so the whole surface can run
+#: concurrently. These are the backend's read-only capability ports; a write
+#: reaches the graph through ``backend.mutation`` or ``graph.mutate``, never
+#: through one of these.
+READ_ONLY_RPC_SURFACES: Final[frozenset[str]] = frozenset(
+    {
+        "backend.analytics",
+        "backend.claim_query",
+        "backend.inspection",
+    }
+)
+
+#: Per-surface members that are reads, on surfaces that also carry writes.
+#:
+#: **The default is exclusive.** A method that is not named here is serialized
+#: exactly as every method used to be, so adding one to a service — or renaming
+#: one listed here — costs throughput and never correctness. That direction is
+#: the whole reason this is a declaration and not a naming convention: a
+#: ``get_or_create`` matching a "reads start with get" rule would be a silent
+#: lost update, and no test would fail.
+#:
+#: Everything listed was read for this: it either returns a projection of
+#: stored state or delegates to one of the read-only ports above. The pot,
+#: plan, and inbox stores publish through ``tmp.replace(path)``, so a reader
+#: concurrent with a writer sees one whole version or the other — which is why
+#: concurrent *reads* need no ordering at all, and why readers still exclude
+#: writers below.
+READ_ONLY_RPC_MEMBERS: Final[dict[str, frozenset[str]]] = {
+    "agent_context": frozenset({"resolve", "search", "status"}),
+    "auth": frozenset({"whoami"}),
+    "backend": frozenset({"capabilities", "profile"}),
+    "config": frozenset({"get", "list_public", "probe"}),
+    "graph": frozenset(
+        {
+            "catalog",
+            "catalog_async",
+            "data_plane_status",
+            "describe",
+            "describe_async",
+            "read",
+            "read_async",
+            "resolve",
+            "resolve_async",
+            "search",
+            "search_async",
+            "search_entities",
+            "search_entities_async",
+        }
+    ),
+    "graph_workbench": frozenset({"history", "inbox_list", "inbox_show", "quality"}),
+    "installer": frozenset({"is_installed"}),
+    # ``pull`` is missing on purpose: it advances the consumer cursor.
+    "ledger": frozenset({"query", "sources", "status"}),
+    "pots": frozenset(
+        {
+            "active_pot",
+            "aggregate_status",
+            "list_pots",
+            "list_repo_defaults",
+            "list_repo_sources",
+            "list_sources",
+            "repo_default",
+            "source_status",
+        }
+    ),
+    "resources": frozenset({"claims", "get", "index_status", "list", "status"}),
+    "skills": frozenset({"list", "status"}),
+}
+
+
+def is_read_only(surface: str, member: str) -> bool:
+    """Can this call share the daemon with another read?
+
+    Unrecognised is not read-only. The cost of that default is a slower call;
+    the cost of the other default is a race nobody would find.
+    """
+    if surface in READ_ONLY_RPC_SURFACES:
+        return True
+    return member in READ_ONLY_RPC_MEMBERS.get(surface, frozenset())
+
+
 def surface_contract() -> dict[str, Any]:
     """What ``GET /surfaces`` answers: the surfaces this host actually serves.
 
@@ -123,8 +208,11 @@ def undeclared_host_surfaces() -> tuple[str, ...]:
 
 __all__ = [
     "DENIED_SURFACES",
+    "READ_ONLY_RPC_MEMBERS",
+    "READ_ONLY_RPC_SURFACES",
     "RPC_SURFACES",
     "SURFACE_CONTRACT_VERSION",
+    "is_read_only",
     "surface_contract",
     "undeclared_host_surfaces",
 ]

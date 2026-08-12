@@ -13,12 +13,16 @@ from typing import Any, Mapping
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 from potpie_context_engine.adapters.outbound.skills.agent_installer import (
     InstallResult,
+    UninstallResult,
     available_skill_ids,
     install_global_agent_instructions,
     install_agent_bundle,
     install_skill_bundle,
     project_skill_path,
+    prune_empty_dirs,
     resolve_install_root,
+    uninstall_agent_bundle,
+    uninstall_global_agent_instructions,
 )
 from potpie_context_engine.adapters.outbound.skills.bundle_catalog import (
     RECOMMENDED_SKILL_IDS,
@@ -26,6 +30,32 @@ from potpie_context_engine.adapters.outbound.skills.bundle_catalog import (
 from potpie_context_engine.adapters.outbound.skills.harness_home import harness_home
 
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+
+
+def _read_version_manifest(path: Path) -> dict[str, str]:
+    """The recorded ``skill id -> version`` map, or an empty one it can repair.
+
+    The manifest is a *cache* of what install last wrote; the files on disk are
+    the truth about what is installed. So an unreadable one is answered with
+    "no recorded versions", which surfaces as ``installed_version="unknown"``,
+    lands every present skill in ``skills status --outdated``, and is repaired
+    by the reinstall that report already tells the user to run.
+
+    Only ``JSONDecodeError`` used to be caught, so a manifest holding valid JSON
+    of the wrong *shape* — a list, a string, anything a stray write leaves
+    behind — raised ``AttributeError: 'list' object has no attribute 'items'``.
+    Across the daemon that is an unclassified 500, which the CLI reports as
+    ``unavailable`` at exit 2 and repairs with "check backend/daemon readiness
+    with 'potpie doctor'" — a daemon that is fine, for a file that is not.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, Mapping):
+        return {}
+    return {str(k): str(v) for k, v in data.items()}
 
 
 def _project_manifest_slug(root: Path) -> str:
@@ -63,12 +93,7 @@ class FileBackedAgentTarget:
         return self.home / f"skills_{self.agent}_{self.scope}.json"
 
     def _load(self) -> dict[str, str]:
-        try:
-            with open(self._path, encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-        return {str(k): str(v) for k, v in data.items()}
+        return _read_version_manifest(self._path)
 
     def _save(self, data: Mapping[str, str]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
@@ -122,6 +147,18 @@ class FileBackedAgentTarget:
             force=True,
         )
 
+    def remove_support_files(
+        self, *, path: str | None = None
+    ) -> UninstallResult | None:
+        """The mirror of :meth:`install_support_files`; see it for what these are."""
+        del path
+        if self.instructions_root is None:
+            return None
+        return uninstall_global_agent_instructions(
+            self.instructions_root,
+            agent=self.instructions_agent or self.agent,
+        )
+
     def remove(self, *, skill_id: str) -> None:
         shutil.rmtree(self.skills_root.expanduser() / skill_id, ignore_errors=True)
         data = self._load()
@@ -156,12 +193,7 @@ class ProjectAgentTarget:
         )
 
     def _load(self) -> dict[str, str]:
-        try:
-            with open(self._path, encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-        return {str(k): str(v) for k, v in data.items()}
+        return _read_version_manifest(self._path)
 
     def _save(self, data: Mapping[str, str]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
@@ -216,11 +248,20 @@ class ProjectAgentTarget:
             root, agent=self.agent, skill_ids=(), force=True, support_files=True
         )
 
+    def remove_support_files(self, *, path: str | None = None) -> UninstallResult:
+        """The mirror of :meth:`install_support_files`; see it for what these are."""
+        root = Path(path) if path else self.path
+        return uninstall_agent_bundle(root, agent=self.agent)
+
     def remove(self, *, skill_id: str) -> None:
-        shutil.rmtree(
-            project_skill_path(self.path, agent=self.agent, skill_id=skill_id).parent,
-            ignore_errors=True,
-        )
+        skill_dir = project_skill_path(
+            self.path, agent=self.agent, skill_id=skill_id
+        ).parent
+        shutil.rmtree(skill_dir, ignore_errors=True)
+        # The harness's skills directory is Potpie's own; once the last skill
+        # leaves it, an empty `.claude/potpie-plugin/skills/` still reads as an
+        # install to anyone opening the repo.
+        prune_empty_dirs(skill_dir.parent, stop_at=self.target_root)
         data = self._load()
         data.pop(skill_id, None)
         self._save(data)
@@ -256,6 +297,16 @@ class ProjectOnlyAgentTarget:
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         del skill_id, version, path
         self._refuse()
+
+    def install_support_files(self, *, path: str | None = None) -> InstallResult:
+        del path
+        self._refuse()
+        raise AssertionError  # pragma: no cover - _refuse always raises
+
+    def remove_support_files(self, *, path: str | None = None) -> UninstallResult:
+        del path
+        self._refuse()
+        raise AssertionError  # pragma: no cover - _refuse always raises
 
     def remove(self, *, skill_id: str) -> None:
         del skill_id

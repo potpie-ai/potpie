@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NoReturn
 
 import typer
 
@@ -32,14 +32,21 @@ from potpie.cli.telemetry.onboarding_events import (
     now_ms,
     sanitized_failure_kind,
 )
-from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
+from potpie.cli.repo_location import (
+    repo_identity_key_for_location,
+    resolve_repo_location,
+)
 from potpie.cli.source_kinds import (
     SourceKind,
     known_tokens,
     registrable_names,
     resolve_kind,
 )
-from potpie_context_core.errors import CapabilityNotImplemented, PotNotFound
+from potpie_context_core.errors import CapabilityNotImplemented, SourceNotFound
+from potpie_context_engine.domain.ports.services.pot_management import (
+    INGESTION_NOT_STARTED,
+    SOURCE_REGISTERED,
+)
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
 default_app = typer.Typer(help="Repo-local default pot routing.")
@@ -93,9 +100,19 @@ def pot_list(
         # hid the managed ones is what sent people looking for a broken server.
         # The flags narrow it; --all forces both sections so an unconfigured or
         # unreachable managed host is stated rather than merely absent.
-        if local and not managed:
-            origins: tuple[str, ...] = (hosts.LOCAL,)
-        elif managed and not local:
+        #
+        # A flag combination that names *both* origins is honoured as both,
+        # never as whichever branch happened to be tested first: `--local
+        # --managed` used to fall through to the configured origins, so on the
+        # default install it printed a local-only listing at exit 0 while
+        # `--managed` on its own refused — half the request dropped without a
+        # word. Same for `--all --local`, which is `--all` with one origin
+        # named twice, not a narrowing of it.
+        wants_local = local or all_
+        wants_managed = managed or all_
+        if wants_local and wants_managed:
+            origins: tuple[str, ...] = hosts.ORIGINS
+        elif wants_managed:
             if hosts.managed_endpoint() is None:
                 raise CapabilityNotImplemented(
                     "host.pots.list_managed",
@@ -103,8 +120,8 @@ def pot_list(
                     recommended_next_action="run 'potpie host set <base-url> [--token <key>]'",
                 )
             origins = (hosts.MANAGED,)
-        elif all_:
-            origins = hosts.ORIGINS
+        elif wants_local:
+            origins = (hosts.LOCAL,)
         else:
             origins = hosts.configured_origins()
 
@@ -224,19 +241,32 @@ def _repo_key_from_option(repo: str) -> str:
     if value in ("", ".", "current"):
         repo_key = current_repo_identity_for_cli()
     else:
-        repo_key = repo_identity_key(value)
+        # The same key `source add repo --default` writes, so binding a repo by
+        # path and reading it back from inside that path cannot disagree.
+        repo_key = repo_identity_key_for_location(value)
     if not repo_key:
         raise ValueError("--repo must resolve to a git remote or path")
     return repo_key
 
 
-def _matching_repo_source(
+def _existing_source(
     host: Any,
     *,
     pot_id: str,
+    kind: str,
     resolved_location: str,
     repo_key: str | None,
 ) -> Any | None:
+    """The row this registration would duplicate, or ``None``.
+
+    Repo sources are matched by repo identity — the point of the key is that
+    ``.``, an absolute path and ``git@github.com:acme/shop.git`` are one
+    repository. Every other kind is matched on its stored location, which is
+    all the identity a Linear team or a URL has: ``source add linear team/PLAT``
+    run twice used to leave two rows, and a registry that answers "which
+    sources does this pot have" with the same source twice is wrong in the
+    listing, in ``source_count``, and in whatever a harness does per source.
+    """
     list_sources = getattr(host.pots, "list_sources", None)
     if not callable(list_sources):
         return None
@@ -245,14 +275,16 @@ def _matching_repo_source(
     except Exception:  # noqa: BLE001 - duplicate detection must not block registration
         return None
     for source in sources or []:
-        if getattr(source, "kind", None) != "repo":
+        if getattr(source, "kind", None) != kind:
             continue
         refs = (
             str(getattr(source, "location", "") or "").strip(),
             str(getattr(source, "name", "") or "").strip(),
         )
-        if repo_key:
-            if any(repo_identity_key(ref) == repo_key for ref in refs if ref):
+        if kind == "repo" and repo_key:
+            if any(
+                repo_identity_key_for_location(ref) == repo_key for ref in refs if ref
+            ):
                 return source
             continue
         if resolved_location in refs:
@@ -273,9 +305,15 @@ def register_repo_source(
     Resolves ``.`` / ``current`` to git remote or absolute path, persists
     ``location`` on the source row, and sets the repo-local default unless
     ``make_default`` is false.
+
+    Everything that can refuse this registration refuses it *before* the row is
+    written. The repo-identity check used to run the other way round: an
+    unresolvable location was persisted as a source row and only then failed,
+    so exit 1 left a junk registration behind — and because dedup then matched
+    that row, every retry "found" it and never wrote a real one.
     """
     resolved_location = resolve_repo_location(location)
-    repo_key = repo_identity_key(resolved_location)
+    repo_key = repo_identity_key_for_location(resolved_location)
     repo_default_set = False
     repo_default_setter = None
     if make_default:
@@ -286,9 +324,16 @@ def register_repo_source(
                 message="This host does not support repo default bindings.",
                 next_action="upgrade the local context-engine host",
             )
-    existing = _matching_repo_source(
+        if not repo_key:
+            fail(
+                code="repo_unresolved",
+                message="Could not resolve the repository identity.",
+                next_action="pass a repo location such as '<owner>/<repo>'",
+            )
+    existing = _existing_source(
         host,
         pot_id=pot_id,
+        kind="repo",
         resolved_location=resolved_location,
         repo_key=repo_key,
     )
@@ -302,15 +347,19 @@ def register_repo_source(
             name=name,
         )
     if make_default:
-        if not repo_key:
-            fail(
-                code="repo_unresolved",
-                message="Could not resolve the repository identity.",
-                next_action="pass a repo location such as '<owner>/<repo>'",
+        try:
+            repo_default_setter(repo=repo_key, pot_id=pot_id)
+        except Exception:
+            # The binding is the reason `source add repo` is more than a row, so
+            # a row that outlives the failure of the thing it was written for is
+            # the same junk registration — and the one every later retry would
+            # then dedup against.
+            _discard_registration(
+                host, pot_id=pot_id, source=src, created=existing is None
             )
-        repo_default_setter(repo=repo_key, pot_id=pot_id)
+            raise
         repo_default_set = True
-    return {
+    payload: dict[str, object] = {
         "source_id": src.source_id,
         "kind": src.kind,
         "name": src.name,
@@ -320,6 +369,32 @@ def register_repo_source(
         "repo_key": repo_key,
         "registration_only": True,
     }
+    # Reported only when it happened, like ``requested_kind``: "we reused the
+    # row you already had" is the one thing this answer would otherwise hide
+    # behind a fresh-looking success.
+    if existing is not None:
+        payload["already_registered"] = True
+    return payload
+
+
+def _discard_registration(
+    host: Any, *, pot_id: str, source: Any, created: bool
+) -> None:
+    """Undo a row this invocation wrote, when the rest of the command failed.
+
+    Only a row *this* invocation created is dropped: reusing an existing
+    registration and then failing must not delete the registration that was
+    already there.
+    """
+    if not created:
+        return
+    remover = getattr(host.pots, "remove_source", None)
+    if not callable(remover):
+        return
+    try:
+        remover(pot_id=pot_id, source_id=source.source_id)
+    except Exception:  # noqa: BLE001, S110 - the original failure is the one to report
+        pass
 
 
 @pot_app.command("create")
@@ -587,19 +662,42 @@ _TEARDOWN_UNREPORTED = (
 def _destructive_target(host: Any, ref: str) -> tuple[str, str]:
     """``(pot_id, label)`` for a ref a destructive command is about to act on."""
     pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
-    return pot_id, _target_label(pot_id)
+    return pot_id, _target_label(host, pot_id)
 
 
-def _target_label(pot_id: str) -> str:
-    """How to name the target in a confirmation prompt: pot *and* host.
+def _target_label(host: Any, pot_id: str) -> str:
+    """How to name the target in a confirmation prompt: name, id *and* host.
 
     A prompt that says only ``resetting 'default'`` is not enough to consent to
     when ``default`` exists on two hosts and the CLI has been moved to one of
-    them by the ref itself.
+    them by the ref itself. The *name* is here for the mirror-image case: a
+    target the caller did not type — a bare ``pot reset`` resolved off the repo
+    binding — arrives as an opaque ``pot_37ab7f7fe4ef``, which nobody can match
+    against the pot they believe they are working in.
     """
     from potpie.cli import hosts
 
-    return f"{pot_id} on the {hosts.current_origin()} host"
+    name = _pot_name(host, pot_id)
+    named = f"'{name}' ({pot_id})" if name else pot_id
+    return f"{named} on the {hosts.current_origin()} host"
+
+
+def _pot_name(host: Any, pot_id: str) -> str | None:
+    """The pot's display name, or ``None`` if the host will not say.
+
+    Naming the target is an improvement to a refusal or a prompt, never a
+    precondition for it: a host that cannot enumerate must still be able to
+    print "resetting pot_x" rather than dying inside the message it was
+    building.
+    """
+    try:
+        pots = host.pots.list_pots()
+    except Exception:  # noqa: BLE001 - see docstring
+        return None
+    for pot in pots or ():
+        if getattr(pot, "pot_id", None) == pot_id:
+            return getattr(pot, "name", None)
+    return None
 
 
 @pot_app.command("rename")
@@ -609,6 +707,65 @@ def pot_rename(ref: str, new_name: str) -> None:
         pot_id, _ = _destructive_target(host, ref)
         pot = host.pots.rename_pot(ref=pot_id, new_name=new_name)
         emit({"id": pot.pot_id, "name": pot.name}, human=f"renamed → {pot.name}")
+
+
+def _inferred_reset_target(host: Any) -> tuple[str, str]:
+    """``(pot_id, label)`` for a ``pot reset`` that named no pot at all.
+
+    The pot still comes out of :func:`resolve_pot_scope` — the same resolution
+    every other command uses, repo default then the repo's single linked pot
+    then the active pot — so a bare ``reset`` can never wipe a pot that is not
+    the one the rest of the CLI is reading and writing. That order is right for
+    a read and not sufficient for a wipe: it *finds* a pot rather than being
+    told one. With a repo default pointing at one pot and a different pot
+    active, ``pot reset --confirm`` destroyed the repo default while ``pot
+    info`` named the other as active; with no active pot at all it still found
+    the repo's pot and destroyed that.
+
+    So inference may find the target and may not choose it: unless the resolved
+    pot is also the active one, the caller has to name it. Typing the ref costs
+    a word; re-creating a wiped pot's memory is not possible at all.
+    """
+    target, resolved_via = resolve_pot_scope(host)
+    label = _target_label(host, target)
+    active = host.pots.active_pot()
+    active_id = getattr(active, "pot_id", None)
+    if active_id == target:
+        return target, label
+    repo = (
+        current_repo_identity_for_cli()
+        if resolved_via in {"repo_default", "linked_repo"}
+        else None
+    )
+    via = pot_scope_resolution_human(resolved_via, repo=repo)
+    detail = {
+        "target_pot_id": target,
+        "resolved_via": resolved_via,
+        "active_pot_id": active_id,
+    }
+    next_action = (
+        f"name the pot you mean: 'potpie pot reset {target} --confirm', "
+        f"or select it first with 'potpie pot use {target}'"
+    )
+    if active_id is None:
+        fail(
+            code="no_active_pot",
+            message=(
+                f"No pot is active, so 'potpie pot reset' will not pick one: it "
+                f"would have wiped {label}, {via}."
+            ),
+            detail=detail,
+            next_action=next_action,
+        )
+    fail(
+        code="ambiguous_pot",
+        message=(
+            f"'potpie pot reset' with no ref would wipe {label}, {via} — but the "
+            f"active pot is '{getattr(active, 'name', active_id)}' ({active_id})."
+        ),
+        detail=detail,
+        next_action=next_action,
+    )
 
 
 @pot_app.command("reset")
@@ -625,8 +782,7 @@ def pot_reset(
         if ref:
             target, label = _destructive_target(host, ref)
         else:
-            target = resolve_pot_id(host)
-            label = _target_label(target)
+            target, label = _inferred_reset_target(host)
         if not confirm:
             fail(
                 code="confirmation_required",
@@ -735,6 +891,59 @@ def _dispatch_source_kind(raw: str) -> SourceKind:
     return resolved
 
 
+def _require_location(location: str, *, kind: SourceKind) -> str:
+    """The location to register, refusing one that identifies nothing.
+
+    ``source add linear '   '`` exited 0 and left a row whose location, name and
+    every later match against it were blank: un-routable, un-ingestable, and
+    visible only as an extra number in ``source_count``. Refused at the boundary
+    the user typed at, so the message can name the argument; the control plane
+    refuses it again, because a registry that accepts a nameless row is wrong
+    whoever asked.
+    """
+    cleaned = (location or "").strip()
+    if cleaned:
+        return cleaned
+    fail(
+        code="missing_source_location",
+        message=(
+            f"A '{kind.name}' source needs a location; an empty one registers nothing."
+        ),
+        detail={"kind": kind.name},
+        next_action=(
+            "pass what to register, e.g. 'potpie source add repo .'"
+            if kind.disposition == "repo"
+            else f"pass what to register, e.g. 'potpie source add {kind.name} <ref>'"
+        ),
+    )
+
+
+def _fail_source_not_found(exc: SourceNotFound, *, pot_id: str) -> NoReturn:
+    """Report a missing *source* as one, with the listing that would find it.
+
+    ``source_not_found``, never ``pot_not_found``: the pot resolved fine, and
+    sending the operator to ``pot list`` to hunt for a pot that is not missing
+    is a repair that cannot succeed. The registration is usually alive in the
+    pot they did not pass.
+    """
+    fail(
+        code="source_not_found",
+        message=str(exc),
+        detail={"pot_id": pot_id},
+        next_action=(
+            getattr(exc, "recommended_next_action", None)
+            or f"list this pot's sources with 'potpie source list --pot {pot_id}'"
+        ),
+    )
+
+
+def _ingestion_marker(row: dict) -> str:
+    """The human suffix for how far ingestion has got on a source row."""
+    if row.get("registration_only"):
+        return " [registration-only]"
+    return f" [ingestion: {row.get('ingestion_status')}]"
+
+
 @source_app.command("add")
 def source_add(
     kind: str = typer.Argument(
@@ -761,6 +970,7 @@ def source_add(
     with contract():
         host = get_host()
         source_kind = _dispatch_source_kind(kind)
+        location = _require_location(location, kind=source_kind)
         is_repo = source_kind.disposition == "repo"
         if not is_repo and make_default is True:
             fail(
@@ -791,7 +1001,18 @@ def source_add(
                     make_default=make_default is not False,
                 )
             else:
-                src = host.pots.add_source(
+                # Idempotent for every kind, not just repo: re-running
+                # `source add linear team/PLAT` doubled the registry, and each
+                # copy then counted as a source of its own everywhere sources
+                # are counted or walked.
+                existing = _existing_source(
+                    host,
+                    pot_id=pot_id,
+                    kind=source_kind.name,
+                    resolved_location=location,
+                    repo_key=None,
+                )
+                src = existing or host.pots.add_source(
                     pot_id=pot_id,
                     kind=source_kind.name,
                     location=location,
@@ -806,6 +1027,8 @@ def source_add(
                     "repo_default_set": False,
                     "registration_only": True,
                 }
+                if existing is not None:
+                    payload["already_registered"] = True
         except Exception as exc:  # noqa: BLE001
             capture_project_binding_event(
                 "cli_onboarding_repo_source_add_failed",
@@ -917,22 +1140,39 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
 
 
 def _enrich_source(host, src, pot_id: str) -> dict:
-    """Build the rich source row used by both per-pot summary and single-source status."""
+    """Build the rich source row used by both per-pot summary and single-source status.
+
+    Every field here is the row's own answer. Three of them were literals —
+    ``status`` fell back to ``"ok"``, ``ingestion_status`` was always
+    ``"not_started"`` and ``registration_only`` was always ``True`` — so
+    ``source status`` reported a healthy, never-ingested registration for a
+    source stored as ``error`` and ingested last week. A status command that
+    cannot report a bad status is a status command with nothing to say.
+    """
     location = getattr(src, "location", None)
     kind = getattr(src, "kind", "unknown")
     repo_default = False
     if kind == "repo" and location:
-        repo_key = repo_identity_key(location)
+        repo_key = repo_identity_key_for_location(location)
         repo_default = repo_default_matches(host, repo_key, pot_id)
+    ingestion_status = str(
+        getattr(src, "ingestion_status", None) or INGESTION_NOT_STARTED
+    )
     return {
         "id": src.source_id,
         "kind": kind,
         "name": src.name,
         "location": location,
-        "status": getattr(src, "status", "ok"),
+        "status": str(getattr(src, "status", None) or SOURCE_REGISTERED),
         "repo_default": repo_default,
-        "registration_only": True,
-        "ingestion_status": "not_started",
+        # Derived on the row when the host reports one (``SourceInfo`` computes
+        # it from the ingestion status); otherwise from the ingestion status
+        # this row carries, so an ingested source is never labelled
+        # registration-only.
+        "registration_only": bool(
+            getattr(src, "registration_only", ingestion_status == INGESTION_NOT_STARTED)
+        ),
+        "ingestion_status": ingestion_status,
     }
 
 
@@ -995,7 +1235,7 @@ def source_status(
                                     f"({row['id']}) "
                                     f"status={row['status']}"
                                     + (" [repo-default]" if row["repo_default"] else "")
-                                    + " [registration-only]"
+                                    + _ingestion_marker(row)
                                 )
                                 for row in source_rows
                             ),
@@ -1012,14 +1252,17 @@ def source_status(
             )
         else:
             # Single-source mode: same enriched shape
-            src = host.pots.source_status(pot_id=pot_id, source_id=source_id)
+            try:
+                src = host.pots.source_status(pot_id=pot_id, source_id=source_id)
+            except SourceNotFound as exc:
+                _fail_source_not_found(exc, pot_id=pot_id)
             row = _enrich_source(host, src, pot_id)
             emit(
                 row,
                 human=(
-                    f"{src.name}: {src.status} kind={src.kind}"
+                    f"{src.name}: {row['status']} kind={row['kind']}"
                     + (" [repo-default]" if row["repo_default"] else "")
-                    + " [registration-only]"
+                    + _ingestion_marker(row)
                 ),
             )
 
@@ -1037,20 +1280,13 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
         # worst possible answer to the likeliest mistake: the registration is
         # usually alive in the pot the caller did not pass, and the message
         # sends them away believing it is gone. Named like the same miss in
-        # ``source status`` so both commands answer it identically.
+        # ``source status`` so both commands answer it identically — same error
+        # type, same code, same repair.
         if removed is False:
-            missing = PotNotFound(f"No source '{source_id}' in pot '{pot_id}'.")
-            # The right message pointed at the wrong repair: the boundary's
-            # default ``PotNotFound`` next action is "list pots with 'potpie pot
-            # list' or create one with 'potpie setup'", and the pot is not what
-            # is missing — the registration is usually alive in the pot the
-            # caller did not pass. Naming the listing that actually answers the
-            # question keeps this from being the same misdirection the message
-            # above was written to avoid.
-            missing.recommended_next_action = (
-                f"list this pot's sources with 'potpie source list --pot {pot_id}'"
+            _fail_source_not_found(
+                SourceNotFound(f"No source '{source_id}' in pot '{pot_id}'."),
+                pot_id=pot_id,
             )
-            raise missing
         emit(
             {"removed": source_id, "resources_touched": False},
             human=(

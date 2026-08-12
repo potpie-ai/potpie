@@ -267,6 +267,16 @@ class _PlanStoreBridge(_StoreBridge):
         return await self._bridge.call_async("compare_and_set", *args, **kwargs)
 
 
+class _InboxStoreBridge(_StoreBridge):
+    """Inbox-store facade including the atomic claim transition."""
+
+    def compare_and_set(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("compare_and_set", *args, **kwargs)
+
+    async def compare_and_set_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("compare_and_set", *args, **kwargs)
+
+
 class _BackendBridge:
     """Protocol-visible facade for a backend with async-capable nested ports."""
 
@@ -696,7 +706,12 @@ def build_graph_runtime(
     )
     if inbox_store is not None:
         _require_sync_or_async_methods(
-            inbox_store, "inbox_store", ("save", "get", "list")
+            inbox_store,
+            "inbox_store",
+            # ``compare_and_set`` backs the claim lease: without it two workers
+            # can hold the same inbox item, so a store that cannot swap
+            # atomically is rejected at build rather than at claim time.
+            ("save", "get", "compare_and_set", "list"),
         )
     observer = observability or NoOpGraphObserver()
     _require_methods(observer, "observability", ("observe",))
@@ -710,7 +725,9 @@ def build_graph_runtime(
         ) from exc
     runtime_backend = _BackendBridge(backend)
     runtime_plan_store = _PlanStoreBridge(plan_store)
-    runtime_inbox_store = _StoreBridge(inbox_store) if inbox_store is not None else None
+    runtime_inbox_store = (
+        _InboxStoreBridge(inbox_store) if inbox_store is not None else None
+    )
     graph = composition.build_graph_service(
         backend=runtime_backend,
         definition=definition,

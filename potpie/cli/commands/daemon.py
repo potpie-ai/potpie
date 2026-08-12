@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from typing import Iterable
+
 import typer
 
 from potpie.cli.commands._common import (
@@ -9,9 +12,15 @@ from potpie.cli.commands._common import (
     emit,
     fail,
     get_host_for,
+    is_json,
+    json_error_formatter,
 )
 from potpie.daemon.process.launcher import DaemonStartError
-from potpie.daemon.lifecycle import Daemon
+from potpie.daemon.lifecycle import (
+    DEFAULT_LOG_TAIL_LINES,
+    Daemon,
+    parse_since,
+)
 
 daemon_app = typer.Typer(help="Local daemon lifecycle (recovery tools).")
 
@@ -69,16 +78,99 @@ def daemon_start() -> None:
 
 @daemon_app.command("status")
 def daemon_status() -> None:
+    """Report daemon liveness — and *exit* on it, so scripts can gate on it.
+
+    This exited ``0`` whether the daemon was up, down, or wedged, which made the
+    number worthless: the one command whose entire job is to answer "is it
+    alive?" could only be consulted by parsing its output. A daemon that is not
+    serving is ``daemon_unavailable`` — the code the exit table already maps to
+    ``2`` for every other "a dependency did not answer", so ``potpie daemon
+    status || potpie daemon start`` now means what it reads like.
+
+    The payload is *not* reduced to an error envelope. ``--json`` still carries
+    the full status (``state``, ``pid``, ``url``, ``home``) with the five error
+    keys laid over it, because a caller that gates on the exit code usually
+    wants to report what it found.
+
+    ``doctor``'s always-zero rule does not apply here and is not a
+    contradiction: ``doctor`` is the report you run *because* something is down,
+    while this is the probe you run *to find out*.
+    """
     with contract():
         st = _detached_daemon().status()
-        emit(st, human=f"daemon: {st['mode']} (up={st['up']})")
+        human = f"daemon: {st['state']} (mode={st['mode']})"
+        if st.get("serving"):
+            emit(st, human=human)
+            return
+        with json_error_formatter(lambda payload: {**st, **payload}):
+            fail(
+                code="daemon_unavailable",
+                message=str(st.get("detail") or human),
+                next_action=(
+                    "restart it with 'potpie daemon restart'"
+                    if st.get("up")
+                    else "start it with 'potpie daemon start'"
+                ),
+            )
 
 
 @daemon_app.command("logs")
-def daemon_logs(follow: bool = typer.Option(False, "--follow")) -> None:
+def daemon_logs(
+    follow: bool = typer.Option(
+        False, "--follow", "-f", help="stream new lines until interrupted"
+    ),
+    tail: int = typer.Option(
+        DEFAULT_LOG_TAIL_LINES,
+        "--tail",
+        "-n",
+        help="how many trailing lines to show; 0 for the whole file",
+    ),
+    since: str | None = typer.Option(
+        None,
+        "--since",
+        help="only lines at or after this time: ISO-8601, or an age like 15m",
+    ),
+) -> None:
+    """Tail the daemon log.
+
+    Bounded by default. Nothing rotates this file, so the old whole-file read
+    returned every line the daemon had ever written — and ``--follow`` was
+    accepted and then ignored, which is worse than rejecting it: the caller
+    believes it is watching a live stream that ended before it was printed.
+    """
     with contract():
-        lines = _detached_daemon().logs(follow=follow)
-        emit({"lines": lines}, human="\n".join(lines) or "(no logs)")
+        cutoff = parse_since(since) if since else None
+        daemon = _detached_daemon()
+        limit = tail if tail > 0 else None
+        if not follow:
+            lines = daemon.logs(tail=limit, since=cutoff)
+            emit(
+                {"lines": lines, "log_file": _log_file(daemon), "follow": False},
+                human="\n".join(lines) or "(no logs)",
+            )
+            return
+        _stream(daemon.follow_logs(tail=limit, since=cutoff))
+
+
+def _log_file(daemon: Daemon) -> str | None:
+    path = daemon.log_path()
+    return str(path) if path is not None else None
+
+
+def _stream(lines: Iterable[str]) -> None:
+    """Print a follow stream one line at a time until the reader gives up.
+
+    ``--json`` gets NDJSON — one object per line — because a stream that never
+    ends cannot be one JSON document, and a half-written array is not something
+    a consumer can parse incrementally. ``Ctrl-C`` is how this command is meant
+    to end, so it is a success, not an aborted run.
+    """
+    json_mode = is_json()
+    try:
+        for line in lines:
+            typer.echo(json.dumps({"line": line}) if json_mode else line)
+    except KeyboardInterrupt:  # pragma: no cover - interactive exit
+        pass
 
 
 @daemon_app.command("restart")

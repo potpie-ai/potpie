@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
 from potpie.daemon.http.ui.auth import (
     require_bearer,
@@ -43,6 +43,7 @@ from potpie_context_core.ports.graph_service import (
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
+from potpie_context_core.workbench_service import normalize_catalog_result
 
 # Labels that carry no display meaning (every node has the base :Entity label).
 _BASE_LABELS = {"Entity"}
@@ -81,6 +82,17 @@ _PREFIX_LABEL = {
 #: The counts are a browsing aid, not the data — whichever pot actually gets
 #: opened is enriched by ``/api/status``, which is a single call for one pot.
 _REMOTE_COUNT_LIMIT: int = 25
+
+#: HTTP for a workbench body that came back ``ok: false``, keyed by its
+#: ``status``. This is the CLI's exit-code table (``exit_code_for``) said over
+#: HTTP, so the explorer and the terminal classify the same refusal the same
+#: way; anything unclassified is a validation failure, because a code nobody has
+#: triaged is not grounds for claiming a dependency is down.
+_FAILURE_STATUS: dict[str, int] = {
+    "unavailable": 503,
+    "degraded": 503,
+    "not_implemented": 501,
+}
 
 
 def _origins() -> tuple[str, ...]:
@@ -253,6 +265,13 @@ def build_ui_api_router(host: Any) -> APIRouter:
             # `_host_for` — without this it escaped as a 500 and read to the SPA
             # as "the explorer is broken" instead of "that host is down".
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except OSError as exc:
+            # The control-plane state on disk failing mid-write — a pot switch
+            # racing another writer, a full or read-only home. Left unmapped it
+            # escaped the router and Starlette answered a plain-text "Internal
+            # Server Error", which the SPA parses as JSON, fails to, and shows
+            # as nothing at all.
+            raise HTTPException(status_code=500, detail=_detail(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -366,7 +385,16 @@ def build_ui_api_router(host: Any) -> APIRouter:
         def go():
             scoped, _ = _host_for(host, origin)
             pot_id = _resolve_pot(scoped, pot)
-            return scoped.graph.catalog(GraphCatalogRequest(pot_id=pot_id)).to_dict()
+            result = scoped.graph.catalog(GraphCatalogRequest(pot_id=pot_id))
+            # The same projection ``potpie graph catalog`` serves. Handing back
+            # the raw data-plane body advertised the four V1.5 commands where
+            # the CLI advertises the twelve-command V2 workbench, so the
+            # explorer and the terminal disagreed about what the graph even
+            # supports — and the catalog is the one route whose whole job is to
+            # be the contract. ``ok`` is restored on top because every other
+            # body this router returns carries it and the normalizer drops it
+            # for the CLI's envelope, which has its own.
+            return {"ok": True, **normalize_catalog_result(result.to_dict())}
 
         return _guarded(go)
 
@@ -479,6 +507,7 @@ def build_ui_api_router(host: Any) -> APIRouter:
 
     @router.get("/api/read")
     def read_view(
+        response: Response,
         subgraph: str = Query(...),
         view: str = Query(...),
         query: str | None = Query(None),
@@ -508,7 +537,21 @@ def build_ui_api_router(host: Any) -> APIRouter:
                     relations="full",
                 )
             )
-            return env.to_dict()
+            body = env.to_dict()
+            # A read the workbench *refused* — a view whose required scope was
+            # not given, say — is not a 200. A client that checks the status
+            # line and nothing else (``jget`` in the SPA, curl, anything
+            # scripting this API) rendered the refusal as an empty graph, which
+            # reads as "this pot holds nothing" rather than "you did not say
+            # which repo". The whole body still travels: ``unsupported`` names
+            # the filter to fix, and ``detail`` is where every other failure on
+            # this router puts its message.
+            if body.get("ok", True) is False:
+                response.status_code = _FAILURE_STATUS.get(
+                    str(body.get("status") or ""), 400
+                )
+                body["detail"] = body.get("message") or "graph read failed"
+            return body
 
         return _guarded(go)
 
@@ -529,16 +572,39 @@ def _detail(exc: Exception) -> str:
 
 
 def _parse_scope(scope: str | None) -> dict[str, str]:
+    """``key:value[,key:value]`` → mapping, refusing anything else.
+
+    Same contract, and the same three refusals, as ``--scope`` on the CLI
+    (``potpie.cli.commands.graph._parse_scope``); ``_guarded`` turns the
+    ``ValueError`` into a 400.
+
+    Dropping a malformed pair — which is what this did — is the worst available
+    answer. One typo beside one good pair produced a *confident* result computed
+    against a narrower filter, with the constraint the caller asked for missing
+    from the query and from the response alike, so nothing on either end could
+    tell that half the scope had evaporated. A trailing comma is still fine, as
+    on the CLI: an empty entry is not a malformed one.
+    """
     if not scope:
         return {}
     out: dict[str, str] = {}
-    for pair in scope.split(","):
-        pair = pair.strip()
-        if not pair or ":" not in pair:
+    for entry in scope.split(","):
+        pair = entry.strip()
+        if not pair:
             continue
+        if ":" not in pair:
+            raise ValueError(f"invalid scope entry {pair!r}; expected key:value pairs")
         key, value = pair.split(":", 1)
-        if key.strip() and value.strip():
-            out[key.strip()] = value.strip()
+        key, value = key.strip(), value.strip()
+        if not key:
+            raise ValueError(
+                f"invalid scope entry {pair!r}; scope keys must not be empty"
+            )
+        if not value:
+            raise ValueError(
+                f"invalid scope entry {pair!r}; scope values must not be empty"
+            )
+        out[key] = value
     return out
 
 

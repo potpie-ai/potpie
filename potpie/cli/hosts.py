@@ -46,6 +46,13 @@ managed one unavailable, because a listing that dies when a remote is down is
 useless offline. Anything aimed at a *specific* pot propagates the failure
 instead: falling back to the other host would run the command against the wrong
 graph, which is worse than not running it.
+
+The two therefore ask for different candidate sets — :func:`configured_origins`
+and :func:`targeting_origins`. They differ on exactly one state, a managed host
+that is configured and unusable, and they have to: nothing may route at an
+address that will not parse, but leaving it out of a *targeting* candidate set
+asserts that no other host holds the name, which is precisely what a host nobody
+can enumerate cannot be shown to say.
 """
 
 from __future__ import annotations
@@ -372,22 +379,95 @@ def _resolve_managed() -> tuple[tuple[str, str] | None, str | None]:
     be reported as ``configured: true`` at exit 0: an address every later command
     fails on, named nowhere. The environment goes through the same normalizer as
     ``host set`` so a typo cannot enter by the one door that skips the CLI.
+
+    The address is normalized before the credential is resolved, so an override
+    that is both unusable *and* uncredentialed is reported as the syntax error it
+    is: that is the one of the two the user can fix by reading the message.
     """
+    state: dict[str, Any] = {}
     env_url = managed_env_override()
     if env_url:
         source, base_url = "POTPIE_MANAGED_URL", env_url
-        token = normalize_managed_token(os.getenv("POTPIE_MANAGED_TOKEN"))
     else:
         state = _read_state()
         source = str(_state_path())
         base_url = str(state.get("managed_url") or "").strip()
-        token = normalize_managed_token(str(state.get("managed_token") or ""))
     if not base_url:
         return None, None
     try:
-        return (normalize_managed_url(base_url), token), None
+        normalized = normalize_managed_url(base_url)
     except ValueError as exc:
         return None, f"{source} holds an unusable managed host: {exc}"
+    if env_url:
+        return _env_managed_credentials(normalized)
+    stored_token = normalize_managed_token(str(state.get("managed_token") or ""))
+    return (normalized, stored_token), None
+
+
+def _env_managed_credentials(
+    base_url: str,
+) -> tuple[tuple[str, str] | None, str | None]:
+    """The credential to pair with ``POTPIE_MANAGED_URL``, or why there is none.
+
+    ``POTPIE_MANAGED_TOKEN`` *set* — the empty string included — is the caller's
+    whole statement about the credential, so it is taken as given. Unset is not
+    the same statement, and treating it as one is the bug this exists for:
+    overriding only the *address* dropped the stored token on the floor and sent
+    :data:`NO_AUTH_TOKEN` to a service that wants a real key, which comes back as
+    a 401 and reads as the managed host refusing a login the CLI never made. A
+    placeholder is never a credential to fall back on.
+
+    So an unset token falls back to the stored one when the address is the
+    address it was stored *for*, and refuses when it is not. Refusing rather than
+    sending it is the point: a key the user pasted in for one service is not a
+    key they handed to whatever else ``POTPIE_MANAGED_URL`` happens to name, and
+    the whole use of that variable is pointing at some other service for one run.
+
+    Nothing stored is nothing to lose, and ``""`` is what a service with auth
+    disabled has — that stays the documented scratch-service setup, placeholder
+    and all.
+
+    Reading the registry to answer this propagates
+    :class:`HostRegistryUnreadable`, which is the right way round and costs
+    nothing new: a file nothing can parse may hold the very token that would be
+    dropped, so there is no honest answer to give — and every command already
+    reaches that same refusal through :func:`persisted_origin`.
+    """
+    raw = os.getenv("POTPIE_MANAGED_TOKEN")
+    if raw is not None:
+        return (base_url, normalize_managed_token(raw)), None
+    stored = _read_state()
+    token = normalize_managed_token(str(stored.get("managed_token") or ""))
+    if not token:
+        return (base_url, ""), None
+    stored_url = str(stored.get("managed_url") or "").strip()
+    if _same_managed_address(stored_url, base_url):
+        return (base_url, token), None
+    return None, (
+        f"POTPIE_MANAGED_URL={base_url} is set with no POTPIE_MANAGED_TOKEN, and "
+        f"the stored token belongs to {stored_url or 'no stored address'} rather "
+        "than to that host. Set POTPIE_MANAGED_TOKEN to the key that host expects "
+        "(or to '' if its auth is disabled)"
+    )
+
+
+def _same_managed_address(left: str, right: str) -> bool:
+    """Whether two managed base URLs name the same host to this CLI.
+
+    Compared through :func:`normalize_managed_url` so a stored
+    ``http://svc:8090/`` and an override ``http://svc:8090`` are one address, and
+    tolerant of a value that will not normalize — a hand-edited registry is not
+    a reason to raise from inside a credential lookup, it is a reason to answer
+    "not the same host" and let the refusal above name both.
+    """
+
+    def _key(value: str) -> str:
+        try:
+            return normalize_managed_url(value)
+        except ValueError:
+            return value.strip().rstrip("/")
+
+    return _key(left) == _key(right)
 
 
 def managed_endpoint() -> tuple[str, str] | None:
@@ -443,6 +523,42 @@ def managed_endpoint_problem() -> str | None:
     silent.
     """
     return _resolve_managed()[1]
+
+
+def managed_unconfigured_refusal() -> tuple[str, str]:
+    """``(message, next_action)`` for "managed was targeted, and there is none".
+
+    One text, in one place, because there are two ways to have no usable managed
+    host and only one of them is fixed by ``host set``. A configured-but-unusable
+    endpoint reads as *absent* to every router — deliberately, so nothing routes
+    at it — and each door that turned that reading back into "No managed host is
+    configured. Run 'potpie host set <url>'" was telling a caller whose
+    ``POTPIE_MANAGED_URL`` outranks the file to go and write the file, which the
+    next command would ignore for the same reason. :func:`managed_endpoint_problem`
+    already knows which of the two states it is; the doors only ever needed to
+    ask.
+    """
+    problem = managed_endpoint_problem()
+    if problem is None:
+        return (
+            "No managed host is configured.",
+            "run 'potpie host set <url>'",
+        )
+    return (
+        # The problem is a sentence in its own right and already ends in a stop
+        # for some producers; re-adding one gave the refusal a ".." in the middle
+        # of the URL diagnostics the reader is meant to be scanning.
+        f"The managed host is unusable: {problem.rstrip('.')}.",
+        "run 'potpie host list' to see the managed host as it is currently resolved",
+    )
+
+
+def managed_unconfigured_error() -> ContextEngineDisabled:
+    """:func:`managed_unconfigured_refusal` in the shape ``build_host`` raises."""
+    message, next_action = managed_unconfigured_refusal()
+    error = ContextEngineDisabled(message)
+    error.recommended_next_action = next_action
+    return error
 
 
 def stored_managed_token() -> str:
@@ -636,9 +752,7 @@ def build_host(origin: str) -> Any:
     else:
         endpoint = managed_endpoint()
         if endpoint is None:
-            raise ContextEngineDisabled(
-                "No managed host configured. Run 'potpie host set <base-url>'."
-            )
+            raise managed_unconfigured_error()
         base_url, token = endpoint
         # The credential is part of the host's identity, not a detail of it.
         # `_built` is cleared only in the process that writes the registry, so a
@@ -681,11 +795,28 @@ def configured_origins() -> tuple[str, ...]:
     return ORIGINS if managed_endpoint() is not None else (LOCAL,)
 
 
-#: What each host answered at ``/surfaces``, keyed by the endpoint *and* the
-#: credential — a 401 is one of the outcomes recorded as "does not say", and a
-#: rotated key inside one process must not keep reading the old refusal. A
-#: cached ``None`` is a real answer, not a miss; see :func:`advertised_surfaces`.
-_surfaces: dict[tuple[str, str], frozenset[str] | None] = {}
+def targeting_origins() -> tuple[str, ...]:
+    """Origins a bare *targeting* ref has to be accounted for against.
+
+    :func:`configured_origins` answers a different question — which hosts are
+    worth talking to — and a managed host whose address will not parse is not
+    one of them: nothing may route at it, which is exactly why
+    :func:`managed_endpoint` reports it as absent.
+
+    Dropping it from a *targeting* candidate set is a second and much stronger
+    claim: that no other host holds a pot by this name. A host nobody can
+    enumerate cannot be shown to say that. Read as "one candidate", a managed
+    address with a stray character in its port turned every bare ``potpie use
+    shop`` into a confident selection of the *local* ``shop``, with nothing in
+    the output mentioning the host that was never asked — the same silence as an
+    unreachable one, reached a step earlier.
+
+    So it stays in this list and the refusal comes from whoever tries to read
+    it. Enumeration degrades; targeting fails loud.
+    """
+    if managed_endpoint() is not None or managed_endpoint_problem() is not None:
+        return ORIGINS
+    return (LOCAL,)
 
 
 def advertised_surfaces(host: Any) -> frozenset[str] | None:
@@ -700,9 +831,26 @@ def advertised_surfaces(host: Any) -> frozenset[str] | None:
     — this only lets ``doctor`` say out loud which surfaces a host is missing
     relative to what this CLI knows how to call.
 
-    Every failure is silence: a 404, a rejected credential, a proxy's HTML, an
-    unreachable address, a host object with no transport at all. A diagnostic
-    that raised while collecting diagnostics would be the bug it is looking for.
+    The answer itself lives in :mod:`potpie.daemon.negotiation`, cached per
+    endpoint-and-credential, because ``doctor`` is not the only reader: the RPC
+    client consults the same negotiated set to decide whether a refusal is a
+    capability gap or a caller mistake. Two caches would let the report and the
+    error disagree about the same host.
+    """
+    endpoint = _host_endpoint(host)
+    if endpoint is None:
+        return None
+    from potpie.daemon.negotiation import negotiate
+
+    return negotiate(*endpoint).surfaces
+
+
+def _host_endpoint(host: Any) -> tuple[str, str] | None:
+    """``(base_url, token)`` for a host with a real transport, else ``None``.
+
+    Every failure is silence: an unreadable discovery record, a host object with
+    no transport at all, an address that is not http(s). A diagnostic that
+    raised while collecting diagnostics would be the bug it is looking for.
     """
     try:
         rpc = getattr(host, "rpc", None)
@@ -719,37 +867,7 @@ def advertised_surfaces(host: Any) -> frozenset[str] | None:
     token = str(discovery.get("token") or "")
     if not base_url.startswith(("http://", "https://")):
         return None
-    key = (base_url, token)
-    if key in _surfaces:
-        return _surfaces[key]
-    answer = _fetch_surfaces(base_url, token)
-    _surfaces[key] = answer
-    return answer
-
-
-def _fetch_surfaces(base_url: str, token: str) -> frozenset[str] | None:
-    """One authenticated GET, with every failure collapsed to "does not say".
-
-    The timeout is short and fixed: this is a diagnostic on a path nothing hot
-    takes, and a host that is slow to answer a question about *itself* is one
-    more thing not worth waiting on inside ``doctor``.
-    """
-    import httpx
-
-    try:
-        response = httpx.get(
-            f"{base_url}/surfaces",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=5.0,
-        )
-        if response.status_code != 200:
-            return None
-        body = response.json()
-    except Exception:  # noqa: BLE001 - transport, JSON, anything: it did not say
-        return None
-    if not isinstance(body, dict) or not isinstance(body.get("surfaces"), list):
-        return None
-    return frozenset(str(name) for name in body["surfaces"])
+    return base_url, token
 
 
 def managed_label(base_url: str) -> str:
@@ -777,8 +895,10 @@ def origin_label(origin: str) -> str:
 
 
 def reset_for_tests() -> None:
+    from potpie.daemon.negotiation import reset as reset_negotiation
+
     _built.clear()
-    _surfaces.clear()
+    reset_negotiation()
     _current["origin"] = None
 
 
@@ -803,6 +923,8 @@ __all__ = [
     "managed_endpoint_problem",
     "managed_env_override",
     "managed_label",
+    "managed_unconfigured_error",
+    "managed_unconfigured_refusal",
     "normalize_managed_token",
     "normalize_managed_url",
     "origin_degraded",
@@ -817,4 +939,5 @@ __all__ = [
     "set_persisted_origin",
     "split_ref",
     "stored_managed_token",
+    "targeting_origins",
 ]

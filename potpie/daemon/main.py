@@ -32,8 +32,9 @@ from potpie_context_core.errors import (
     PotNotFound,
 )
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_SERVER
+from potpie.daemon.concurrency import RpcAccessLock
 from potpie.daemon.rpc import decode, encode
-from potpie.daemon.surfaces import RPC_SURFACES, surface_contract
+from potpie.daemon.surfaces import RPC_SURFACES, is_read_only, surface_contract
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,10 @@ def _stop_embedded_graph_servers() -> None:
 
 def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI:
     host = build_host_shell()
-    rpc_lock = asyncio.Lock()
+    # Reads share; writes run alone. See potpie.daemon.concurrency for what the
+    # single process-wide exclusive lock this replaces was actually protecting,
+    # and why a slow read no longer stops every other CLI invocation.
+    rpc_lock = RpcAccessLock()
     home = default_home()
     pid_file = home / "daemon.pid"
     discovery_file = home / "discovery.json"
@@ -145,15 +149,17 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
         with correlation_scope(source="daemon_rpc", trace_id=_daemon_trace_id("rpc")):
             with get_observability().span("daemon.rpc", kind=SPAN_KIND_SERVER) as span:
                 try:
-                    surface = str(payload["surface"])
-                    method = str(payload["method"])
+                    surface = _required_field(payload, "surface")
+                    method = _required_field(payload, "method")
                     _validate_rpc_target(surface, method)
                     span.set_attributes({"rpc.surface": surface, "rpc.method": method})
-                    args = decode(payload.get("args") or [])
-                    kwargs = decode(payload.get("kwargs") or {})
+                    args = _positional(payload.get("args"))
+                    kwargs = _keyword(payload.get("kwargs"))
                     if kwargs.get("pot_id"):
                         span.set_attribute("pot_id", kwargs["pot_id"])
-                    async with rpc_lock:
+                    async with rpc_lock.for_call(
+                        read_only=is_read_only(surface, method)
+                    ):
                         target = _resolve(host, surface)
                         fn = getattr(target, method)
                         result = await run_in_threadpool(fn, *args, **kwargs)
@@ -173,11 +179,15 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
         with correlation_scope(source="daemon_attr", trace_id=_daemon_trace_id("attr")):
             with get_observability().span("daemon.attr", kind=SPAN_KIND_SERVER) as span:
                 try:
-                    surface = str(payload["surface"])
-                    name = str(payload["name"])
+                    surface = _required_field(payload, "surface")
+                    name = _required_field(payload, "name")
                     _validate_rpc_target(surface, name)
                     span.set_attributes({"rpc.surface": surface, "rpc.attr": name})
-                    async with rpc_lock:
+                    # An attribute read is a read. It resolves a dotted path and
+                    # returns what is already there; nothing on this route
+                    # mutates, which is why `/attr` exists separately from
+                    # `/rpc` at all.
+                    async with rpc_lock.shared():
                         target = _resolve(host, surface)
                         return {"ok": True, "result": encode(getattr(target, name))}
                 except Exception as exc:  # noqa: BLE001
@@ -213,6 +223,53 @@ def _resolve(host: Any, path: str) -> Any:
             raise ValueError("invalid RPC path")
         obj = getattr(obj, part)
     return obj
+
+
+def _required_field(payload: dict[str, Any], name: str) -> str:
+    """Read a required string off an RPC envelope, or say which one is missing.
+
+    ``payload["surface"]`` on a body that has no ``surface`` raised ``KeyError``,
+    which fell through :func:`_error_payload`'s final branch: the client was
+    told ``daemon_error: 'surface'`` — a bare quoted word, classified as *the
+    daemon is broken*, logged with a traceback, and reported to Sentry as an
+    unexpected fault. A malformed request is none of those things. It is a
+    ``ValueError``, which crosses the wire as ``validation_error`` and names
+    the field.
+    """
+    value = payload.get(name)
+    if value is None:
+        raise ValueError(f"rpc payload is missing required field {name!r}")
+    if not isinstance(value, str):
+        raise ValueError(
+            f"rpc payload field {name!r} must be a string, got {type(value).__name__}"
+        )
+    return value
+
+
+def _positional(value: Any) -> tuple[Any, ...]:
+    """The decoded ``args``, which the client sends as an encoded tuple.
+
+    Checked after decoding, not before: :func:`potpie.daemon.rpc.encode` turns
+    the client's argument tuple into a *marker object*, so "is this a JSON
+    array" is the wrong question to ask of the raw body.
+    """
+    decoded = decode(value or [])
+    if not isinstance(decoded, (list, tuple)):
+        raise ValueError(
+            f"rpc payload field 'args' must be a sequence, got {type(decoded).__name__}"
+        )
+    return tuple(decoded)
+
+
+def _keyword(value: Any) -> dict[str, Any]:
+    """The decoded ``kwargs``. A non-mapping here used to splat into a crash."""
+    decoded = decode(value or {})
+    if not isinstance(decoded, dict):
+        raise ValueError(
+            f"rpc payload field 'kwargs' must be an object, "
+            f"got {type(decoded).__name__}"
+        )
+    return decoded
 
 
 def _validate_rpc_target(surface: str, member: str) -> None:
