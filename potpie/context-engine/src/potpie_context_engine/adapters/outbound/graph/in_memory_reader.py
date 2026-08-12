@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
+from datetime import timezone
 from typing import Any, Iterable, Mapping
 
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
@@ -167,15 +168,22 @@ def _matches_filter(
         return False
     if not filter_.include_invalidated and row.invalid_at is not None:
         return False
+    # A naive row timestamp is interpreted as UTC, matching how naive filter
+    # bounds are normalized at the read boundary (potpie issue #1008). Without
+    # this, a naive valid_at compared against an aware bound raises
+    # ``TypeError: can't compare offset-naive and offset-aware datetimes``.
+    row_valid_at = row.valid_at
+    if row_valid_at is not None and row_valid_at.tzinfo is None:
+        row_valid_at = row_valid_at.replace(tzinfo=timezone.utc)
     if filter_.valid_at_after and (
-        row.valid_at is None or row.valid_at < filter_.valid_at_after
+        row_valid_at is None or row_valid_at < filter_.valid_at_after
     ):
         return False
     if filter_.valid_at_before and (
-        row.valid_at is not None and row.valid_at > filter_.valid_at_before
+        row_valid_at is not None and row_valid_at > filter_.valid_at_before
     ):
         return False
-    if filter_.as_of and row.valid_at is not None and row.valid_at > filter_.as_of:
+    if filter_.as_of and row_valid_at is not None and row_valid_at > filter_.as_of:
         return False
     if filter_.subject_label:
         labels = store.entity_label_index.get((row.pot_id, row.subject_key), ())

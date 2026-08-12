@@ -6,6 +6,7 @@ graph surface.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -460,6 +461,41 @@ def test_timeline_read_filters_by_exact_source_ref(service) -> None:
         item["source_refs"] == ["github:potpie-ai/potpie#issue/881"]
         for item in env.items
     )
+
+
+def test_entity_search_accepts_naive_since_until_window(service) -> None:
+    """potpie issue #1008: search-entities builds ClaimQueryFilter directly
+    (bypassing ReadRequest), so a naive since/until must still be interpreted
+    as UTC and never crash the in-memory filter's datetime comparison."""
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="TOUCHED",
+            subject_key="activity:github:pr-1",
+            object_key="service:auth-svc",
+            claim_key="claim:pr-1",
+            truth="timeline_event",
+            source_refs=("github:potpie-ai/potpie#pr/1",),
+            fact="PR 1 touched auth service.",
+            valid_at=datetime(2024, 5, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p",
+            query="touched auth",
+            since=datetime(2024, 4, 1),  # naive → interpreted as UTC
+            until=datetime(2024, 6, 1),  # naive → interpreted as UTC
+            limit=10,
+        )
+    )
+
+    assert {entity.key for entity in result.entities} == {
+        "activity:github:pr-1",
+        "service:auth-svc",
+    }
 
 
 def test_entity_search_filters_by_exact_source_ref(service) -> None:
