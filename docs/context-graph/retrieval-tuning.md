@@ -207,18 +207,54 @@ largest remaining gap, and it is precisely the case the resource index exists to
 serve: a fact no section summary mentions, asked for in words the document does
 not use.
 
-**It is a ranking failure, not a retrieval failure.** Of the 59 paraphrase
-questions, the gold chunk is inside the 120-candidate pool for 57 — the semantic
-arm finds it and the ranking cannot promote it. Only 2 are genuinely unreachable.
+### It is not a ranking failure — corrected 2026-08-12
 
-The obvious next lever is that `_relevance` still ignores the **semantic rank**
-entirely: it consumes the raw cosine but not the fact that the semantic arm
-ranked a chunk first. A `dual_blend` formula giving the semantic arm its own
-rank-decay term was measured and reached AUC 0.905–0.910 on the held-out half
-(against 0.887), but did not improve paraphrase MRR (0.389 → 0.390) and cost
-recall@5. It adds two constants for a gain inside the noise of 12 unanswerable
-probes, so it was **not** adopted. It is the most promising thing to revisit
-with a larger unanswerable set.
+This section previously claimed the opposite: *"a ranking failure, not a
+retrieval failure — the gold chunk is inside the 120-candidate pool for 57 of
+59, and the ranking cannot promote it."* **That was wrong**, and the error was
+letting "inside the 120-candidate pool" stand in for "found". A chunk at
+semantic rank 90 of a 120-candidate pool has not been retrieved in any useful
+sense; it is noise that happens to fall inside the cut.
+
+Measured directly, the semantic arm *on its own* — no fusion, no lexical arm,
+no `_relevance` — already scores paraphrase at what the whole pipeline scores:
+
+| | semantic arm alone | full tuned pipeline |
+|---|---|---|
+| paraphrase MRR | 0.383 | 0.389 |
+
+Everything downstream is already extracting essentially all the encoder
+provides. Where the arm actually puts the gold chunk, over 59 questions:
+
+| rank 1 | 2–3 | 4–10 | 11–30 | 31+ |
+|---|---|---|---|---|
+| 15 | 8 | 15 | 8 | 13 |
+
+For contrast the arm alone scores `identifier` 0.776 and `natural` 0.784, where
+the full pipeline reaches 0.932 and 0.937 — *there* the ranking is doing heavy
+lifting. On paraphrase there is nothing left for it to lift.
+
+### What was tried against it, and did not work
+
+Every row is measured on this corpus and key, offline against the arms dump
+except where noted.
+
+| lever | result |
+|---|---|
+| `dual_blend` — give the semantic arm its own rank-decay term | AUC 0.905–0.910 held out, but paraphrase MRR 0.389 → 0.390 and recall@5 fell. Not adopted |
+| reader over-fetch (`INDEX_LIMIT`) 24 → 36…120 | **worse**: paraphrase 0.389 → 0.386 → 0.350. Admitting more candidates admits more competitors that outscore the gold |
+| query-adaptive blend, keyed on max `term_coverage` | flat. The signal separates the kinds cleanly (identifier 1.00, paraphrase 0.60), but the best held-out point moves paraphrase 0.365 → 0.374 — about one question |
+| weighting the section-summary window above body windows | flat: summary-only 0.378, body-only 0.381, shipped `max` 0.383; a +0.03 bonus reaches 0.393 and costs top-1 and AUC |
+| cross-encoder rerank (`ms-marco-MiniLM-L-6-v2`, depth 24) | **worse** — paraphrase 0.373, overall MRR 0.774 → 0.730 — and 1,051 ms/query on CPU, which is unshippable regardless |
+
+The mechanism behind all of it is visible in a single case. *"How do we keep two
+agents from overwriting each other in one workspace"* against a section titled
+**Concurrency and Locking** whose summary reads "lock mutating commands per
+workspace" scores **cosine 0.144** and lands at rank 213. That was verified
+against the deployed weights — the stored vectors are consistent, and
+recomputing the pair from scratch reproduces 0.1444. The encoder simply cannot
+make the inference from "overwriting each other" to "advisory locks". No
+reweighting of a number that wrong can rescue it.
 
 ---
 
@@ -263,9 +299,78 @@ Both halves are measured, and the lexical changes (BM25 weights, prefix) apply
 to both — they are a wash on hashing (top-1 −0.010, recall@5 +0.021, worst junk
 score 0.476 → 0.429) and a gain on MiniLM.
 
-**What this makes newly worth testing:** the embedder is now load-bearing, so
-model choice is a real lever for the first time. A stronger encoder should show
-up directly in paraphrase MRR, which is where the corpus is still failing.
+**What this made newly worth testing:** the embedder is now load-bearing, so
+model choice is a real lever for the first time. That test has since been run —
+below.
+
+---
+
+## Which encoder? Measured, 2026-08-12
+
+Six encoders over the same windows, the same collapse-to-best-window, and the
+same 202 queries, scoring **the semantic arm alone** — which the section above
+establishes is the ceiling any ranking change is working under. No index
+rebuild: the `windows` table already holds every window, so a model is screened
+by re-embedding those strings in memory.
+
+The MiniLM row is a **gate, not a result** — it has to reproduce the arm numbers
+measured off the real dump (identifier 0.776, paraphrase 0.383) or the screen is
+measuring its own arithmetic. It does, exactly. *(It did not on the first
+attempt: a body window stores a `(start, length)` slice and only `section`
+windows carry their own text, so reading `windows.text` directly fed the model
+992 empty strings. Identifier collapsed to 0.624 and the gate caught it.)*
+
+| model | dim | MRR | AUC | identifier | natural | multi_term | paraphrase |
+|---|---|---|---|---|---|---|---|
+| `all-MiniLM-L6-v2` *(shipped)* | 384 | 0.649 | 0.874 | 0.776 | 0.784 | 0.745 | 0.383 |
+| `bge-small-en-v1.5` | 384 | 0.679 | 0.889 | 0.762 | 0.878 | 0.793 | 0.392 |
+| `bge-base-en-v1.5` | 768 | **0.713** | 0.854 | **0.859** | 0.853 | **0.859** | 0.391 |
+| **`gte-base`** | 768 | 0.701 | **0.902** | 0.812 | **0.881** | 0.807 | 0.410 |
+| `e5-base-v2` | 768 | 0.700 | 0.886 | 0.805 | 0.867 | 0.839 | 0.402 |
+| `all-mpnet-base-v2` | 768 | 0.656 | 0.799 | 0.707 | 0.820 | 0.702 | **0.465** |
+
+Two things fall out of this table.
+
+**A stronger encoder is a real, broad win — and it is not a paraphrase fix.**
+`bge-base` buys +0.083 identifier and +0.114 multi_term; it buys +0.008
+paraphrase. The gap that motivated the search is the one that does not close.
+
+**The best paraphrase model is the worst retrieval model.** `all-mpnet-base-v2`
+is trained symmetrically — *sentence A means the same as sentence B* — while
+bge/gte/e5 are trained asymmetrically, query against passage, MS MARCO-shaped. A
+paraphrase question *is* a symmetry task, which is exactly why the ordering
+inverts on that column and only that column.
+
+That looked like a case for running both. It is not:
+
+| variant | MRR | AUC | identifier | paraphrase |
+|---|---|---|---|---|
+| `gte-base` alone | 0.701 | 0.902 | 0.812 | 0.410 |
+| `all-mpnet-base-v2` alone | 0.656 | 0.799 | 0.707 | 0.465 |
+| max of the two cosines | 0.701 | 0.902 | 0.812 | 0.410 |
+| mean of the two cosines | 0.683 | 0.821 | 0.740 | 0.475 |
+| RRF over the two arms | 0.694 | 0.721 | 0.774 | 0.457 |
+
+Taking the max is just `gte-base` wearing a second index, because its cosines
+run systematically higher. Averaging buys +0.065 paraphrase for −0.072
+identifier and −0.081 AUC. RRF throws away the magnitude that separation depends
+on and AUC falls off a cliff, 0.902 → 0.721.
+
+And the ceiling says why. On the 59 paraphrase questions, counting where each
+model alone puts the gold chunk first: **both 13, only `gte-base` 4, only
+`all-mpnet-base-v2` 9, neither 33.** The two are complementary on 13 questions
+and jointly blind on 33. Even an oracle that picked the better model per query
+would reach 26 of 59 — the models are not disagreeing about paraphrase so much
+as both failing at it.
+
+**Conclusion.** `gte-base` is the recommended swap on the strength of everything
+*except* paraphrase: it takes the arm's MRR 0.649 → 0.701 and its AUC 0.874 →
+0.902, the best separation of the six, which is the metric this retrieval is
+chosen on. Paraphrase moves 0.383 → 0.410 and stays the largest gap in the
+corpus. Closing it needs something this architecture does not have — the
+failures are inference-shaped, and the one inference-capable option cheap enough
+to test, a cross-encoder reranker, measured worse and 1,051 ms/query. Nothing
+here should be read as that gap being one constant away.
 
 ---
 
