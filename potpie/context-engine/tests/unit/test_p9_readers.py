@@ -113,6 +113,35 @@ def test_claim_semantic_similarity_ignores_booleans() -> None:
     assert not row_matches_query(row, "unrelated query")
 
 
+def test_naive_as_of_is_interpreted_as_utc_and_does_not_crash() -> None:
+    """potpie issue #1008: a date-only/naive as_of must not crash the read.
+
+    ``as_of="2024-06-01"`` used to reach recency scoring as a naive datetime
+    and raise ``TypeError: can't subtract offset-naive and offset-aware
+    datetimes`` against aware valid_at claims.
+    """
+    store = InMemoryClaimQueryStore()
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:1042",
+            object_key="service:auth-svc",
+            fact="PR 1042 touched auth service",
+            valid_at=datetime(2024, 5, 1, tzinfo=timezone.utc),
+        )
+    )
+    reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+    request = ReadRequest(
+        pot_id="pot-1", scope={"service": "auth-svc"}, as_of=datetime(2024, 6, 1)
+    )
+
+    response = reader.read(request)
+    assert response.items  # normal envelope, no TypeError
+    # The naive bound is normalized to UTC at the read boundary.
+    assert request.as_of == datetime(2024, 6, 1, tzinfo=timezone.utc)
+
+
 # ---------------------------------------------------------------------------
 # CodingPreferencesReader
 # ---------------------------------------------------------------------------
