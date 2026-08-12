@@ -104,8 +104,8 @@ override-dependencies = [
     # CVE-2026-59881 / CVE-2026-69243 / CVE-2026-69244: floor at 3.14.3.
     "aiohttp>=3.14.3",
     # GitPython: Medium + High advisories through 3.1.57 (incl. GHSA-p538-c434-8v24,
-    # GHSA-539m-9xh6-q6rr, GHSA-wvpp-8hx9-p66j). Floor at 3.1.58.
-    "gitpython>=3.1.58",
+    # GHSA-539m-9xh6-q6rr, GHSA-wvpp-8hx9-p66j; Dependabot #372/#373/#382). Floor at 3.1.59.
+    "gitpython>=3.1.59",
     # CVE-2026-71554 / GHSA-6hr6-w5qg-qmwg: h2 <=4.4.0; floor at 4.4.1.
     "h2>=4.4.1",
     "starlette>=1.3.1",

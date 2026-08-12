@@ -2,15 +2,15 @@
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
-# Dependency-graph hygiene stub (POT-2236 / POT-2266).
+# Dependency-graph hygiene stub (POT-2236 / POT-2266 / POT-2290).
 # GitHub's SBOM kept a deleted potpie-legacy@0.1.0 + legacy/uv.lock snapshot
 # with aiohttp==3.14.1, gitpython==3.1.54, and httpx[http2] -> h2==4.3.0 after
 # legacy/ was removed (#1034). Re-publishing an empty manifest + empty uv.lock
-# at this path (version bump to 0.2.0) replaces that stale snapshot so
+# at this path (version bump to 0.2.1) replaces that stale snapshot so
 # Dependabot/Vanta Medium findings can clear. Not a workspace member.
 [project]
 name = "potpie-legacy"
-version = "0.2.0"
+version = "0.2.1"
 description = "Empty stub replacing the removed legacy demo host (dependency-graph hygiene only)."
 requires-python = ">=3.12,<3.15"
 license = "Apache-2.0"
