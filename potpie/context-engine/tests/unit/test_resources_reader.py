@@ -290,3 +290,50 @@ def test_resources_is_advertised_backed_and_demoted():
     # envelope.
     assert INCLUDE_RANK_WEIGHT["resources"] < INCLUDE_RANK_WEIGHT["docs"]
     assert INCLUDE_RANK_WEIGHT["resources"] < INCLUDE_RANK_WEIGHT["decisions"]
+
+
+def test_best_relevance_reports_the_pools_strongest_measured_similarity():
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=True,
+            hits=(
+                hit(2, similarity=0.31, lexical_rank=1, semantic_rank=2),
+                hit(3, similarity=0.58, lexical_rank=2, semantic_rank=1),
+            ),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="liability cap"))
+    assert response.meta["best_relevance"] == 0.58
+
+
+def test_best_relevance_is_none_when_the_index_is_uncalibrated():
+    """The hashing embedder's cosines are not on the sentence-encoder scale, so
+    reporting one would have the envelope band it against thresholds tuned for
+    a different distribution."""
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=False,
+            hits=(hit(2, similarity=0.58, lexical_rank=1, semantic_rank=1),),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="liability cap"))
+    assert response.meta["best_relevance"] is None
+
+
+def test_best_relevance_is_none_when_nothing_was_scored_semantically():
+    """Unknown is not the same claim as bad: a lexical-only pool has no measured
+    similarity, and a zero here would read as 'the corpus has no answer'."""
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_fts",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=True,
+            hits=(hit(2, similarity=None, lexical_rank=1),),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="ERR_QUOTA_EXCEEDED"))
+    assert response.meta["best_relevance"] is None

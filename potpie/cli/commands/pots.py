@@ -1296,3 +1296,81 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
 
 
 __all__ = ["pot_app", "source_app"]
+
+
+# --- grants ----------------------------------------------------------------
+#
+# Sharing is a *managed host* concept. The local daemon is single-user by
+# construction — no identity on the wire, one implicit actor — so there is
+# nobody to grant to, and these three refuse there rather than dispatching a
+# member the daemon has never heard of and reporting whatever it says.
+
+
+def _managed_only(verb: str) -> None:
+    """Refuse a grant verb anywhere but a managed host, and say why."""
+    from potpie.cli import hosts
+
+    origin = hosts.current_origin()
+    if origin != "managed":
+        fail(
+            code="unsupported",
+            message=(
+                f"'pot {verb}' needs a managed host: the local daemon is "
+                "single-user, so a pot there has no one to share with"
+            ),
+            next_action="point this CLI at a service with 'potpie host set <url>'",
+        )
+
+
+@pot_app.command("grant")
+def pot_grant(
+    ref: str,
+    actor_id: str = typer.Argument(..., help="Actor to give access to."),
+    role: str = typer.Option("writer", "--role", help="reader | writer | admin."),
+) -> None:
+    """Give another actor access to a pot. Requires admin on it."""
+    with contract():
+        _managed_only("grant")
+        host = get_host()
+        granted = host.pots.grant_pot(ref=ref, actor_id=actor_id, role=role)
+        emit(
+            dict(granted),
+            human=f"{granted['actor_id']} → {granted['role']} on '{ref}'",
+        )
+
+
+@pot_app.command("revoke")
+def pot_revoke(
+    ref: str,
+    actor_id: str = typer.Argument(..., help="Actor to remove access from."),
+) -> None:
+    """Take away an actor's access to a pot. Requires admin on it."""
+    with contract():
+        _managed_only("revoke")
+        host = get_host()
+        revoked = bool(host.pots.revoke_pot(ref=ref, actor_id=actor_id))
+        emit(
+            {"pot": ref, "actor_id": actor_id, "revoked": revoked},
+            # "no grant to remove" rather than "revoked", because reporting a
+            # revocation that did not happen is how someone concludes an actor
+            # has been removed when they never had access under that name.
+            human=(
+                f"revoked {actor_id} from '{ref}'"
+                if revoked
+                else f"{actor_id} had no grant on '{ref}'"
+            ),
+        )
+
+
+@pot_app.command("grants")
+def pot_grants(ref: str) -> None:
+    """List who can reach a pot, and as what. Requires admin on it."""
+    with contract():
+        _managed_only("grants")
+        host = get_host()
+        grants = [dict(g) for g in host.pots.list_grants(ref=ref)]
+        emit(
+            {"pot": ref, "grants": grants},
+            human="\n".join(f"{g['actor_id']:<20} {g['role']}" for g in grants)
+            or f"no grants on '{ref}'",
+        )

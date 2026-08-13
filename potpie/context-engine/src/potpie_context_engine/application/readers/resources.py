@@ -108,8 +108,37 @@ class ResourcesReader:
                 "lexical_candidates": result.lexical_candidates,
                 "semantic_candidates": result.semantic_candidates,
                 "detail": result.detail,
+                # How good the best hit actually is, on an absolute scale — the
+                # question `coverage_status` cannot answer, since a full page of
+                # k-NN rows is "complete" whether or not one of them answers.
+                # The *raw* cosine, deliberately, not the ranker's blended
+                # `_relevance`: that one is part-ordinal by design, and an
+                # ordinal score cannot tell "nothing beat this" from "this is
+                # the answer". Only meaningful when the index says its
+                # similarities are calibrated.
+                "best_relevance": _best_calibrated_relevance(result),
             },
         )
+
+
+def _best_calibrated_relevance(result: IndexSearchResult) -> float | None:
+    """The best absolute similarity in the pool, when that number means something.
+
+    Measured over the whole pool rather than the surviving page: the floor and
+    the ranker decide *ordering*, and a query the corpus cannot answer should
+    read as weak evidence even when its tail happens to rank cleanly.
+
+    ``None`` when the index is uncalibrated — the bundled hashing embedder
+    produces cosines whose magnitudes are not comparable to a sentence
+    encoder's, so a threshold tuned on one would silently mislabel the other.
+    A lexical-only hit has no measured similarity and contributes nothing here;
+    if nothing in the pool was scored semantically the answer is ``None``, not
+    zero, because unknown is not the same claim as bad.
+    """
+    if not result.similarity_calibrated:
+        return None
+    measured = [hit.similarity for hit in result.hits if hit.similarity is not None]
+    return max(measured) if measured else None
 
 
 def _requested_doc(req: ReadRequest) -> str | None:

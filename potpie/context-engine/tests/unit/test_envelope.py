@@ -19,6 +19,7 @@ from potpie_context_core.agent_context_port import (
     DEFAULT_INTENT_INCLUDES,
 )
 from potpie_context_core.agent_envelope import (
+    AgentEnvelope,
     CoverageReport,
     derive_overall_confidence,
 )
@@ -64,6 +65,64 @@ class TestDeriveOverallConfidence:
 
     def test_empty_input_returns_unknown(self) -> None:
         assert derive_overall_confidence(coverage=[]) == "unknown"
+
+    def test_unmeasured_relevance_leaves_coverage_verdict_alone(self) -> None:
+        """A family that cannot measure relevance is judged exactly as before."""
+        coverage = [CoverageReport(include="owners", status="complete")]
+        assert derive_overall_confidence(coverage=coverage) == "high"
+
+    def test_weak_evidence_downgrades_a_complete_page(self) -> None:
+        """The regression this exists for: a full page of irrelevant hits.
+
+        ``complete`` only says the family filled its page. Before relevance was
+        carried, an unanswerable query against a working index reported "high".
+        """
+        coverage = [
+            CoverageReport(include="resources", status="complete", best_relevance=0.21)
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "low"
+
+    def test_middling_evidence_reports_medium(self) -> None:
+        coverage = [
+            CoverageReport(include="resources", status="complete", best_relevance=0.40)
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "medium"
+
+    def test_strong_evidence_keeps_high(self) -> None:
+        coverage = [
+            CoverageReport(include="resources", status="complete", best_relevance=0.62)
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "high"
+
+    def test_relevance_never_upgrades_a_weak_coverage_verdict(self) -> None:
+        """The two signals cap each other; neither promotes."""
+        coverage = [
+            CoverageReport(include="resources", status="sparse", best_relevance=0.95)
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "low"
+
+    def test_best_relevance_wins_across_families(self) -> None:
+        """One family finding a strong answer is not dragged down by another's
+        weak one — the relevance channel takes the best measured, while status
+        still takes the worst."""
+        coverage = [
+            CoverageReport(include="resources", status="complete", best_relevance=0.62),
+            CoverageReport(include="docs", status="complete", best_relevance=0.10),
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "high"
+
+    def test_best_relevance_is_serialised(self) -> None:
+        envelope = AgentEnvelope(
+            pot_id="pot_1",
+            intent="unknown",
+            items=(),
+            coverage=(
+                CoverageReport(
+                    include="resources", status="complete", best_relevance=0.42
+                ),
+            ),
+        )
+        assert envelope.to_dict()["coverage"][0]["best_relevance"] == 0.42
 
 
 class TestEnvelopeBuilder:

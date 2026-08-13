@@ -124,6 +124,7 @@ class EnvelopeBuilder:
                         breakdown=dict(ranked.breakdown),
                     )
                 )
+            best_relevance = resp.meta.get("best_relevance")
             coverage.append(
                 CoverageReport(
                     include=inc,
@@ -132,6 +133,12 @@ class EnvelopeBuilder:
                     if isinstance(resp.meta.get("candidate_pool"), int)
                     else 0,
                     graph_view=INCLUDE_TO_VIEW.get(inc),
+                    # Only a family that measured it reports it; anything else
+                    # stays None and is judged on coverage alone.
+                    best_relevance=float(best_relevance)
+                    if isinstance(best_relevance, (int, float))
+                    and not isinstance(best_relevance, bool)
+                    else None,
                 )
             )
 
