@@ -101,6 +101,41 @@ class TestRecencyMatters:
         assert fresh_gap >= balanced_gap
 
 
+class TestNaiveNowNormalizedToUtc:
+    """potpie issue #1008: a naive clock must not crash recency scoring.
+
+    A naive ``now`` (e.g. ``as_of="2024-06-01"`` parsed without a tzinfo)
+    used to raise ``TypeError: can't subtract offset-naive and offset-aware
+    datetimes`` against an aware ``valid_at``. It is now interpreted as UTC,
+    the same instant as the explicit ``...T00:00:00Z`` spelling.
+    """
+
+    def test_naive_now_does_not_crash_and_matches_aware_clock(self) -> None:
+        service = RankingService()
+        candidate = _make_candidate(
+            key="k", valid_at=datetime(2024, 5, 1, tzinfo=timezone.utc)
+        )
+
+        naive_ctx = TaskContext(pot_id="p", now=datetime(2024, 6, 1))
+        aware_ctx = TaskContext(
+            pot_id="p", now=datetime(2024, 6, 1, tzinfo=timezone.utc)
+        )
+
+        naive = service.rank([candidate], naive_ctx)[0]
+        aware = service.rank([candidate], aware_ctx)[0]
+        # Same instant → identical recency score, no exception.
+        assert naive.breakdown["recency"] == aware.breakdown["recency"]
+        assert naive.breakdown["recency"] > 0.0
+
+    def test_naive_valid_at_and_naive_now_both_default_to_utc(self) -> None:
+        service = RankingService()
+        candidate = _make_candidate(key="k", valid_at=datetime(2024, 5, 1))
+        ranked = service.rank(
+            [candidate], TaskContext(pot_id="p", now=datetime(2024, 6, 1))
+        )
+        assert ranked[0].breakdown["recency"] > 0.0
+
+
 class TestScopeOverlap:
     def test_scope_overlap_dominates_when_only_factor_differs(self) -> None:
         service = RankingService()

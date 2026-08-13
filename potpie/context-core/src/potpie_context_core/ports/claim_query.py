@@ -15,7 +15,7 @@ computed read annotations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
 
@@ -85,6 +85,19 @@ class ClaimQueryFilter:
     # candidates ordered by similarity. Cosine distance scores are
     # stamped onto ``ClaimRow.properties["semantic_similarity"]``.
     fact_query: str | None = None
+
+    def __post_init__(self) -> None:
+        # A naive temporal bound is interpreted as UTC (consistent with how
+        # naive valid_at values are already treated by readers/ranking). Every
+        # backend read consumes these bounds directly from this filter — some
+        # callers (e.g. graph search-entities, inspection) build it without
+        # going through ReadRequest — so normalizing here guarantees the bounds
+        # are aware before any Python-side datetime comparison (potpie issue
+        # #1008).
+        for field_name in ("as_of", "valid_at_after", "valid_at_before"):
+            value = getattr(self, field_name)
+            if value is not None and value.tzinfo is None:
+                object.__setattr__(self, field_name, value.replace(tzinfo=timezone.utc))
 
 
 @runtime_checkable

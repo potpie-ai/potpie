@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 from typing import Any
 
@@ -37,6 +37,16 @@ class ReadRequest:
     # these; other readers ignore them.
     depth: int | None = None
     direction: str | None = None  # "out" | "in" | "both"
+
+    def __post_init__(self) -> None:
+        # A naive temporal bound is interpreted as UTC (consistent with how
+        # naive valid_at values are already treated). Without this, a naive
+        # ``as_of`` crashes ranking with ``TypeError: can't subtract
+        # offset-naive and offset-aware datetimes`` (potpie issue #1008).
+        for field_name in ("as_of", "since", "until"):
+            value = getattr(self, field_name)
+            if value is not None and value.tzinfo is None:
+                object.__setattr__(self, field_name, value.replace(tzinfo=timezone.utc))
 
 
 @dataclass(frozen=True, slots=True)

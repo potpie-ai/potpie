@@ -31,7 +31,7 @@ from potpie_context_engine.application.readers._common import (
     dedupe_claim_rows,
     row_matches_query,
 )
-from potpie_context_core.ports.claim_query import ClaimRow
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ranking import RankingService
 
 
@@ -111,6 +111,127 @@ def test_claim_semantic_similarity_ignores_booleans() -> None:
     )
     assert claim_semantic_similarity(row) is None
     assert not row_matches_query(row, "unrelated query")
+
+
+def test_naive_as_of_is_interpreted_as_utc_and_does_not_crash() -> None:
+    """potpie issue #1008: a date-only/naive as_of must not crash the read.
+
+    ``as_of="2024-06-01"`` used to reach recency scoring as a naive datetime
+    and raise ``TypeError: can't subtract offset-naive and offset-aware
+    datetimes`` against aware valid_at claims.
+    """
+    store = InMemoryClaimQueryStore()
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:1042",
+            object_key="service:auth-svc",
+            fact="PR 1042 touched auth service",
+            valid_at=datetime(2024, 5, 1, tzinfo=timezone.utc),
+        )
+    )
+    reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+    request = ReadRequest(
+        pot_id="pot-1", scope={"service": "auth-svc"}, as_of=datetime(2024, 6, 1)
+    )
+
+    response = reader.read(request)
+    assert response.items  # normal envelope, no TypeError
+    # The naive bound is normalized to UTC at the read boundary.
+    assert request.as_of == datetime(2024, 6, 1, tzinfo=timezone.utc)
+
+
+def test_naive_valid_at_row_and_naive_as_of_do_not_crash() -> None:
+    """potpie issue #1008: a claim stored with a naive valid_at must not crash
+    the read once the naive as_of is normalized to aware at the boundary.
+
+    The in-memory claim filter compares ``row.valid_at > filter_.as_of`` in
+    Python, so a naive row value against an aware bound raised the same
+    ``TypeError`` the issue reports for the ranker.
+    """
+    store = InMemoryClaimQueryStore()
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:1043",
+            object_key="service:auth-svc",
+            fact="PR 1043 touched auth service",
+            valid_at=datetime(2024, 5, 1),  # naive stored valid_at
+        )
+    )
+    reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+    response = reader.read(
+        ReadRequest(
+            pot_id="pot-1", scope={"service": "auth-svc"}, as_of=datetime(2024, 6, 1)
+        )
+    )
+
+    assert response.items  # normal envelope, no TypeError
+
+
+def test_naive_event_time_with_naive_window_bounds_do_not_crash() -> None:
+    """potpie issue #1008: a naive occurred_at (no offset) against naive
+    since/until window bounds must not crash the timeline window filter.
+
+    ``since``/``until`` are normalized to aware UTC at the read boundary, so a
+    naive event time compared against them previously raised ``TypeError``.
+    The naive event time is interpreted as UTC and the window still filters.
+    """
+    store = InMemoryClaimQueryStore()
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:1044",
+            object_key="service:auth-svc",
+            fact="PR 1044 touched auth service",
+            valid_at=datetime(2024, 5, 1, tzinfo=timezone.utc),
+            properties={"occurred_at": "2024-05-01T10:00:00"},  # naive
+        )
+    )
+    store.add(
+        _row(
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:1045",
+            object_key="service:auth-svc",
+            fact="PR 1045 touched auth service",
+            valid_at=datetime(2024, 6, 10, tzinfo=timezone.utc),
+            properties={"occurred_at": "2024-06-10T10:00:00"},  # naive, outside window
+        )
+    )
+    reader = TimelineReader(claim_query=store, ranker=RankingService())
+
+    response = reader.read(
+        ReadRequest(
+            pot_id="pot-1",
+            scope={"service": "auth-svc"},
+            since=datetime(2024, 5, 1),
+            until=datetime(2024, 5, 31),
+        )
+    )
+
+    keys = {r.candidate.payload["subject_key"] for r in response.items}
+    assert keys == {"activity:github:pr:1044"}  # window filtering still applies
+
+
+def test_claim_query_filter_normalizes_naive_bounds_to_utc() -> None:
+    """potpie issue #1008: backends receive aware bounds even when the filter
+    is built directly (search-entities / inspection bypass ReadRequest)."""
+    flt = ClaimQueryFilter(
+        pot_id="pot-1",
+        as_of=datetime(2024, 6, 1),
+        valid_at_after=datetime(2024, 4, 1),
+        valid_at_before=datetime(2024, 6, 30),
+    )
+    assert flt.as_of == datetime(2024, 6, 1, tzinfo=timezone.utc)
+    assert flt.valid_at_after == datetime(2024, 4, 1, tzinfo=timezone.utc)
+    assert flt.valid_at_before == datetime(2024, 6, 30, tzinfo=timezone.utc)
+
+    # Aware inputs pass through untouched.
+    aware = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert ClaimQueryFilter(pot_id="pot-1", as_of=aware).as_of == aware
+    assert ClaimQueryFilter(pot_id="pot-1").as_of is None
 
 
 # ---------------------------------------------------------------------------

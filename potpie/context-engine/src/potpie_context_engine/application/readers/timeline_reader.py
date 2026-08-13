@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from potpie_context_engine.application.readers._common import (
@@ -491,12 +491,20 @@ def _representative_activity_row(
 
 def _event_datetime(row: ClaimRow) -> datetime | None:
     raw = row.properties.get("occurred_at")
+    event_time: datetime | None = None
     if isinstance(raw, str) and raw.strip():
         try:
-            return datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+            event_time = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
         except ValueError:
             pass
-    return row.valid_at
+    if event_time is None:
+        event_time = row.valid_at
+    # A naive event time is interpreted as UTC: the window bounds
+    # (since/until) are normalized to UTC at the read boundary, so comparing
+    # against a naive event time would raise (potpie issue #1008).
+    if event_time is not None and event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=timezone.utc)
+    return event_time
 
 
 def _event_time_iso(row: ClaimRow) -> str | None:
