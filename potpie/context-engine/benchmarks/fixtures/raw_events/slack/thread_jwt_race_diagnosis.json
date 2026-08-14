@@ -1,0 +1,76 @@
+{
+  "connector": "slack",
+  "event_type": "message",
+  "action": "thread",
+  "source_id": "slack:thread:C04AUTH401:1737028800.001234",
+  "occurred_at": "2026-01-15T00:00:00Z",
+  "repo_name": "acme/platform",
+  "payload": {
+    "type": "message",
+    "subtype": "thread_broadcast",
+    "channel": "C04AUTH401",
+    "channel_name": "incidents-auth",
+    "thread_ts": "1737028800.001234",
+    "team_id": "T0ACME001",
+    "messages": [
+      {
+        "type": "message",
+        "user": "U004JORDAN",
+        "username": "jordan-park",
+        "real_name": "Jordan Park",
+        "text": "<!here> seeing another 401 spike on auth-service — PD-AUTH-401-SPIKE is firing again. Same pattern as OPS-355: bursts under load, clears on retry. Logs attached. @maya-chen can you take point? You're auth owner per CODEOWNERS.",
+        "ts": "1737028800.001234",
+        "thread_ts": "1737028800.001234"
+      },
+      {
+        "type": "message",
+        "user": "U014MAYA",
+        "username": "maya-chen",
+        "real_name": "Maya Chen",
+        "text": "On it. Pulling auth-service metrics now. 401 rate correlates with `token_refresh_worker` cycle — spikes exactly when the background refresh job runs every 30s.",
+        "ts": "1737028801.445678",
+        "thread_ts": "1737028800.001234"
+      },
+      {
+        "type": "message",
+        "user": "U014MAYA",
+        "username": "maya-chen",
+        "real_name": "Maya Chen",
+        "text": "Hypothesis: the refresh worker and the request handler both check expiry independently. Under concurrent load there's a narrow window where the worker rotates the refresh token while an in-flight request still presents the old access token → 401.",
+        "ts": "1737028805.112233",
+        "thread_ts": "1737028800.001234"
+      },
+      {
+        "type": "message",
+        "user": "U004JORDAN",
+        "username": "jordan-park",
+        "real_name": "Jordan Park",
+        "text": "That matches the trace I grabbed — introspect 401 happens ~80ms after a refresh_worker log line for the same session_id. No deploy, keys look fine.",
+        "ts": "1737028809.778899",
+        "thread_ts": "1737028800.001234"
+      },
+      {
+        "type": "message",
+        "user": "U001SAM",
+        "username": "sam-kim",
+        "real_name": "Sam Kim",
+        "text": "checkout-api is just forwarding tokens from clients — we're not re-validating expiry locally. If auth rejects a token mid-flow we surface the 401 downstream. Happy to help repro if you need a concurrent client.",
+        "ts": "1737028814.334455",
+        "thread_ts": "1737028800.001234"
+      },
+      {
+        "type": "message",
+        "user": "U014MAYA",
+        "username": "maya-chen",
+        "real_name": "Maya Chen",
+        "text": "Confirmed in staging with Sam's repro script — concurrent refresh + introspect hits the race ~2% of the time. Opening OPS-431 for root cause and linking to OPS-355. Fix will need a lock or single expiry authority across worker + handler.",
+        "ts": "1737028820.667788",
+        "thread_ts": "1737028800.001234"
+      }
+    ]
+  },
+  "_meta": {
+    "captured_from": "synthetic",
+    "redactions": []
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "connector": "repo_docs",
+  "event_type": "service_manifest",
+  "action": "create",
+  "source_id": "repo_docs:service_manifest:auth-service:create",
+  "occurred_at": "2026-01-15T00:00:00Z",
+  "repo_name": "acme/platform",
+  "payload": {
+    "path": "services/auth-service/service.yaml",
+    "service": {
+      "name": "auth-service",
+      "display_name": "Auth Service",
+      "description": "Issues and refreshes JWT access tokens for Acme platform clients. Owns token signing keys, refresh-token rotation, and the background token refresh worker.",
+      "repo": "acme/platform",
+      "path": "services/auth-service",
+      "language": "python",
+      "team": "@platform-platform",
+      "capabilities": [
+        "jwt-issuance",
+        "jwt-refresh",
+        "session-validation"
+      ],
+      "dependencies": {
+        "datastores": ["auth-redis", "auth-postgres"],
+        "services": []
+      },
+      "runtime": {
+        "port": 8080,
+        "health_check": "/healthz"
+      }
+    }
+  },
+  "_meta": {
+    "captured_from": "synthetic",
+    "redactions": []
+  }
+}
