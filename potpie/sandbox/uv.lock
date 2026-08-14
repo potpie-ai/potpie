@@ -8,7 +8,7 @@ constraints = [
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "gitpython", specifier = ">=3.1.58" },
     { name = "idna", specifier = ">=3.15" },
-    { name = "pydantic-ai-slim", specifier = ">=1.102.0" },
+    { name = "pydantic-ai-slim", specifier = ">=1.106.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "python-multipart", specifier = ">=0.0.28" },
