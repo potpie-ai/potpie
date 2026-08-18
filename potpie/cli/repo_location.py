@@ -13,7 +13,9 @@ exactly one definition of what a repo *is*.
 
 from __future__ import annotations
 
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Final, Literal
 
@@ -21,6 +23,14 @@ from potpie_context_engine.domain.repo_identity import (
     normalize_repo_ref,
     repo_identity_key,
 )
+
+
+def _no_window_kwargs() -> dict:
+    """Keep the git probe from flashing a console when the host has none."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
 
 #: The registered ref names the working tree the caller is standing in — either
 #: exactly, or as the project directory the cwd sits inside.
@@ -144,19 +154,29 @@ def current_repo_identity(cwd: Path) -> str | None:
 
 
 def current_git_remote(cwd: Path) -> str | None:
+    # Output goes to a temp file, never a pipe. `capture_output` spawns reader
+    # threads that `communicate()` must join, and on Windows a surviving git
+    # grandchild keeps the inherited pipe write handle open after the timeout
+    # kills the direct child — so the join never returns and the caller wedges
+    # forever. A file has no such handle dependency, so the timeout is real.
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(cwd), "remote", "get-url", "origin"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
+        with tempfile.TemporaryFile() as out:
+            proc = subprocess.run(
+                ["git", "-C", str(cwd), "remote", "get-url", "origin"],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                **_no_window_kwargs(),
+            )
+            if proc.returncode != 0:
+                return None
+            out.seek(0)
+            stdout = out.read().decode("utf-8", errors="replace")
     except Exception:
         return None
-    if proc.returncode != 0:
-        return None
-    return normalize_repo_ref(proc.stdout.strip())
+    return normalize_repo_ref(stdout.strip())
 
 
 __all__ = [

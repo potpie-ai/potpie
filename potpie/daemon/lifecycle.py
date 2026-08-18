@@ -78,7 +78,7 @@ _RELATIVE_SINCE_UNITS: Final[dict[str, str]] = {
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError, OSError):
+    except (ProcessLookupError, PermissionError, OSError, SystemError):
         return False
     return True
 
@@ -135,14 +135,25 @@ class Daemon:
         from potpie.daemon.process.pidfile import read_pid_file
 
         pid = read_pid_file(self.home / "daemon.pid")
-        up = bool(pid and _pid_alive(pid))
         discovery = self.discovery() or {}
         bind = discovery.get("bind", "")
         socket = bind.removeprefix("unix:") if bind.startswith("unix:") else bind
         base_url = discovery.get("base_url", "")
         # One probe, two answers: whether it is serving, and what backend it
         # serves. Only paid for when a process actually exists.
-        health = self.health() if up else {}
+        up = bool(pid and _pid_alive(pid))
+        health = self.health() if (up or base_url) else {}
+        health_pid = health.get("pid")
+        if (
+            not up
+            and pid
+            and health.get("live")
+            and health_pid is not None
+            and str(health_pid) == str(pid)
+        ):
+            # On Windows, signal-zero can reject a detached Python process even
+            # while its health endpoint is serving normally.
+            up = True
         serving = bool(health.get("live"))
         if not up:
             state = STATE_NOT_RUNNING

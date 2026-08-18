@@ -115,6 +115,14 @@ def start_detached(
                 raise DaemonStartError(f"daemon already running (pid={existing})")
             except ProcessLookupError:
                 pid_file.unlink()  # stale
+            except OSError as exc:
+                if not _is_stale_pid_error(exc):
+                    raise
+                pid_file.unlink()  # stale
+            except SystemError:
+                if os.name != "nt":
+                    raise
+                pid_file.unlink()  # stale
     log_path.parent.mkdir(parents=True, exist_ok=True)
     # Only the child started below gets to signal readiness. A daemon killed
     # with SIGKILL never removed its discovery file, and the dead daemon's
@@ -135,13 +143,24 @@ def start_detached(
         },
     )
     try:
+        popen_kwargs = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": log_fp,
+            "stderr": subprocess.STDOUT,
+            "close_fds": True,
+            "env": child_env,
+        }
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+                | subprocess.CREATE_BREAKAWAY_FROM_JOB
+            )
+        else:
+            popen_kwargs["start_new_session"] = True
         proc = subprocess.Popen(
             [sys.executable, "-m", "potpie.daemon.main"],
-            stdout=log_fp,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-            env=child_env,
+            **popen_kwargs,
         )
     finally:
         log_fp.close()
@@ -213,7 +232,10 @@ def _read_discovery(disc_file: pathlib.Path) -> tuple[dict | None, str | None]:
     if not bind and not base_url:
         return None, f"{disc_file} names neither a socket nor a URL"
     socket_path = bind[len("unix:") :] if bind.startswith("unix:") else bind
-    return {"socket": socket_path, "bind": bind, "url": base_url}, None
+    address = {"socket": socket_path, "bind": bind, "url": base_url}
+    if isinstance(disc.get("pid"), int):
+        address["pid"] = disc["pid"]
+    return address, None
 
 
 def _serving_fault(address: dict[str, str], pid: int) -> str | None:
@@ -245,10 +267,11 @@ def _serving_fault(address: dict[str, str], pid: int) -> str | None:
     except ValueError:
         return f"{label} is not answering as a Potpie daemon"
     served_pid = served.get("pid") if isinstance(served, dict) else None
-    if isinstance(served_pid, int) and served_pid != pid:
+    expected_pid = address.get("pid", pid)
+    if isinstance(served_pid, int) and served_pid != expected_pid:
         return (
             f"{label} is served by pid {served_pid}, not the daemon just "
-            f"started (pid {pid})"
+            f"started (pid {expected_pid})"
         )
     return None
 
@@ -349,6 +372,10 @@ def _clip(line: str) -> str:
     return line[: _MAX_CAUSE_CHARS - 3] + "..."
 
 
+def _is_stale_pid_error(exc: OSError) -> bool:
+    return os.name == "nt" and getattr(exc, "winerror", None) in {6, 11, 87}
+
+
 def stop_daemon(home: pathlib.Path) -> str:
     """Stop the daemon if running. Returns a human-readable message; never raises."""
     home = pathlib.Path(home)
@@ -369,6 +396,16 @@ def stop_daemon(home: pathlib.Path) -> str:
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
+        _unlink(pid_file)
+        return "stale pid file removed"
+    except OSError as exc:
+        if not _is_stale_pid_error(exc):
+            raise
+        _unlink(pid_file)
+        return "stale pid file removed"
+    except SystemError:
+        if os.name != "nt":
+            raise
         _unlink(pid_file)
         return "stale pid file removed"
     deadline = time.time() + 10

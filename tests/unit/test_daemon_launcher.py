@@ -613,13 +613,15 @@ def _captured_child_env(
                 self,
                 _args: list[str],
                 *,
+                stdin: object,
                 stdout: object,
                 stderr: int,
-                start_new_session: bool,
+                start_new_session: bool = False,
                 close_fds: bool,
                 env: dict[str, str],
+                creationflags: int = 0,
             ) -> None:
-                del stdout, stderr, start_new_session, close_fds
+                del stdin, stdout, stderr, start_new_session, close_fds, creationflags
                 captured["env"] = env
                 home = pathlib.Path(env["CONTEXT_ENGINE_HOME"])
                 (home / "discovery.json").write_text(
