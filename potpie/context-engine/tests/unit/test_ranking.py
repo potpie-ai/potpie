@@ -249,3 +249,33 @@ class TestTruncate:
         service = RankingService()
         ranked = service.rank([_make_candidate(key="a")], _ctx())
         assert truncate(ranked, max_items=0) == []
+
+
+class TestNaiveDatetimeHandling:
+    """A naive ``TaskContext.now`` (e.g. an agent's date-only ``as_of``) must
+    rank instead of raising naive-minus-aware ``TypeError``."""
+
+    @staticmethod
+    def _naive_ctx(now: datetime) -> TaskContext:
+        return TaskContext(pot_id="pot-1", now=now)
+
+    def test_naive_now_with_aware_valid_at_does_not_crash(self) -> None:
+        service = RankingService()
+        cand = _make_candidate(key="a", valid_at=_NOW - timedelta(days=3))
+        ranked = service.rank([cand], self._naive_ctx(datetime(2026, 5, 20)))
+        assert len(ranked) == 1
+
+    def test_naive_now_with_naive_valid_at_does_not_crash(self) -> None:
+        service = RankingService()
+        cand = _make_candidate(key="a", valid_at=datetime(2026, 5, 17))
+        ranked = service.rank([cand], self._naive_ctx(datetime(2026, 5, 20)))
+        assert len(ranked) == 1
+
+    def test_naive_now_scores_as_utc(self) -> None:
+        """A naive now is interpreted as UTC: same instant, same score."""
+        service = RankingService()
+        cand = _make_candidate(key="a", valid_at=_NOW - timedelta(days=3))
+        aware = service.rank([cand], self._naive_ctx(_NOW))[0]
+        naive = service.rank([cand], self._naive_ctx(_NOW.replace(tzinfo=None)))[0]
+        assert naive.score == aware.score
+        assert naive.breakdown["recency"] == aware.breakdown["recency"]
