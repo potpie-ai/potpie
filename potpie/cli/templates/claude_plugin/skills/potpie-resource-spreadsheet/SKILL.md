@@ -247,6 +247,23 @@ causes apart: a hit there but not in the bare search means the index works and
 was simply outranked; nothing there means the summary and claims need the
 rewrite.
 
+## Report back
+
+Report the ingest as commands and counts: the `resource import` you ran, the
+`sections_created` / `sections_changed` / `chunks` it reported, the `plan_id`
+from the derived claims and the DOCUMENTS link, and the retrieval check from
+step 6 with the query you used. The derived facts are the deliverable here, so
+name them and the chunk ids they cite — that pairing is what a reader has to be
+able to audit.
+
+Show the commands, never the chunk text. Pasting rows back into your reply routes
+the spreadsheet through your own output, which is exactly what the extraction
+script exists to prevent, and chunked rows read badly anyway — that is why the
+facts were derived as claims in the first place.
+
+No diagram. Figures belong in a markdown table with their units and period, where
+they can be compared; mermaid cannot hold a number the reader wants to check.
+
 ## Refreshing and removing
 
 Re-import the same `--doc` from a **complete** directory: a section missing

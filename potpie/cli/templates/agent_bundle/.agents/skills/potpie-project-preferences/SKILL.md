@@ -41,6 +41,19 @@ user before choosing.
 
 Do not quote Potpie context back unless it matters. Use it to write better code.
 
+## Report Back
+
+Still show the `graph read` you ran, with its `--scope` and `--query`. That is
+not the same as quoting the context back: the command is how the reader checks
+that you looked at the right scope, while the preference text belongs in the
+code you wrote, not in the reply. Say so when a read came back empty — code
+written against no preferences is a different claim from code written against
+none that applied.
+
+Preferences are a list, not a shape. Report them as prose or a short table and
+do not draw a mermaid diagram; boxes around a scope hierarchy are slower to read
+than the sentence "file beats directory beats service beats repo".
+
 ## Record A Preference
 
 Record only reusable, explicit preferences that are likely to matter again. Do

@@ -122,6 +122,30 @@ Use `agent_claim` for lower-authority synthesis. Every entity and claim needs a
 compact summary, retrieval-grade description, confidence, truth class, source
 authority, and source refs when available.
 
+## Report Back
+
+A baseline that lands only in the graph has not been delivered — the person who
+asked for it needs to check it. Show the reads and the write flow you ran, and
+name the plan id from `graph commit` so the whole write is inspectable with
+`graph history --plan <plan_id>`.
+
+The map of what you found is a shape, so draw it once at the end:
+
+```mermaid
+flowchart TD
+  repo["acme/payments (Repository)"] --> api["payments-api (Service)"]
+  repo --> worker["settlement-worker (Service)"]
+  api -->|EXPOSES| rest["REST /v2/payments (APIContract)"]
+  api -->|USES| pgdb[("payments-db (DataStore)")]
+  worker -->|DEPLOYED_TO| prod["prod (Environment)"]
+```
+
+Use the canonical entity families as node labels so the picture and the graph
+say the same thing, and draw only relations a source supported — a baseline
+diagram that quietly asserts an unverified dependency is the fastest way to make
+a wrong fact look settled. Environments, features, and ownership go in prose or
+a table; they flatten a topology diagram without adding to it.
+
 ## Mutation Requirements
 
 Before proposing:

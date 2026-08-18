@@ -52,6 +52,41 @@ Express reads through `graph read --subgraph <subgraph> --view <view>`.
 | `knowledge.document_context` | docs, runbooks, and ingested document sections (hits carry chunk ids) |
 | `admin.inspection_slice` | raw canonical graph for debugging |
 
+## Report Back
+
+When an answer used Potpie, two things travel with it.
+
+**The commands.** Show the `potpie` commands you ran, verbatim, not paraphrased.
+"I checked the graph" tells the reader nothing they can act on; the command
+itself is one they can re-run, widen, or correct — and it is how they notice you
+read `staging` when they meant `prod`. Include the reads that came back empty: an
+empty result is usually why an answer is thin, and it is invisible otherwise.
+
+**A mermaid diagram, when the answer is a shape.** Structure lands faster drawn
+than described. Emit it as a fenced ` ```mermaid ` block — never ASCII art, and
+never a description of a picture:
+
+| The answer is | Draw |
+|---|---|
+| three or more entities and the edges between them | `flowchart LR` |
+| an ordered run of events — deploys, PRs, incidents | `timeline` |
+| a symptom moving through attempts to a fix | `flowchart TD` |
+
+```mermaid
+flowchart LR
+  payments["payments-api (prod)"] -->|DEPENDS_ON| ledger["ledger-api (prod)"]
+  ledger -.->|USES, inferred| cache[("redis")]
+```
+
+Skip it otherwise. One or two entities, a single fact, a yes/no, or a list of
+preferences reads faster as a sentence, and a diagram that restates one line is
+noise.
+
+A diagram is a claim, so it obeys the rules a graph write does. Draw only edges
+your reads or sources support, keep the environment qualifier on anything that
+carries one (`payments-api (prod)`), and use a dashed edge for what you inferred
+rather than read. Never add an edge to make the picture connected.
+
 ## Writing
 
 Two rules carry most of the value:

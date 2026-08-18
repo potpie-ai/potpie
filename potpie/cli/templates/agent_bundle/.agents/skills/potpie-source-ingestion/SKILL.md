@@ -223,6 +223,19 @@ potpie --json graph quality orphan-entities --limit 20
 If the verified commit misses expected facts, fix the mutation or record an inbox item.
 Report what was ingested, what was skipped, and what remains uncertain.
 
+Report it with the commands, not as prose alone: the `propose` and
+`commit --verify` you ran, the `plan_id` they returned, and the verify outcome.
+An ingestion the reader cannot re-open with `graph history --plan <plan_id>` is
+one they have to take on trust, and the whole point of the verified gate is that
+they do not have to. Name the reads that came back empty as well — they are why
+a slice of the evidence matrix stayed thin.
+
+When the ingested source described a topology — a service map, a deploy shape, a
+set of dependencies — draw what you wrote as a mermaid ` ```mermaid ` /
+`flowchart LR` block, using the same entity keys and predicates that went into
+the mutation, so the picture and the graph can be compared line by line. Nothing else here is a shape: counts, skipped
+sources, and open questions belong in a list.
+
 ## Repository Baseline
 
 For repository ingestion, run baseline before change history. Use

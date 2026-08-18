@@ -247,6 +247,22 @@ splits the two causes apart. A hit there but not in the bare search means the
 summary works and was simply outranked; nothing there means the summary is weak
 — rewrite it and re-import.
 
+## Report back
+
+Report the ingest as commands and counts: the `resource import` you ran, the
+`sections_created` / `sections_changed` / `chunks` it reported, the `plan_id`
+from the DOCUMENTS link, and the retrieval check from step 6 with the query you
+used. That is the whole audit trail, and it is checkable — a sentence saying "the
+runbook is ingested" is not.
+
+This is the one skill where the reporting rule and the never-broken rule meet:
+show the commands, never the chunk text. Pasting a section back into your reply
+routes the document through your own output, which is exactly what the extraction
+script exists to prevent. Cite `chunk_id`s and let `resource get` fetch the body.
+
+No diagram. A document is a section tree, and a section tree is a nested list —
+which markdown already draws better than mermaid does.
+
 ## Refreshing and removing
 
 Re-import the same `--doc` from a **complete** directory: a section missing

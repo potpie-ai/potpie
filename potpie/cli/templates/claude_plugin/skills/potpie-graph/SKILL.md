@@ -236,6 +236,44 @@ Compare:
 - Weak: `"deadlock fix"`
 - Strong: `"Concurrent refund + settle deadlocks payments DB under load; seen as 'refund race timeout' and 'payment deadlock on concurrent settle' in prod; fixed by ordering lock acquisition in services/payments/settle.py"`
 
+## 7. Report back — the commands, then a diagram if it earns its place
+
+Every read above is an argument for the answer you give, so put it on the page.
+Show the `potpie` commands you ran **verbatim** — the subgraph, view, scope,
+query, and limit included. A reader cannot re-run "I checked the graph", cannot
+tell that your `--limit 5` is why the list looks short, and cannot spot that you
+read `--environment staging` when they meant prod. Print the reads that returned
+nothing too: an empty `search-entities` is normally the reason an answer is thin,
+and silence about it reads as a confident negative.
+
+For a write, name the `plan_id` and whether `commit --verify` passed. That is the
+handle for `graph history --plan <plan_id>`, and it is the difference between
+"recorded" and "recorded and checked".
+
+Then draw the result when the result is a shape:
+
+| The answer is | Draw |
+|---|---|
+| three or more entities and the edges between them | `flowchart LR` |
+| an ordered run of events — deploys, PRs, incidents | `timeline` |
+| a symptom moving through attempts to a fix | `flowchart TD` |
+
+```mermaid
+flowchart LR
+  payments["payments-api (prod)"] -->|DEPENDS_ON| ledger["ledger-api (prod)"]
+  ledger -.->|USES, inferred| cache[("redis")]
+```
+
+Skip the diagram otherwise. One or two entities, a single claim, a yes/no, or a
+list of preferences reads faster as a sentence, and a picture that restates one
+line costs the reader time instead of saving it.
+
+A diagram is a claim and inherits the same discipline as a mutation: draw only
+edges a read or a source supports, label edges with the predicate the graph
+actually uses, keep environment qualifiers on the nodes that carry them, and dash
+anything you inferred. Never add an edge to make the picture connected — an
+invented edge in a diagram is a fact the reader will repeat.
+
 ## Responding To Nudges
 
 A Potpie hook may call `graph nudge` and inject its result into your session. The

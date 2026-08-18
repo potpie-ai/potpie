@@ -54,6 +54,28 @@ Timeline context is correlation, not proof. Use it to choose files, PRs, tickets
 or deploys to inspect, then verify the source ref before blaming a change.
 Timeline reads do not include uncommitted local work unless it was recorded.
 
+## Report Back
+
+Show the `graph read` you ran with its window and `--limit`. A timeline is only
+as complete as its bounds, and "nothing changed since March" reads very
+differently once the reader can see you asked for twenty rows in a 7-day window.
+
+When the answer is a sequence — a regression window, a release train, an
+incident and the deploys around it — draw it:
+
+```mermaid
+timeline
+  title payments-api, 2026-03
+  2026-03-04 : PR 412 merged — retry budget lowered
+  2026-03-06 : INC-77 — settlement timeouts in prod
+  2026-03-07 : PR 418 — reverted 412
+```
+
+Use the recorded `occurred_at` dates, not your reading order, and keep the source
+ref in the label so each row stays checkable. Two events in a row do not need a
+picture. Correlation stays correlation on a diagram: adjacency is not causation,
+so do not draw an arrow from a deploy to an incident you have not verified.
+
 ## Record History
 
 For GitHub, Linear, Jira, docs, and similar sources, hydrate records with the

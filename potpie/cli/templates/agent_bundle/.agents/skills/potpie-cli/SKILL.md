@@ -113,6 +113,18 @@ potpie --json graph quality summary
 
 Use `potpie-graph` for advanced graph workbench details.
 
+## Report Back
+
+Answer with the command, not a description of it. `potpie doctor` said something
+specific; paste the line you acted on, and paste the command that produced it.
+Half of what this skill diagnoses is a wrong pot, a wrong host, or a stale
+install, and every one of those is invisible in a summary and obvious in the
+output the reader can see. Show the failing command *and* the fixing one when you
+changed something.
+
+Nothing in CLI troubleshooting is a shape, so no mermaid diagram here. A
+pot/host/source state is a short list; write it as one.
+
 ## Boundaries
 
 Repository links, docs, tickets, PRs, and logs are interpreted by the harness and

@@ -44,6 +44,28 @@ staging dependency is not proof of a production dependency.
 Look for explicit topology facts: `DEFINED_IN`, `DEPLOYED_TO`, `DEPENDS_ON`,
 `USES`, `EXPOSES`, `HOSTED_ON`, and `OWNED_BY`.
 
+## Report Back
+
+Show the `search-entities` and `graph read` you ran, including the
+`--environment`, `--depth`, and `--limit` you chose. A neighborhood is only
+interpretable next to its bounds: "nothing depends on it" means one thing at
+`--depth 2` and another at `--depth 1`, and the reader cannot tell which you
+meant unless the command is on the page.
+
+A neighborhood is the case a diagram was made for — draw it:
+
+```mermaid
+flowchart LR
+  payments["payments-api (prod)"] -->|DEPENDS_ON| ledger["ledger-api (prod)"]
+  payments -->|USES| pgdb[("payments-db")]
+  ledger -.->|USES, inferred| cache[("redis")]
+```
+
+Keep the environment qualifier on the node, label every edge with its predicate,
+and dash any edge you inferred rather than read — a solid edge asserts the graph
+says so. Blast radius is the same picture with the direction reversed. Do not
+draw one dependency; say it in a sentence.
+
 ## Record Architecture
 
 Record only source-backed topology or carefully labeled agent inferences. Use

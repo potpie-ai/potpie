@@ -34,6 +34,23 @@ Use text output for routine orientation and context reads. Add `--json` when a
 workflow needs exact machine parsing, mutation plans, commits, history
 verification, or full evidence/debug payloads.
 
+## Report Back
+
+Show the `potpie` commands behind the answer, verbatim — "I checked the graph"
+cannot be re-run, widened, or corrected, and a visible command is how the reader
+notices you read `staging` when they meant `prod`. Include reads that returned
+nothing; an empty result is usually why the answer is thin.
+
+Draw a mermaid diagram when the answer *is* a shape: `flowchart LR` for three or
+more entities and their edges, `timeline` for an ordered run of deploys, PRs, or
+incidents, `flowchart TD` for a symptom moving through attempts to a fix. Skip it
+otherwise — one fact, a yes/no, or a list of preferences reads faster as a
+sentence, and a diagram that restates one line is noise.
+
+A diagram is a claim: draw only edges your reads support, keep environment
+qualifiers on the nodes that carry them (`payments-api (prod)`), dash anything
+inferred, and never add an edge just to make the picture connected.
+
 ## Use-Case Skills
 
 - `potpie-project-preferences`: coding preferences for error handling, structure,

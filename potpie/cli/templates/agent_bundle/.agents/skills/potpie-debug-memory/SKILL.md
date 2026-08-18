@@ -52,6 +52,26 @@ Treat prior fixes as leads. Check whether the same symptom, environment,
 version, dependency, data shape, command, or test path matches this incident.
 Failed prior attempts are useful because they prevent repeated work.
 
+## Report Back
+
+Show the reads you ran and, above all, the `--query` text you searched with. The
+wording is what decides whether a prior occurrence surfaces at all, so a reader
+who can see your phrasing can hand you the one that actually hits — and a search
+that returned nothing is a finding worth printing, not a step to omit.
+
+When prior attempts matter as much as the fix, draw the path through them:
+
+```mermaid
+flowchart TD
+  s["symptom: settlement timeouts (prod)"] --> a1["tried: larger pool — no effect"]
+  s --> a2["tried: retry budget — held"]
+  a2 --> f["fix: PR 418, verified"]
+```
+
+The dead ends are the reason to draw it; a picture of one occurrence and one fix
+is a sentence with boxes around it. Keep the verification status on the fix node
+so an unverified lead is never mistaken for a settled one.
+
 ## Record Debug Memory
 
 Record after the investigation when the learning is reusable: bug pattern, fix,
