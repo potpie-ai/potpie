@@ -47,7 +47,10 @@ cli-install: ui-build ## Install potpie + potpie-daemon globally from the root p
 	@# Stop any old detached daemon before replacing the tool env; otherwise the
 	@# fresh CLI can still talk to a daemon running the previous Python/backend.
 	-@if command -v potpie >/dev/null 2>&1; then potpie daemon stop >/dev/null 2>&1; fi
-	uv tool install --python '$(CLI_PYTHON)' --force --editable "."
+	@# ".[all]", not ".": the base distribution is a remote-only client, so a bare
+	@# editable install would leave every dev machine without a local backend or
+	@# a daemon.
+	uv tool install --python '$(CLI_PYTHON)' --force --editable ".[all]"
 	@case ":$$PATH:" in \
 	  *":$$HOME/.local/bin:"*) echo "✓ potpie installed (editable). Try: potpie --help";; \
 	  *) echo "✓ installed, but $$HOME/.local/bin is not on PATH — run: uv tool update-shell, then restart your shell";; \

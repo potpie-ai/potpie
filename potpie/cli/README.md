@@ -58,8 +58,9 @@ make cli-status
 ```
 
 That path builds the graph-explorer UI, stops any old daemon, and installs the
-editable package. Published-package users should use `uv tool install potpie` or
-`pip install potpie` instead.
+editable package. Published-package users should use
+`uv tool install 'potpie[all]'` or `pip install 'potpie[all]'` instead — bare
+`potpie` is a remote-only client with no local backend and no daemon.
 
 ## Agent harness install
 

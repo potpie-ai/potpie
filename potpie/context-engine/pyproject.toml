@@ -98,6 +98,11 @@ dev = [
     "ruff>=0.8.0",
 ]
 
+# The inbound HTTP UI's build inputs. Excluded by name from both targets: the
+# tree is gitignored only by the frontend's own nested .gitignore, and hatchling
+# consults the *root* ignore file alone -- so on any machine that has run
+# `make ui-build` it lands in the wheel (~27 MB, 92% of its entries). `dist/`,
+# the build output, still ships.
 [tool.hatch.build.targets.wheel]
 packages = ["src/potpie_context_engine"]
 include = [
@@ -105,6 +110,9 @@ include = [
     "src/potpie_context_engine/benchmarks/use_cases/**/*.yaml",
     "src/potpie_context_engine/benchmarks/fixtures/raw_events/**/*.json",
     "src/potpie_context_engine/benchmarks/_legacy/data/**/*.json",
+]
+exclude = [
+    "src/potpie_context_engine/adapters/inbound/http/ui/frontend/node_modules",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -115,6 +123,9 @@ include = [
     "scripts/**/*.py",
     "scripts/**/*.json",
     "scripts/**/*.mjs",
+]
+exclude = [
+    "src/potpie_context_engine/adapters/inbound/http/ui/frontend/node_modules",
 ]
 
 [tool.ruff]

@@ -43,7 +43,8 @@ body:
       label: Install source
       description: How are you running Potpie locally?
       options:
-        - uv tool install potpie
+        - uv tool install 'potpie[all]'
+        - uv tool install potpie (remote-only, no extras)
         - pip or pipx from PyPI
         - Source checkout
         - Editable/local build

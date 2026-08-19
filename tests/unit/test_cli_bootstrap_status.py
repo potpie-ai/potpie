@@ -343,6 +343,46 @@ def test_doctor_json_includes_backend_readiness(
     assert payload["backend_readiness"]["detail"] == "mutation store is unavailable"
     assert payload["backend_readiness"]["capability_ready"] == {"mutation": False}
     assert payload["active_pot"] == "foo-pot"
+    # The backend's own reason, not the generic "run backend doctor": a backend
+    # that answered "not ready" already said why, and on a base install the why
+    # is a package name.
+    assert payload["recommended_next_action"] == "mutation store is unavailable"
+
+
+def test_doctor_next_action_falls_back_when_readiness_gives_no_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A not-ready backend with no detail still gets pointed somewhere."""
+
+    class _Pot:
+        pot_id = "foo-pot"
+
+    class _LedgerStatus:
+        available = True
+        binding = "none"
+
+    mock_host = MagicMock()
+    mock_host.daemon.status.return_value = {"mode": "in_process"}
+    mock_host.backend.profile = "memory"
+    mock_host.backend.capabilities.return_value = BackendCapabilities(
+        profile="memory",
+        mutation=True,
+        claim_query=True,
+    )
+    mock_host.backend.mutation.readiness.return_value = BackendReadiness(
+        profile="memory",
+        ready=False,
+        detail="",
+        capability_ready={"mutation": False},
+    )
+    mock_host.pots.active_pot.return_value = _Pot()
+    mock_host.ledger.status.return_value = _LedgerStatus()
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
     assert "graph status" in payload["recommended_next_action"]
 
 

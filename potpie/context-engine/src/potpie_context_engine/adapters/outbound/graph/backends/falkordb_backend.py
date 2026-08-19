@@ -87,6 +87,32 @@ class _FalkorDBModeSettings:
         return self._mode
 
 
+def _missing_driver_module(settings: Any) -> str | None:
+    """The driver module this profile needs and does not have, if any.
+
+    Readiness used to be answered from what was *wired* — ``writer.enabled`` is
+    set during construction and stays true whether or not a handle can ever be
+    opened. On a base ``potpie`` install, where the graph-native driver ships in
+    the ``[local]`` extra, that produced the worst available ordering of two
+    facts: ``potpie backend doctor`` said ``ready: true`` with every capability
+    ``true``, and the very next read crashed. The diagnostic an operator runs
+    first has to be the one that is right.
+
+    A spec probe rather than an open: importability is exactly the question
+    ("was the extra installed?"), and it costs nothing and starts no server.
+    A driver that is present but broken is a different failure and still
+    surfaces where it always did.
+    """
+    import importlib.util
+
+    module = "falkordb" if settings.falkordb_mode() == "server" else "redislite"
+    try:
+        found = importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):  # pragma: no cover - malformed installation
+        found = False
+    return None if found else module
+
+
 def _run_sync(coro: Any) -> Any:
     """Drive an async writer call from a sync backend port."""
     import asyncio
@@ -194,16 +220,27 @@ class _FalkorDBMutation:
         return _run_sync(self.writer.reset_pot(pot_id))
 
     def readiness(self, pot_id: str) -> BackendReadiness:
-        ready = bool(getattr(self.writer, "enabled", False))
+        driver = _missing_driver_module(self.settings)
+        ready = bool(getattr(self.writer, "enabled", False)) and driver is None
+        if driver is not None:
+            detail = (
+                f"{self.profile} is selected but its driver ({driver!r}) is not "
+                "installed — install it with `pip install 'potpie[local]'`, or "
+                "use a managed host"
+            )
+        elif ready:
+            detail = (
+                f"{self.profile} claim_query + mutation + semantic + analytics + "
+                "inspection wired; snapshot pending"
+            )
+        else:
+            detail = (
+                f"{self.profile} backend is not configured or context graph is disabled"
+            )
         return BackendReadiness(
             profile=self.profile,
             ready=ready,
-            detail=(
-                f"{self.profile} claim_query + mutation + semantic + analytics + "
-                "inspection wired; snapshot pending"
-                if ready
-                else f"{self.profile} backend is not configured or context graph is disabled"
-            ),
+            detail=detail,
             capability_ready={
                 "mutation": ready,
                 "claim_query": ready,

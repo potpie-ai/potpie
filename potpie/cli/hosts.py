@@ -739,6 +739,11 @@ def build_managed_host(base_url: str, token: str) -> Any:
     )
 
 
+#: The third-party modules ``potpie[daemon]`` installs. The daemon cannot serve
+#: without them, and their absence is a packaging answer rather than a fault.
+_DAEMON_SERVER_MODULES: tuple[str, ...] = ("uvicorn", "fastapi")
+
+
 def build_host(origin: str) -> Any:
     """Build the host for ``origin``. Raises if managed is not configured."""
     require_origin(origin)
@@ -775,8 +780,31 @@ def build_host(origin: str) -> Any:
 
 
 def _build_local_host() -> Any:
+    """The local host: through the daemon where there is one, in process where not.
+
+    The base ``potpie`` distribution is a remote-only client — the daemon's HTTP
+    server ships in the ``potpie[daemon]`` extra. Without that fallback, every
+    local command on a base install went to ``RemoteHostShell``, which tried to
+    start a daemon that could not import ``uvicorn``, and a bare ``potpie use
+    mine`` died with "Cannot reach the local host to resolve 'mine'" plus advice
+    to run ``potpie setup`` — a repair that cannot work, because the missing
+    piece is a package.
+
+    Running in process instead is not a consolation prize. With the
+    dependency-free ``embedded`` backend that :func:`default_backend_profile`
+    now selects in the same circumstance, the local host genuinely works: pots,
+    graph reads and writes, skills. That is why there is no "local is not
+    installed" state anywhere in this module — it would be a false claim, and
+    asserting it would take away a host that answers.
+
+    The probe is on the server package, not on whether a daemon is *running*: a
+    daemon that fails to start for any other reason is a fault to surface, and
+    quietly demoting it to in-process would hide it. Same discipline as the
+    ``ModuleNotFoundError`` guard below — answer the packaging question, re-raise
+    everything else.
+    """
     mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "").strip().lower()
-    if mode != "in_process":
+    if mode != "in_process" and daemon_server_installed():
         try:
             from potpie.daemon.client import RemoteHostShell
         except ModuleNotFoundError as exc:
@@ -788,6 +816,30 @@ def _build_local_host() -> Any:
     from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 
     return build_host_shell()
+
+
+def daemon_server_installed() -> bool:
+    """Whether this installation took the ``potpie[daemon]`` extra.
+
+    ``potpie.daemon`` itself always ships — it is inside ``packages =
+    ["potpie"]`` regardless of extras — so importing the module proves nothing.
+    What can be absent is the third-party server it runs on, and the honest
+    question is whether *that* is importable.
+
+    A spec probe rather than an import: this runs on the way to building a host,
+    which is most CLI invocations, and importing FastAPI to find out whether
+    FastAPI exists would put the daemon's whole import cost on commands that
+    never touch it.
+    """
+    import importlib.util
+
+    for module in _DAEMON_SERVER_MODULES:
+        try:
+            if importlib.util.find_spec(module) is None:
+                return False
+        except (ImportError, ValueError):  # pragma: no cover - broken install
+            return False
+    return True
 
 
 def configured_origins() -> tuple[str, ...]:

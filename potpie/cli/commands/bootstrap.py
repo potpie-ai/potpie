@@ -202,6 +202,13 @@ def _doctor_next_action(
         )
     if readiness is not None and readiness.get("ready", False):
         return None
+    # A backend that answered "not ready" already said why, and on a base
+    # install the why is a package name. Printing "run backend doctor" over the
+    # top of "the driver is not installed" sends the operator to re-read the
+    # sentence they are being shown.
+    detail = (readiness or {}).get("detail")
+    if detail:
+        return str(detail)
     return "Run `potpie backend doctor` or inspect `potpie graph status --json`."
 
 
@@ -384,9 +391,49 @@ def register(root: typer.Typer) -> None:
             "--embedding-model",
             help="SentenceTransformer model to prepare during setup.",
         ),
+        remote: str = typer.Option(
+            None,
+            "--remote",
+            metavar="URL",
+            help=(
+                "Set this machine up as a remote-only client of the managed "
+                "service at URL. Provisions nothing locally."
+            ),
+        ),
+        token: str = typer.Option(
+            None,
+            "--token",
+            help=(
+                "API key for --remote. Omit when the service runs with auth disabled."
+            ),
+        ),
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         with contract():
+            if remote is not None:
+                _run_remote_setup(
+                    url=remote,
+                    token=token,
+                    agent=agent,
+                    dry_run=dry_run,
+                    local_only_flags={
+                        "--backend": backend is not None,
+                        "--daemon/--in-process": daemon is not None,
+                        "--embeddings": embeddings is not None,
+                        "--embedding-model": embedding_model is not None,
+                        "--scan": bool(scan),
+                    },
+                )
+                return
+            if token is not None:
+                fail(
+                    code="validation_error",
+                    message="'--token' only applies with '--remote'.",
+                    next_action=(
+                        "pass '--remote <url> --token <key>' to configure a "
+                        "managed host, or drop --token to provision this machine"
+                    ),
+                )
             _refuse_remote_setup_target()
             # Every option this run was given, checked against the registry the
             # runtime itself reads, before a single byte is written. Setup is
@@ -1396,6 +1443,121 @@ def _refuse_remote_setup_target() -> None:
                 "or 'potpie host list' to see what the hosts already hold"
             ),
         )
+
+
+def _run_remote_setup(
+    *,
+    url: str,
+    token: str | None,
+    agent: str,
+    dry_run: bool,
+    local_only_flags: dict[str, bool],
+) -> None:
+    """Set this machine up as a client of a managed host, provisioning nothing.
+
+    The other half of :func:`_refuse_remote_setup_target`. That function is
+    right that ``setup`` provisions the local machine and must not be *aimed*
+    at a remote one — but a remote-only install still has a first run, and until
+    this existed there was no command that performed it. The base ``potpie``
+    distribution ships without a local backend or a daemon, so on Windows, on
+    Linux older than glibc 2.39, and on anyone who simply does not want a local
+    graph, ``potpie setup`` was a wizard whose every step was inapplicable.
+
+    What a client's first run actually consists of: prove the endpoint answers,
+    record it, make it active, and install the skills — which are files on
+    *this* filesystem and need no host at all (see
+    ``potpie.cli.commands.skills``). No config.json, no backend, no daemon, no
+    default pot: the pots live on the service, and creating a local one here
+    would be the wrong-host success this module refuses everywhere else.
+
+    Ordered so nothing is written until nothing can refuse it, matching
+    ``host set``: address, then credential, then reachability, and only then the
+    registry. A ``setup`` that stored an unreachable endpoint and exited 0 would
+    leave the machine in the state it was run to get out of.
+    """
+    from potpie.cli import hosts
+    from potpie.cli.commands.host import (
+        probe_managed_endpoint,
+        resolved_token as resolve_managed_token,
+        validated_base_url,
+    )
+
+    named = [flag for flag, given in local_only_flags.items() if given]
+    if named:
+        # Refused rather than ignored: every one of these provisions local
+        # storage, and a run that silently dropped them would report success for
+        # a setup that did none of what was asked.
+        fail(
+            code="validation_error",
+            message=(
+                f"'--remote' provisions nothing on this machine, so "
+                f"{', '.join(sorted(named))} cannot apply."
+            ),
+            next_action=(
+                "drop those flags to configure the managed host, or run "
+                "'potpie setup' without --remote to provision this machine"
+            ),
+        )
+
+    base_url = validated_base_url(url)
+    resolved_token = resolve_managed_token(token)
+
+    if dry_run:
+        emit(
+            {
+                "mode": "remote",
+                "endpoint": base_url,
+                "steps": [
+                    "verify endpoint",
+                    "store host",
+                    "activate host",
+                    "install skills",
+                ],
+                "dry_run": True,
+            },
+            human=(
+                f"would point this machine at {base_url}, make it the active "
+                f"host, and install {agent} skills locally"
+            ),
+        )
+        return
+
+    pots = probe_managed_endpoint(base_url, resolved_token)
+    hosts.set_managed_endpoint(base_url, resolved_token)
+    hosts.set_persisted_origin(hosts.MANAGED)
+
+    # Built in process, exactly as `potpie skills install` does. A skill install
+    # writes into this machine's harness directories, so it neither needs nor
+    # wants the host that was just configured.
+    from potpie_context_engine.bootstrap.host_wiring import build_skill_manager
+
+    installed = build_skill_manager().install(
+        agent=agent, skill_id=None, scope="global"
+    )
+
+    payload = {
+        "mode": "remote",
+        "endpoint": base_url,
+        "active_origin": hosts.MANAGED,
+        "pots_visible": len(pots),
+        "agent": installed.agent,
+        "skills_changed": len(installed.changed),
+    }
+    human = (
+        f"managed host → {base_url} ({len(pots)} pots visible)\n"
+        f"active host → managed\n"
+        f"{agent} skills installed ({len(installed.changed)} changed)"
+    )
+    # Same warning `host set` gives, for the same reason: the write succeeded
+    # and is still not what the next command will use.
+    shadow = hosts.managed_env_override()
+    payload["shadowed_by_env"] = shadow
+    if shadow:
+        human = (
+            f"{human}\n! POTPIE_MANAGED_URL={shadow} is set and outranks the "
+            "stored host; commands will use it until it is unset"
+        )
+    emit(payload, human=human)
 
 
 def _build_local_setup_host(

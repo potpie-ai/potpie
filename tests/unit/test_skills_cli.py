@@ -52,15 +52,22 @@ class _Skills:
         )
 
 
-@dataclass
-class _Host:
-    skills: _Skills
+@pytest.fixture()
+def fake_skills(monkeypatch) -> _Skills:
+    """Stand in for the manager the commands build for themselves.
+
+    Injected at ``build_skill_manager`` rather than through ``set_host``: skill
+    commands no longer go through a host at all, so that they keep working on a
+    remote-only install where there is no local daemon to ask.
+    """
+    manager = _Skills()
+    from potpie_context_engine.bootstrap import host_wiring
+
+    monkeypatch.setattr(host_wiring, "build_skill_manager", lambda: manager)
+    return manager
 
 
-def test_skills_remove_all_defaults_to_global_scope() -> None:
-    fake_skills = _Skills()
-    _common.set_host(_Host(skills=fake_skills))
-
+def test_skills_remove_all_defaults_to_global_scope(fake_skills) -> None:
     result = CliRunner().invoke(
         skills.skills_app,
         ["remove", "--all", "--agent", "codex"],
@@ -79,9 +86,7 @@ def test_skills_remove_all_defaults_to_global_scope() -> None:
     assert "removed Potpie skills for codex" in result.output
 
 
-def test_skills_remove_all_json_output() -> None:
-    fake_skills = _Skills()
-    _common.set_host(_Host(skills=fake_skills))
+def test_skills_remove_all_json_output(fake_skills) -> None:
     _common.set_json(True)
 
     result = CliRunner().invoke(
@@ -105,14 +110,11 @@ def test_skills_remove_all_json_output() -> None:
 
 @pytest.fixture()
 def repo(tmp_path):
-    from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
-        InMemoryGraphBackend,
-    )
-    from potpie_context_engine.bootstrap.host_wiring import build_host_shell
-
+    # No host is set up, deliberately: these drive the real DefaultSkillManager
+    # the commands build in process, which is the whole point — a skill install
+    # needs the template bundle and a filesystem, not a graph or a daemon.
     checkout = tmp_path / "repo"
     (checkout / ".git").mkdir(parents=True)
-    _common.set_host(build_host_shell(backend=InMemoryGraphBackend()))
     return checkout
 
 

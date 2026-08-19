@@ -108,9 +108,9 @@ def host_set(
 ) -> None:
     """Point this CLI at a managed context-graph service."""
     with contract():
-        base_url = _validated_base_url(url)
-        token = _resolved_token(token)
-        pots = _probe(base_url, token) if check else None
+        base_url = validated_base_url(url)
+        token = resolved_token(token)
+        pots = probe_managed_endpoint(base_url, token) if check else None
         # Written only once there is nothing left that can refuse it.
         # set_managed_endpoint replaces the stored url *and* token, so the old
         # write-first-clear-on-failure order turned a typo into the permanent
@@ -193,7 +193,7 @@ def host_use(origin: str = typer.Argument(..., metavar="local|managed")) -> None
         emit({"active_origin": origin}, human=f"active host → {origin}")
 
 
-def _validated_base_url(url: str) -> str:
+def validated_base_url(url: str) -> str:
     """Normalize ``url`` or refuse it, before any host is built or written.
 
     ``--check`` decides whether the service is *reachable*; this decides whether
@@ -211,7 +211,7 @@ def _validated_base_url(url: str) -> str:
         )
 
 
-def _resolved_token(token: str | None) -> str:
+def resolved_token(token: str | None) -> str:
     """The token to store, refusing the one case where omitting one destroys one.
 
     Omitting ``--token`` means "this service has auth disabled" on a first setup
@@ -243,7 +243,7 @@ def _resolved_token(token: str | None) -> str:
     )
 
 
-def _probe(base_url: str, token: str) -> list[Any]:
+def probe_managed_endpoint(base_url: str, token: str) -> list[Any]:
     """List pots on ``(base_url, token)`` to prove the pair works.
 
     Built from the pair being offered rather than from stored state — that is
@@ -263,4 +263,13 @@ def _probe(base_url: str, token: str) -> list[Any]:
         )
 
 
-__all__ = ["host_app"]
+# Exported alongside the command: `potpie setup --remote` performs the same
+# address/credential/reachability sequence before writing the registry, and
+# two copies of that order would eventually disagree about which step comes
+# first -- the one thing that decides whether a typo costs you a token.
+__all__ = [
+    "host_app",
+    "probe_managed_endpoint",
+    "resolved_token",
+    "validated_base_url",
+]

@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import typer
 
-from potpie.cli.commands._common import contract, emit, fail, get_host_for
+from potpie.cli.commands._common import contract, emit, fail
 from potpie.cli.telemetry.onboarding_events import (
     capture_project_binding_event,
     elapsed_ms,
@@ -29,11 +29,20 @@ skills_app = typer.Typer(help="CLI-managed agent skills.")
 
 
 def _skills():
-    """The local host's skill manager — never the active host; see the module
-    docstring."""
-    from potpie.cli import hosts
+    """The skill manager, built in process — never the active host's.
 
-    return get_host_for(hosts.LOCAL).skills
+    See the module docstring for why these commands are pinned to this machine.
+    Building the manager directly rather than reaching for
+    ``get_host_for(hosts.LOCAL).skills`` makes that pin structural instead of
+    registry-enforced, and it is what lets skills work at all on a remote-only
+    install: a skill install needs the template bundle and a filesystem, so
+    demanding a running daemon and a local backend for it failed with "Potpie
+    daemon is not running" on precisely the fresh installs that need skills
+    most.
+    """
+    from potpie_context_engine.bootstrap.host_wiring import build_skill_manager
+
+    return build_skill_manager()
 
 
 @skills_app.command("list")

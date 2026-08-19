@@ -50,7 +50,13 @@ def _start(daemon: Daemon) -> dict[str, int | str]:
             code="daemon_start_failed",
             message=str(exc),
             detail=(str(exc.log_path) if exc.log_path else None),
-            next_action="inspect the daemon log with 'potpie daemon logs'",
+            # The raiser's repair beats this one wherever it has it: a daemon
+            # that died because `potpie[daemon]` was never installed is fixed by
+            # installing it, not by reading the log line that already said so.
+            next_action=(
+                exc.recommended_next_action
+                or "inspect the daemon log with 'potpie daemon logs'"
+            ),
         )
 
 
@@ -65,7 +71,13 @@ def _restart(daemon: Daemon) -> dict[str, int | str]:
             code="daemon_start_failed",
             message=str(exc),
             detail=(str(exc.log_path) if exc.log_path else None),
-            next_action="inspect the daemon log with 'potpie daemon logs'",
+            # The raiser's repair beats this one wherever it has it: a daemon
+            # that died because `potpie[daemon]` was never installed is fixed by
+            # installing it, not by reading the log line that already said so.
+            next_action=(
+                exc.recommended_next_action
+                or "inspect the daemon log with 'potpie daemon logs'"
+            ),
         )
 
 

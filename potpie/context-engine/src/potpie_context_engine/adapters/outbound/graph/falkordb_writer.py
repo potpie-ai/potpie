@@ -29,7 +29,8 @@ import json
 import logging
 import os
 import time
-from typing import Any, Callable, Coroutine, TypeVar
+from contextlib import contextmanager
+from typing import Any, Callable, Coroutine, Iterator, TypeVar
 
 from potpie_context_core.errors import GraphSubstrateUnavailable
 
@@ -181,11 +182,13 @@ def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
                 "falkordb server mode requires a URL — set FALKORDB_URL "
                 "(or CONTEXT_ENGINE_FALKORDB_URL), or use the default lite mode"
             )
-        from falkordb import FalkorDB
+        with _naming_the_missing_extra("falkordb"):
+            from falkordb import FalkorDB
 
         return FalkorDB.from_url(url).select_graph(name)
     # Lite (default): embedded FalkorDBLite over a local file — no server.
-    from redislite.falkordb_client import FalkorDB as LiteFalkorDB
+    with _naming_the_missing_extra("redislite"):
+        from redislite.falkordb_client import FalkorDB as LiteFalkorDB
 
     path = settings.falkordb_lite_path()
     parent = os.path.dirname(path)
@@ -196,6 +199,40 @@ def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
     _ensure_lite_durability(db, path)
     _remember_owned_server(db, path)
     return db.select_graph(name)
+
+
+@contextmanager
+def _naming_the_missing_extra(module: str) -> Iterator[None]:
+    """Turn "the local graph driver was never installed" into a sentence.
+
+    The base ``potpie`` distribution is a remote-only client: the FalkorDB
+    driver lives behind ``potpie[local]``. Without this, the absence surfaced as
+    a bare ``ModuleNotFoundError`` two layers down and the CLI reported
+    ``unexpected_cli_error`` / "Unexpected internal error" — a message that
+    names neither the cause nor a way out, on the single most likely first-run
+    failure.
+
+    Matched on the module name, never on ``ModuleNotFoundError`` as a family: a
+    blanket handler here would report a genuine circular import inside the
+    driver as "install potpie[local]" and hide a real bug behind packaging
+    advice.
+    """
+    try:
+        yield
+    except ModuleNotFoundError as exc:
+        if exc.name != module:
+            raise
+        raise GraphSubstrateUnavailable(
+            f"the local graph backend needs the {module!r} driver, which this "
+            "installation does not have — the base 'potpie' distribution is a "
+            "remote-only client and the graph-native backend ships as an extra",
+            recommended_next_action=(
+                "install the local backend with `pip install 'potpie[local]'`, "
+                "or point this machine at a managed host with `potpie host use "
+                "managed`. On Windows and on Linux older than glibc 2.39 no "
+                "local wheel exists yet: use the managed host."
+            ),
+        ) from exc
 
 
 def _settings_file(path: str) -> str:

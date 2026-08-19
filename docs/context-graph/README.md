@@ -48,9 +48,21 @@ flowchart TB
 **Published package** (PyPI):
 
 ```bash
-uv tool install potpie   # recommended
-# or: pip install potpie
+uv tool install 'potpie[all]'   # recommended
+# or: pip install 'potpie[all]'
 potpie setup        # provisions config, local stores, the default pot, the daemon, and skills
+potpie status
+```
+
+Bare `potpie` is a **remote-only client**: the CLI and the RPC transport, no
+local graph backend and no daemon. `potpie[all]` restores the full local
+product. For a machine that only talks to a managed host — including every
+Windows box and any Linux older than glibc 2.39, where the local backend has no
+wheel:
+
+```bash
+uv tool install potpie
+potpie setup --remote https://your-host.example --token <key>
 potpie status
 ```
 

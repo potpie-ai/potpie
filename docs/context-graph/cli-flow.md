@@ -712,10 +712,15 @@ during setup):
 **Published package:**
 
 ```bash
-uv tool install potpie   # or: pip install potpie
+uv tool install 'potpie[all]'   # or: pip install 'potpie[all]'
 potpie setup --repo . --agent claude
 potpie status
 ```
+
+The `[all]` is load-bearing: bare `potpie` installs a remote-only client with
+no local backend and no daemon. A client-only first run is
+`potpie setup --remote <url> [--token <key>]`, which writes the host registry,
+verifies the endpoint and installs skills without provisioning anything locally.
 
 **This repo (local development):** prefer `make cli-install` so the graph-explorer
 UI is built and any old daemon is stopped before the editable install.

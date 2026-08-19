@@ -81,14 +81,79 @@ from potpie.daemon.lifecycle import Daemon
 from potpie_context_engine.host.shell import HostShell, LedgerFacade, ResourceFacade
 
 
+#: The graph-native local default, and the driver module it cannot run without.
+_GRAPH_NATIVE_PROFILE = "falkordb_lite"
+_GRAPH_NATIVE_DRIVER = "redislite"
+
+#: Where a base install lands instead: a real, JSON-persisted backend with no
+#: third-party dependencies at all.
+_DEPENDENCY_FREE_PROFILE = "embedded"
+
+
 def default_backend_profile() -> str:
-    # 'falkordb_lite' is the OSS local default: a graph-native, persistent
-    # backend across CLI invocations.
+    """The local backend to use when nobody has said which one.
+
+    'falkordb_lite' is the OSS local default: a graph-native, persistent backend
+    across CLI invocations. It needs the ``redislite`` driver, which the base
+    ``potpie`` distribution — a remote-only client — does not install.
+
+    When that driver is absent, fall back to ``embedded`` rather than returning
+    a profile that is certain to fail on first use. ``embedded`` is a real,
+    JSON-persisted backend with no third-party dependencies, so a base install
+    keeps a working (if not graph-native) local graph instead of a crash. An
+    explicit ``$CONTEXT_ENGINE_BACKEND`` is never second-guessed: if an operator
+    named a profile, a loud failure about its missing driver is the right answer.
+    """
     for env_name in ("CONTEXT_ENGINE_BACKEND", "GRAPH_DB_BACKEND"):
         profile = (os.getenv(env_name) or "").strip().lower()
         if profile:
             return profile
-    return "falkordb_lite"
+    if not graph_native_driver_available():
+        return _DEPENDENCY_FREE_PROFILE
+    return _GRAPH_NATIVE_PROFILE
+
+
+def graph_native_driver_available() -> bool:
+    """Whether the local graph-native backend's driver is installed.
+
+    A spec probe, not an import: the question is only "did this installation
+    take the ``potpie[local]`` extra", and answering it must not start an
+    embedded server or pay the driver's import cost on every CLI invocation.
+    """
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(_GRAPH_NATIVE_DRIVER) is not None
+    except (ImportError, ValueError):  # pragma: no cover - malformed installation
+        return False
+
+
+def build_skill_manager() -> DefaultSkillManager:
+    """The skill manager on its own, with no host around it.
+
+    Installing a skill copies template files into *this* machine's harness
+    directories. It needs the bundle and a filesystem — not a graph, a backend,
+    a pot, or a running process. Routing it through a full ``HostShell`` made it
+    fail with "Potpie daemon is not running" on exactly the installs that most
+    need skills to work: a fresh, remote-only one.
+
+    Keeping the target registry here rather than in the CLI keeps one list:
+    ``build_host_shell`` below composes the same function, so a harness added in
+    one place cannot go missing in the other.
+    """
+    return DefaultSkillManager(
+        targets={
+            "claude": ClaudeAgentTarget(),
+            # Registered so the harness is known rather than merely absent:
+            # its bundle ships in the wheel and installs at project scope,
+            # but leaving it out made every subcommand answer with a "Known:"
+            # list that read as "unsupported".
+            "claude-plugin": ClaudePluginAgentTarget(),
+            "codex": CodexAgentTarget(),
+            "cursor": CursorAgentTarget(),
+            "opencode": OpenCodeAgentTarget(),
+        }
+    )
 
 
 def default_host_mode() -> str:
@@ -156,19 +221,7 @@ def build_host_shell(
         pots = LocalPotManagementService(
             store=pot_store, backend=backend, resources=resource_store
         )
-        skills = DefaultSkillManager(
-            targets={
-                "claude": ClaudeAgentTarget(),
-                # Registered so the harness is known rather than merely absent:
-                # its bundle ships in the wheel and installs at project scope,
-                # but leaving it out made every subcommand answer with a "Known:"
-                # list that read as "unsupported".
-                "claude-plugin": ClaudePluginAgentTarget(),
-                "codex": CodexAgentTarget(),
-                "cursor": CursorAgentTarget(),
-                "opencode": OpenCodeAgentTarget(),
-            }
-        )
+        skills = build_skill_manager()
         agent_context = AgentContextService(
             graph=graph,
             pots=pots,

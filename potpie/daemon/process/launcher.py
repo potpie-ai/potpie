@@ -52,15 +52,37 @@ _FAULT_MARKERS: Final[tuple[str, ...]] = (
 )
 
 
+#: Modules the ``potpie[daemon]`` extra provides. A missing one of these means
+#: the server was never installed, which is a packaging answer rather than a
+#: fault to debug; anything else importing badly in the daemon is a real bug.
+_DAEMON_EXTRA_MODULES: Final[tuple[str, ...]] = (
+    "uvicorn",
+    "fastapi",
+    "starlette",
+)
+
+
 class DaemonStartError(Exception):
     """Raised by start_detached() when the daemon does not come up.
 
-    Carries the daemon log path (when available) so callers can surface the cause.
+    Carries the daemon log path (when available) so callers can surface the
+    cause, and ``recommended_next_action`` when the failure has a better repair
+    than reading that log — "the server package is not installed" is answered by
+    installing it, and sending the operator to the log to rediscover the
+    sentence they were just shown is the failure this whole error path exists
+    to stop.
     """
 
-    def __init__(self, message: str, *, log_path: "pathlib.Path | None" = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_path: "pathlib.Path | None" = None,
+        recommended_next_action: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.log_path = log_path
+        self.recommended_next_action = recommended_next_action
 
 
 def start_detached(
@@ -144,8 +166,11 @@ def start_detached(
                 if serving_fault is None:
                     return {"pid": proc.pid, **address}
         if exited is not None:
+            cause = _fault_line(log_path, log_offset)
             raise DaemonStartError(
-                _crash_message(exited, log_path, log_offset), log_path=log_path
+                _crash_message(exited, log_path, log_offset),
+                log_path=log_path,
+                recommended_next_action=_missing_extra_next_action(cause or ""),
             )
         if time.time() >= deadline:
             break
@@ -260,7 +285,38 @@ def _crash_message(returncode: int, log_path: pathlib.Path, offset: int) -> str:
     """
     cause = _fault_line(log_path, offset)
     exited = f"daemon failed to start (exit {returncode})"
-    return f"{exited}: {cause}" if cause else exited
+    if cause is None:
+        return exited
+    return f"{exited}: {cause}{_missing_extra_hint(cause)}"
+
+
+def _missing_extra_hint(cause: str) -> str:
+    """The extra to install, when the cause is that the server was never installed.
+
+    The base ``potpie`` distribution is a remote-only client, so the daemon's
+    HTTP server lives behind ``potpie[daemon]``. Quoting the child's
+    ``ModuleNotFoundError: No module named 'uvicorn'`` back is honest but still
+    leaves the operator to work out that a package name maps to an extra name.
+
+    Keyed on the specific modules the extra provides, not on
+    ``ModuleNotFoundError`` in general: an import error from anywhere else in
+    the daemon is a bug, and answering it with packaging advice would bury it.
+    """
+    return (
+        f" — {_missing_extra_next_action(cause)}"
+        if _missing_extra_next_action(cause)
+        else ""
+    )
+
+
+def _missing_extra_next_action(cause: str) -> str | None:
+    """The repair, when the daemon died because its server was never installed."""
+    lowered = cause.lower()
+    if "modulenotfounderror" not in lowered and "no module named" not in lowered:
+        return None
+    if not any(f"'{name}'" in lowered for name in _DAEMON_EXTRA_MODULES):
+        return None
+    return "install the daemon with `pip install 'potpie[daemon]'`"
 
 
 def _fault_line(log_path: pathlib.Path, offset: int) -> str | None:

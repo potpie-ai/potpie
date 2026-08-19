@@ -25,23 +25,63 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development",
 ]
+# Base = a remote-only client: the CLI, the RPC transport, and the engine's
+# contract layer. Everything that exists to run a graph-native store on *this*
+# machine -- the FalkorDB driver, the daemon's HTTP server, the local embedder,
+# the ingestion clients -- lives behind an extra below. `potpie[all]` restores
+# the full local product.
 dependencies = [
-    "aiohttp>=3.14.3",
     "click>=8.1.8",
-    "fastapi>=0.115.0",
     "httpx>=0.28.0",
-    "pillow>=12.3.0",
     "potpie-context-core==0.1.0",
-    "potpie-context-engine[all]==0.1.0",
-    "pydantic-ai-slim>=1.102.0",
+    "potpie-context-engine==0.1.0",
     "pydantic-settings>=2.14.2",
-    "pyjwt>=2.13.0",
     "rich>=13.0",
-    "sentry-sdk>=2.61.1,<3.0.0",
-    "starlette>=1.3.1",
     "typer>=0.15.0",
-    "uvicorn[standard]>=0.32.0",
 ]
+
+[project.optional-dependencies]
+# Version floors here are not decoration. `aiohttp`, `pyjwt` and
+# `pydantic-ai-slim` are declared purely as CVE floors for transitive
+# dependencies (see the [tool.uv] override-dependencies comments and #1015);
+# nothing in potpie/cli or potpie/daemon imports them. Moving a package into an
+# extra without its floor is a silent security regression, so the floors move
+# with the packages they constrain.
+daemon = [
+    "potpie-context-engine[http]",
+    "fastapi>=0.115.0",
+    # Imported directly by potpie/daemon (http/ui/static.py, http/ui/auth.py,
+    # main.py) *and* the CVE floor for FastAPI's core (#1015).
+    "starlette>=1.3.1",
+    "uvicorn[standard]>=0.32.0",
+    "pyjwt>=2.13.0",
+    # process/launcher.py reads the daemon's argv through psutil. It used to
+    # arrive by accident as a redislite dependency; once `local` is optional the
+    # daemon has to ask for it. Absent, launcher falls back to `ps`.
+    "psutil>=7.0",
+]
+# A graph-native local store is served by a host process; `in_process` is a
+# fallback, not a second supported topology. Hence local implies daemon.
+local = [
+    "potpie[daemon]",
+    "potpie-context-engine[local]",
+]
+auth = ["potpie-context-engine[cli-auth]"]
+embeddings = ["potpie-context-engine[embeddings]"]
+ingest = [
+    "potpie-context-engine[github,reconciliation-agent]",
+    "aiohttp>=3.14.3",            # CVE floor
+    "pydantic-ai-slim>=1.102.0",  # CVE floor
+]
+telemetry = [
+    "sentry-sdk>=2.61.1,<3.0.0",
+    "potpie-context-engine[observability]",
+]
+# Pillow drives the CLI's animated logo (potpie/cli/ui/logo_rotation.py, already
+# probed with pillow_available()). The daemon never touches it, so filing it
+# under `daemon` would make a CLI-only user install a server to get a logo.
+ui = ["pillow>=12.3.0"]
+all = ["potpie[daemon,local,auth,embeddings,ingest,telemetry,ui]"]
 
 [project.scripts]
 potpie = "potpie.cli.main:main"
@@ -66,6 +106,13 @@ exclude = [
     "/potpie/integrations",
     "/potpie/parsing",
     "/potpie/sandbox",
+    # The graph UI's build inputs, not its build output. `dist/**` above is what
+    # ships. Both are gitignored, but only by the frontend's own nested
+    # .gitignore, and hatchling reads the root one only -- so on any machine
+    # that has run `make ui-build` this tree lands in the wheel (~27 MB, 96% of
+    # its entries) unless it is excluded by name. Named explicitly rather than
+    # `**/node_modules` so that vendoring one on purpose stays a decision.
+    "/potpie/daemon/http/ui/frontend/node_modules",
 ]
 
 [tool.hatch.build.force-include]
@@ -90,6 +137,9 @@ exclude = [
     "/potpie/integrations",
     "/potpie/parsing",
     "/potpie/sandbox",
+    # Same tree, same reason as the wheel target: `/potpie/daemon` is included
+    # wholesale above, which sweeps the frontend's build inputs in with it.
+    "/potpie/daemon/http/ui/frontend/node_modules",
 ]
 
 [tool.uv]

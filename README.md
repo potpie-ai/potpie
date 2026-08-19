@@ -22,18 +22,34 @@ It indexes code, structure, decisions, source history, team knowledge and engine
 ### Step 1: install the CLI through [PyPI](https://pypi.org/project/potpie/) with `uv` or `pip`:
 
 ```bash
-uv tool install potpie
+uv tool install 'potpie[all]'
 ```
 
 or:
 
 ```bash
-python3 -m pip install --user potpie
+python3 -m pip install --user 'potpie[all]'
 ```
 
 > [!NOTE]
-> `uv tool install potpie` is recommended for CLI installs because global
+> `uv tool install` is recommended for CLI installs because global
 > mutation of Python packages is generally not recommended.
+
+> [!IMPORTANT]
+> **`potpie` on its own installs a remote-only client** — the CLI and the
+> transport, with no local graph backend and no daemon. That is the right
+> install if you only talk to a managed host, and it is the *only* install that
+> works on Windows and on Linux older than glibc 2.39 (Debian 12, Ubuntu 22.04,
+> RHEL 9, Alpine), where the local backend has no wheel to publish:
+>
+> ```bash
+> uv tool install potpie
+> potpie setup --remote https://your-host.example --token <key>
+> ```
+>
+> `potpie[all]` adds everything the local product needs. Individual extras are
+> `local` (graph-native backend + daemon), `daemon`, `auth`, `embeddings`,
+> `ingest`, `telemetry` and `ui`.
 
 ### Step 2: Run the Potpie setup wizard
 

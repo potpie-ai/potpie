@@ -20,8 +20,17 @@ potpie doctor
 ```
 
 Do not use raw `uv tool install --editable …` or `pip install` for day-to-day
-local reinstalls. Reserve `uv tool install potpie` / `pip install potpie` for
-the **published** package.
+local reinstalls. Reserve `uv tool install 'potpie[all]'` /
+`pip install 'potpie[all]'` for the **published** package.
+
+The extras are not optional decoration. Bare `potpie` installs a **remote-only
+client**: the CLI and the RPC transport, with no graph-native local backend and
+no daemon. On such an install the local host runs in process on the
+dependency-free `embedded` backend, `potpie daemon …` reports that
+`potpie[daemon]` is missing, and the first run is
+`potpie setup --remote <url> [--token <key>]` rather than `potpie setup`. If
+`potpie backend doctor` names a missing driver, that is a packaging answer —
+report the extra it names; do not treat it as a broken graph.
 
 ```bash
 potpie doctor

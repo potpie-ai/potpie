@@ -619,15 +619,20 @@ def test_ui_warns_when_the_running_daemon_predates_host_routing(
 def test_skills_install_stays_on_the_local_machine(registry, monkeypatch) -> None:
     """A skill install writes into this machine's harness directory. Routed to
     a managed host it would write onto the server, where no harness of yours
-    will ever read it, and report success."""
-    calls: list[str] = []
+    will ever read it, and report success.
+
+    Asserted as "no host at all", which is stronger than the old "the local
+    host": the manager is now built in process, so the locality is structural
+    rather than a routing decision that could be made differently. It also means
+    skills work on a remote-only install, where there is no local daemon to ask.
+    """
+    from potpie_context_engine.bootstrap import host_wiring
+
+    built: list[str] = []
 
     class _Skills:
-        def __init__(self, origin: str) -> None:
-            self.origin = origin
-
         def status(self, **_kwargs: Any) -> Any:
-            calls.append(self.origin)
+            built.append("in_process")
 
             class _St:
                 agent = "claude"
@@ -637,11 +642,14 @@ def test_skills_install_stays_on_the_local_machine(registry, monkeypatch) -> Non
 
             return _St()
 
-    for origin, host in registry.items():
-        host.skills = _Skills(origin)
+    def _no_host(origin: str) -> Any:
+        raise AssertionError(f"skills must not build the {origin} host")
+
+    monkeypatch.setattr(host_wiring, "build_skill_manager", lambda: _Skills())
+    monkeypatch.setattr(hosts, "build_host", _no_host)
     hosts.set_current_origin(hosts.MANAGED)
 
     result = _run("--json", "skills", "status")
 
     assert result.exit_code == 0, result.output
-    assert calls == [hosts.LOCAL]
+    assert built == ["in_process"]

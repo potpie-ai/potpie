@@ -57,7 +57,10 @@ jobs:
           version: "0.10.7"
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # --all-extras: the root distribution's base dependencies are a
+        # remote-only client. Without it the suites lose falkordblite, fastapi,
+        # uvicorn, keyring, sentence-transformers and pygithub.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
 
       - name: Run parsing_rs Rust tests
         env:
@@ -90,7 +93,10 @@ jobs:
           version: "0.10.7"
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # --all-extras: the root distribution's base dependencies are a
+        # remote-only client. Without it the suites lose falkordblite, fastapi,
+        # uvicorn, keyring, sentence-transformers and pygithub.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
 
       - name: Run context-core package tests
         working-directory: potpie/context-core
@@ -141,7 +147,10 @@ jobs:
           version: "0.10.7"
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # --all-extras: the root distribution's base dependencies are a
+        # remote-only client. Without it the suites lose falkordblite, fastapi,
+        # uvicorn, keyring, sentence-transformers and pygithub.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
 
       - name: Run root Potpie tests
         env:
@@ -194,7 +203,10 @@ jobs:
           version: "0.10.7"
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # --all-extras: the root distribution's base dependencies are a
+        # remote-only client. Without it the suites lose falkordblite, fastapi,
+        # uvicorn, keyring, sentence-transformers and pygithub.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
 
       - name: Run context-engine package tests
         working-directory: potpie/context-engine
@@ -228,12 +240,98 @@ jobs:
           toolchain: stable
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # --all-extras: the root distribution's base dependencies are a
+        # remote-only client. Without it the suites lose falkordblite, fastapi,
+        # uvicorn, keyring, sentence-transformers and pygithub.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
 
       - name: Run pre-merge CLI journey test
         env:
           PREMERGE_JOURNEY_REQUIRED: "1"
         run: uv run pytest tests/integration/test_premerge_cli_journey.py -v
+
+  thin-install:
+    # The base `potpie` distribution is a remote-only client. Two things about
+    # it regress silently and only here: a top-level import of something that
+    # now lives in an extra, and an edit to a build target that puts the
+    # frontend's node_modules back in the wheel. Both look fine in every other
+    # job, because every other job installs --all-extras.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build the graph-explorer UI
+        # Deliberate: the node_modules assertion below is worthless against a
+        # clean checkout, where the tree does not exist at all. Releases are cut
+        # from machines that have built the UI, so the job builds it too.
+        run: make ui-build
+
+      - name: Build the wheel and sdist
+        run: uv build --wheel --sdist --out-dir dist .
+
+      - name: Assert no node_modules ships
+        run: |
+          python - <<'EOF'
+          import pathlib, tarfile, zipfile
+          d = pathlib.Path("dist")
+          whl = next(d.glob("potpie-*.whl"))
+          z = zipfile.ZipFile(whl)
+          names = z.namelist()
+          bad = [n for n in names if "node_modules" in n]
+          assert not bad, f"{len(bad)} node_modules entries in {whl.name}"
+          assert any("/frontend/dist/" in n for n in names), "UI dist/ missing from wheel"
+          tgz = next(d.glob("potpie-*.tar.gz"))
+          bad = [n for n in tarfile.open(tgz).getnames() if "node_modules" in n]
+          assert not bad, f"{len(bad)} node_modules entries in {tgz.name}"
+          print(f"{whl.name}: {whl.stat().st_size / 1e6:.2f} MB, {len(names)} entries")
+          EOF
+
+      - name: Install the wheel with no extras
+        run: |
+          uv venv --python 3.12 .venv-thin
+          uv pip install --python .venv-thin --only-binary :all: dist/potpie-*.whl
+
+      - name: Assert the local backend and the daemon are absent
+        run: |
+          .venv-thin/bin/python - <<'EOF'
+          import importlib.util as u
+          for absent in ("redislite", "falkordb", "uvicorn", "fastapi", "sentence_transformers"):
+              assert u.find_spec(absent) is None, f"{absent} reached a base install"
+          for present in ("typer", "rich", "httpx", "potpie", "potpie_context_engine"):
+              assert u.find_spec(present) is not None, f"{present} missing from a base install"
+          EOF
+
+      - name: Run the CLI on a base install
+        env:
+          CONTEXT_ENGINE_HOME: ${{ runner.temp }}/thin-home
+        run: |
+          set -euo pipefail
+          .venv-thin/bin/potpie --version
+          # A base install keeps a working local graph on the dependency-free
+          # `embedded` backend, and installs skills with no daemon at all.
+          .venv-thin/bin/potpie --json pot create thin
+          .venv-thin/bin/potpie --json graph status
+          .venv-thin/bin/potpie --json graph catalog > /dev/null
+          .venv-thin/bin/potpie --json skills install
+          # And it must not have started one on the way through.
+          test ! -f "${CONTEXT_ENGINE_HOME}/daemon.pid"
 
   potpie-sandbox:
     runs-on: ubuntu-latest
@@ -257,7 +355,10 @@ jobs:
           version: "0.10.7"
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # --all-extras: the root distribution's base dependencies are a
+        # remote-only client. Without it the suites lose falkordblite, fastapi,
+        # uvicorn, keyring, sentence-transformers and pygithub.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
 
       - name: Run sandbox unit tests
         working-directory: potpie/sandbox
