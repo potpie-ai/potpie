@@ -117,12 +117,13 @@ read order.
 | ADR-0004 | [Potpie resource-management ownership](decisions/ADR-0004-potpie-resource-management-ownership.md) | accepted |
 | ADR-0005 | [Typed daemon and CLI boundary](decisions/ADR-0005-typed-daemon-and-cli-boundary.md) | accepted |
 | ADR-0006 | [Deferred runtime concerns](decisions/ADR-0006-deferred-runtime-concerns.md) | accepted |
+| ADR-0007 | [Context runtime migration path](decisions/ADR-0007-context-runtime-migration-path.md) | accepted |
 
 ## Open Questions
 
-Twelve intentionally deferred questions are recorded in
-[questions/open.md](questions/open.md). No accepted active behavior depends on
-them.
+Ten intentionally deferred questions and two resolved implementation-readiness
+questions are recorded in [questions/open.md](questions/open.md). No accepted
+active behavior depends on a deferred question.
 
 ## Change Record Registry
 

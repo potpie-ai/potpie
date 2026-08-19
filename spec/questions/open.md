@@ -8,9 +8,10 @@ owners:
 
 # Context Runtime Open Questions
 
-These questions are intentionally deferred and are not referenced by active
-behavior nodes. Each becomes a separate decision before an implementation
-commit depends on its answer.
+Ten questions remain intentionally deferred and are not referenced by active
+behavior nodes. Two implementation-readiness questions are resolved by
+ADR-0007. Each deferred question becomes a separate decision before an
+implementation commit depends on its answer.
 
 OQ-CE-API-001 [deferred]: What exact operation groups and synchronous or asynchronous surfaces should the public ContextEngine façade expose?
   > decision [active]: decision:ADR-0006
@@ -30,14 +31,15 @@ OQ-RM-LIFETIME-001 [deferred]: What reuse, eviction, and idle-shutdown policy sh
   decision-trigger: before implementing engine reuse, eviction, or idle shutdown; borrowed and transferred ownership are already fixed
   resolution: null
 
-OQ-DAEMON-IMPLEMENTATION-001 [deferred]: Which existing daemon stack supplies reusable implementation and which stack is removed first?
-  > decision [active]: decision:ADR-0006
+OQ-DAEMON-IMPLEMENTATION-001 [resolved]: Which existing daemon stack supplies reusable implementation and which stack is removed first?
+  > decision [superseded]: decision:ADR-0006
+  > decision [active]: decision:ADR-0007
   owner: team:potpie
   option: replace reflection in the active launcher and remove the candidate runtime
   option: complete the candidate runtime and migrate the launcher and client to it
   option: extract minimal shared primitives and replace both stacks
   decision-trigger: before the first daemon implementation commit
-  resolution: null
+  resolution: ADR-0007
 
 OQ-DAEMON-CONTROLLER-001 [deferred]: What exact controller API and operating-system supervisor integration should implement daemon creation, observation, status, and failure reporting?
   > decision [active]: decision:ADR-0006
@@ -111,11 +113,12 @@ OQ-CLI-JSON-001 [deferred]: What exact machine JSON envelope and complete numeri
   decision-trigger: before changing existing machine output or exit mappings
   resolution: null
 
-OQ-COMPAT-001 [deferred]: What sequence and temporary shims should perform the required removal of Context Core, HostShell, reflection RPC, the unused daemon stack, and duplicate discovery formats while preserving supported callers?
-  > decision [active]: decision:ADR-0006
+OQ-COMPAT-001 [resolved]: What sequence and temporary shims should perform the required removal of Context Core, HostShell, reflection RPC, the unused daemon stack, and duplicate discovery formats while preserving supported callers?
+  > decision [superseded]: decision:ADR-0006
+  > decision [active]: decision:ADR-0007
   owner: team:potpie
   option: staged compatibility shims removed within the same pull request
   option: additive typed boundary followed by one deprecation release
   option: coordinated breaking release with import and command migration guidance
   decision-trigger: before the first compatibility or deletion commit; the deletion end state is not deferred
-  resolution: null
+  resolution: ADR-0007
