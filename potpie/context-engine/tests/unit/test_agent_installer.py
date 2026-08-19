@@ -117,11 +117,34 @@ def test_install_global_agent_instructions_merges_compact_agents_md(
     assert "# Personal defaults" in text
     assert "Potpie is durable project memory" in text
     assert "potpie --json source list" in text
-    assert len([line for line in managed.splitlines() if line.strip()]) <= 6
+    # A budget, not a line count. This block is prepended to the global
+    # instructions of every agent on the machine, so what it costs is context
+    # every single turn pays for -- and the person paying it never chose it.
+    # Measured in characters because line count is a wrapping artifact: reflowing
+    # the same prose to a wider column would have "fixed" the old `<= 6` bound
+    # without removing a word, and adding a paragraph the block genuinely wanted
+    # broke it. Raise this deliberately, having decided the words earn their keep
+    # in a file the reader did not write.
+    assert len(managed.strip()) <= 800
 
     rerun = install_global_agent_instructions(root, agent="codex")
 
     assert rerun.unchanged == ["AGENTS.md"]
+
+
+def test_the_two_global_instruction_templates_do_not_drift() -> None:
+    """AGENTS.md and CLAUDE.md carry the same words, so one budget covers both.
+
+    They are two copies of one paragraph, differing only in which harness reads
+    them, and only the codex/AGENTS.md path has a size assertion on it. Left
+    unpinned, CLAUDE.md could grow alone -- and CLAUDE.md is the copy that lands
+    in the global config of every Claude user on the machine.
+    """
+    bundle = dict(agent_installer._iter_bundle_files("global_agent_bundle"))
+    by_name = {path.as_posix(): text for path, text in bundle.items()}
+
+    assert set(by_name) == {"AGENTS.md", "CLAUDE.md"}
+    assert by_name["AGENTS.md"] == by_name["CLAUDE.md"]
 
 
 def test_install_global_agent_instructions_updates_managed_claude_section(
