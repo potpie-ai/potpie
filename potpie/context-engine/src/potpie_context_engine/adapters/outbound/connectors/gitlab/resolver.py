@@ -1,17 +1,19 @@
-"""GitHub pull-request source resolver.
+"""GitLab merge-request source resolver.
 
-Handles ``source_policy`` modes ``summary``, ``verify``, and ``snippets`` for
-refs that identify a GitHub pull request. The host injects a factory that
-returns a ``GitHubReadPort`` for a given repo name; the resolver calls
-``get_pull_request``/``get_pull_request_commits`` and clamps output to the
-caller's :class:`ResolverBudget`.
+Handles ``source_policy`` modes ``summary``, ``verify``, and ``snippets``
+for refs that identify a GitLab merge request — the counterpart of
+``connectors/github/resolver.py``. The host injects a factory that
+returns a ``GitLabReadPort`` for a given project path; the resolver calls
+``get_merge_request`` and clamps output to the caller's
+:class:`ResolverBudget`.
 
-Refs are matched by ``source_system == "github"`` or ``source_type == "pr"``
-and parsed from common shapes (``github:pr:42``, ``PR #42``, or an
-``external_id`` that parses as an integer). A ``repo_resolver`` callable
-maps ``pot_id`` → ``repo_name``; hosts that attach a single GitHub repo to
-each pot can return that directly, multi-repo hosts should disambiguate via
-the ref's ``resolver_hint``.
+Refs are matched by ``source_system == "gitlab"`` or a
+``merge_request``/``mr`` source type and parsed from the common shapes
+(``gitlab:mr:group/project:42``, ``!42``, a ``/-/merge_requests/42``
+URL, or an ``external_id`` that parses as an integer). A
+``project_resolver`` callable maps ``pot_id`` → project path; hosts that
+attach a single GitLab project to each pot can return that directly,
+multi-project hosts should disambiguate via the ref's ``resolver_hint``.
 """
 
 from __future__ import annotations
@@ -24,8 +26,8 @@ from typing import Any, Awaitable, Callable, Sequence
 from potpie_context_engine.adapters.outbound.connectors._diff_chunks import (
     split_diff_chunks,
 )
-from potpie_context_engine.adapters.outbound.connectors.github.api_client import (
-    GitHubReadPort,
+from potpie_context_engine.adapters.outbound.connectors.gitlab.api_client import (
+    GitLabReadPort,
 )
 from potpie_context_core.source_references import (
     SourceReferenceRecord,
@@ -50,39 +52,41 @@ from potpie_context_engine.domain.source_resolution import (
 
 logger = logging.getLogger(__name__)
 
-# RepoResolver can be sync or async: ``(pot_id, ref) -> repo_name | None``.
+# ProjectResolver can be sync or async: ``(pot_id, ref) -> project | None``.
 # Returning ``None`` emits an UNSUPPORTED_SOURCE_TYPE fallback for that ref.
-RepoResolver = Callable[
+ProjectResolver = Callable[
     [str, SourceReferenceRecord], "str | None | Awaitable[str | None]"
 ]
-# SourceControlFactory: ``(repo_name) -> GitHubReadPort``. Typically the
-# same callable as ``IngestionServerContainer.source_for_repo``.
-SourceControlFactory = Callable[[str], GitHubReadPort]
+# SourceControlFactory: ``(project) -> GitLabReadPort``.
+SourceControlFactory = Callable[[str], GitLabReadPort]
 
 
-class GitHubPullRequestResolver:
-    """Resolver for GitHub pull-request refs."""
+class GitLabMergeRequestResolver:
+    """Resolver for GitLab merge-request refs."""
 
-    _PR_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"^github:pr:(\d+)$", re.IGNORECASE),
-        re.compile(r"^pr\s*#?(\d+)$", re.IGNORECASE),
-        re.compile(r"pull/(\d+)"),
+    _MR_PATTERNS: tuple[re.Pattern[str], ...] = (
+        # gitlab:mr:group/sub/project:42 — the iid is the last segment.
+        re.compile(r"^gitlab:mr:.+:(\d+)$", re.IGNORECASE),
+        re.compile(r"^gitlab:mr:(\d+)$", re.IGNORECASE),
+        re.compile(r"^!(\d+)$"),
+        re.compile(r"^mr\s*[!#]?(\d+)$", re.IGNORECASE),
+        re.compile(r"merge_requests/(\d+)"),
         re.compile(r"^(\d+)$"),
     )
 
     def __init__(
         self,
         *,
-        source_for_repo: SourceControlFactory,
-        repo_resolver: RepoResolver,
+        source_for_project: SourceControlFactory,
+        project_resolver: ProjectResolver,
     ) -> None:
-        self._source_for_repo = source_for_repo
-        self._repo_resolver = repo_resolver
+        self._source_for_project = source_for_project
+        self._project_resolver = project_resolver
 
     def capabilities(self) -> Sequence[ResolverCapabilityEntry]:
         return (
             ResolverCapabilityEntry(
-                provider="github",
+                provider="gitlab",
                 source_kind="repository",
                 policies=frozenset({"summary", "verify", "snippets"}),
             ),
@@ -103,31 +107,33 @@ class GitHubPullRequestResolver:
             out.fallbacks.append(
                 ResolverFallback(
                     code=UNSUPPORTED_SOURCE_POLICY,
-                    message=f"GitHubPullRequestResolver does not handle policy={policy!r}.",
+                    message=(
+                        f"GitLabMergeRequestResolver does not handle policy={policy!r}."
+                    ),
                 )
             )
             return out
 
         remaining_chars = budget.max_total_chars
         for ref in refs:
-            pr_number = self._parse_pr_number(ref)
-            if pr_number is None:
+            iid = self._parse_mr_iid(ref)
+            if iid is None:
                 out.fallbacks.append(
                     ResolverFallback(
                         code=UNSUPPORTED_SOURCE_TYPE,
-                        message="Could not parse a PR number from ref.",
+                        message="Could not parse a merge request iid from ref.",
                         ref=ref.ref,
                         source_type=ref.source_type,
                     )
                 )
                 continue
 
-            repo_name = await self._resolve_repo(pot_id, ref)
-            if not repo_name:
+            project = await self._resolve_project(pot_id, ref)
+            if not project:
                 out.fallbacks.append(
                     ResolverFallback(
                         code=UNSUPPORTED_SOURCE_TYPE,
-                        message="No GitHub repo could be resolved for this pot/ref.",
+                        message="No GitLab project could be resolved for this pot/ref.",
                         ref=ref.ref,
                         source_type=ref.source_type,
                     )
@@ -135,16 +141,14 @@ class GitHubPullRequestResolver:
                 continue
 
             try:
-                client = self._source_for_repo(repo_name)
+                client = self._source_for_project(project)
                 want_diff = policy == "snippets"
-                pr_data = client.get_pull_request(
-                    repo_name, pr_number, include_diff=want_diff
-                )
+                mr_data = client.get_merge_request(project, iid, include_diff=want_diff)
             except PermissionError as exc:
                 out.fallbacks.append(
                     ResolverFallback(
                         code=PERMISSION_DENIED,
-                        message=str(exc) or "GitHub rejected the request.",
+                        message=str(exc) or "GitLab rejected the request.",
                         ref=ref.ref,
                         source_type=ref.source_type,
                     )
@@ -154,18 +158,18 @@ class GitHubPullRequestResolver:
                 out.fallbacks.append(
                     ResolverFallback(
                         code=SOURCE_UNREACHABLE,
-                        message=f"GitHub unreachable: {exc}",
+                        message=f"GitLab unreachable: {exc}",
                         ref=ref.ref,
                         source_type=ref.source_type,
                     )
                 )
                 continue
             except Exception as exc:
-                logger.exception("github PR fetch failed: %s", exc)
+                logger.exception("gitlab MR fetch failed: %s", exc)
                 out.fallbacks.append(
                     ResolverFallback(
                         code=RESOLVER_ERROR,
-                        message=f"GitHub fetch raised: {exc}",
+                        message=f"GitLab fetch raised: {exc}",
                         ref=ref.ref,
                         source_type=ref.source_type,
                     )
@@ -175,7 +179,7 @@ class GitHubPullRequestResolver:
             now_iso = datetime.now(timezone.utc).isoformat()
 
             if policy == "summary":
-                text = _compose_pr_summary(pr_data, budget.max_chars_per_item)
+                text = _compose_mr_summary(mr_data, budget.max_chars_per_item)
                 if len(text) > remaining_chars:
                     text = clamp_text(text, remaining_chars)
                 if not text:
@@ -185,11 +189,10 @@ class GitHubPullRequestResolver:
                         ref=ref.ref,
                         source_type=ref.source_type,
                         summary=text,
-                        title=_str_field(pr_data, "title"),
+                        title=_str_field(mr_data, "title"),
                         fetched_at=now_iso,
-                        source_system="github",
-                        retrieval_uri=_str_field(pr_data, "html_url")
-                        or ref.retrieval_uri,
+                        source_system="gitlab",
+                        retrieval_uri=_str_field(mr_data, "url") or ref.retrieval_uri,
                     )
                 )
                 remaining_chars = max(0, remaining_chars - len(text))
@@ -197,11 +200,11 @@ class GitHubPullRequestResolver:
                     break
 
             elif policy == "verify":
-                merged = bool(pr_data.get("merged"))
-                state = str(pr_data.get("state") or "").lower()
+                merged = bool(mr_data.get("merged"))
+                state = str(mr_data.get("state") or "").lower()
                 verification_state = (
                     "verified"
-                    if (merged or state in {"open", "closed"})
+                    if (merged or state in {"opened", "closed", "merged", "locked"})
                     else "verification_failed"
                 )
                 out.verifications.append(
@@ -211,9 +214,9 @@ class GitHubPullRequestResolver:
                         verified=verification_state == "verified",
                         verification_state=verification_state,
                         checked_at=now_iso,
-                        source_system="github",
+                        source_system="gitlab",
                         reason=(
-                            f"PR state={state!r}, merged={merged}"
+                            f"MR state={state!r}, merged={merged}"
                             if verification_state != "verified"
                             else None
                         ),
@@ -221,15 +224,15 @@ class GitHubPullRequestResolver:
                 )
 
             elif policy == "snippets":
-                diff_text = _str_field(pr_data, "diff") or ""
-                body_text = _str_field(pr_data, "body") or ""
+                diff_text = _files_as_diff(mr_data)
+                body_text = _str_field(mr_data, "body") or ""
                 chunks = split_diff_chunks(
                     diff_text or body_text,
                     per_item=budget.max_chars_per_item,
                     max_chunks=budget.max_snippets_per_ref,
                 )
                 if not chunks and body_text:
-                    chunks = [clamp_text(body_text, budget.max_chars_per_item)]
+                    chunks = [(clamp_text(body_text, budget.max_chars_per_item), None)]
                 for chunk, location in chunks:
                     if remaining_chars <= 0:
                         break
@@ -245,7 +248,7 @@ class GitHubPullRequestResolver:
                             snippet=text,
                             location=location,
                             fetched_at=now_iso,
-                            source_system="github",
+                            source_system="gitlab",
                         )
                     )
                     remaining_chars = max(0, remaining_chars - len(text))
@@ -254,17 +257,17 @@ class GitHubPullRequestResolver:
 
         return out
 
-    async def _resolve_repo(
+    async def _resolve_project(
         self,
         pot_id: str,
         ref: SourceReferenceRecord,
     ) -> str | None:
-        result = self._repo_resolver(pot_id, ref)
+        result = self._project_resolver(pot_id, ref)
         if hasattr(result, "__await__"):
             result = await result  # type: ignore[misc]
         return result if isinstance(result, str) and result else None
 
-    def _parse_pr_number(self, ref: SourceReferenceRecord) -> int | None:
+    def _parse_mr_iid(self, ref: SourceReferenceRecord) -> int | None:
         for candidate in (ref.external_id, ref.ref, ref.uri, ref.retrieval_uri):
             n = self._parse_int(candidate)
             if n is not None:
@@ -276,7 +279,7 @@ class GitHubPullRequestResolver:
         if not value:
             return None
         value = value.strip()
-        for pattern in cls._PR_PATTERNS:
+        for pattern in cls._MR_PATTERNS:
             m = pattern.search(value)
             if m:
                 try:
@@ -286,11 +289,37 @@ class GitHubPullRequestResolver:
         return None
 
 
-def _compose_pr_summary(pr: dict[str, Any], max_chars: int) -> str:
+def _files_as_diff(mr: dict[str, Any]) -> str:
+    """Rebuild a unified diff from the API's per-file ``files`` entries.
+
+    ``split_diff_chunks`` splits on ``diff --git`` headers, which GitLab's
+    per-file payload does not carry — synthesizing them keeps one chunking
+    implementation shared with the GitHub resolver.
+    """
+    files = mr.get("files")
+    if not isinstance(files, list):
+        return ""
     parts: list[str] = []
-    title = _str_field(pr, "title")
-    state = _str_field(pr, "state")
-    merged = pr.get("merged")
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        patch = entry.get("patch")
+        if not patch:
+            continue
+        filename = entry.get("filename") or entry.get("previous_filename") or ""
+        previous = entry.get("previous_filename") or filename
+        parts.append(f"diff --git a/{previous} b/{filename}")
+        parts.append(f"--- a/{previous}")
+        parts.append(f"+++ b/{filename}")
+        parts.append(str(patch).rstrip("\n"))
+    return "\n".join(parts)
+
+
+def _compose_mr_summary(mr: dict[str, Any], max_chars: int) -> str:
+    parts: list[str] = []
+    title = _str_field(mr, "title")
+    state = _str_field(mr, "state")
+    merged = mr.get("merged")
     if title:
         parts.append(title)
     meta: list[str] = []
@@ -298,12 +327,12 @@ def _compose_pr_summary(pr: dict[str, Any], max_chars: int) -> str:
         meta.append(f"state={state}")
     if merged is not None:
         meta.append(f"merged={'yes' if merged else 'no'}")
-    author = _str_field(pr, "user_login") or _str_field(pr, "author")
+    author = _str_field(mr, "author")
     if author:
         meta.append(f"author={author}")
     if meta:
         parts.append("(" + ", ".join(meta) + ")")
-    body = _str_field(pr, "body")
+    body = _str_field(mr, "body")
     if body:
         parts.append(body)
     return clamp_text(" ".join(parts), max_chars)

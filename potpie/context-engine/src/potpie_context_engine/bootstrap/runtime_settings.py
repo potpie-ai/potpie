@@ -49,6 +49,9 @@ class RuntimeSettings:
     github_client_id: str | None
     context_engine_github_token: str | None
     github_webhook_secret: str | None
+    context_engine_gitlab_token: str | None = None
+    context_engine_gitlab_url: str | None = None
+    gitlab_webhook_secret: str | None = None
 
 
 def load_runtime_settings(
@@ -110,6 +113,9 @@ def load_runtime_settings(
         or _default(defaults, "github_client_id"),
         context_engine_github_token=_env(environ, "CONTEXT_ENGINE_GITHUB_TOKEN"),
         github_webhook_secret=_env(environ, "GITHUB_WEBHOOK_SECRET"),
+        context_engine_gitlab_token=_env(environ, "CONTEXT_ENGINE_GITLAB_TOKEN"),
+        context_engine_gitlab_url=_env(environ, "CONTEXT_ENGINE_GITLAB_URL"),
+        gitlab_webhook_secret=_env(environ, "GITLAB_WEBHOOK_SECRET"),
     )
 
 
@@ -169,6 +175,13 @@ def project_child_environment(
         child, "CONTEXT_ENGINE_GITHUB_TOKEN", settings.context_engine_github_token
     )
     _set_if_present(child, "GITHUB_WEBHOOK_SECRET", settings.github_webhook_secret)
+    _set_if_present(
+        child, "CONTEXT_ENGINE_GITLAB_TOKEN", settings.context_engine_gitlab_token
+    )
+    _set_if_present(
+        child, "CONTEXT_ENGINE_GITLAB_URL", settings.context_engine_gitlab_url
+    )
+    _set_if_present(child, "GITLAB_WEBHOOK_SECRET", settings.gitlab_webhook_secret)
     if overrides:
         child.update(
             {

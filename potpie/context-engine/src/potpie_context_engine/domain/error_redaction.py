@@ -1,6 +1,7 @@
 """Strip credentials from error text before it crosses a trust boundary.
 
-PyGithub / httpx / git exception strings routinely embed tokenized clone
+PyGithub / python-gitlab-style REST / httpx / git exception strings
+routinely embed tokenized clone
 URLs (``https://x-access-token:<token>@host/...``), ``Authorization``
 headers and bearer tokens. Returning that text to the agent re-enters it
 into the model context and can be persisted into graph properties; in HTTP
@@ -18,6 +19,17 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # GitHub tokens (classic / fine-grained / oauth / server / refresh)
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), "***"),
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), "***"),
+    # GitLab tokens (personal / project & group / oauth / runner /
+    # CI-build / deploy / feed / incoming-mail / trigger). GitLab prefixes
+    # are hyphenated, so ``\b`` would not anchor them the way it does the
+    # GitHub underscore forms.
+    (
+        re.compile(
+            r"\b(?:glpat|glptt|gloas|glrt|glcbt|gldt|glft|glimt|gltrigger|"
+            r"glsoat|glagent)-[A-Za-z0-9_-]{20,}"
+        ),
+        "***",
+    ),
     # Bearer / token / apikey style "key = value" pairs. The value run is
     # masked to the end of its segment so multi-token values like
     # ``Authorization: Bearer <tok>`` are fully removed.

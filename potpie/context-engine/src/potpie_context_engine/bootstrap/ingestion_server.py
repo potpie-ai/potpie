@@ -20,6 +20,19 @@ from potpie_context_engine.adapters.outbound.connectors.github import (
     GitHubReadPort,
     PyGithubSourceControl,
 )
+from potpie_context_engine.adapters.outbound.cli_auth.gitlab_client import (
+    normalize_instance_url,
+)
+from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
+    GITLAB_DEFAULT_INSTANCE,
+)
+from potpie_context_engine.adapters.outbound.connectors.gitlab import (
+    GitLabConnector,
+    GitLabGraphQLClient,
+    GitLabReadPort,
+    GitLabRestSourceControl,
+    graphql_enabled,
+)
 from potpie_context_engine.adapters.outbound.connectors._bench_stubs import (
     register_bench_stubs,
 )
@@ -447,20 +460,25 @@ def _default_repo_resolver(
     return _resolve
 
 
-def build_ingestion_server_with_github_token(
+def _allow_unsigned_webhooks() -> bool:
+    import os
+
+    return os.getenv("CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def register_github_connector(
+    registry: SourceConnectorRegistry,
     *,
     token: str,
     pots: PotResolutionPort,
-    settings: ContextEngineSettingsPort | None = None,
-    reconciliation_agent: ReconciliationAgentPort | None = None,
-    jobs: ContextGraphJobQueuePort | None = None,
-    reconciliation_config: ReconciliationConfig | None = None,
-) -> IngestionServerContainer:
-    """Build a container with the GitHub + Notion connectors pre-wired.
+) -> None:
+    """Register the GitHub connector against a shared org credential."""
+    import os
 
-    Hosts that need Linear (or any other source) register their connector
-    onto the returned ``container.connectors`` after construction.
-    """
     try:
         from github import Auth, Github
 
@@ -473,20 +491,85 @@ def build_ingestion_server_with_github_token(
     def source_for_repo(_repo_name: str) -> GitHubReadPort:
         return PyGithubSourceControl(gh)
 
-    import os
-
-    registry = SourceConnectorRegistry()
     registry.register(
         GitHubConnector(
             source_for_repo=source_for_repo,
             repo_resolver=_default_repo_resolver(pots),
             webhook_secret=(os.getenv("GITHUB_WEBHOOK_SECRET") or "").strip() or None,
-            allow_unsigned=os.getenv("CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS", "")
-            .strip()
-            .lower()
-            in ("1", "true", "yes"),
+            allow_unsigned=_allow_unsigned_webhooks(),
         )
     )
+
+
+def register_gitlab_connector(
+    registry: SourceConnectorRegistry,
+    *,
+    token: str,
+    pots: PotResolutionPort,
+    instance_url: str | None = None,
+) -> None:
+    """Register the GitLab connector against a shared instance credential.
+
+    ``instance_url`` defaults to ``CONTEXT_ENGINE_GITLAB_URL`` and then to
+    gitlab.com; a self-managed CE deployment must set it so webhook
+    routing and entity ``provider_host`` agree with the events the
+    instance actually sends.
+    """
+    import os
+
+    resolved_url = (
+        instance_url
+        or os.getenv("CONTEXT_ENGINE_GITLAB_URL")
+        or GITLAB_DEFAULT_INSTANCE
+    ).strip()
+    graphql = (
+        GitLabGraphQLClient(normalize_instance_url(resolved_url) or resolved_url, token)
+        if graphql_enabled()
+        else None
+    )
+    # One client per process: the instance credential and HTTP pool are
+    # shared, and per-project scoping is enforced by the agent-tool
+    # allowlist, not by handing out distinct clients.
+    client = GitLabRestSourceControl(resolved_url, token, graphql=graphql)
+
+    def source_for_project(_project: str) -> GitLabReadPort:
+        return client
+
+    registry.register(
+        GitLabConnector(
+            source_for_project=source_for_project,
+            project_resolver=_default_repo_resolver(pots),
+            webhook_secret=(os.getenv("GITLAB_WEBHOOK_SECRET") or "").strip() or None,
+            allow_unsigned=_allow_unsigned_webhooks(),
+            instance_host=client.instance_host or "gitlab.com",
+        )
+    )
+
+
+def build_source_connector_registry(
+    *,
+    pots: PotResolutionPort,
+    github_token: str | None = None,
+    gitlab_token: str | None = None,
+    gitlab_url: str | None = None,
+) -> SourceConnectorRegistry:
+    """Registry with every source this process has credentials for.
+
+    Both code hosts are optional and independent — a deployment may run
+    GitHub only, GitLab only, or both. Notion and the bench stubs are
+    always registered so ``context_status`` returns a non-empty manifest
+    even when no code-host token is configured.
+    """
+    registry = SourceConnectorRegistry()
+    if (github_token or "").strip():
+        register_github_connector(registry, token=github_token.strip(), pots=pots)
+    if (gitlab_token or "").strip():
+        register_gitlab_connector(
+            registry,
+            token=gitlab_token.strip(),
+            pots=pots,
+            instance_url=gitlab_url,
+        )
     # Notion is registered with no fetcher — capabilities advertise as
     # "available connector, no live read access" so the registry can still
     # surface it in ``context_status`` and prove the contract is wired.
@@ -497,11 +580,54 @@ def build_ingestion_server_with_github_token(
     # so production traffic that lacks a real reader will still fail
     # closed instead of silently grading against a stub.
     register_bench_stubs(registry)
+    return registry
 
+
+def build_ingestion_server_with_source_tokens(
+    *,
+    pots: PotResolutionPort,
+    github_token: str | None = None,
+    gitlab_token: str | None = None,
+    gitlab_url: str | None = None,
+    settings: ContextEngineSettingsPort | None = None,
+    reconciliation_agent: ReconciliationAgentPort | None = None,
+    jobs: ContextGraphJobQueuePort | None = None,
+    reconciliation_config: ReconciliationConfig | None = None,
+) -> IngestionServerContainer:
+    """Build a container with every credentialed code host + Notion pre-wired.
+
+    Hosts that need Linear (or any other source) register their connector
+    onto the returned ``container.connectors`` after construction.
+    """
     return build_ingestion_server(
         settings=settings,
         pots=pots,
-        connectors=registry,
+        connectors=build_source_connector_registry(
+            pots=pots,
+            github_token=github_token,
+            gitlab_token=gitlab_token,
+            gitlab_url=gitlab_url,
+        ),
+        reconciliation_agent=reconciliation_agent,
+        jobs=jobs,
+        reconciliation_config=reconciliation_config,
+    )
+
+
+def build_ingestion_server_with_github_token(
+    *,
+    token: str,
+    pots: PotResolutionPort,
+    settings: ContextEngineSettingsPort | None = None,
+    reconciliation_agent: ReconciliationAgentPort | None = None,
+    jobs: ContextGraphJobQueuePort | None = None,
+    reconciliation_config: ReconciliationConfig | None = None,
+) -> IngestionServerContainer:
+    """GitHub-only alias kept for existing callers."""
+    return build_ingestion_server_with_source_tokens(
+        pots=pots,
+        github_token=token,
+        settings=settings,
         reconciliation_agent=reconciliation_agent,
         jobs=jobs,
         reconciliation_config=reconciliation_config,

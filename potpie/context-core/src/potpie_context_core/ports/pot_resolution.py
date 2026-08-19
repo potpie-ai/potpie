@@ -41,7 +41,7 @@ class ResolvedPotRepo:
                 owner=self.repo_name,
                 repo=self.repo_name,
             )
-        owner, name = self.repo_name.split("/", 1)
+        owner, name = self.repo_name.rsplit("/", 1)
         return RepoRef(
             provider=self.provider,
             provider_host=self.provider_host,
@@ -87,6 +87,12 @@ def resolve_write_repo(
     return None
 
 
+_DEFAULT_PROVIDER_HOSTS = {
+    "github": "github.com",
+    "gitlab": "gitlab.com",
+}
+
+
 class PotResolutionPort(Protocol):
     def resolve_pot(self, pot_id: str) -> ResolvedPot | None:
         """Return the pot and its repos when the pot exists and is accessible."""
@@ -108,6 +114,33 @@ class PotResolutionPort(Protocol):
         """Return the repo membership row if this repo is in the pot."""
 
 
+def single_repo_pot(
+    pot_id: str,
+    repo_name: str,
+    *,
+    provider: str = "github",
+    provider_host: str | None = None,
+    ready: bool = True,
+    name: str | None = None,
+) -> ResolvedPot:
+    """Build a :class:`ResolvedPot` holding exactly one repo.
+
+    ``provider_host`` defaults to the SaaS host for the provider; a
+    self-managed forge (GitLab CE, GitHub Enterprise) must pass its own
+    host so webhook routing matches the events it sends.
+    """
+    host = (provider_host or _DEFAULT_PROVIDER_HOSTS.get(provider) or "").strip()
+    rr = ResolvedPotRepo(
+        pot_id=pot_id,
+        repo_id=pot_id,
+        provider=provider,
+        provider_host=host,
+        repo_name=repo_name,
+        ready=ready,
+    )
+    return ResolvedPot(pot_id=pot_id, name=name or repo_name, repos=[rr], ready=ready)
+
+
 def single_github_repo_pot(
     pot_id: str,
     repo_name: str,
@@ -116,12 +149,11 @@ def single_github_repo_pot(
     name: str | None = None,
 ) -> ResolvedPot:
     """Build a :class:`ResolvedPot` with one GitHub.com repo (common Potpie project case)."""
-    rr = ResolvedPotRepo(
-        pot_id=pot_id,
-        repo_id=pot_id,
+    return single_repo_pot(
+        pot_id,
+        repo_name,
         provider="github",
         provider_host="github.com",
-        repo_name=repo_name,
         ready=ready,
+        name=name,
     )
-    return ResolvedPot(pot_id=pot_id, name=name or repo_name, repos=[rr], ready=ready)

@@ -302,6 +302,243 @@ _register(
 )
 
 
+# --- gitlab / repository / added (source-history seed) ---------------------
+_register(
+    EventPlaybook(
+        source_system="gitlab",
+        event_type="repository",
+        action="added",
+        summary=(
+            "A GitLab project was just attached to this pot. This event "
+            "registers the source and may seed authored source history, but "
+            "it is not a working-tree scan or module-map bootstrap."
+        ),
+        available_data=(
+            "Payload carries the project path (group/project, subgroups "
+            "allowed), default_branch, and maybe a remote_url. GitLab "
+            "list/get tools can enumerate recent merged merge requests and "
+            "issues. If the payload includes explicit documents or links, "
+            "read those specific sources; do not walk the repository file "
+            "tree."
+        ),
+        extract=(
+            "Your todo/plan tools are ON for this batch. Use them for a "
+            "bounded source-history seed: enumerate, write one todo per "
+            "artifact, then drain the list. A resumed run CONTINUES the todo "
+            "list instead of re-enumerating.\n\n"
+            "PHASE 1 — source registration: ensure the Repository entity is "
+            "represented with the attached project metadata, including the "
+            "instance host (self-managed GitLab CE is NOT gitlab.com — read "
+            "the host off an item url). Do not infer services, modules, "
+            "dependencies, features, or architecture from the file tree.\n\n"
+            "PHASE 2 — historical backfill: use "
+            "gitlab_list_merge_requests(project) and "
+            "gitlab_list_issues(project). These are bounded server-side to a "
+            "trailing window and hard item cap and come back newest-first. "
+            "ONE call each returns compact refs; do NOT page beyond what they "
+            "return. Drain merge requests first, then issues. For each ref, "
+            "hydrate with gitlab_get_merge_request / gitlab_get_issue and "
+            "supporting metadata tools only where the per-kind playbooks "
+            "below say it is worth it. Then apply_graph_mutations. Follow the "
+            "`merge_request / merged` and `issue / opened` playbooks for what "
+            "to extract per item.\n\n"
+            "PHASE 3 — explicit docs/links: if the event payload names a "
+            "README, ADR, runbook, doc URL, or other authored document, read "
+            "that exact source and record Document / Decision / Preference / "
+            "Document memory only when the text explicitly supports it.\n\n"
+            "Idempotent stable keys per artifact: ``activity:gitlab:mr:"
+            "<group>/<project>:<iid>`` and ``activity:gitlab:issue:"
+            "<group>/<project>:<iid>`` — so a backfilled artifact and a later "
+            "live webhook converge instead of duplicating. Merge request iids "
+            "and issue iids are separate sequences; !7 and #7 are different "
+            "artifacts.\n\n"
+            "SINGLE-EVENT CONTRACT: this batch contains exactly ONE event — "
+            "the repository.added seed. Pass ITS event_id to EVERY "
+            "apply_graph_mutations call and to the final mark_event_processed; "
+            "per-artifact identity lives in the entity_keys above, not in "
+            "event ids. When the todo list is drained (or you reach your "
+            "budget with a coherent subset), mark_event_processed(seed) then "
+            "finish_batch."
+        ),
+        skip=(
+            "Do NOT use working-tree tools, walk the file tree, scan "
+            "manifests, or infer code structure. Do NOT page or scrape beyond "
+            "what the list tools return — the window/cap is deliberate. NEVER "
+            "fabricate a merge request, issue, document, service, dependency, "
+            "feature, or preference you did not actually read — add a warning "
+            "instead."
+        ),
+        tool_hints=(
+            "gitlab_list_merge_requests",
+            "gitlab_list_issues",
+            "gitlab_get_merge_request",
+            "gitlab_get_issue",
+            "gitlab_get_merge_request_commits",
+            "gitlab_get_merge_request_discussions",
+            "gitlab_get_merge_request_notes",
+            "gitlab_get_merge_request_approvals",
+            "gitlab_get_merge_request_state_events",
+            "gitlab_get_merge_request_closes_issues",
+            "gitlab_get_issue_notes",
+            "gitlab_get_issue_links",
+            "apply_graph_mutations",
+            "mark_event_processed",
+            "finish_batch",
+            "web_fetch",
+        ),
+        max_tool_calls=400,
+        enables_planner=True,
+    )
+)
+
+
+# --- gitlab / repository / one_shot_ingest (MR + issue backfill skill) -----
+# Source of truth lives in ``playbooks/repo_one_shot_ingestion_gitlab.md`` so
+# Claude Code and the internal reconciliation agent read the exact same prompt.
+# The markdown body is embedded into ``extract`` at module import.
+_register(
+    EventPlaybook(
+        source_system="gitlab",
+        event_type="repository",
+        action="one_shot_ingest",
+        summary=(
+            "One-time backfill of a GitLab project's recent merged merge "
+            "requests and issues into the context graph. Not incremental — "
+            "live updates continue via the gitlab/merge_request/merged and "
+            "gitlab/issue/opened webhook paths."
+        ),
+        available_data=(
+            "Payload may include the project path and count (per-kind list "
+            "limit). The embedded skill below is authoritative for procedure, "
+            "tool surface, key formats, and mutation shapes."
+        ),
+        extract=_load_skill_body("repo_one_shot_ingestion_gitlab.md"),
+        skip=(
+            "Do NOT re-emit gitlab/repository/added. Do NOT page past one "
+            "list call per kind (one gitlab_list_merge_requests + one "
+            "gitlab_list_issues). Do NOT read code diffs unless commit + "
+            "branch + title + body + discussions all leave intent unclear. "
+            "Do NOT emit Fix nodes from issue filings alone — Fix is reserved "
+            "for merged merge requests."
+        ),
+        tool_hints=(
+            "gitlab_list_merge_requests",
+            "gitlab_list_issues",
+            "gitlab_get_merge_request",
+            "gitlab_get_merge_request_commits",
+            "gitlab_get_merge_request_discussions",
+            "gitlab_get_merge_request_notes",
+            "gitlab_get_merge_request_approvals",
+            "gitlab_get_merge_request_state_events",
+            "gitlab_get_merge_request_closes_issues",
+            "gitlab_get_issue",
+            "gitlab_get_issue_notes",
+            "gitlab_get_issue_links",
+            "apply_graph_mutations",
+            "mark_event_processed",
+            "finish_batch",
+        ),
+        max_tool_calls=400,
+        enables_planner=True,
+    )
+)
+
+
+# --- gitlab / merge_request / merged ---------------------------------------
+_register(
+    EventPlaybook(
+        source_system="gitlab",
+        event_type="merge_request",
+        action="merged",
+        summary=(
+            "A merge request was just merged. This is a unit of completed "
+            "work with a clear author, scope, and (often) a stated reason."
+        ),
+        available_data=(
+            "The merge request iid is in the payload; full metadata, commits, "
+            "inline review discussions, conversation notes, approvals, state "
+            "events, and the issues it closes are reachable via the "
+            "gitlab_get_merge_request* tools. The merged diff describes the "
+            "surface area changed."
+        ),
+        extract=(
+            "Always emit one Activity (with PERFORMED + TOUCHED + IN_PERIOD). "
+            "Where evidenced by the MR body, also seed: Decisions (DECIDED / "
+            "AFFECTS the affected Repository, Service, Feature, or CodeAsset), "
+            "Fixes (RESOLVED → BugPattern), and new Features (PROVIDES / "
+            "IMPLEMENTED_IN → Repository, Service, or CodeAsset). Use "
+            "DEPENDS_ON / USES edges if dependencies were added. Record who "
+            "actually approved (approvals payload, or the 'approved this "
+            "merge request' system note) and the issues the MR closes. Link "
+            "the merge request as evidence."
+        ),
+        skip=(
+            "Do not invent design decisions that the MR body does not state. "
+            "Trivial MRs (typo fixes, lint) only need an Activity, no "
+            "Decision. An assigned reviewer who never approved is not an "
+            "approver, and an unresolved discussion thread is an open "
+            "question, not an accepted decision."
+        ),
+        tool_hints=(
+            "gitlab_get_merge_request",
+            "gitlab_get_merge_request_commits",
+            "gitlab_get_merge_request_discussions",
+            "gitlab_get_merge_request_notes",
+            "gitlab_get_merge_request_approvals",
+            "gitlab_get_merge_request_state_events",
+            "gitlab_get_merge_request_closes_issues",
+            "context_timeline",
+            "web_fetch",
+        ),
+        max_tool_calls=20,
+    )
+)
+
+
+# --- gitlab / issue / opened -----------------------------------------------
+_register(
+    EventPlaybook(
+        source_system="gitlab",
+        event_type="issue",
+        action="opened",
+        summary=(
+            "An issue was just filed. It may describe a bug, a feature "
+            "request, or a question — read the body, labels, and issue_type "
+            "to tell which."
+        ),
+        available_data=(
+            "Issue iid, title, body, labels, assignees, milestone, due date, "
+            "and author are in the payload (or fetchable via "
+            "gitlab_get_issue). Comments (gitlab_get_issue_notes) may add "
+            "detail, and gitlab_get_issue_links names the merge requests "
+            "related to or closing it."
+        ),
+        extract=(
+            "Emit an Activity for the filing, carrying the task-tracking "
+            "facts GitLab supplies: assignees, milestone, due_date. If the "
+            "issue describes a bug, consider seeding a BugPattern and an "
+            "Observation for the reported signal if it has lasting value. If "
+            "it describes a feature request, link the Activity to any "
+            "existing Feature it touches. Always preserve the reporter as "
+            "PERFORMED actor."
+        ),
+        skip=(
+            "Don't auto-resolve issues — the open event is a signal of "
+            "intent, not a confirmed bug. Do not emit a Fix from a filing. "
+            "Use warnings for ambiguous reports."
+        ),
+        tool_hints=(
+            "gitlab_get_issue",
+            "gitlab_get_issue_notes",
+            "gitlab_get_issue_links",
+            "context_search",
+            "web_fetch",
+        ),
+        max_tool_calls=15,
+    )
+)
+
+
 # --- manual / raw_episode / submit (UI raw ingest) -------------------------
 _register(
     EventPlaybook(
