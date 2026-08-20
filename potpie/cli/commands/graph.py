@@ -85,6 +85,7 @@ from potpie_context_engine.requests import (
     InboxShowRequest as EngineInboxShowRequest,
     InspectRequest as EngineInspectRequest,
     NeighborhoodRequest as EngineNeighborhoodRequest,
+    NudgeRequest as EngineNudgeRequest,
     ProposeRequest as EngineProposeRequest,
     QualityRequest as EngineQualityRequest,
     ReadRequest as EngineReadRequest,
@@ -1334,21 +1335,22 @@ def graph_nudge(
     Deterministic and free — reads via the local embedder, never calls a model.
     Hooks forward their event + path here and inject the result.
     """
-    from potpie_context_engine.domain.nudge import GraphNudgeRequest
-
     with _graph_command("graph.nudge") as ctx:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.nudge.nudge(
-            GraphNudgeRequest(
-                pot_id=pot_id,
-                event=event,
-                session_id=session,
-                scope=_parse_scope(scope),
-                path=path,
-                query=query,
-                limit=limit,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).nudge(
+                EngineNudgeRequest(
+                    payload={
+                        "event": event,
+                        "session_id": session,
+                        "scope": _parse_scope(scope),
+                        "path": path,
+                        "query": query,
+                        "limit": limit,
+                    }
+                )
             )
         )
         _emit_graph_result(

@@ -56,6 +56,7 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphReadRequest,
 )
 from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
+from potpie_context_engine.domain.nudge import GraphNudgeRequest
 from potpie_context_engine.requests import (
     CatalogRequest,
     CommitRequest,
@@ -75,6 +76,7 @@ from potpie_context_engine.requests import (
     InspectRequest,
     MutateRequest,
     NeighborhoodRequest,
+    NudgeRequest,
     ProposeRequest,
     QualityRequest,
     ReadRequest,
@@ -586,6 +588,24 @@ class HostShellEngineOperations:
             )
         )
 
+    async def nudge(
+        self, context: ContextIdentity, request: NudgeRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.nudge.nudge(
+                GraphNudgeRequest(
+                    pot_id=context.value,
+                    event=_required_str(payload, "event"),
+                    session_id=_required_str(payload, "session_id"),
+                    scope=_mapping(payload, "scope"),
+                    path=_optional_str(payload, "path"),
+                    query=_optional_str(payload, "query"),
+                    limit=int(payload.get("limit") or 5),
+                )
+            )
+        )
+
     async def invoke(
         self,
         operation: EngineOperation,
@@ -621,6 +641,7 @@ class HostShellEngineOperations:
             EngineOperation.INBOX_MARK_APPLIED: self.inbox_mark_applied,
             EngineOperation.INBOX_MARK_REJECTED: self.inbox_mark_rejected,
             EngineOperation.INBOX_CLOSE: self.inbox_close,
+            EngineOperation.NUDGE: self.nudge,
         }
         handler = handlers.get(operation)
         if handler is None:

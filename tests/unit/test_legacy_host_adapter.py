@@ -25,6 +25,7 @@ from potpie_context_engine.domain.ports.services.pot_management import (
 )
 from potpie_context_engine.requests import (
     ImportSnapshotRequest,
+    NudgeRequest,
     ProposeRequest,
     RecordRequest,
     SearchRequest,
@@ -198,6 +199,42 @@ async def test_legacy_destructive_write_requires_exact_confirmation() -> None:
     host.backend.snapshot.import_.assert_called_once_with(
         pot_id="pot-1", source="snapshot.json"
     )
+
+
+@pytest.mark.anyio
+async def test_nudge_is_context_bound_and_preserves_normalized_input() -> None:
+    selected = PotInfo(pot_id="pot-1", name="selected", active=True)
+    host = _host(_Pots([selected], selected))
+    host.nudge = SimpleNamespace(
+        nudge=MagicMock(return_value={"action": "inject"})
+    )
+    client = build_legacy_engine_client(
+        host=host,
+        selector=ContextSelector(kind="active"),
+    )
+
+    outcome = await client.nudge(
+        NudgeRequest(
+            payload={
+                "event": "test_failed",
+                "session_id": "session-1",
+                "scope": {"service": "api"},
+                "path": "src/api.py",
+                "query": "timeout",
+                "limit": 4,
+            }
+        )
+    )
+
+    assert outcome == Success({"action": "inject"})
+    request = host.nudge.nudge.call_args.args[0]
+    assert request.pot_id == "pot-1"
+    assert request.event == "test_failed"
+    assert request.session_id == "session-1"
+    assert request.scope == {"service": "api"}
+    assert request.path == "src/api.py"
+    assert request.query == "timeout"
+    assert request.limit == 4
 
 
 @pytest.mark.anyio
