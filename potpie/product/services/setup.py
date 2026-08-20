@@ -41,19 +41,19 @@ from potpie_context_engine.core.lifecycle import (
     SetupReport,
     StepResult,
 )
-from potpie_context_engine.domain.ports.install import Installer
+from potpie.product.ports.install import Installer
 from potpie_context_engine.domain.ports.provisioning import ProvisionableGraphBackend
-from potpie_context_engine.domain.ports.services.auth import AuthService
-from potpie_context_engine.domain.ports.services.config import ConfigService
-from potpie_context_engine.domain.ports.services.pot_management import (
+from potpie.product.ports.auth import AuthService
+from potpie.product.ports.config import ConfigService
+from potpie.product.ports.pot_management import (
     PotManagementService,
 )
-from potpie_context_engine.domain.ports.services.skill_manager import SkillManager
-from potpie_context_engine.domain.ports.services.state_store import (
+from potpie.product.ports.skills import SkillManager
+from potpie.product.ports.state_store import (
     MigrationPort,
     StateStorePort,
 )
-from potpie_context_engine.domain.ports.services.setup import (
+from potpie.product.ports.setup import (
     NoOpSetupObserver,
     SetupObserver,
 )
@@ -397,8 +397,15 @@ def _resolve_setup_repo_location(location: str) -> str:
 
 def _current_git_remote(cwd: Path) -> str | None:
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(cwd), "remote", "get-url", "origin"],
+        proc = subprocess.run(  # noqa: S603 - fixed argv, never invokes a shell.
+            [  # noqa: S607 - the user's Git installation is intentionally used.
+                "git",
+                "-C",
+                str(cwd),
+                "remote",
+                "get-url",
+                "origin",
+            ],
             check=False,
             capture_output=True,
             text=True,

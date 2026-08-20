@@ -36,20 +36,20 @@ from potpie_context_engine.core.workbench_service import (
 from potpie_context_engine.application.services.nudge_service import NudgeService
 from potpie_context_engine.core.ports.agent_context import AgentContextPort
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
-from potpie_context_engine.domain.ports.install import Installer
+from potpie.product.ports.install import Installer
 from potpie_context_engine.domain.ports.ledger.client import (
     EventLedgerClientPort,
     LedgerPage,
 )
 from potpie_context_engine.domain.ports.ledger.cursor import LedgerCursorStorePort
-from potpie_context_engine.domain.ports.services.auth import AuthService
-from potpie_context_engine.domain.ports.services.config import ConfigService
+from potpie.product.ports.auth import AuthService
+from potpie.product.ports.config import ConfigService
 from potpie_context_engine.core.ports.graph_service import GraphService
-from potpie_context_engine.domain.ports.services.pot_management import (
+from potpie.product.ports.pot_management import (
     PotManagementService,
 )
-from potpie_context_engine.domain.ports.services.setup import SetupOrchestrator
-from potpie_context_engine.domain.ports.services.skill_manager import SkillManager
+from potpie.product.ports.setup import SetupOrchestrator
+from potpie.product.ports.skills import SkillManager
 from potpie.daemon.lifecycle import Daemon
 
 

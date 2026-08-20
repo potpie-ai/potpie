@@ -14,9 +14,12 @@ ROOT = Path(__file__).resolve().parents[2]
 ENGINE_ROOT = ROOT / "potpie" / "context-engine"
 
 EXPECTED_ENGINE_CLI_IMPORTERS = {
-    "src/potpie_context_engine/adapters/outbound/skills/agent_installer.py",
-    "src/potpie_context_engine/adapters/outbound/skills/bundle_catalog.py",
     "src/potpie_context_engine/bootstrap/sentry_metrics_runtime.py",
+}
+
+EXPECTED_ENGINE_PRODUCT_IMPORTERS = {
+    "src/potpie_context_engine/bootstrap/host_wiring.py",
+    "src/potpie_context_engine/host/shell.py",
 }
 
 
@@ -68,6 +71,16 @@ def test_temporary_engine_to_cli_imports_are_explicitly_bounded() -> None:
     assert importers == EXPECTED_ENGINE_CLI_IMPORTERS
 
 
+def test_product_imports_remain_only_in_tracked_host_compatibility() -> None:
+    importers = {
+        path.relative_to(ENGINE_ROOT).as_posix()
+        for path in ENGINE_ROOT.rglob("*.py")
+        if "tests" not in path.relative_to(ENGINE_ROOT).parts
+        and _references_namespace(path, "potpie.product")
+    }
+    assert importers == EXPECTED_ENGINE_PRODUCT_IMPORTERS
+
+
 def test_engine_metadata_does_not_depend_on_root_potpie() -> None:
     engine_metadata = tomllib.loads(
         (ENGINE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -112,6 +125,30 @@ def test_product_authentication_is_owned_by_root_potpie() -> None:
         (ENGINE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
     assert "cli-auth" not in engine_metadata["project"]["optional-dependencies"]
+
+
+def test_product_lifecycle_sources_are_owned_by_root_potpie() -> None:
+    engine_source = ENGINE_ROOT / "src" / "potpie_context_engine"
+    removed_files = (
+        engine_source / "domain" / "ports" / "install.py",
+        engine_source / "application" / "services" / "agent_context.py",
+        engine_source / "application" / "services" / "auth_service.py",
+        engine_source / "application" / "services" / "config_service.py",
+        engine_source / "application" / "services" / "pot_management.py",
+        engine_source / "application" / "services" / "setup_orchestrator.py",
+        engine_source / "application" / "services" / "skill_manager.py",
+    )
+    assert all(not path.exists() for path in removed_files)
+
+    removed_directories = (
+        engine_source / "domain" / "ports" / "services",
+        engine_source / "adapters" / "outbound" / "install",
+        engine_source / "adapters" / "outbound" / "pots",
+        engine_source / "adapters" / "outbound" / "skills",
+    )
+    assert all(
+        not any(path.rglob("*.py")) for path in removed_directories if path.is_dir()
+    )
 
 
 def test_root_console_script_targets_relocated_cli() -> None:

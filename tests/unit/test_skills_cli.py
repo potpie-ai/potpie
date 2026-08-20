@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from potpie.cli.commands import _common, skills
-from potpie_context_engine.domain.ports.services.skill_manager import (
+from potpie.product.ports.skills import (
     SkillOperationResult,
 )
 

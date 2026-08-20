@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie_context_engine.adapters.outbound.local_paths import default_home
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import (
+from potpie.product.adapters.pots.local_pot_store import (
     LocalPotStore,
     default_home,
 )

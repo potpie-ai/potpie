@@ -38,7 +38,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
 )
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie_context_engine.adapters.outbound.local_paths import default_home
 from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.lifecycle import DONE, SetupPlan, StepResult

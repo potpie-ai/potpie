@@ -2,7 +2,7 @@
 
 Backs the first setup step. State lives at ``<home>/config.json`` where
 ``<home>`` is ``$CONTEXT_ENGINE_HOME`` or ``~/.potpie`` (shared with
-:func:`potpie_context_engine.adapters.outbound.pots.local_pot_store.default_home`). This is a working
+:func:`potpie.product.adapters.pots.local_pot_store.default_home`). This is a working
 Real dirs + JSON, not a stub — config is cheap and unblocks every
 downstream step. The real config layer may add schema/validation behind the same
 ``ConfigService`` interface.
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie.product.adapters.pots.local_pot_store import default_home
 from potpie_context_engine.core.lifecycle import SetupPlan
 
 KNOWN_CONFIG_KEYS: tuple[str, ...] = (

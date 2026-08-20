@@ -34,9 +34,9 @@ EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
             "potpie/context-engine/tests/conformance/test_local_profile_completion.py",
             "potpie/context-engine/tests/unit/test_falkordb_backend.py",
             "potpie/context-engine/tests/unit/test_observability.py",
-            "potpie/context-engine/tests/unit/test_setup_defer_pot.py",
-            "potpie/context-engine/tests/unit/test_setup_defer_skills.py",
-            "potpie/context-engine/tests/unit/test_skill_manager_global_targets.py",
+            "tests/unit/test_setup_defer_pot.py",
+            "tests/unit/test_setup_defer_skills.py",
+            "tests/unit/test_skill_manager_global_targets.py",
         }
     ),
     "cli_host_acquisition": frozenset(),

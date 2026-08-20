@@ -14,16 +14,12 @@ state DB (SQLite + migrations) per ``cli-flow.md``.
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
-def default_home() -> Path:
-    raw = os.getenv("CONTEXT_ENGINE_HOME")
-    return Path(raw).expanduser() if raw else Path.home() / ".potpie"
+from potpie_context_engine.adapters.outbound.local_paths import default_home
 
 
 @dataclass(slots=True)

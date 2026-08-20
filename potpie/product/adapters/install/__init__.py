@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from potpie_context_engine.adapters.outbound.install.local_installer import (
+from potpie.product.adapters.install.local_installer import (
     LocalInstaller,
 )
 

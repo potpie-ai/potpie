@@ -19,7 +19,7 @@ from potpie.runtime.legacy_host_adapter import (
     build_local_resource_manager,
 )
 from potpie_context_engine import Failure, Success
-from potpie_context_engine.domain.ports.services.pot_management import (
+from potpie.product.ports.pot_management import (
     PotInfo,
     SourceInfo,
 )

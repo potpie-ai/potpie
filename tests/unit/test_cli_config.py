@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from potpie.cli import main as cli_main
 from potpie.cli.commands import _common, bootstrap
-from potpie_context_engine.application.services.config_service import LocalConfigService
+from potpie.product.services.config import LocalConfigService
 
 runner = CliRunner()
 
@@ -22,7 +22,7 @@ class _FakeConfig:
         return self._values.get(key)
 
     def list_public(self) -> dict[str, str | None]:
-        from potpie_context_engine.application.services.config_service import (
+        from potpie.product.services.config import (
             public_config_value,
         )
 
@@ -178,7 +178,7 @@ def test_local_config_service_list_public_redacts_secrets(tmp_path) -> None:
 def test_is_secret_config_key_handles_camelcase_and_separators(
     key: str, secret: bool
 ) -> None:
-    from potpie_context_engine.application.services.config_service import (
+    from potpie.product.services.config import (
         is_secret_config_key,
     )
 

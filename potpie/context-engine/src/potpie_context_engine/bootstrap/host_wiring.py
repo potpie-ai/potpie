@@ -25,7 +25,7 @@ from potpie_context_engine.adapters.outbound.graph.inbox_stores import (
 from potpie_context_engine.adapters.outbound.graph.plan_stores import (
     LocalJsonGraphPlanStore,
 )
-from potpie_context_engine.adapters.outbound.install.local_installer import (
+from potpie.product.adapters.install.local_installer import (
     LocalInstaller,
 )
 from potpie_context_engine.adapters.outbound.ledger.cursor_store import (
@@ -34,32 +34,32 @@ from potpie_context_engine.adapters.outbound.ledger.cursor_store import (
 from potpie_context_engine.adapters.outbound.ledger.managed_client import (
     ManagedEventLedgerClient,
 )
-from potpie_context_engine.adapters.outbound.pots.flat_file_state_store import (
+from potpie.product.adapters.pots.flat_file_state_store import (
     FlatFileMigrator,
     FlatFileStateStore,
 )
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import LocalPotStore
+from potpie.product.adapters.pots.local_pot_store import LocalPotStore
 from potpie_context_engine.adapters.outbound.session.injection_ledger import (
     LocalInjectionLedger,
 )
-from potpie_context_engine.adapters.outbound.skills.claude_target import (
+from potpie.product.adapters.skills.agent_targets import (
     ClaudeAgentTarget,
     CodexAgentTarget,
     CursorAgentTarget,
     OpenCodeAgentTarget,
 )
-from potpie_context_engine.application.services.agent_context import AgentContextService
-from potpie_context_engine.application.services.auth_service import LocalAuthService
-from potpie_context_engine.application.services.config_service import LocalConfigService
+from potpie.product.services.agent_context import AgentContextService
+from potpie.product.services.auth import LocalAuthService
+from potpie.product.services.config import LocalConfigService
 from potpie_context_engine.core.api import build_graph_runtime
 from potpie_context_engine.application.services.nudge_service import NudgeService
-from potpie_context_engine.application.services.pot_management import (
+from potpie.product.services.pot_management import (
     LocalPotManagementService,
 )
-from potpie_context_engine.application.services.setup_orchestrator import (
+from potpie.product.services.setup import (
     DefaultSetupOrchestrator,
 )
-from potpie_context_engine.application.services.skill_manager import DefaultSkillManager
+from potpie.product.services.skills import DefaultSkillManager
 from potpie_context_engine.bootstrap.logging_setup import configure_logging
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import set_observability

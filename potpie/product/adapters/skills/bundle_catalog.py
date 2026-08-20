@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from importlib import resources
 
-from potpie_context_engine.domain.ports.services.skill_manager import SkillInfo
+from potpie.product.ports.skills import SkillInfo
 
 AGENT_BUNDLE_NAME = "agent_bundle"
 SKILLS_PREFIX = ".agents/skills/"

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from potpie_context_engine.adapters.outbound.skills.bundle_catalog import (
+from potpie.product.adapters.skills.bundle_catalog import (
     BUILTIN_SKILLS,
     RECOMMENDED_SKILL_IDS,
     catalog_by_id,
     load_bundle_skills,
     recommended_skill_ids,
 )
-from potpie_context_engine.adapters.outbound.skills.claude_target import (
+from potpie.product.adapters.skills.agent_targets import (
     ClaudeAgentTarget,
     CodexAgentTarget,
     CursorAgentTarget,

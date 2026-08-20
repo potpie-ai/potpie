@@ -29,7 +29,7 @@ from potpie.cli.ui.setup_wizard_ui import (
     live_ui_enabled,
 )
 from potpie_context_engine.core.lifecycle import SetupPlan, SetupReport
-from potpie_context_engine.domain.ports.services.setup import (
+from potpie.product.ports.setup import (
     SetupObserver,
     SetupOrchestrator,
 )
@@ -382,7 +382,7 @@ POST_SETUP_AGENT_ORDER: tuple[str, ...] = tuple(
 
 def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any]]:
     """Copy packaged skill bundles into *repo* for each harness id."""
-    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+    from potpie.product.adapters.skills.agent_installer import (
         AGENT_TYPES,
         install_agent_bundle,
     )
@@ -399,7 +399,7 @@ def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any
 def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
     """Install packaged skill bundles into each harness's global skill location."""
     from potpie.cli.commands._common import get_skill_service
-    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+    from potpie.product.adapters.skills.agent_installer import (
         AGENT_TYPES,
     )
 

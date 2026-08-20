@@ -1,4 +1,4 @@
-"""``AgentContextPort`` implementation — composes the three services.
+"""Potpie product-status composition over context and control-plane services.
 
 This is the public four-tool surface. ``resolve``/``search``/``record`` delegate
 straight to the ``GraphService`` data plane; ``status`` is the only composite —
@@ -24,10 +24,10 @@ from potpie_context_engine.core.ports.agent_context import (
     StatusRequest,
 )
 from potpie_context_engine.core.ports.graph_service import GraphService
-from potpie_context_engine.domain.ports.services.pot_management import (
+from potpie.product.ports.pot_management import (
     PotManagementService,
 )
-from potpie_context_engine.domain.ports.services.skill_manager import SkillManager
+from potpie.product.ports.skills import SkillManager
 
 
 @dataclass(slots=True)

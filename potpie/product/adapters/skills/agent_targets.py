@@ -8,14 +8,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+from potpie.product.adapters.pots.local_pot_store import default_home
+from potpie.product.adapters.skills.agent_installer import (
     install_global_agent_instructions,
     install_agent_bundle,
     install_skill_bundle,
     project_skill_path,
 )
-from potpie_context_engine.adapters.outbound.skills.bundle_catalog import (
+from potpie.product.adapters.skills.bundle_catalog import (
     RECOMMENDED_SKILL_IDS,
 )
 

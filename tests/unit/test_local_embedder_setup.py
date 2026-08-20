@@ -17,8 +17,8 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
     HashingEmbedder,
     SentenceTransformerEmbedder,
 )
-from potpie_context_engine.application.services.config_service import LocalConfigService
-from potpie_context_engine.application.services.setup_orchestrator import (
+from potpie.product.services.config import LocalConfigService
+from potpie.product.services.setup import (
     DefaultSetupOrchestrator,
 )
 from potpie_context_engine.core.lifecycle import DONE, FAILED, SetupPlan

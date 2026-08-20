@@ -233,7 +233,7 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
             DaemonDiscoveryError,
             load_daemon_connection,
         )
-        from potpie_context_engine.adapters.outbound.pots.local_pot_store import (
+        from potpie.product.adapters.pots.local_pot_store import (
             default_home,
         )
 

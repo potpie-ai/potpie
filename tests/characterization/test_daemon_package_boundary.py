@@ -14,7 +14,6 @@ ROOT = Path(__file__).resolve().parents[2]
 ENGINE_ROOT = ROOT / "potpie" / "context-engine"
 
 EXPECTED_ENGINE_DAEMON_IMPORTERS = {
-    "src/potpie_context_engine/application/services/setup_orchestrator.py",
     "src/potpie_context_engine/bootstrap/host_wiring.py",
     "src/potpie_context_engine/host/__init__.py",
     "src/potpie_context_engine/host/shell.py",

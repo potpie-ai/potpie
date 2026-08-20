@@ -56,7 +56,7 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
     configured_embedder_choice,
     configured_embedding_model,
 )
-from potpie_context_engine.application.services.config_service import (
+from potpie.product.services.config import (
     KNOWN_CONFIG_KEYS,
     public_config_value,
 )

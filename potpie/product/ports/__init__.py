@@ -13,20 +13,20 @@ public four-tool surface.
 
 from __future__ import annotations
 
-from potpie_context_engine.domain.ports.services.auth import AuthIdentity, AuthService
-from potpie_context_engine.domain.ports.services.config import ConfigService
+from potpie.product.ports.auth import AuthIdentity, AuthService
+from potpie.product.ports.config import ConfigService
 from potpie_context_engine.core.ports.graph_service import (
     DataPlaneStatus,
     GraphService,
 )
-from potpie_context_engine.domain.ports.services.pot_management import (
+from potpie.product.ports.pot_management import (
     PotAggregateStatus,
     PotInfo,
     PotManagementService,
     SourceInfo,
 )
-from potpie_context_engine.domain.ports.services.setup import SetupOrchestrator
-from potpie_context_engine.domain.ports.services.skill_manager import (
+from potpie.product.ports.setup import SetupOrchestrator
+from potpie.product.ports.skills import (
     AgentTargetPort,
     SkillInfo,
     SkillManager,
