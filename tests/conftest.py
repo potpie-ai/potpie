@@ -12,8 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
-
 
 @pytest.fixture()
 def anyio_backend() -> str:
@@ -49,16 +47,6 @@ async def wait_for_condition(
         await asyncio.sleep(interval_s)
         remaining -= interval_s
     raise TimeoutError(error_message)
-
-
-@pytest.fixture()
-def daemon_ctx(tmp_path: Path) -> ShellContext:
-    return ShellContext(
-        config={},
-        data_dir=tmp_path,
-        logger=logging.getLogger("test"),
-        endpoints=ServiceEndpoints(),
-    )
 
 
 @pytest.fixture(autouse=True)
