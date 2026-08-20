@@ -147,9 +147,7 @@ def register(root: typer.Typer) -> None:
                 explicit_embeddings=embeddings is not None,
                 explicit_model=embedding_model is not None,
             )
-            from potpie_context_engine.bootstrap.host_wiring import (
-                default_backend_profile,
-            )
+            from potpie.runtime.composition import default_backend_profile
 
             if human_output:
                 host, selected_backend, in_process = _build_local_setup_host(
@@ -174,16 +172,17 @@ def register(root: typer.Typer) -> None:
                 and backend
                 and backend != host.backend.profile
             ):
-                from potpie.cli.commands._common import set_host
+                from potpie.cli.commands._common import set_runtime
                 from potpie_context_engine.adapters.outbound.graph.backends import (
                     build_backend,
                 )
-                from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+                from potpie.runtime.composition import build_local_runtime
 
-                host = build_host_shell(
+                runtime = build_local_runtime(
                     backend=build_backend(backend), profile=host.profile
                 )
-                set_host(host)
+                set_runtime(runtime)
+                host = runtime.root
                 in_process = getattr(get_daemon_service(host), "in_process", False)
                 selected_backend = host.backend.profile
             if (
@@ -193,19 +192,20 @@ def register(root: typer.Typer) -> None:
             ):
                 import os
 
-                from potpie.cli.commands._common import set_host
+                from potpie.cli.commands._common import set_runtime
                 from potpie_context_engine.adapters.outbound.graph.backends import (
                     build_backend,
                 )
-                from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+                from potpie.runtime.composition import build_local_runtime
 
                 os.environ["CONTEXT_ENGINE_HOST_MODE"] = (
                     "daemon" if daemon else "in_process"
                 )
-                host = build_host_shell(
+                runtime = build_local_runtime(
                     backend=build_backend(selected_backend), profile=host.profile
                 )
-                set_host(host)
+                set_runtime(runtime)
+                host = runtime.root
                 in_process = getattr(get_daemon_service(host), "in_process", False)
                 selected_backend = host.backend.profile
             plan = SetupPlan(
@@ -236,12 +236,10 @@ def register(root: typer.Typer) -> None:
                 if in_process or get_daemon_service(host).status().get("up"):
                     preview = get_setup_service(host).preview(plan)
                 else:
-                    from potpie_context_engine.bootstrap.host_wiring import (
-                        build_host_shell,
-                    )
+                    from potpie.runtime.composition import build_local_runtime
 
-                    preview_host = build_host_shell()
-                    preview = get_setup_service(preview_host).preview(plan)
+                    preview_runtime = build_local_runtime()
+                    preview = get_setup_service(preview_runtime.root).preview(plan)
                 capture_setup_dry_run_completed(
                     plan=plan,
                     planned_step_count=len(preview.steps),
@@ -364,9 +362,7 @@ def register(root: typer.Typer) -> None:
             shell = get_root_runtime()
             pot_id = resolve_pot_id(shell, pot)
             data_plane = run_engine_operation(
-                get_engine_client(pot).data_plane_status(
-                    DataPlaneStatusRequest()
-                )
+                get_engine_client(pot).data_plane_status(DataPlaneStatusRequest())
             )
             report = _build_context_status_report(
                 shell,
@@ -733,15 +729,16 @@ def _build_local_setup_host(
     """Build a local setup host so the Rich wizard can observe real steps."""
     import os
 
-    from potpie.cli.commands._common import set_host
+    from potpie.cli.commands._common import set_runtime
     from potpie_context_engine.adapters.outbound.graph.backends import build_backend
-    from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+    from potpie.runtime.composition import build_local_runtime
 
     selected_backend = backend or default_backend
     if daemon is not None:
         os.environ["CONTEXT_ENGINE_HOST_MODE"] = "daemon" if daemon else "in_process"
-    host = build_host_shell(backend=build_backend(selected_backend))
-    set_host(host)
+    runtime = build_local_runtime(backend=build_backend(selected_backend))
+    set_runtime(runtime)
+    host = runtime.root
     return (
         host,
         host.backend.profile,

@@ -1,16 +1,22 @@
-"""Finite Potpie-owned control-plane services during runtime migration."""
+"""Finite Potpie-owned control-plane services."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
+from potpie_context_engine.domain.ports.ledger.client import (
+    EventLedgerClientPort,
+    LedgerPage,
+)
+from potpie_context_engine.domain.ports.ledger.cursor import LedgerCursorStorePort
+
 
 class PotResourceService:
     """Explicit pot/source administration over the current composed backend.
 
-    The compatibility backend is selected once at the root composition seam.
-    Product callers depend on these finite operations rather than HostShell.
+    The backend is selected once at the root composition seam. Product callers
+    depend on these finite operations rather than an aggregate façade.
     """
 
     def __init__(self, backend: Any) -> None:
@@ -83,11 +89,53 @@ class PotResourceService:
         return self._backend.aggregate_status(pot_id=pot_id)
 
 
+@dataclass(slots=True)
+class LedgerService:
+    """Potpie-owned ledger presentation over explicit client and cursor ports."""
+
+    client: EventLedgerClientPort
+    cursors: LedgerCursorStorePort
+
+    def status(self):
+        return self.client.health()
+
+    def sources(self, *, pot_id: str):
+        return self.client.sources(pot_id=pot_id)
+
+    def query(
+        self,
+        *,
+        pot_id: str,
+        source_id=None,
+        kind=None,
+        since=None,
+        until=None,
+        limit: int = 100,
+    ) -> LedgerPage:
+        return self.client.query(
+            pot_id=pot_id,
+            source_id=source_id,
+            kind=kind,
+            since=since,
+            until=until,
+            limit=limit,
+        )
+
+    def pull(self, *, pot_id: str, source_id: str, limit: int = 100) -> LedgerPage:
+        cursor = self.cursors.get(pot_id=pot_id, source_id=source_id)
+        page = self.client.fetch(
+            pot_id=pot_id, source_id=source_id, cursor=cursor, limit=limit
+        )
+        if page.next_cursor is not None:
+            self.cursors.set(pot_id=pot_id, cursor=page.next_cursor)
+        return page
+
+
 @dataclass(frozen=True, slots=True)
 class RootRuntimeServices:
     """Potpie-only services; intentionally excludes Context Engine operations."""
 
-    pots: PotResourceService
+    pots: Any
     backend: Any
     auth: Any
     config: Any
@@ -99,53 +147,66 @@ class RootRuntimeServices:
     profile: str
 
 
-def build_pot_resource_service(host: Any) -> PotResourceService:
-    """Compose the root service from the explicitly selected legacy backend."""
-    if isinstance(host, RootRuntimeServices):
-        return host.pots
-    return PotResourceService(host.pots)
+def build_pot_resource_service(runtime: Any) -> PotResourceService:
+    """Return the finite pot/source service from an explicit runtime."""
+    if isinstance(runtime, RootRuntimeServices):
+        return runtime.pots
+    root = getattr(runtime, "root", None)
+    if isinstance(root, RootRuntimeServices):
+        return root.pots
+    pots = getattr(runtime, "pots", None)
+    if pots is None:
+        raise TypeError("runtime does not provide pot/source services")
+    return PotResourceService(pots)
 
 
-def build_root_runtime_services(host: Any) -> RootRuntimeServices:
+def build_root_runtime_services(runtime: Any) -> RootRuntimeServices:
+    if isinstance(runtime, RootRuntimeServices):
+        return runtime
+    root = getattr(runtime, "root", None)
+    if isinstance(root, RootRuntimeServices):
+        return root
+    raw_pots = getattr(runtime, "pots", None)
     return RootRuntimeServices(
-        pots=build_pot_resource_service(host),
-        backend=getattr(host, "backend", None),
-        auth=getattr(host, "auth", None),
-        config=getattr(host, "config", None),
-        daemon=getattr(host, "daemon", None),
-        installer=getattr(host, "installer", None),
-        ledger=getattr(host, "ledger", None),
-        setup=getattr(host, "setup", None),
-        skills=getattr(host, "skills", None),
-        profile=str(getattr(host, "profile", "local")),
+        pots=PotResourceService(raw_pots) if raw_pots is not None else None,
+        backend=getattr(runtime, "backend", None),
+        auth=getattr(runtime, "auth", None),
+        config=getattr(runtime, "config", None),
+        daemon=getattr(runtime, "daemon", None),
+        installer=getattr(runtime, "installer", None),
+        ledger=getattr(runtime, "ledger", None),
+        setup=getattr(runtime, "setup", None),
+        skills=getattr(runtime, "skills", None),
+        profile=str(getattr(runtime, "profile", "local")),
     )
 
 
-def build_auth_service(host: Any):
-    return host.auth
+def build_auth_service(runtime: Any):
+    return build_root_runtime_services(runtime).auth
 
 
-def build_config_service(host: Any):
-    return host.config
+def build_config_service(runtime: Any):
+    return build_root_runtime_services(runtime).config
 
 
-def build_daemon_service(host: Any):
-    return host.daemon
+def build_daemon_service(runtime: Any):
+    return build_root_runtime_services(runtime).daemon
 
 
-def build_ledger_service(host: Any):
-    return host.ledger
+def build_ledger_service(runtime: Any):
+    return build_root_runtime_services(runtime).ledger
 
 
-def build_setup_service(host: Any):
-    return host.setup
+def build_setup_service(runtime: Any):
+    return build_root_runtime_services(runtime).setup
 
 
-def build_skill_service(host: Any):
-    return host.skills
+def build_skill_service(runtime: Any):
+    return build_root_runtime_services(runtime).skills
 
 
 __all__ = [
+    "LedgerService",
     "PotResourceService",
     "RootRuntimeServices",
     "build_auth_service",

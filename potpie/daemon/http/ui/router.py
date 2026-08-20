@@ -1,8 +1,9 @@
 """Read-only JSON API for the local graph-explorer UI.
 
 Every route resolves a pot (explicit ``?pot=`` or the active pot) and delegates
-to a ``HostShell`` surface. Nothing here mutates the graph — the UI is a
-browse/select surface, in keeping with the "harness is the intelligence" model.
+to explicit root- and engine-owned services. Nothing here mutates the graph —
+the UI is a browse/select surface, in keeping with the "harness is the
+intelligence" model.
 """
 
 from __future__ import annotations
@@ -50,11 +51,8 @@ _PREFIX_LABEL = {
 }
 
 
-def _resolve_pot(host: Any, pot: str | None) -> str:
+def _resolve_pot(pots: Any, pot: str | None) -> str:
     """Explicit ``pot`` ref → id, else the active pot. 400 if neither resolves."""
-    from potpie.cli.commands._common import get_pot_service
-
-    pots = get_pot_service(host)
     if pot:
         for p in pots.list_pots():
             if pot in (p.pot_id, p.name):
@@ -90,9 +88,9 @@ def _caption(key: str, props: dict[str, Any]) -> str:
     return tail or key
 
 
-def _counts(host: Any, pot_id: str) -> dict[str, int]:
+def _counts(graph: Any, pot_id: str) -> dict[str, int]:
     try:
-        dp = host.graph.data_plane_status(pot_id)
+        dp = graph.data_plane_status(pot_id)
     except Exception:  # noqa: BLE001
         return {}
     out: dict[str, int] = {}
@@ -104,11 +102,9 @@ def _counts(host: Any, pot_id: str) -> dict[str, int]:
     return out
 
 
-def _source_count(host: Any, pot_id: str) -> int:
+def _source_count(pots: Any, pot_id: str) -> int:
     try:
-        from potpie.cli.commands._common import get_pot_service
-
-        return len(get_pot_service(host).list_sources(pot_id=pot_id))
+        return len(pots.list_sources(pot_id=pot_id))
     except Exception:  # noqa: BLE001
         return 0
 
@@ -146,8 +142,8 @@ def _slice_to_graph(sl: Any) -> dict[str, Any]:
     }
 
 
-def build_ui_api_router(host: Any) -> APIRouter:
-    """Build the ``/ui/api`` router bound to a concrete in-process ``host``."""
+def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
+    """Build the ``/ui/api`` router from explicit runtime services."""
     router = APIRouter()
 
     def _guarded(fn):
@@ -166,21 +162,18 @@ def build_ui_api_router(host: Any) -> APIRouter:
     @router.get("/api/pots")
     def list_pots() -> dict[str, Any]:
         def go():
-            from potpie.cli.commands._common import get_pot_service
-
-            service = get_pot_service(host)
-            pots = service.list_pots()
-            active = service.active_pot()
+            pot_records = pots.list_pots()
+            active = pots.active_pot()
             return {
                 "pots": [
                     {
                         "id": p.pot_id,
                         "name": p.name,
                         "active": bool(p.active),
-                        "source_count": _source_count(host, p.pot_id),
-                        "counts": _counts(host, p.pot_id),
+                        "source_count": _source_count(pots, p.pot_id),
+                        "counts": _counts(graph, p.pot_id),
                     }
-                    for p in pots
+                    for p in pot_records
                 ],
                 "active": (
                     {"id": active.pot_id, "name": active.name} if active else None
@@ -192,9 +185,7 @@ def build_ui_api_router(host: Any) -> APIRouter:
     @router.post("/api/pots/use")
     def use_pot(ref: str = Body(..., embed=True)) -> dict[str, Any]:
         def go():
-            from potpie.cli.commands._common import get_pot_service
-
-            pot = get_pot_service(host).use_pot(ref=ref)
+            pot = pots.use_pot(ref=ref)
             return {"id": pot.pot_id, "name": pot.name, "active": True}
 
         return _guarded(go)
@@ -202,16 +193,16 @@ def build_ui_api_router(host: Any) -> APIRouter:
     @router.get("/api/catalog")
     def catalog(pot: str | None = Query(None)) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            return host.graph.catalog(GraphCatalogRequest(pot_id=pot_id)).to_dict()
+            pot_id = _resolve_pot(pots, pot)
+            return graph.catalog(GraphCatalogRequest(pot_id=pot_id)).to_dict()
 
         return _guarded(go)
 
     @router.get("/api/status")
     def status(pot: str | None = Query(None)) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            dp = host.graph.data_plane_status(pot_id)
+            pot_id = _resolve_pot(pots, pot)
+            dp = graph.data_plane_status(pot_id)
             return {
                 "pot_id": pot_id,
                 "backend_profile": dp.backend_profile,
@@ -235,8 +226,8 @@ def build_ui_api_router(host: Any) -> APIRouter:
         pot: str | None = Query(None),
     ) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            result = host.graph.search_entities(
+            pot_id = _resolve_pot(pots, pot)
+            result = graph.search_entities(
                 GraphEntitySearchRequest(
                     pot_id=pot_id,
                     query=q,
@@ -261,8 +252,8 @@ def build_ui_api_router(host: Any) -> APIRouter:
         include_invalid: bool = Query(False),
     ) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            sl = host.backend.inspection.slice(
+            pot_id = _resolve_pot(pots, pot)
+            sl = backend.inspection.slice(
                 pot_id=pot_id,
                 filter_=ClaimQueryFilter(
                     pot_id=pot_id, include_invalidated=include_invalid
@@ -279,8 +270,8 @@ def build_ui_api_router(host: Any) -> APIRouter:
         pot: str | None = Query(None),
     ) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            sl = host.backend.inspection.neighborhood(
+            pot_id = _resolve_pot(pots, pot)
+            sl = backend.inspection.neighborhood(
                 pot_id=pot_id, entity_key=key, depth=depth
             )
             return {"pot_id": pot_id, **_slice_to_graph(sl)}
@@ -300,8 +291,8 @@ def build_ui_api_router(host: Any) -> APIRouter:
         pot: str | None = Query(None),
     ) -> dict[str, Any]:
         def go():
-            pot_id = _resolve_pot(host, pot)
-            env = host.graph.read(
+            pot_id = _resolve_pot(pots, pot)
+            env = graph.read(
                 GraphReadRequest(
                     pot_id=pot_id,
                     subgraph=subgraph,

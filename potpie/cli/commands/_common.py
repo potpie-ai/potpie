@@ -4,7 +4,7 @@ Context-domain commands acquire a typed ``EngineClient``; root-owned commands
 continue to use explicit Potpie services while their callers migrate. This
 module owns the cross-cutting concerns so command bodies stay thin:
 
-- one cached root compatibility host and context resource manager per process;
+- one cached explicit runtime composition and context resource manager per process;
 - ``--json`` output state + ``emit`` / ``fail`` helpers;
 - the ``contract()`` error boundary that maps domain errors to the documented
   exit codes (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth) and the
@@ -48,20 +48,20 @@ EXIT_AUTH = 4
 _state: dict[str, Any] = {
     "json": False,
     "verbose": False,
-    "host": None,
+    "runtime": None,
     "store": None,
     "json_error_formatter": None,
     "engine_runner": None,
     "engine_manager": None,
-    "engine_host": None,
+    "engine_runtime": None,
     "engine_daemon_client": None,
     "engine_daemon_key": None,
     "pot_service": None,
-    "pot_service_host": None,
+    "pot_service_runtime": None,
     "root_product_services": {},
-    "root_product_services_host": None,
+    "root_product_services_runtime": None,
     "root_runtime": None,
-    "root_runtime_host": None,
+    "root_runtime_source": None,
 }
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -107,105 +107,105 @@ def is_verbose() -> bool:
     return bool(_state["verbose"])
 
 
-def get_host():
-    """Return the process-wide ``HostShell`` (built lazily)."""
-    if _state["host"] is None:
-        from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+def get_runtime():
+    """Return the process-wide explicit runtime composition, built lazily."""
+    if _state["runtime"] is None:
+        from potpie.runtime.composition import build_local_runtime
 
-        _state["host"] = build_host_shell()
-    return _state["host"]
+        _state["runtime"] = build_local_runtime()
+    return _state["runtime"]
 
 
-def set_host(host: Any) -> None:
-    """Inject a host (tests / alternate wiring)."""
-    _state["host"] = host
+def set_runtime(runtime: Any) -> None:
+    """Inject an explicit runtime composition or focused test double."""
+    _state["runtime"] = runtime
     _state["engine_manager"] = None
-    _state["engine_host"] = None
+    _state["engine_runtime"] = None
     _state["engine_daemon_client"] = None
     _state["engine_daemon_key"] = None
     _state["pot_service"] = None
-    _state["pot_service_host"] = None
+    _state["pot_service_runtime"] = None
     _state["root_product_services"] = {}
-    _state["root_product_services_host"] = None
+    _state["root_product_services_runtime"] = None
     _state["root_runtime"] = None
-    _state["root_runtime_host"] = None
+    _state["root_runtime_source"] = None
 
 
-def get_pot_service(host: Any | None = None):
+def get_pot_service(runtime: Any | None = None):
     """Return the finite Potpie-owned pot/source control-plane service."""
     from potpie.runtime.root_services import build_pot_resource_service
 
-    host = host if host is not None else get_host()
+    runtime = runtime if runtime is not None else get_runtime()
     service = _state.get("pot_service")
-    if service is None or _state.get("pot_service_host") is not host:
-        service = build_pot_resource_service(host)
+    if service is None or _state.get("pot_service_runtime") is not runtime:
+        service = build_pot_resource_service(runtime)
         _state["pot_service"] = service
-        _state["pot_service_host"] = host
+        _state["pot_service_runtime"] = runtime
     return service
 
 
 def get_root_runtime():
-    """Return root-only services composed at the legacy compatibility seam."""
+    """Return the explicit Potpie-owned product service group."""
     from potpie.runtime.root_services import build_root_runtime_services
 
-    host = get_host()
+    runtime_source = get_runtime()
     runtime = _state.get("root_runtime")
-    if runtime is None or _state.get("root_runtime_host") is not host:
-        runtime = build_root_runtime_services(host)
+    if runtime is None or _state.get("root_runtime_source") is not runtime_source:
+        runtime = build_root_runtime_services(runtime_source)
         _state["root_runtime"] = runtime
-        _state["root_runtime_host"] = host
+        _state["root_runtime_source"] = runtime_source
     return runtime
 
 
 def _get_root_product_service(
     name: str,
     builder: Callable[[Any], object],
-    host: Any | None = None,
+    runtime: Any | None = None,
 ):
-    host = host if host is not None else get_host()
-    if _state.get("root_product_services_host") is not host:
+    runtime = runtime if runtime is not None else get_root_runtime()
+    if _state.get("root_product_services_runtime") is not runtime:
         _state["root_product_services"] = {}
-        _state["root_product_services_host"] = host
+        _state["root_product_services_runtime"] = runtime
     services = _state["root_product_services"]
     if name not in services:
-        services[name] = builder(host)
+        services[name] = builder(runtime)
     return services[name]
 
 
-def get_auth_service(host: Any | None = None):
+def get_auth_service(runtime: Any | None = None):
     from potpie.runtime.root_services import build_auth_service
 
-    return _get_root_product_service("auth", build_auth_service, host)
+    return _get_root_product_service("auth", build_auth_service, runtime)
 
 
-def get_config_service(host: Any | None = None):
+def get_config_service(runtime: Any | None = None):
     from potpie.runtime.root_services import build_config_service
 
-    return _get_root_product_service("config", build_config_service, host)
+    return _get_root_product_service("config", build_config_service, runtime)
 
 
-def get_daemon_service(host: Any | None = None):
+def get_daemon_service(runtime: Any | None = None):
     from potpie.runtime.root_services import build_daemon_service
 
-    return _get_root_product_service("daemon", build_daemon_service, host)
+    return _get_root_product_service("daemon", build_daemon_service, runtime)
 
 
-def get_ledger_service(host: Any | None = None):
+def get_ledger_service(runtime: Any | None = None):
     from potpie.runtime.root_services import build_ledger_service
 
-    return _get_root_product_service("ledger", build_ledger_service, host)
+    return _get_root_product_service("ledger", build_ledger_service, runtime)
 
 
-def get_setup_service(host: Any | None = None):
+def get_setup_service(runtime: Any | None = None):
     from potpie.runtime.root_services import build_setup_service
 
-    return _get_root_product_service("setup", build_setup_service, host)
+    return _get_root_product_service("setup", build_setup_service, runtime)
 
 
-def get_skill_service(host: Any | None = None):
+def get_skill_service(runtime: Any | None = None):
     from potpie.runtime.root_services import build_skill_service
 
-    return _get_root_product_service("skills", build_skill_service, host)
+    return _get_root_product_service("skills", build_skill_service, runtime)
 
 
 class EngineClientError(Exception):
@@ -216,7 +216,7 @@ class EngineClientError(Exception):
         self.error = error
 
 
-def get_engine_client(explicit_pot: str | None = None, *, host: Any | None = None):
+def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = None):
     """Compose the explicitly selected local or canonical daemon engine client."""
     from potpie.runtime import (
         DaemonEngineClient,
@@ -224,7 +224,7 @@ def get_engine_client(explicit_pot: str | None = None, *, host: Any | None = Non
         LocalEngineClient,
         ProtocolTransportError,
     )
-    from potpie.runtime.legacy_host_adapter import build_local_resource_manager
+    from potpie.runtime.local_engine import build_local_resource_manager
 
     selector = _context_selector(explicit_pot)
     mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "daemon").strip().lower()
@@ -272,12 +272,17 @@ def get_engine_client(explicit_pot: str | None = None, *, host: Any | None = Non
             _state["engine_daemon_key"] = key
         return client
 
-    host = host if host is not None else get_host()
+    runtime = runtime if runtime is not None else get_runtime()
+    from potpie.runtime.composition import LocalRuntimeComposition
+
+    engine_services = (
+        runtime.engine if isinstance(runtime, LocalRuntimeComposition) else runtime
+    )
     manager = _state.get("engine_manager")
-    if manager is None or _state.get("engine_host") is not host:
-        manager = build_local_resource_manager(host)
+    if manager is None or _state.get("engine_runtime") is not runtime:
+        manager = build_local_resource_manager(engine_services)
         _state["engine_manager"] = manager
-        _state["engine_host"] = host
+        _state["engine_runtime"] = runtime
     return LocalEngineClient(
         selector=selector,
         authentication={"kind": "local_cli"},
@@ -1141,7 +1146,7 @@ __all__ = [
     "contract",
     "emit",
     "fail",
-    "get_host",
+    "get_runtime",
     "get_store",
     "current_repo_identity_for_cli",
     "empty_pot_guidance",
@@ -1162,7 +1167,7 @@ __all__ = [
     "repo_pot_candidates",
     "resolve_pot_id",
     "resolve_pot_scope",
-    "set_host",
+    "set_runtime",
     "set_store",
     "set_json",
     "set_verbose",

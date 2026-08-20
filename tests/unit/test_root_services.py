@@ -7,10 +7,30 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from potpie.runtime.composition import LocalRuntimeComposition, build_local_runtime
+from potpie.runtime.local_engine import LocalEngineServices
 from potpie.runtime.root_services import (
+    RootRuntimeServices,
     build_pot_resource_service,
     build_root_runtime_services,
 )
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+
+
+def test_local_runtime_composition_separates_root_and_engine_services(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    runtime = build_local_runtime(backend=InMemoryGraphBackend())
+
+    assert isinstance(runtime, LocalRuntimeComposition)
+    assert isinstance(runtime.root, RootRuntimeServices)
+    assert isinstance(runtime.engine, LocalEngineServices)
+    assert runtime.root.backend is runtime.engine.backend
+    assert not hasattr(runtime.root, "graph")
+    assert not hasattr(runtime.engine, "setup")
 
 
 def test_pot_resource_service_exposes_only_finite_control_plane_operations() -> None:

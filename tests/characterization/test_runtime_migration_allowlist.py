@@ -23,33 +23,10 @@ ROOT = Path(__file__).resolve().parents[2]
 THIS_TEST = Path(__file__).resolve().relative_to(ROOT).as_posix()
 
 EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
-    "context_core_importers": frozenset(
-        {
-            "potpie/cli/commands/cloud.py",
-            "potpie/cli/read_presenter.py",
-            "potpie/cli/telemetry/onboarding_events.py",
-            "potpie/cli/ui/setup_ux.py",
-            "tests/unit/test_agent_templates_v15.py",
-            "tests/unit/test_cli_ergonomics.py",
-            "tests/unit/test_graph_cli_contract.py",
-            "tests/unit/test_onboarding_analytics.py",
-            "tests/unit/test_read_presenter.py",
-            "tests/unit/test_repo_baseline_skill.py",
-            "tests/unit/test_sentry_cli.py",
-            "tests/unit/test_sentry_daemon.py",
-            "tests/unit/test_setup_live_ux.py",
-            "tests/unit/test_ui_router.py",
-        }
-    ),
-    "context_core_dependencies": frozenset(
-        {
-            "pyproject.toml",
-        }
-    ),
+    "context_core_importers": frozenset(),
+    "context_core_dependencies": frozenset(),
     "host_shell": frozenset(
         {
-            "potpie/cli/commands/_common.py",
-            "potpie/cli/commands/bootstrap.py",
             "potpie/context-engine/src/potpie_context_engine/bootstrap/host_wiring.py",
             "potpie/context-engine/src/potpie_context_engine/host/__init__.py",
             "potpie/context-engine/src/potpie_context_engine/host/shell.py",
@@ -60,29 +37,9 @@ EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
             "potpie/context-engine/tests/unit/test_setup_defer_pot.py",
             "potpie/context-engine/tests/unit/test_setup_defer_skills.py",
             "potpie/context-engine/tests/unit/test_skill_manager_global_targets.py",
-            "potpie/daemon/__main__.py",
-            "tests/unit/test_onboarding_analytics.py",
-            "tests/unit/test_setup_first_pot.py",
         }
     ),
-    "cli_host_acquisition": frozenset(
-        {
-            "potpie/cli/commands/_common.py",
-            "potpie/cli/commands/bootstrap.py",
-            "tests/integration/test_context_runtime_baseline.py",
-            "tests/unit/test_audit8_audit22.py",
-            "tests/unit/test_cli_bootstrap_status.py",
-            "tests/unit/test_cli_daemon_service.py",
-            "tests/unit/test_cli_ergonomics.py",
-            "tests/unit/test_empty_pot_guidance.py",
-            "tests/unit/test_graph_cli_contract.py",
-            "tests/unit/test_pot_create_repo.py",
-            "tests/unit/test_sentry_daemon.py",
-            "tests/unit/test_setup_first_pot.py",
-            "tests/unit/test_skills_cli.py",
-            "tests/unit/test_source_cli_contract.py",
-        }
-    ),
+    "cli_host_acquisition": frozenset(),
     "remote_host": frozenset(),
     "candidate_runtime": frozenset(),
     "discovery": frozenset(
@@ -303,7 +260,6 @@ def _legacy_paths() -> dict[str, frozenset[str]]:
             "potpie/context-engine/src/potpie_context_engine/bootstrap/host_wiring.py",
         }
     )
-    groups["cli_host_acquisition"].add("potpie/cli/commands/_common.py")
     for metadata_path in (
         ROOT / "pyproject.toml",
         ROOT / "potpie" / "context-engine" / "pyproject.toml",

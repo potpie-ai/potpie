@@ -28,7 +28,7 @@ from potpie.cli.ui.setup_wizard_ui import (
     is_interactive_tty,
     live_ui_enabled,
 )
-from potpie_context_core.lifecycle import SetupPlan, SetupReport
+from potpie_context_engine.core.lifecycle import SetupPlan, SetupReport
 from potpie_context_engine.domain.ports.services.setup import (
     SetupObserver,
     SetupOrchestrator,

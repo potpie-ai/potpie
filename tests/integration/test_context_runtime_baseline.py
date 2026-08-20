@@ -50,7 +50,7 @@ def _configure_runtime(
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
     monkeypatch.delenv("POTPIE_DAEMON_PORT", raising=False)
     monkeypatch.delenv("POTPIE_DAEMON_TOKEN", raising=False)
-    _common.set_host(None)
+    _common.set_runtime(None)
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ def isolated_daemon_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     try:
         yield runtime_home
     finally:
-        _common.set_host(None)
+        _common.set_runtime(None)
 
 
 def _assert_json_result(
@@ -269,7 +269,7 @@ def test_direct_and_daemon_cli_paths_have_equivalent_domain_outcomes(
                 Daemon(home=runtime_home, in_process=False).stop()
             if daemon_pid is not None:
                 _assert_daemon_stopped(runtime_home, daemon_pid)
-        _common.set_host(None)
+        _common.set_runtime(None)
 
     if host_mode == "daemon":
         assert stop_result is not None

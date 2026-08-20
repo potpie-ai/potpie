@@ -69,7 +69,7 @@ class _Host:
 def _reset_state():
     yield
     _common.set_json(False)
-    _common.set_host(None)
+    _common.set_runtime(None)
 
 
 # ============================================================================
@@ -89,7 +89,7 @@ def _setup_default_show(monkeypatch, *, default_pot_id: str | None = None):
     )
     if default_pot_id:
         pots_service.repo_defaults["github.com/acme/shop"] = default_pot_id
-    _common.set_host(_Host(pots_service))
+    _common.set_runtime(_Host(pots_service))
     _common.set_json(True)
     return pots_service
 

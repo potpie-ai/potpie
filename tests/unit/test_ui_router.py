@@ -12,7 +12,7 @@ from potpie.daemon.http.ui.router import (
     _slice_to_graph,
     build_ui_api_router,
 )
-from potpie_context_core.ports.graph.inspection import (
+from potpie_context_engine.core.ports.graph.inspection import (
     GraphEdge,
     GraphNode,
     GraphSlice,
@@ -116,12 +116,10 @@ def test_pots_api_includes_counts_for_selector() -> None:
                 {"claims": 82, "entities": 46} if pot_id == "p2" else {"claims": 0}
             )
 
-    class Host:
-        pots = Pots()
-        graph = Graph()
-
     app = FastAPI()
-    app.include_router(build_ui_api_router(Host()))
+    app.include_router(
+        build_ui_api_router(pots=Pots(), graph=Graph(), backend=object())
+    )
 
     response = TestClient(app).get("/api/pots")
 

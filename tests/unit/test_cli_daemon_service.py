@@ -69,7 +69,7 @@ class _FakeHost:
 
 def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
     daemon = _FakeDaemon(home=tmp_path)
-    _common.set_host(_FakeHost(daemon=daemon))
+    _common.set_runtime(_FakeHost(daemon=daemon))
 
     start = runner.invoke(host_cli.app, ["--json", "daemon", "start"])
     status = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
@@ -86,7 +86,7 @@ def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
 
 
 def test_service_command_group_is_removed(tmp_path: Path) -> None:
-    _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
+    _common.set_runtime(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
 
     result = runner.invoke(host_cli.app, ["--json", "service", "status"])
 

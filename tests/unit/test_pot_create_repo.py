@@ -22,7 +22,7 @@ pytestmark = pytest.mark.unit
 def _reset_cli_state() -> None:
     yield
     _common.set_json(False)
-    _common.set_host(None)
+    _common.set_runtime(None)
 
 
 @dataclass
@@ -90,7 +90,7 @@ def test_pot_create_repo_dot_uses_source_add_normalization(monkeypatch) -> None:
         repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     fake_pots = _Pots()
-    _common.set_host(_Host(pots=fake_pots))
+    _common.set_runtime(_Host(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(
@@ -123,7 +123,7 @@ def test_pot_create_repo_is_idempotent_when_pot_and_source_exist(monkeypatch) ->
         repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     fake_pots = _Pots()
-    _common.set_host(_Host(pots=fake_pots))
+    _common.set_runtime(_Host(pots=fake_pots))
     _common.set_json(True)
     runner = CliRunner()
 
@@ -170,7 +170,7 @@ def test_pot_create_repo_no_default_skips_repo_default(monkeypatch) -> None:
         repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     fake_pots = _Pots()
-    _common.set_host(_Host(pots=fake_pots))
+    _common.set_runtime(_Host(pots=fake_pots))
     _common.set_json(True)
 
     result = CliRunner().invoke(

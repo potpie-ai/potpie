@@ -69,20 +69,20 @@ def _reset_cli_state():
         if runner is not None:
             runner.close()
         _common._state["store"] = None
-        _common._state["host"] = None
+        _common._state["runtime"] = None
         _common._state["json"] = False
         _common._state["verbose"] = False
         _common._state["engine_runner"] = None
         _common._state["engine_manager"] = None
-        _common._state["engine_host"] = None
+        _common._state["engine_runtime"] = None
         _common._state["engine_remote_host"] = None
         _common._state["engine_remote_home"] = None
         _common._state["pot_service"] = None
-        _common._state["pot_service_host"] = None
+        _common._state["pot_service_runtime"] = None
         _common._state["root_product_services"] = {}
-        _common._state["root_product_services_host"] = None
+        _common._state["root_product_services_runtime"] = None
         _common._state["root_runtime"] = None
-        _common._state["root_runtime_host"] = None
+        _common._state["root_runtime_source"] = None
     except Exception:
         logging.getLogger(__name__).debug(
             "failed to reset CLI test state", exc_info=True

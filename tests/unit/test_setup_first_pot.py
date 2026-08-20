@@ -7,20 +7,20 @@ from pathlib import Path
 import pytest
 
 from potpie.cli.ui import interactive_prompts, setup_ux
+from potpie.runtime.composition import build_local_runtime
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 
 
 @pytest.fixture()
 def host(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
-    shell = build_host_shell(backend=InMemoryGraphBackend())
+    runtime = build_local_runtime(backend=InMemoryGraphBackend())
     from potpie.cli.commands import _common
 
-    _common.set_host(shell)
-    return shell
+    _common.set_runtime(runtime)
+    return runtime.root
 
 
 def test_maybe_prompt_first_pot_creates_and_registers_repo(
