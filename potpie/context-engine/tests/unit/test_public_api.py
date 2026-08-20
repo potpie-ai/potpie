@@ -116,10 +116,23 @@ def test_package_root_exports_the_documented_runtime_surface() -> None:
     assert potpie_context_engine.build_graph_runtime is build_graph_runtime
     assert set(potpie_context_engine.__all__) == {
         "DEFAULT_GRAPH_DEFINITION",
+        "ContextEngine",
+        "ContextIdentity",
+        "DependencyError",
+        "DomainError",
+        "EngineConfig",
+        "EngineDependencies",
+        "EngineError",
+        "EngineLifecycleError",
+        "EngineResource",
+        "Failure",
         "GraphDefinition",
         "GraphExtension",
         "GraphRuntime",
+        "Outcome",
+        "Success",
         "build_graph_runtime",
+        "create_engine",
     }
 
 

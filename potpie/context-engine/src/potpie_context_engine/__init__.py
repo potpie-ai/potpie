@@ -29,11 +29,41 @@ from potpie_context_core.definition import (
     GraphExtension,
 )
 from potpie_context_core.runtime import GraphRuntime, build_graph_runtime
+from potpie_context_engine.context_engine import (
+    ContextEngine,
+    ContextIdentity,
+    EngineConfig,
+    EngineDependencies,
+    EngineResource,
+    create_engine,
+)
+from potpie_context_engine.outcomes import (
+    DependencyError,
+    DomainError,
+    EngineError,
+    EngineLifecycleError,
+    Failure,
+    Outcome,
+    Success,
+)
 
 __all__ = [
     "DEFAULT_GRAPH_DEFINITION",
+    "ContextEngine",
+    "ContextIdentity",
+    "DependencyError",
+    "DomainError",
+    "EngineConfig",
+    "EngineDependencies",
+    "EngineError",
+    "EngineLifecycleError",
+    "EngineResource",
+    "Failure",
     "GraphDefinition",
     "GraphExtension",
     "GraphRuntime",
+    "Outcome",
+    "Success",
     "build_graph_runtime",
+    "create_engine",
 ]
