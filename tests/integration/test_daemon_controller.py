@@ -85,6 +85,7 @@ async def test_controller_starts_observes_and_typed_stops_real_foreground_child(
 ) -> None:
     socket_path = short_socket_dir / "controller.sock"
     log_path = tmp_path / "daemon.log"
+    log_path.write_text("controller boot\n", encoding="utf-8")
     token = generate_bearer_token()
     instance_id = "controller-instance"
     endpoint = RuntimeEndpoint(kind="uds", address=str(socket_path))
@@ -123,6 +124,7 @@ async def test_controller_starts_observes_and_typed_stops_real_foreground_child(
     assert status.running is True
     assert status.ready is True
     assert status.instance_id == instance_id
+    assert controller.logs() == ["controller boot"]
     assert isinstance(stopped, Success)
     assert stopped.value.mode == "typed_shutdown"
     assert controller.pid is None

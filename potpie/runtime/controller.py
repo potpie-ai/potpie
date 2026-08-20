@@ -55,7 +55,7 @@ class DaemonProcessObserver(Protocol):
     def instance_id(self) -> str | None: ...
 
     async def wait_ready(
-        self, process: asyncio.subprocess.Process, *, timeout_s: float
+        self, process: DaemonProcessHandle, *, timeout_s: float
     ) -> Success[None] | Failure[RuntimeBoundaryError]: ...
 
     async def request_stop(
@@ -63,6 +63,22 @@ class DaemonProcessObserver(Protocol):
     ) -> Success[object] | Failure[RuntimeBoundaryError]: ...
 
     async def close(self) -> None: ...
+
+
+class DaemonProcessHandle(Protocol):
+    """Minimal process surface used for owned and previously launched children."""
+
+    @property
+    def pid(self) -> int: ...
+
+    @property
+    def returncode(self) -> int | None: ...
+
+    async def wait(self) -> int: ...
+
+    def terminate(self) -> None: ...
+
+    def kill(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +121,7 @@ class TypedDaemonObserver:
         return self._instance_id
 
     async def wait_ready(
-        self, process: asyncio.subprocess.Process, *, timeout_s: float
+        self, process: DaemonProcessHandle, *, timeout_s: float
     ) -> Success[None] | Failure[RuntimeBoundaryError]:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
@@ -152,6 +168,7 @@ class DaemonController:
         boot_factory: DaemonBootFactory,
         readiness_timeout_s: float = 10.0,
         stop_timeout_s: float = 5.0,
+        log_paths: tuple[Path, ...] = (),
     ) -> None:
         if readiness_timeout_s <= 0 or stop_timeout_s <= 0:
             raise ValueError("controller timeouts must be positive")
@@ -160,8 +177,9 @@ class DaemonController:
         self._observer: DaemonProcessObserver | None = None
         self._readiness_timeout_s = readiness_timeout_s
         self._stop_timeout_s = stop_timeout_s
-        self._process: asyncio.subprocess.Process | None = None
+        self._process: DaemonProcessHandle | None = None
         self._log_handle: object | None = None
+        self._log_paths = log_paths
         self._lock = asyncio.Lock()
 
     @property
@@ -255,6 +273,39 @@ class DaemonController:
                 )
             return Success(self._status(ready=True))
 
+    async def attach(
+        self,
+        *,
+        process: DaemonProcessHandle,
+        observer: DaemonProcessObserver,
+        launch: DaemonLaunchSpec | None = None,
+    ) -> ControllerStartOutcome:
+        """Observe a daemon launched by an earlier controller invocation.
+
+        Local CLI commands are short-lived, while the foreground daemon child is
+        intentionally long-lived. A later invocation can therefore reattach to
+        the exact PID and discovery identity recorded by the earlier invocation;
+        this is not external-supervisor integration.
+        """
+        async with self._lock:
+            current = self._process
+            if (
+                current is not None
+                and current.returncode is None
+                and current.pid != process.pid
+            ):
+                return Failure(
+                    ResourceLifecycleError(
+                        code="daemon_controller_busy",
+                        message="the controller already observes another daemon",
+                    )
+                )
+            self._process = process
+            self._observer = observer
+            self._launch = launch
+            ready = await observer.wait_ready(process, timeout_s=0.25)
+            return Success(self._status(ready=isinstance(ready, Success)))
+
     async def status(self) -> ControllerStatus:
         process = self._process
         if process is None or process.returncode is not None:
@@ -332,8 +383,21 @@ class DaemonController:
             return stopped
         return await self.start()
 
+    def logs(self) -> list[str]:
+        """Read the configured daemon logs without changing process state."""
+        candidates: list[Path] = []
+        if self._launch is not None and self._launch.log_path is not None:
+            candidates.append(self._launch.log_path)
+        candidates.extend(path for path in self._log_paths if path not in candidates)
+        for path in candidates:
+            if path.exists():
+                return path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+        return []
+
     async def _bounded_terminate(
-        self, process: asyncio.subprocess.Process
+        self, process: DaemonProcessHandle
     ) -> StopResult:
         if process.returncode is not None:
             return StopResult(mode="already_stopped", exit_code=process.returncode)
@@ -375,6 +439,7 @@ class DaemonController:
             os.O_APPEND | os.O_CREAT | os.O_WRONLY,
             0o600,
         )
+        os.chmod(path, 0o600)
         self._log_handle = os.fdopen(descriptor, "ab")  # noqa: PTH123
         return self._log_handle
 
@@ -398,6 +463,7 @@ __all__ = [
     "DaemonBootSpec",
     "DaemonController",
     "DaemonLaunchSpec",
+    "DaemonProcessHandle",
     "DaemonProcessObserver",
     "StopResult",
     "TypedDaemonObserver",

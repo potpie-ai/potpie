@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: S101 - pytest assertions are intentional.
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,7 +11,7 @@ from typer.testing import CliRunner
 from potpie.cli import main as host_cli
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
-from potpie_context_core.lifecycle import (
+from potpie_context_engine.core.lifecycle import (
     SKIPPED,
     PlannedSetupStep,
     SetupPlan,

@@ -1,10 +1,14 @@
-"""potpie.daemon.lifecycle.Daemon seam: in-process stand-in vs detached lifecycle (launcher faked)."""
+"""Daemon seam: in-process stand-in versus controller-backed lifecycle."""
 
 from __future__ import annotations
 
+# ruff: noqa: S101 - pytest assertions are intentional.
+
 import pathlib
 
-from potpie_context_core.lifecycle import DONE, SKIPPED
+from potpie.runtime import ControllerStatus
+from potpie_context_engine import Success
+from potpie_context_engine.core.lifecycle import DONE, SKIPPED
 from potpie.daemon.lifecycle import Daemon
 
 
@@ -19,17 +23,22 @@ def test_in_process_status_health_and_ensure_skips(tmp_path: pathlib.Path):
 def test_detached_ensure_starts_when_not_running(tmp_path: pathlib.Path, monkeypatch):
     started = {}
 
-    def fake_start_detached(home, **kw):
-        started["home"] = home
-        return {
-            "pid": 4242,
-            "socket": str(home / "daemon.sock"),
-            "bind": f"unix:{home}/daemon.sock",
-        }
+    class _Controller:
+        pid = None
 
-    monkeypatch.setattr(
-        "potpie.daemon.process.launcher.start_detached", fake_start_detached
-    )
+        async def start(self):
+            started["home"] = tmp_path
+            return Success(
+                ControllerStatus(
+                    running=True,
+                    ready=True,
+                    pid=4242,
+                    instance_id=None,
+                    exit_code=None,
+                )
+            )
+
+    monkeypatch.setattr(Daemon, "_new_controller", lambda *_args, **_kw: _Controller())
     d = Daemon(home=tmp_path, in_process=False)
     res = d.ensure()
     assert res.state == DONE
@@ -43,10 +52,6 @@ def test_detached_ensure_reuses_running_daemon(tmp_path: pathlib.Path, monkeypat
     (tmp_path / "discovery.json").write_text('{"bind": "unix:/x/daemon.sock"}')
     monkeypatch.setattr("potpie.daemon.lifecycle._pid_alive", lambda pid: True)
 
-    def _boom(*a, **k):  # must NOT be called when already running
-        raise AssertionError("start_detached should not be called when daemon is up")
-
-    monkeypatch.setattr("potpie.daemon.process.launcher.start_detached", _boom)
     d = Daemon(home=tmp_path, in_process=False)
     res = d.ensure()
     assert res.state == SKIPPED and "already running" in (res.detail or "")
