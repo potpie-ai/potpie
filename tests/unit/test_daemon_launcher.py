@@ -554,14 +554,14 @@ def test_identity_is_read_off_the_real_command_line() -> None:
             proc.wait(timeout=10)
 
 
-def _stopping_kill(pid_file: pathlib.Path, signalled: list[int]):
-    """Stand in for a daemon that honours SIGTERM: it drops its pid file."""
-
-    def _kill(pid: int, _sig: int) -> None:
-        signalled.append(pid)
-        pid_file.unlink(missing_ok=True)
-
-    return _kill
+def _live_until_signalled(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """A daemon that is alive until it is signalled, as the kernel would report
+    it. Liveness is the process, not the pid file: a terminated Windows daemon
+    cannot remove its file, so the file is no longer what stop waits on."""
+    signalled: list[int] = []
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: pid not in signalled)
+    monkeypatch.setattr(launcher.os, "kill", lambda pid, _sig: signalled.append(pid))
+    return signalled
 
 
 def test_a_pid_that_cannot_be_identified_is_left_to_the_old_behaviour(
@@ -574,21 +574,27 @@ def test_a_pid_that_cannot_be_identified_is_left_to_the_old_behaviour(
     monkeypatch.setattr(launcher, "_process_command_line", lambda pid: None)
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text("424242\n")
-    signalled: list[int] = []
-    monkeypatch.setattr(launcher.os, "kill", _stopping_kill(pid_file, signalled))
+    signalled = _live_until_signalled(monkeypatch)
 
     assert launcher.stop_daemon(tmp_path) == "daemon stopped"
     assert signalled == [424242]
+    # Confirmed gone, so the files it would have removed itself are removed here.
+    assert not pid_file.exists()
 
 
-def test_windows_access_denied_pid_is_treated_as_stale(
+def test_windows_access_denied_signal_falls_through_to_the_tree_kill(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
 ) -> None:
-    monkeypatch.setattr(launcher.os, "name", "nt")
+    """winerror 5 used to read as "stale": the pid file of a *live* daemon was
+    unlinked and the next start put a second daemon on the same home. A denied
+    TerminateProcess is a denied signal, nothing more; taskkill gets its turn,
+    and only a process the kernel says is gone is ever called stale."""
+    monkeypatch.setattr(launcher, "_windows", lambda: True)
     monkeypatch.setattr(launcher, "_process_command_line", lambda pid: None)
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text("424242\n")
+    tree_killed: list[int] = []
 
     def _access_denied(_pid: int, _sig: int) -> None:
         error = OSError("access denied")
@@ -596,8 +602,12 @@ def test_windows_access_denied_pid_is_treated_as_stale(
         raise error
 
     monkeypatch.setattr(launcher.os, "kill", _access_denied)
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: pid not in tree_killed)
+    monkeypatch.setattr(launcher, "_force_kill", lambda pid: tree_killed.append(pid))
+    monkeypatch.setattr(launcher, "_STOP_GRACE_S", 0.2)
 
-    assert launcher.stop_daemon(tmp_path) == "stale pid file removed"
+    assert launcher.stop_daemon(tmp_path) == "daemon killed (forced after timeout)"
+    assert tree_killed == [424242]
     assert not pid_file.exists()
 
 
@@ -612,11 +622,199 @@ def test_a_recognised_daemon_is_still_signalled(
     )
     pid_file = tmp_path / "daemon.pid"
     pid_file.write_text("424243\n")
-    signalled: list[int] = []
-    monkeypatch.setattr(launcher.os, "kill", _stopping_kill(pid_file, signalled))
+    signalled = _live_until_signalled(monkeypatch)
 
     assert launcher.stop_daemon(tmp_path) == "daemon stopped"
     assert signalled == [424243]
+
+
+# --- a polite stop that reaches a Windows daemon -----------------------------
+
+
+class _ShutdownHandler(BaseHTTPRequestHandler):
+    """A daemon that honours ``POST /shutdown`` -- with its token -- and "dies"."""
+
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path != "/shutdown":
+            self.send_error(404)
+            return
+        self.server.seen_auth.append(self.headers.get("Authorization"))
+        if self.server.predates_shutdown:
+            self.send_error(404)
+            return
+        self.server.stopped = True
+        body = b'{"ok": true, "stopping": true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args) -> None:
+        return
+
+
+@contextlib.contextmanager
+def _daemon_with_shutdown(*, predates_shutdown: bool = False):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ShutdownHandler)
+    server.seen_auth = []
+    server.stopped = False
+    server.predates_shutdown = predates_shutdown
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield server, f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _write_discovery(home: pathlib.Path, url: str, token: str = "t0k") -> None:
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "discovery.json").write_text(
+        json.dumps({"transport": "http", "base_url": url, "token": token, "pid": 424250}),
+        encoding="utf-8",
+    )
+
+
+def test_stop_asks_the_daemon_over_http_before_signalling_anything(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The one polite stop a Windows daemon can receive: it is detached with no
+    console, so no control event reaches it, and a signal there is
+    TerminateProcess. The request carries the daemon's own token."""
+    monkeypatch.setattr(
+        launcher, "_process_command_line", lambda pid: "python -m potpie.daemon.main"
+    )
+    (tmp_path / "daemon.pid").write_text("424250\n")
+    signalled: list[int] = []
+    monkeypatch.setattr(launcher.os, "kill", lambda pid, _sig: signalled.append(pid))
+
+    with _daemon_with_shutdown() as (server, url):
+        _write_discovery(tmp_path, url)
+        monkeypatch.setattr(launcher, "pid_alive", lambda pid: not server.stopped)
+
+        assert launcher.stop_daemon(tmp_path) == "daemon stopped"
+
+    assert server.seen_auth == ["Bearer t0k"]
+    assert signalled == []
+    # Gone, so the runtime files are cleared: a stale discovery.json would turn
+    # the next command's "not running" into a connection error.
+    assert not (tmp_path / "daemon.pid").exists()
+    assert not (tmp_path / "discovery.json").exists()
+
+
+def test_a_daemon_that_predates_shutdown_gets_the_signal_instead(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    monkeypatch.setattr(
+        launcher, "_process_command_line", lambda pid: "python -m potpie.daemon.main"
+    )
+    (tmp_path / "daemon.pid").write_text("424250\n")
+
+    with _daemon_with_shutdown(predates_shutdown=True) as (server, url):
+        _write_discovery(tmp_path, url)
+        signalled = _live_until_signalled(monkeypatch)
+
+        assert launcher.stop_daemon(tmp_path) == "daemon stopped"
+
+    assert server.seen_auth == ["Bearer t0k"]
+    assert signalled == [424250]
+
+
+def test_a_dead_pid_is_stale_and_takes_its_discovery_file_with_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    monkeypatch.setattr(launcher, "_process_command_line", lambda pid: None)
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: False)
+    (tmp_path / "daemon.pid").write_text("424251\n")
+    _write_discovery(tmp_path, "http://127.0.0.1:9")
+
+    assert launcher.stop_daemon(tmp_path) == "stale pid file removed"
+    assert not (tmp_path / "daemon.pid").exists()
+    assert not (tmp_path / "discovery.json").exists()
+
+
+# --- starting: liveness from the kernel, and a job that refuses breakaway ---
+
+
+def test_start_refuses_while_a_live_daemon_owns_the_pid_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "daemon.pid").write_text("424260\n")
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: True)
+    monkeypatch.setattr(
+        launcher, "_process_command_line", lambda pid: "python -m potpie.daemon.main"
+    )
+
+    with pytest.raises(launcher.DaemonStartError, match="already running"):
+        launcher.start_detached(home, ready_timeout_s=1)
+
+
+def test_start_treats_a_dead_pid_as_stale_and_proceeds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The Windows failure in one line: ``os.kill(pid, 0)`` said "alive" or
+    "denied" depending on whether the caller had a console; the kernel says."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "daemon.pid").write_text("424261\n")
+    monkeypatch.setattr(launcher, "pid_alive", lambda pid: False)
+
+    with _daemon_serving(_WritesDiscovery.pid) as url:
+        monkeypatch.setattr(
+            launcher.subprocess, "Popen", _WritesDiscovery(json.dumps({"base_url": url}))
+        )
+        result = launcher.start_detached(home, ready_timeout_s=5)
+
+    assert result["url"] == url
+
+
+def test_breakaway_refused_falls_back_to_a_detached_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A job without JOB_OBJECT_LIMIT_BREAKAWAY_OK refuses the whole CreateProcess
+    with ERROR_ACCESS_DENIED. That used to escape as a bare PermissionError."""
+    monkeypatch.setattr(launcher.os, "name", "nt")
+    flags_seen: list[int] = []
+
+    def _popen(_argv, *, creationflags: int = 0, **_kwargs):
+        flags_seen.append(creationflags)
+        if creationflags & launcher._WIN_CREATE_BREAKAWAY_FROM_JOB:
+            error = PermissionError("[WinError 5] Access is denied")
+            error.winerror = 5
+            raise error
+        return "spawned"
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", _popen)
+
+    assert launcher._spawn_daemon(env={}) == "spawned"
+    assert len(flags_seen) == 2
+    assert flags_seen[0] & launcher._WIN_CREATE_BREAKAWAY_FROM_JOB
+    assert not flags_seen[1] & launcher._WIN_CREATE_BREAKAWAY_FROM_JOB
+    assert flags_seen[1] & launcher._WIN_DETACHED_PROCESS
+
+
+def test_any_other_refused_spawn_is_a_start_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    def _popen(*_a, **_k):
+        raise OSError("no such interpreter")
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", _popen)
+
+    with pytest.raises(launcher.DaemonStartError) as raised:
+        launcher.start_detached(tmp_path / "home", ready_timeout_s=1)
+
+    assert "could not start the daemon process" in str(raised.value)
+    assert "no such interpreter" in str(raised.value)
 
 
 def test_force_kill_uses_taskkill_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:

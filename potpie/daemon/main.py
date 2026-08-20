@@ -148,6 +148,27 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
         _authorize(authorization, token)
         return surface_contract()
 
+    @app.post("/shutdown")
+    def shutdown(authorization: str | None = Header(None)) -> dict[str, Any]:
+        """Stop this daemon cleanly, on request from a client holding its token.
+
+        ``potpie daemon stop`` tries this first. It is the only polite stop a
+        Windows daemon can receive: the process is detached with no console,
+        so no console control event reaches it, and a signal there is
+        ``TerminateProcess`` -- which skips the lifespan teardown that removes
+        the pid and discovery files. Behind the token like ``/rpc``: anything
+        that can reach the port must not be able to stop the daemon.
+        """
+        _authorize(authorization, token)
+        request_stop = getattr(app.state, "request_stop", None)
+        if request_stop is None:
+            raise HTTPException(
+                status_code=503,
+                detail="this daemon was not started in a way that lets it stop itself",
+            )
+        request_stop()
+        return {"ok": True, "stopping": True, "pid": pid}
+
     @app.post("/rpc")
     async def rpc(
         payload: dict[str, Any], authorization: str | None = Header(None)
@@ -220,7 +241,14 @@ def main() -> None:
     token = os.getenv("POTPIE_DAEMON_TOKEN") or secrets.token_urlsafe(32)
     base_url = f"http://127.0.0.1:{port}"
     app = create_app(token=token, base_url=base_url, pid=os.getpid(), log_file=log_file)
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info", access_log=False)
+    # `uvicorn.Server` rather than `uvicorn.run`, so `/shutdown` has a handle
+    # to set `should_exit` on: that is uvicorn's own graceful stop, the same
+    # path its signal handlers take, lifespan teardown included.
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info", access_log=False)
+    )
+    app.state.request_stop = lambda: setattr(server, "should_exit", True)
+    server.run()
 
 
 def _resolve(host: Any, path: str) -> Any:

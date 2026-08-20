@@ -175,6 +175,22 @@ def test_health_says_which_build_is_answering(app) -> None:
     assert set(body["build"]) == {"rev", "dirty", "built_at"}
 
 
+def test_shutdown_is_behind_the_token_and_needs_a_server_to_stop(app) -> None:
+    """``potpie daemon stop`` asks here first. Anything that can reach the port
+    must not be able to stop the daemon, and an app with no server handle
+    (this fixture) must refuse rather than answer "stopping" to nothing."""
+    assert TestClient(app).post("/shutdown").status_code == 401
+    assert TestClient(app, headers=BEARER).post("/shutdown").status_code == 503
+
+    stopped: list[bool] = []
+    app.state.request_stop = lambda: stopped.append(True)
+    response = TestClient(app, headers=BEARER).post("/shutdown")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["stopping"] is True
+    assert stopped == [True]
+
+
 def test_the_daemon_advertises_its_surfaces_only_to_an_authorized_caller(app) -> None:
     """The answer to "what do you implement" is behind the daemon token.
 

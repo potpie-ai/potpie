@@ -9,7 +9,7 @@ HTTP.
 Liveness and readiness are separate: the daemon can be live while a backend or
 semantic index is not ready. *Existing* and *serving* are separate too: a
 process that has been SIGSTOPped, or that is wedged inside a call it will never
-return from, still owns its pid and still answers ``os.kill(pid, 0)``. Reporting
+return from, still owns its pid and still reads as alive. Reporting
 that as "running" is the answer an operator is least able to act on, so
 :meth:`Daemon.status` probes the health endpoint and reports the two facts
 apart — see :data:`STATE_RUNNING` and friends.
@@ -75,12 +75,7 @@ _RELATIVE_SINCE_UNITS: Final[dict[str, str]] = {
 }
 
 
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError, OSError, SystemError):
-        return False
-    return True
+from potpie.daemon.process.liveness import pid_alive as _pid_alive  # noqa: E402
 
 
 @dataclass

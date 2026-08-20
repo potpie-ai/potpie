@@ -25,14 +25,7 @@ class AlreadyRunning(RuntimeError):
     pass
 
 
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError, SystemError):
-        return False
-    except OSError:
-        return False
+from potpie.daemon.process.liveness import pid_alive as _pid_alive  # noqa: E402
 
 
 @contextmanager

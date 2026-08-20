@@ -17,6 +17,8 @@ import sys
 import time
 from typing import Final
 
+from potpie.daemon.process.ipc_client import load_discovery
+from potpie.daemon.process.liveness import pid_alive
 from potpie.daemon.process.pidfile import read_pid_file
 from potpie_context_engine.bootstrap.runtime_settings import (
     RuntimeSettings,
@@ -34,6 +36,29 @@ _PROBE_TIMEOUT_S: Final[float] = 2.0
 
 #: How far back into the daemon log a failed start reads for the cause.
 _LOG_TAIL_BYTES: Final[int] = 64 * 1024
+
+#: How long a daemon gets to leave on its own -- after ``/shutdown``, and again
+#: after a signal -- before the next, less polite, step.
+_STOP_GRACE_S: Final[float] = 10.0
+
+#: How long the tree kill gets to take effect before stop gives up.
+_KILL_GRACE_S: Final[float] = 3.0
+
+#: How long the ``/shutdown`` request itself may take. The daemon answers
+#: before it starts stopping, so this is a round trip, not the shutdown.
+_SHUTDOWN_REQUEST_TIMEOUT_S: Final[float] = 3.0
+
+#: Windows ``ERROR_ACCESS_DENIED`` -- what ``CreateProcess`` raises when the
+#: job this process runs in does not allow children to break away from it.
+_ERROR_ACCESS_DENIED: Final[int] = 5
+
+#: The ``CreateProcess`` flags, by value: ``subprocess`` only defines the names
+#: on Windows, and the spawn fallback below has to be testable elsewhere.
+_WIN_DETACHED_PROCESS: Final[int] = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_WIN_CREATE_NEW_PROCESS_GROUP: Final[int] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+_WIN_CREATE_BREAKAWAY_FROM_JOB: Final[int] = getattr(
+    subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000
+)
 
 #: How much of that line is quoted back before it stops being a message.
 _MAX_CAUSE_CHARS: Final[int] = 400
@@ -110,19 +135,12 @@ def start_detached(
     if pid_file.exists():
         existing = read_pid_file(pid_file)
         if existing:
-            try:
-                os.kill(existing, 0)
+            # Liveness comes from the kernel (psutil), not from ``os.kill(pid,
+            # 0)``, which on Windows is a console control event that says
+            # nothing about the pid -- see potpie.daemon.process.liveness.
+            if pid_alive(existing) and is_daemon_process(existing) is not False:
                 raise DaemonStartError(f"daemon already running (pid={existing})")
-            except ProcessLookupError:
-                pid_file.unlink()  # stale
-            except OSError as exc:
-                if not _is_stale_pid_error(exc):
-                    raise
-                pid_file.unlink()  # stale
-            except SystemError:
-                if os.name != "nt":
-                    raise
-                pid_file.unlink()  # stale
+            pid_file.unlink()  # gone, or a recycled pid that is provably not ours
     log_path.parent.mkdir(parents=True, exist_ok=True)
     # Only the child started below gets to signal readiness. A daemon killed
     # with SIGKILL never removed its discovery file, and the dead daemon's
@@ -143,25 +161,19 @@ def start_detached(
         },
     )
     try:
-        popen_kwargs = {
-            "stdin": subprocess.DEVNULL,
-            "stdout": log_fp,
-            "stderr": subprocess.STDOUT,
-            "close_fds": True,
-            "env": child_env,
-        }
-        if os.name == "nt":
-            popen_kwargs["creationflags"] = (
-                subprocess.DETACHED_PROCESS
-                | subprocess.CREATE_NEW_PROCESS_GROUP
-                | subprocess.CREATE_BREAKAWAY_FROM_JOB
-            )
-        else:
-            popen_kwargs["start_new_session"] = True
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "potpie.daemon.main"],
-            **popen_kwargs,
+        proc = _spawn_daemon(
+            stdin=subprocess.DEVNULL,
+            stdout=log_fp,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+            env=child_env,
         )
+    except OSError as exc:
+        # A refused spawn used to escape as a raw OSError and the CLI reported
+        # `unexpected_cli_error`; it is a start failure like any other.
+        raise DaemonStartError(
+            f"could not start the daemon process: {exc}", log_path=log_path
+        ) from exc
     finally:
         log_fp.close()
     deadline = time.time() + ready_timeout_s
@@ -217,6 +229,34 @@ def start_detached(
     raise DaemonStartError(
         f"daemon did not become ready within {int(ready_timeout_s)}s", log_path=log_path
     )
+
+
+def _spawn_daemon(**popen_kwargs) -> subprocess.Popen:
+    """Start ``python -m potpie.daemon.main`` detached from this process.
+
+    On Windows the child asks to break away from the caller's job object
+    (``CREATE_BREAKAWAY_FROM_JOB``), so that a daemon started from a terminal
+    or an editor outlives it. A job that does not permit breakaway refuses the
+    whole ``CreateProcess`` with ``ERROR_ACCESS_DENIED`` -- which is how a
+    daemon start under some IDEs and managed shells raised a bare
+    ``PermissionError`` instead of starting. Falling back to a merely detached
+    child keeps the daemon running; it then shares the job's fate, which is
+    still a running daemon for as long as the host that started it is.
+    """
+    argv = [sys.executable, "-m", _DAEMON_ENTRYPOINT]
+    if os.name != "nt":
+        return subprocess.Popen(argv, start_new_session=True, **popen_kwargs)
+    detached = _WIN_DETACHED_PROCESS | _WIN_CREATE_NEW_PROCESS_GROUP
+    try:
+        return subprocess.Popen(
+            argv,
+            creationflags=detached | _WIN_CREATE_BREAKAWAY_FROM_JOB,
+            **popen_kwargs,
+        )
+    except OSError as exc:
+        if getattr(exc, "winerror", None) != _ERROR_ACCESS_DENIED:
+            raise
+        return subprocess.Popen(argv, creationflags=detached, **popen_kwargs)
 
 
 def _read_discovery(disc_file: pathlib.Path) -> tuple[dict | None, str | None]:
@@ -372,12 +412,15 @@ def _clip(line: str) -> str:
     return line[: _MAX_CAUSE_CHARS - 3] + "..."
 
 
-def _is_stale_pid_error(exc: OSError) -> bool:
-    return os.name == "nt" and getattr(exc, "winerror", None) in {5, 6, 11, 87}
+def _windows() -> bool:
+    """Read at call time, and the one place the platform is asked in the stop
+    path, so a test can exercise the Windows branches without patching
+    ``os.name`` -- which makes ``pathlib`` refuse to build a path at all."""
+    return os.name == "nt"
 
 
 def _force_kill(pid: int) -> None:
-    if os.name == "nt":
+    if _windows():
         try:
             subprocess.run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -394,7 +437,28 @@ def _force_kill(pid: int) -> None:
 
 
 def stop_daemon(home: pathlib.Path) -> str:
-    """Stop the daemon if running. Returns a human-readable message; never raises."""
+    """Stop the daemon if running. Returns a human-readable message; never raises.
+
+    Three steps, each waited out before the next, and each one works on one
+    more platform than the last:
+
+    1. ``POST /shutdown`` with the daemon's token. The daemon stops itself
+       through uvicorn's own shutdown, runs its lifespan teardown, and removes
+       its pid and discovery files. This is the only polite stop that reaches a
+       Windows daemon: it is started detached, with no console, so there is no
+       process group a ``CTRL_BREAK_EVENT`` could be delivered to.
+    2. ``SIGTERM``. On POSIX the daemon handles it; on Windows it is
+       ``TerminateProcess`` -- abrupt, but it works, and it is what a daemon
+       that predates ``/shutdown`` gets.
+    3. ``taskkill /T /F`` or ``SIGKILL``.
+
+    Progress is judged by the process, not by the pid file. Waiting for the
+    *file* to disappear meant a Windows daemon that had already been terminated
+    (and so could not remove its own file) was waited on for the full grace
+    and then reported as force-killed. Once the process is confirmed gone the
+    runtime files are removed here, so a stale ``discovery.json`` does not turn
+    the next command's "not running" into a connection error.
+    """
     home = pathlib.Path(home)
     pid_file = home / "daemon.pid"
     pid = read_pid_file(pid_file)
@@ -405,34 +469,82 @@ def stop_daemon(home: pathlib.Path) -> str:
         # something else. SIGTERM followed by SIGKILL is not a recoverable
         # mistake to make against a stranger's process, and a pid file naming a
         # process that is provably not ours is by definition stale.
-        _unlink(pid_file)
+        _clear_runtime_files(home)
         return (
             f"stale pid file removed; pid {pid} belongs to an unrelated process "
             "and was left alone"
         )
+    if not pid_alive(pid):
+        _clear_runtime_files(home)
+        return "stale pid file removed"
+
+    if _request_shutdown(home) and _wait_until_gone(pid, _STOP_GRACE_S):
+        _clear_runtime_files(home)
+        return "daemon stopped"
+
+    if _signal_term(pid) and _wait_until_gone(pid, _STOP_GRACE_S):
+        _clear_runtime_files(home)
+        return "daemon stopped"
+
+    _force_kill(pid)
+    if _wait_until_gone(pid, _KILL_GRACE_S):
+        _clear_runtime_files(home)
+        return "daemon killed (forced after timeout)"
+    return f"could not stop the daemon (pid={pid}); it is still running"
+
+
+def _request_shutdown(home: pathlib.Path) -> bool:
+    """Ask the daemon to stop over its own HTTP endpoint. True when it agreed."""
+    discovery = load_discovery(home)
+    if not discovery:
+        return False
+    base_url = (discovery.get("base_url") or "").rstrip("/")
+    if not base_url:
+        return False
+    headers = {}
+    token = discovery.get("token")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        import httpx
+
+        response = httpx.post(
+            f"{base_url}/shutdown", headers=headers, timeout=_SHUTDOWN_REQUEST_TIMEOUT_S
+        )
+    except Exception:  # noqa: BLE001 - unreachable, refused, or an older daemon: fall through
+        return False
+    return 200 <= response.status_code < 300
+
+
+def _signal_term(pid: int) -> bool:
+    """Send SIGTERM. True when the signal went out (or the process was already
+    gone); False when the platform refused, which on Windows means
+    ``TerminateProcess`` was denied and the tree kill gets to decide."""
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
-        _unlink(pid_file)
-        return "stale pid file removed"
-    except OSError as exc:
-        if not _is_stale_pid_error(exc):
-            raise
-        _unlink(pid_file)
-        return "stale pid file removed"
-    except SystemError:
-        if os.name != "nt":
-            raise
-        _unlink(pid_file)
-        return "stale pid file removed"
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if not pid_file.exists():
-            return "daemon stopped"
+        return True
+    except (OSError, SystemError):
+        if _windows():
+            return False
+        raise
+    return True
+
+
+def _wait_until_gone(pid: int, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if not pid_alive(pid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
         time.sleep(0.1)
-    _force_kill(pid)
-    _unlink(pid_file)
-    return "daemon killed (forced after timeout)"
+
+
+def _clear_runtime_files(home: pathlib.Path) -> None:
+    """Remove what a daemon that left cleanly would have removed itself."""
+    for name in ("daemon.pid", "discovery.json", "daemon.json"):
+        _unlink(home / name)
 
 
 def is_daemon_process(pid: int) -> bool | None:
