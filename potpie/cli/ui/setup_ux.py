@@ -1,4 +1,4 @@
-"""Setup wizard UI for the real host-routed setup flow."""
+"""Setup wizard UI for the root-owned setup service flow."""
 
 from __future__ import annotations
 

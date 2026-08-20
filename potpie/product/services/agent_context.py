@@ -5,8 +5,9 @@ straight to the ``GraphService`` data plane; ``status`` is the only composite â€
 it joins ``GraphService`` data-plane status, ``PotManagementService`` control-
 plane status, and a ``SkillManager`` nudge into one ``StatusReport``.
 
-CLI and HTTP adapters bind here. The managed HTTP ingestion surface is a legacy adapter
-while it migrates onto the host shell; it must not define new agent tools.
+The root local-runtime composition binds here. The standalone Context Engine
+HTTP surface owns its own delivery composition and must not import this product
+status wrapper or define new agent tools through it.
 """
 
 from __future__ import annotations

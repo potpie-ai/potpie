@@ -137,3 +137,10 @@ def test_scan_freshness_survives_mixed_naive_and_aware_stamps() -> None:
     assert freshness["oldest"] == "2025-11-24T00:00:00+00:00"
     assert freshness["newest"] == "2026-07-21T11:34:00+00:00"
     assert freshness["stamped_claims"] == 2
+
+
+def test_empty_scan_analytics_reports_empty_quality() -> None:
+    analytics = _fallback()
+
+    assert analytics.counts("p1")["claims"] == 0
+    assert analytics.quality("p1")["status"] == "empty"

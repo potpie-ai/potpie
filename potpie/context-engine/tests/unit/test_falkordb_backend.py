@@ -17,13 +17,12 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     canonical_label_changes,
     repaired_entity_labels,
 )
-from potpie_context_engine.bootstrap.host_wiring import (
-    build_host_shell,
-    default_backend_profile,
-)
 from potpie_context_engine.bootstrap.ingestion_server import build_ingestion_server
 from potpie_context_engine.core.context_events import EventRef
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphExtension,
+)
 from potpie_context_engine.core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
@@ -223,43 +222,6 @@ def test_ingestion_server_accepts_falkordb_lite_backend() -> None:
     assert container.backend.profile == "falkordb_lite"
     assert container.context_graph is not None
     assert container.graph_writer is not None
-
-
-def test_host_shell_accepts_falkordb_env(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
-    monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "falkordb")
-
-    host = build_host_shell()
-
-    assert host.backend.profile == "falkordb"
-
-
-def test_host_shell_defaults_to_falkordb_lite(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
-    monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
-    monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
-
-    host = build_host_shell()
-
-    assert default_backend_profile() == "falkordb_lite"
-    assert host.backend.profile == "falkordb_lite"
-
-
-def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "   ")
-    monkeypatch.setenv("GRAPH_DB_BACKEND", " embedded ")
-
-    assert default_backend_profile() == "embedded"
-
-
-def test_host_shell_accepts_falkordb_lite_env(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
-    monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "falkordb_lite")
-    monkeypatch.setenv("FALKORDB_MODE", "server")
-
-    host = build_host_shell()
-
-    assert host.backend.profile == "falkordb_lite"
 
 
 def test_falkordb_repair_backfills_entity_summaries() -> None:

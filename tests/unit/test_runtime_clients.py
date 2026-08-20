@@ -22,7 +22,6 @@ from potpie.runtime import (
     FailureResponse,
     HandshakeRequest,
     HandshakeResult,
-    LegacyEngineClientAdapter,
     LocalEngineClient,
     ProtocolError,
     SafetyClass,
@@ -141,11 +140,7 @@ def _success_response(request: object, value: object) -> SuccessResponse[object]
 @pytest.mark.anyio
 async def test_engine_client_surface_matches_finite_context_engine_catalog() -> None:
     expected = {operation.value for operation in EngineOperation}
-    actual = {
-        name
-        for name in expected
-        if callable(getattr(EngineClient, name, None))
-    }
+    actual = {name for name in expected if callable(getattr(EngineClient, name, None))}
 
     assert actual == expected
     assert set(ENGINE_OPERATION_CATALOG) == set(EngineOperation)
@@ -266,7 +261,9 @@ async def test_daemon_client_handshake_then_typed_operation() -> None:
         if isinstance(request, HandshakeRequest):
             return _success_response(request, _handshake_result())
         assert isinstance(request, EngineOperationRequest)
-        return _success_response(request, {"matches": (request.payload.payload["query"],)})
+        return _success_response(
+            request, {"matches": (request.payload.payload["query"],)}
+        )
 
     transport = _Transport(respond)
     client = DaemonEngineClient(
@@ -406,25 +403,3 @@ async def test_response_correlation_mismatch_is_typed_protocol_failure() -> None
     assert isinstance(outcome, Failure)
     assert isinstance(outcome.error, ProtocolError)
     assert outcome.error.code == "response_request_id_mismatch"
-
-
-@pytest.mark.anyio
-async def test_legacy_adapter_is_explicit_and_receives_typed_envelope() -> None:
-    requests: list[EngineOperationRequest] = []
-
-    async def invoke(request: EngineOperationRequest):
-        requests.append(request)
-        return Success({"legacy": request.operation.value})
-
-    client = LegacyEngineClientAdapter(
-        selector=ContextSelector(kind="explicit", value="context-a"),
-        invoker=invoke,
-        request_id_factory=_request_ids("legacy-1"),
-    )
-
-    outcome = await client.resolve(ResolveRequest())
-
-    assert outcome == Success({"legacy": "resolve"})
-    assert len(requests) == 1
-    assert requests[0].operation is EngineOperation.RESOLVE
-    assert requests[0].request_id == "legacy-1"

@@ -138,21 +138,13 @@ def test_package_root_exports_the_documented_runtime_surface() -> None:
 
 def test_public_distributions_package_pep561_markers() -> None:
     engine_root = Path(__file__).resolve().parents[2]
-    projects = (
-        (engine_root, "potpie_context_engine"),
-        (engine_root.parent / "context-core", "potpie_context_core"),
-    )
+    marker = engine_root / "src" / "potpie_context_engine" / "py.typed"
+    config = tomllib.loads((engine_root / "pyproject.toml").read_text(encoding="utf-8"))
+    wheel_include = config["tool"]["hatch"]["build"]["targets"]["wheel"]["include"]
 
-    for project_root, package in projects:
-        marker = project_root / "src" / package / "py.typed"
-        config = tomllib.loads(
-            (project_root / "pyproject.toml").read_text(encoding="utf-8")
-        )
-        wheel_include = config["tool"]["hatch"]["build"]["targets"]["wheel"]["include"]
-
-        assert marker.is_file()
-        assert f"src/{package}/py.typed" in wheel_include
-        assert "Typing :: Typed" in config["project"]["classifiers"]
+    assert marker.is_file()
+    assert "src/potpie_context_engine/py.typed" in wheel_include
+    assert "Typing :: Typed" in config["project"]["classifiers"]
 
     assert (engine_root / "src/potpie_context_engine/core/py.typed").is_file()
 

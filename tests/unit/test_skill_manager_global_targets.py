@@ -12,7 +12,11 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 from potpie.product.adapters.skills.bundle_catalog import (
     RECOMMENDED_SKILL_IDS,
 )
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie.runtime.composition import build_local_runtime
+
+
+def _root_runtime():
+    return build_local_runtime(backend=InMemoryGraphBackend()).root
 
 
 def test_skill_manager_installs_global_harness_targets(
@@ -22,7 +26,7 @@ def test_skill_manager_installs_global_harness_targets(
     potpie_home = tmp_path / "potpie"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(potpie_home))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _root_runtime()
 
     expected = {
         "claude": home / ".claude" / "skills" / "potpie-cli" / "SKILL.md",
@@ -64,7 +68,7 @@ def test_global_harness_target_paths(monkeypatch, tmp_path: Path) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _root_runtime()
 
     assert host.skills.targets["cursor"].skills_root == home / ".cursor" / "skills"
     assert host.skills.targets["claude"].skills_root == home / ".claude" / "skills"
@@ -77,7 +81,7 @@ def test_global_harness_target_paths(monkeypatch, tmp_path: Path) -> None:
 
 def test_skill_manager_installs_project_scope(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _root_runtime()
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
@@ -107,7 +111,7 @@ def test_project_scope_install_preserves_existing_agents_md(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _root_runtime()
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
@@ -136,7 +140,7 @@ def test_skill_manager_removes_all_global_harness_skills(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _root_runtime()
 
     install_result = host.skills.install(agent="codex")
     assert set(install_result.changed) == set(RECOMMENDED_SKILL_IDS)
@@ -165,7 +169,7 @@ def test_remove_uninstalled_skill_reports_no_change(
     # when it was never installed, reporting false removals in CLI/API output.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _root_runtime()
 
     result = host.skills.remove(agent="codex", skill_id="potpie-cli")
     assert result.changed == ()
@@ -174,7 +178,7 @@ def test_remove_uninstalled_skill_reports_no_change(
 def test_skill_manager_rejects_ambiguous_remove(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
+    host = _root_runtime()
 
     with pytest.raises(ValueError, match="either a skill id or --all"):
         host.skills.remove(agent="codex", skill_id="potpie-cli", all_=True)

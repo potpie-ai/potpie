@@ -1,10 +1,10 @@
 """Potpie composition root for the authentication credential seam.
 
-The auth/credential surface deliberately does not route through ``HostShell`` (it
-is interactive, inbound-adapter credential acquisition), but the *persistence*
-contract is a core-owned port (:class:`~potpie.auth.ports.credentials.CredentialStore`).
-This module is the one place that picks the concrete implementation, so inbound
-command code depends on the port — never on an adapter.
+The auth/credential surface is interactive, inbound-adapter credential
+acquisition. Its persistence contract is a Potpie-owned port
+(:class:`~potpie.auth.ports.credentials.CredentialStore`). This module is the
+one place that picks the concrete implementation, so inbound command code
+depends on the port — never on an adapter.
 
 The default is the file-backed store; tests inject an in-memory fake via
 ``commands/_common.set_store`` instead.

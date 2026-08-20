@@ -46,14 +46,14 @@ them (everything except `potpie-cli`).
 
 ## 2. Installation, targets & drift (`DefaultSkillManager`)
 
-`application/services/skill_manager.py DefaultSkillManager` owns the catalog +
+`potpie/product/services/skills.py DefaultSkillManager` owns the catalog +
 per-harness install/drift logic and delegates *where/how* to a registered
 `AgentTargetPort` per harness. Operations: `list / install / update / remove /
 status / nudge / add` (`add` is a TODO stub).
 
-Targets are wired in `bootstrap/host_wiring.py`; each `FileBackedAgentTarget`
-installs into a harness-specific **global** skills root, and a `--scope project`
-install routes through `ProjectAgentTarget` instead:
+Targets are wired in `potpie/runtime/composition.py`; each
+`FileBackedAgentTarget` installs into a harness-specific **global** skills root,
+and a `--scope project` install routes through `ProjectAgentTarget` instead:
 
 | Harness (`--agent`) | Target | Global skills root |
 |---|---|---|

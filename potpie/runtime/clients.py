@@ -97,10 +97,6 @@ class DaemonTransport(Protocol):
     async def send(self, request: ProtocolRequest) -> ProtocolResponse: ...
 
 
-class LegacyRequestInvoker(Protocol):
-    async def __call__(self, request: EngineOperationRequest) -> ClientOutcome: ...
-
-
 class EngineClient(ABC):
     """Named client surface mirroring the public ContextEngine operation catalog."""
 
@@ -744,53 +740,6 @@ class DaemonControlClient:
         return Success(result)
 
 
-class LegacyEngineClientAdapter(EngineClient):
-    """Temporary, explicitly constructed bridge for pre-switch runtime callers.
-
-    The adapter has no discovery, protocol detection, or fallback behavior. It
-    is retired when the canonical daemon path is selected and legacy callers
-    have migrated, no later than the compatibility-deletion phase.
-    """
-
-    def __init__(
-        self,
-        *,
-        selector: ContextSelector,
-        invoker: LegacyRequestInvoker,
-        request_id_factory: RequestIdFactory | None = None,
-    ) -> None:
-        self._selector = selector
-        self._invoker = invoker
-        self._request_id_factory = request_id_factory or (lambda: str(uuid4()))
-
-    async def _dispatch(
-        self,
-        operation: EngineOperation,
-        request: EngineRequest,
-        confirmation: DestructiveConfirmation | None = None,
-    ) -> ClientOutcome:
-        envelope_or_error = _build_operation_request(
-            selector=self._selector,
-            operation=operation,
-            payload=request,
-            confirmation=confirmation,
-            request_id=self._request_id_factory(),
-        )
-        if isinstance(envelope_or_error, Failure):
-            return envelope_or_error
-        try:
-            return await self._invoker(envelope_or_error.value)
-        except Exception:
-            return Failure(
-                DaemonInternalError(
-                    code="legacy_adapter_failed",
-                    message="the temporary legacy runtime adapter failed",
-                    details={"request_id": envelope_or_error.value.request_id},
-                    recommended_next_action="inspect legacy adapter logs",
-                )
-            )
-
-
 def _build_operation_request(
     *,
     selector: ContextSelector,
@@ -959,8 +908,6 @@ __all__ = [
     "DaemonTransport",
     "DestructiveConfirmation",
     "EngineClient",
-    "LegacyEngineClientAdapter",
-    "LegacyRequestInvoker",
     "LocalEngineClient",
     "RequestIdFactory",
     "TypedEngineOperationHandler",

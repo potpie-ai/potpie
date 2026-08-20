@@ -8,7 +8,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
     InMemoryGraphBackend,
 )
 from potpie.product.services import setup as setup_orchestrator
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from potpie.runtime.composition import build_local_runtime
 from potpie_context_engine.core.lifecycle import SKIPPED, SetupPlan
 
 
@@ -16,7 +16,8 @@ from potpie_context_engine.core.lifecycle import SKIPPED, SetupPlan
 def host(tmp_path, monkeypatch):
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    return build_host_shell(backend=InMemoryGraphBackend())
+    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
+    return build_local_runtime(backend=InMemoryGraphBackend()).root
 
 
 def test_setup_run_skips_pot_default_when_deferred(host) -> None:

@@ -7,8 +7,6 @@ from potpie.runtime.clients import (
     DaemonTransport,
     DestructiveConfirmation,
     EngineClient,
-    LegacyEngineClientAdapter,
-    LegacyRequestInvoker,
     LocalEngineClient,
     TypedEngineOperationHandler,
 )
@@ -138,8 +136,6 @@ __all__ = [
     "HandshakeResult",
     "HostResource",
     "HttpDaemonTransport",
-    "LegacyEngineClientAdapter",
-    "LegacyRequestInvoker",
     "LeaseOwnership",
     "LocalEngineClient",
     "OperationSpec",

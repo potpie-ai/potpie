@@ -1,4 +1,4 @@
-"""Potpie-account login/logout implementations (host-routed CLI).
+"""Potpie-account login/logout implementations owned by the root CLI.
 
 The real ``potpie login`` / ``potpie logout`` flows: a browser Firebase sign-in
 (custom token → Firebase session, stored in the local credentials file) or a direct

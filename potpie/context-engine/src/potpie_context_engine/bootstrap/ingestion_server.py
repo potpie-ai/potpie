@@ -1,11 +1,9 @@
 """Composition root for the HTTP **ingestion/server** subsystem.
 
-Distinct from ``bootstrap.host_wiring.build_host_shell`` (the in-process agent
-spine behind the CLI). This root wires the async ingestion pipeline —
-graph backend, the Postgres batch/ledger/execution-log stores, source
-connectors, and the reconciliation agent — that backs the FastAPI surface in
-``adapters/inbound/http``. It is intentionally kept separate while the pipeline
-is migrated onto ``HostShell``; nothing on the CLI path imports it.
+This root wires the async ingestion pipeline — graph backend, the Postgres
+batch/ledger/execution-log stores, source connectors, and the reconciliation
+agent — that backs the FastAPI surface in ``adapters/inbound/http``. It remains
+independent of the Potpie-owned local runtime composition.
 """
 
 from __future__ import annotations
@@ -86,7 +84,9 @@ from potpie_context_engine.domain.ports.ingestion_config import IngestionConfigP
 from potpie_context_engine.domain.ports.context_graph import ContextGraphPort
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 from potpie_context_engine.domain.ports.ingestion_submission import (
     IngestionSubmissionService,
 )
