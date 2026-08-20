@@ -30,6 +30,7 @@ from potpie_context_engine import (
     EngineConfig,
     EngineDependencies,
     EngineLifecycleError,
+    EngineResource,
     Failure,
     Outcome,
     Success,
@@ -201,6 +202,7 @@ def _dependencies() -> EngineDependencies:
         workbench=cast("object", operations),
         ingestion=cast("object", operations),
         nudge=cast("object", operations),
+        resources=(EngineResource(name="backend", ownership="borrowed"),),
     )
 
 
@@ -264,6 +266,10 @@ async def test_acquire_resolves_authenticates_authorizes_then_composes() -> None
     assert outcome.value.engine.context == ContextIdentity("context-a")
     assert outcome.value.ownership.engine_lifetime == "resource_manager_shutdown"
     assert outcome.value.ownership.release_closes_engine is False
+    assert outcome.value.ownership.host_resources == ("first", "second")
+    assert tuple(
+        resource.name for resource in outcome.value.ownership.engine_resources
+    ) == ("backend",)
     assert [event[0] for event in events] == [
         "resolve",
         "authenticate",

@@ -12,6 +12,7 @@ from potpie_context_engine import (
     ContextIdentity,
     EngineConfig,
     EngineDependencies,
+    EngineResource,
     Failure,
     Outcome,
     Success,
@@ -152,8 +153,10 @@ class ResourceComposition:
 
 @dataclass(frozen=True, slots=True)
 class LeaseOwnership:
-    """Explicitly records that request release does not own engine lifetime."""
+    """Expose dependency owners and the manager-retained engine lifetime."""
 
+    host_resources: tuple[str, ...] = ()
+    engine_resources: tuple[EngineResource, ...] = ()
     engine_lifetime: Literal["resource_manager_shutdown"] = (
         "resource_manager_shutdown"
     )
@@ -197,6 +200,7 @@ class _CachedEngine:
     fingerprint: CompositionFingerprint
     engine: ContextEngine
     resources: tuple[HostResource, ...]
+    ownership: LeaseOwnership
     active_leases: int = 0
 
 
@@ -211,13 +215,14 @@ class AuthorizedContextLease:
         context: ContextIdentity,
         scope: AuthorizationScope,
         engine: ContextEngine,
+        ownership: LeaseOwnership,
     ) -> None:
         self._manager = manager
         self._cache_key = cache_key
         self.context = context
         self.scope = scope
         self.engine = engine
-        self.ownership = LeaseOwnership()
+        self.ownership = ownership
         self._released = False
         self._release_lock = asyncio.Lock()
 
@@ -363,6 +368,7 @@ class ContextResourceManager:
                 context=context,
                 scope=scope,
                 engine=cached.engine,
+                ownership=cached.ownership,
             )
         )
 
@@ -473,6 +479,12 @@ class ContextResourceManager:
                 fingerprint=fingerprint,
                 engine=engine_outcome.value,
                 resources=composition.resources,
+                ownership=LeaseOwnership(
+                    host_resources=tuple(
+                        resource.name for resource in composition.resources
+                    ),
+                    engine_resources=composition.dependencies.resources,
+                ),
             )
         )
 
