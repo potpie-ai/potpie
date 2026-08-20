@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Final, Iterator
 
+from potpie import build_info
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 from potpie_context_core.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
 
@@ -171,6 +172,17 @@ class Daemon:
             status["url"] = base_url
         if "backend" in health:
             status["backend"] = health["backend"]
+        # Which build is answering, and whether it is *this* install's. A daemon
+        # is detached on purpose and outlives every window, so it also outlives
+        # the install that started it: after an update the CLI is new and the
+        # daemon is last release's until something restarts it. `stale` is that
+        # comparison, made here so a caller need not know what a rev is.
+        if "version" in health:
+            status["version"] = health["version"]
+        build = health.get("build")
+        if isinstance(build, dict):
+            status["build"] = build
+            status["stale"] = build_is_stale(build)
         return status
 
     def health(self) -> dict[str, Any]:
@@ -369,6 +381,16 @@ class Daemon:
         if "backend" in status:
             info = {**info, "backend": status["backend"]}
         return {**info, "started": info}
+
+
+def build_is_stale(served: dict[str, Any]) -> bool | None:
+    """Does the daemon's stamped rev differ from this CLI's? ``None`` when
+    either side has no rev to compare -- an unstamped build is not evidence."""
+    ours = build_info.build_stamp().get("rev")
+    theirs = served.get("rev")
+    if not ours or not theirs:
+        return None
+    return ours != theirs
 
 
 #: Prose for each :meth:`Daemon.status` state, keyed so the three readings
