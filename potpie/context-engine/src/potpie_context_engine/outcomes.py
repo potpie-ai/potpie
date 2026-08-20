@@ -48,6 +48,7 @@ class EngineLifecycleError:
 EngineError: TypeAlias = DomainError | DependencyError | EngineLifecycleError
 
 T = TypeVar("T")
+E = TypeVar("E")
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,14 +60,14 @@ class Success(Generic[T]):
 
 
 @dataclass(frozen=True, slots=True)
-class Failure:
+class Failure(Generic[E]):
     """Failed public operation outcome."""
 
-    error: EngineError
+    error: E
     ok: Literal[False] = False
 
 
-Outcome: TypeAlias = Success[T] | Failure
+Outcome: TypeAlias = Success[T] | Failure[EngineError]
 
 
 __all__ = [
