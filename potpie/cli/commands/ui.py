@@ -42,15 +42,15 @@ def ui_command(
             daemon.ensure()
         except Exception:  # noqa: BLE001 — fall through to the discovery check
             pass
-        disc = daemon.discovery()
-        if not disc or not disc.get("base_url"):
+        daemon_status = daemon.status()
+        if not daemon_status.get("ready") or not daemon_status.get("url"):
             fail(
                 code="daemon_unavailable",
                 message="Potpie daemon is not running, so the UI can't be served.",
                 next_action="run 'potpie setup' (or 'potpie daemon restart'), then 'potpie ui'",
             )
             return
-        base = str(disc["base_url"]).rstrip("/")
+        base = str(daemon_status["url"]).rstrip("/")
         pot_id = resolve_pot_id(host, pot) if pot else None
         query = f"?{urlencode({'pot': pot_id})}" if pot_id else ""
         url = f"{base}/ui{query}"

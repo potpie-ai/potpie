@@ -1,36 +1,41 @@
-"""``Daemon`` - local host lifecycle.
-
-The daemon shell is the local background process for lifecycle, IPC, health,
-and logs. It is not the business layer. When ``in_process`` is true, the host
-runs in the CLI process and reports synthetic liveness. When detached, the
-daemon process runs ``potpie.daemon.main`` and serves HostShell RPC over loopback
-HTTP.
-
-Liveness and readiness are separate: the daemon can be live while a backend or
-semantic index is not ready.
-"""
+"""Canonical local daemon lifecycle controlled by Potpie."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import signal
+import socket
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
+from potpie.daemon.discovery import (
+    DaemonDiscoveryError,
+    canonical_discovery,
+    load_daemon_connection,
+    read_daemon_discovery,
+    remove_daemon_runtime_records,
+    select_runtime_endpoint,
+    write_daemon_credential,
+    write_daemon_discovery,
+    write_daemon_pid,
+)
 from potpie.runtime.controller import (
     DaemonBootSpec,
     DaemonController,
     DaemonLaunchSpec,
+    DaemonObserver,
     DaemonProcessHandle,
 )
 from potpie.runtime.protocol import ProtocolTransportError
+from potpie.runtime.server import generate_bearer_token
+from potpie.runtime.transport import RuntimeEndpoint
 from potpie_context_engine import Failure, Success
+from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
 
 
 def _pid_alive(pid: int) -> bool:
@@ -72,98 +77,34 @@ class _RecordedDaemonProcess:
         os.kill(self._pid, signal.SIGKILL)
 
 
-class _ReflectiveDaemonObserver:
-    """Temporary readiness adapter for the currently shipped daemon runtime."""
-
-    def __init__(self, *, home: Path, poll_interval_s: float = 0.05) -> None:
-        self._home = home
-        self._poll_interval_s = poll_interval_s
+class _SignalFallbackObserver:
+    """Select bounded signals when canonical discovery cannot be authenticated."""
 
     @property
     def instance_id(self) -> None:
         return None
 
-    async def wait_ready(
-        self, process: DaemonProcessHandle, *, timeout_s: float
-    ) -> Success[None] | Failure[ProtocolTransportError]:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_s
-        last_code = "legacy_discovery_unavailable"
-        while loop.time() < deadline:
-            if process.returncode is not None:
-                last_code = "legacy_daemon_exited"
-                break
-            discovery = _read_reflective_discovery(self._home)
-            if discovery is not None and _discovery_matches_pid(
-                discovery, process.pid
-            ):
-                base_url = str(discovery.get("base_url") or "")
-                if base_url and await _reflective_health_ready(
-                    base_url=base_url,
-                    expected_pid=process.pid,
-                ):
-                    return Success(None)
-                last_code = "legacy_health_unavailable"
-            await asyncio.sleep(
-                min(self._poll_interval_s, max(0.0, deadline - loop.time()))
-            )
+    async def wait_ready(self, process: DaemonProcessHandle, *, timeout_s: float):
+        del process, timeout_s
         return Failure(
             ProtocolTransportError(
-                code=last_code,
-                message="the shipped daemon did not report ready",
+                code="daemon_discovery_unavailable",
+                message="canonical daemon discovery is unavailable",
                 retry_posture="safe",
             )
         )
 
-    async def request_stop(self) -> Failure[ProtocolTransportError]:
-        # The shipped reflective runtime has no typed control operation. The
-        # controller therefore takes its bounded signal fallback until commit 18.
+    async def request_stop(self):
         return Failure(
             ProtocolTransportError(
-                code="legacy_typed_shutdown_unavailable",
-                message="the shipped daemon has no typed shutdown operation",
+                code="daemon_typed_shutdown_unavailable",
+                message="typed daemon shutdown is unavailable",
                 retry_posture="unknown",
             )
         )
 
     async def close(self) -> None:
         return None
-
-
-async def _reflective_health_ready(*, base_url: str, expected_pid: int) -> bool:
-    try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=0.5) as client:
-            response = await client.get(f"{base_url.rstrip('/')}/health")
-        if not 200 <= response.status_code < 300:
-            return False
-        payload = response.json()
-        return bool(payload.get("ok")) and int(payload.get("pid")) == expected_pid
-    except (OSError, ValueError, TypeError):
-        return False
-    except Exception:  # noqa: BLE001 - readiness remains a typed best-effort probe.
-        return False
-
-
-def _read_reflective_discovery(home: Path) -> dict[str, Any] | None:
-    for path in (home / "discovery.json", home / "daemon.json"):
-        if not path.exists():
-            continue
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        if isinstance(raw, dict):
-            return raw
-    return None
-
-
-def _discovery_matches_pid(discovery: dict[str, Any], pid: int) -> bool:
-    try:
-        return int(discovery.get("pid")) == pid
-    except (TypeError, ValueError):
-        return False
 
 
 @dataclass
@@ -173,17 +114,21 @@ class Daemon:
     home: Path = field(default_factory=default_home)
     in_process: bool = True
     startup_timeout_s: float = 60.0
-    _controller: DaemonController | None = field(
+    _controller: DaemonController | None = field(default=None, init=False, repr=False)
+    _runner: asyncio.Runner | None = field(default=None, init=False, repr=False)
+    _pending_endpoint: RuntimeEndpoint | None = field(
         default=None, init=False, repr=False
     )
-    _runner: asyncio.Runner | None = field(default=None, init=False, repr=False)
+    _pending_instance_id: str | None = field(default=None, init=False, repr=False)
 
-    def discovery(self) -> dict[str, str] | None:
-        """Return daemon discovery metadata for either supported local daemon."""
-        raw = _read_reflective_discovery(self.home)
-        if raw is None:
+    def discovery(self) -> dict[str, object] | None:
+        """Return the single canonical daemon discovery document."""
+
+        try:
+            discovery = read_daemon_discovery(self.home)
+        except DaemonDiscoveryError:
             return None
-        return {str(key): str(value) for key, value in raw.items()}
+        return discovery.to_document() if discovery is not None else None
 
     def status(self) -> dict[str, Any]:
         if self.in_process:
@@ -198,17 +143,9 @@ class Daemon:
         if pid is not None and not up:
             self._cleanup_runtime_records()
             pid = None
-        discovery = self.discovery() or {}
-        bind = discovery.get("bind", "")
-        socket = bind.removeprefix("unix:") if bind.startswith("unix:") else bind
-        base_url = discovery.get("base_url", "")
-        controller_status = None
-        if up and pid is not None:
-            controller = self._controller_for_existing(pid)
-            controller_status = self._run(controller.status())
-        status = {
+        result: dict[str, Any] = {
             "up": up,
-            "ready": bool(controller_status and controller_status.ready),
+            "ready": False,
             "mode": "detached",
             "home": str(self.home),
             "pid": pid,
@@ -216,49 +153,40 @@ class Daemon:
             if up
             else "detached daemon not running",
         }
-        if socket:
-            status["socket"] = socket
-        if base_url:
-            status["url"] = base_url
-        if up:
-            health = self.health()
-            if "backend" in health:
-                status["backend"] = health["backend"]
-        return status
+        if not up or pid is None:
+            return result
+        connection = self._connection_for_pid(pid)
+        if connection is None:
+            result["detail"] = "detached daemon running without canonical discovery"
+            return result
+        discovery, observer = connection
+        controller = self._controller_for_existing(pid, observer=observer)
+        controller_status = self._run(controller.status())
+        result["ready"] = controller_status.ready
+        result["transport"] = discovery.endpoint.kind
+        result["socket"] = discovery.endpoint.display
+        try:
+            daemon_status = self._run(observer.status())
+            if isinstance(daemon_status, Success):
+                result["backend"] = daemon_status.value.backend_profile
+                result["url"] = daemon_status.value.ui_url
+        finally:
+            self._run(observer.close())
+        return result
 
     def health(self) -> dict[str, Any]:
         if self.in_process:
             return {"live": True, "mode": "in_process"}
-        discovery = self.discovery() or {}
-        base_url = discovery.get("base_url")
-        if base_url:
-            try:
-                import httpx
-
-                response = httpx.get(f"{base_url.rstrip('/')}/health", timeout=3.0)
-                data = response.json()
-                return {
-                    "live": 200 <= response.status_code < 300,
-                    "mode": "detached",
-                    **data,
-                }
-            except Exception:  # noqa: BLE001 - daemon health must be best-effort.
-                return {"live": False, "mode": "detached"}
-        from potpie.daemon.process.ipc_client import client_for
-
-        try:
-            with client_for(self.home) as client:
-                response = client.get("/admin/health")
-                return {
-                    "live": 200 <= response.status_code < 300,
-                    "mode": "detached",
-                    **response.json(),
-                }
-        except Exception:  # noqa: BLE001 - daemon health must be best-effort.
-            return {"live": False, "mode": "detached"}
+        status = self.status()
+        return {
+            "live": bool(status.get("up") and status.get("ready")),
+            "mode": "detached",
+            **({"pid": status["pid"]} if status.get("pid") else {}),
+            **({"backend": status["backend"]} if "backend" in status else {}),
+        }
 
     def logs(self, *, follow: bool = False) -> list[str]:
-        del follow  # Streaming remains a presentation concern; output is unchanged.
+        del follow
         controller = self._controller or self._new_controller(backend=None)
         return controller.logs()
 
@@ -276,12 +204,7 @@ class Daemon:
                 "daemon.ensure",
                 SKIPPED,
                 f"daemon already running (pid={status.get('pid')})",
-                metadata={
-                    "mode": "detached",
-                    "pid": status.get("pid"),
-                    "socket": status.get("socket"),
-                    "url": status.get("url"),
-                },
+                metadata={"mode": "detached", **status},
             )
         info = self.start(backend=plan.backend if plan is not None else None)
         return StepResult(
@@ -307,18 +230,37 @@ class Daemon:
         controller = self._new_controller(backend=backend)
         outcome = self._run(controller.start())
         if isinstance(outcome, Failure):
-            self._cleanup_stale_runtime_records()
+            self._cleanup_runtime_records()
             raise DaemonStartError(
                 outcome.error.message,
                 log_path=self.home / "logs" / "potpied.log",
             )
+        endpoint = self._pending_endpoint
+        instance_id = self._pending_instance_id
+        if endpoint is None or instance_id is None or outcome.value.pid is None:
+            self._run(controller.stop())
+            self._cleanup_runtime_records()
+            raise DaemonStartError("daemon boot identity was not retained")
+        discovery = canonical_discovery(
+            home=self.home,
+            instance_id=instance_id,
+            pid=outcome.value.pid,
+            endpoint=endpoint,
+        )
+        try:
+            write_daemon_pid(self.home, outcome.value.pid)
+            write_daemon_discovery(self.home, discovery)
+        except Exception:
+            self._run(controller.stop())
+            self._cleanup_runtime_records()
+            raise
         self._controller = controller
-        discovery = self.discovery() or {}
+        status = self.status()
         return {
             "pid": outcome.value.pid,
-            "socket": "",
-            "bind": "",
-            "url": discovery.get("base_url", ""),
+            "socket": endpoint.display,
+            "bind": f"{endpoint.kind}:{endpoint.display}",
+            "url": status.get("url", ""),
         }
 
     def stop(self) -> dict[str, Any]:
@@ -330,12 +272,12 @@ class Daemon:
         if not _pid_alive(pid):
             self._cleanup_runtime_records()
             return {"detail": "stale pid file removed"}
-        discovery = _read_reflective_discovery(self.home)
-        if discovery is not None and not _discovery_matches_pid(discovery, pid):
-            self._cleanup_runtime_records()
-            return {"detail": "stale daemon discovery removed"}
         if controller is None:
-            controller = self._controller_for_existing(pid)
+            connection = self._connection_for_pid(pid)
+            observer = (
+                connection[1] if connection is not None else _SignalFallbackObserver()
+            )
+            controller = self._controller_for_existing(pid, observer=observer)
         outcome = self._run(controller.stop())
         self._cleanup_runtime_records()
         self._controller = None
@@ -377,21 +319,40 @@ class Daemon:
             ),
         )
 
-    def _controller_for_existing(self, pid: int) -> DaemonController:
+    def _controller_for_existing(
+        self,
+        pid: int,
+        *,
+        observer: DaemonObserver | _SignalFallbackObserver,
+    ) -> DaemonController:
         if self._controller is not None and self._controller.pid == pid:
             return self._controller
         controller = self._new_controller(backend=None)
-        process = _RecordedDaemonProcess(pid)
-        launch = self._launch_spec(backend=None)
         self._run(
             controller.attach(
-                process=process,
-                observer=_ReflectiveDaemonObserver(home=self.home),
-                launch=launch,
+                process=_RecordedDaemonProcess(pid),
+                observer=observer,
+                launch=None,
             )
         )
         self._controller = controller
         return controller
+
+    def _connection_for_pid(self, pid: int):
+        try:
+            connection = load_daemon_connection(self.home)
+        except DaemonDiscoveryError:
+            return None
+        if connection.discovery.pid != pid:
+            return None
+        return (
+            connection.discovery,
+            DaemonObserver(
+                endpoint=connection.discovery.endpoint,
+                bearer_token=connection.bearer_token,
+                expected_instance_id=connection.discovery.instance_id,
+            ),
+        )
 
     def _run(self, awaitable: Any) -> Any:
         if self._runner is None:
@@ -399,27 +360,57 @@ class Daemon:
         return self._runner.run(awaitable)
 
     def _boot_spec(self, *, backend: str | None) -> DaemonBootSpec:
+        instance_id = str(uuid4())
+        endpoint = select_runtime_endpoint(self.home, instance_id=instance_id)
+        bearer_token = generate_bearer_token()
+        write_daemon_credential(self.home, bearer_token)
+        self._pending_endpoint = endpoint
+        self._pending_instance_id = instance_id
         return DaemonBootSpec(
-            launch=self._launch_spec(backend=backend),
-            observer=_ReflectiveDaemonObserver(home=self.home),
+            launch=self._launch_spec(
+                backend=backend,
+                endpoint=endpoint,
+                instance_id=instance_id,
+                ui_port=_available_loopback_port(),
+            ),
+            observer=DaemonObserver(
+                endpoint=endpoint,
+                bearer_token=bearer_token,
+                expected_instance_id=instance_id,
+            ),
         )
 
-    def _launch_spec(self, *, backend: str | None) -> DaemonLaunchSpec:
+    def _launch_spec(
+        self,
+        *,
+        backend: str | None,
+        endpoint: RuntimeEndpoint,
+        instance_id: str,
+        ui_port: int,
+    ) -> DaemonLaunchSpec:
         from potpie.cli.telemetry.settings import load_cli_runtime_settings
         from potpie_context_engine.bootstrap.runtime_settings import (
             project_child_environment,
         )
 
+        overrides = {
+            "CONTEXT_ENGINE_HOME": str(self.home.resolve()),
+            "POTPIE_DAEMON_ENDPOINT_KIND": endpoint.kind,
+            "POTPIE_DAEMON_ENDPOINT_ADDRESS": endpoint.address,
+            "POTPIE_DAEMON_INSTANCE_ID": instance_id,
+            "POTPIE_DAEMON_UI_PORT": str(ui_port),
+            **(
+                {"POTPIE_DAEMON_ENDPOINT_PORT": str(endpoint.port)}
+                if endpoint.port
+                else {}
+            ),
+            **({"CONTEXT_ENGINE_BACKEND": backend} if backend else {}),
+        }
         environment = project_child_environment(
-            load_cli_runtime_settings(),
-            os.environ,
-            overrides={
-                "CONTEXT_ENGINE_HOME": str(self.home),
-                **({"CONTEXT_ENGINE_BACKEND": backend} if backend else {}),
-            },
+            load_cli_runtime_settings(), os.environ, overrides=overrides
         )
         return DaemonLaunchSpec(
-            command=(sys.executable, "-m", "potpie.daemon.main"),
+            command=(sys.executable, "-m", "potpie.daemon"),
             environment=environment,
             log_path=self.home / "logs" / "potpied.log",
         )
@@ -429,16 +420,18 @@ class Daemon:
 
         return read_pid_file(self.home / "daemon.pid")
 
-    def _cleanup_stale_runtime_records(self) -> None:
-        pid = self._recorded_pid()
-        if pid is None or not _pid_alive(pid):
-            self._cleanup_runtime_records()
-
     def _cleanup_runtime_records(self) -> None:
-        from potpie.daemon.process.pidfile import remove_pid_file
+        remove_daemon_runtime_records(self.home)
+        try:
+            (self.home / "daemon.json").unlink()
+        except FileNotFoundError:
+            pass
 
-        for name in ("daemon.pid", "discovery.json", "daemon.json"):
-            remove_pid_file(self.home / name)
+
+def _available_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 __all__ = ["Daemon"]

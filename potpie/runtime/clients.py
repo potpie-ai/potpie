@@ -21,6 +21,9 @@ from potpie.runtime.protocol import (
     PROTOCOL_MIN_VERSION,
     PROTOCOL_VERSION,
     DaemonInternalError,
+    DaemonStatusPayload,
+    DaemonStatusRequest,
+    DaemonStatusResult,
     EngineOperationRequest,
     FailureResponse,
     HandshakePayload,
@@ -118,9 +121,7 @@ class EngineClient(ABC):
     async def record(self, request: RecordRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.RECORD, request)
 
-    async def data_plane_status(
-        self, request: DataPlaneStatusRequest
-    ) -> ClientOutcome:
+    async def data_plane_status(self, request: DataPlaneStatusRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.DATA_PLANE_STATUS, request)
 
     async def catalog(self, request: CatalogRequest) -> ClientOutcome:
@@ -308,15 +309,11 @@ async def _inbox_add(engine: ContextEngine, request: EngineRequest) -> Outcome[o
     return await engine.inbox_add(cast(InboxAddRequest, request))
 
 
-async def _inbox_list(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
+async def _inbox_list(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
     return await engine.inbox_list(cast(InboxListRequest, request))
 
 
-async def _inbox_show(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
+async def _inbox_show(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
     return await engine.inbox_show(cast(InboxShowRequest, request))
 
 
@@ -529,7 +526,9 @@ class DaemonEngineClient(EngineClient):
     def handshake_result(self) -> HandshakeResult | None:
         return self._handshake_result
 
-    async def handshake(self) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
+    async def handshake(
+        self,
+    ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
         request = HandshakeRequest(
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
@@ -631,7 +630,9 @@ class DaemonControlClient:
     def handshake_result(self) -> HandshakeResult | None:
         return self._handshake_result
 
-    async def handshake(self) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
+    async def handshake(
+        self,
+    ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
         request = HandshakeRequest(
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
@@ -701,6 +702,43 @@ class DaemonControlClient:
                 ProtocolError(
                     code="shutdown_result_malformed",
                     message="daemon shutdown returned an invalid result",
+                )
+            )
+        return Success(result)
+
+    async def status(
+        self,
+    ) -> Success[DaemonStatusResult] | Failure[RuntimeBoundaryError]:
+        if self._handshake_result is None:
+            return Failure(
+                ProtocolError(
+                    code="handshake_required",
+                    message="a compatible daemon handshake is required",
+                    recommended_next_action="perform an authenticated handshake",
+                    retry_posture="safe",
+                )
+            )
+        request = DaemonStatusRequest(
+            protocol_version=PROTOCOL_VERSION,
+            request_id=self._request_id_factory(),
+            payload=DaemonStatusPayload(),
+        )
+        response_or_error = await _send_protocol_request(
+            transport=self._transport,
+            request=request,
+            safety=SafetyClass.DAEMON_LIFECYCLE_CONTROL,
+        )
+        if isinstance(response_or_error, Failure):
+            return response_or_error
+        response = response_or_error.value
+        if isinstance(response, FailureResponse):
+            return response.outcome
+        result = response.outcome.value
+        if not isinstance(result, DaemonStatusResult):
+            return Failure(
+                ProtocolError(
+                    code="daemon_status_result_malformed",
+                    message="daemon status returned an invalid result",
                 )
             )
         return Success(result)
@@ -802,9 +840,7 @@ def _build_operation_request(
     )
 
 
-def _outcome_may_be_unknown(
-    safety: SafetyClass | None, *, dispatched: bool
-) -> bool:
+def _outcome_may_be_unknown(safety: SafetyClass | None, *, dispatched: bool) -> bool:
     return dispatched and safety in {
         SafetyClass.EXCLUSIVE_CONTEXT_MUTATION,
         SafetyClass.EXCLUSIVE_RESOURCE_MUTATION,
@@ -821,9 +857,7 @@ async def _send_protocol_request(
     try:
         response = await transport.send(request)
     except TransportFailure as exc:
-        outcome_unknown = _outcome_may_be_unknown(
-            safety, dispatched=exc.dispatched
-        )
+        outcome_unknown = _outcome_may_be_unknown(safety, dispatched=exc.dispatched)
         return Failure(
             ProtocolTransportError(
                 code=exc.code,

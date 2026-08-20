@@ -50,7 +50,9 @@ class _Handler:
             raise RuntimeError("sensitive traceback detail")
         if self.unsupported_result:
             return Success(object())
-        return Success({"operation": request.operation.value, "payload": request.payload.payload})
+        return Success(
+            {"operation": request.operation.value, "payload": request.payload.payload}
+        )
 
 
 def _endpoint(kind: str, tmp_path: Path) -> RuntimeEndpoint:
@@ -69,6 +71,8 @@ async def _running_runtime(kind: str, tmp_path: Path, handler: _Handler):
         operation_handler=handler,
         ownership_lock_path=tmp_path / "runtime.lock",
         instance_id="instance-1",
+        backend_profile="embedded",
+        ui_url="http://127.0.0.1:8765",
     )
     await runtime.start()
     serve_task = asyncio.create_task(runtime.serve_until_shutdown())
@@ -110,10 +114,14 @@ async def test_authenticated_runtime_handshake_operation_and_typed_stop(
             SearchRequest(payload={"query": "typed"})
         )
         control_handshake = await control_client.handshake()
+        status = await control_client.status()
         shutdown = await control_client.shutdown(reason="integration_test")
 
         assert isinstance(handshake, Success)
         assert isinstance(control_handshake, Success)
+        assert isinstance(status, Success)
+        assert status.value.backend_profile == "embedded"
+        assert status.value.ui_url == "http://127.0.0.1:8765"
         assert operation == Success(
             {"operation": "search", "payload": {"query": "typed"}}
         )
@@ -234,7 +242,9 @@ async def test_malformed_and_unknown_requests_return_safe_correlated_envelopes(
         assert malformed.status_code == 400
         assert isinstance(malformed_body["request_id"], str)
         assert malformed_body["request_id"]
-        assert malformed_body["outcome"]["error"]["code"] == "request_envelope_malformed"
+        assert (
+            malformed_body["outcome"]["error"]["code"] == "request_envelope_malformed"
+        )
         assert unknown.status_code == 400
         assert unknown_body["request_id"] == "unknown-1"
         assert unknown_body["outcome"]["error"]["code"] == "operation_unknown"

@@ -104,8 +104,8 @@ class _Daemon:
     def ensure(self):
         return None
 
-    def discovery(self):
-        return {"base_url": "http://127.0.0.1:8765"}
+    def status(self):
+        return {"ready": True, "url": "http://127.0.0.1:8765"}
 
 
 class _Status:

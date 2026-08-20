@@ -45,7 +45,7 @@ dependencies = [
 
 [project.scripts]
 potpie = "potpie.cli.main:main"
-potpie-daemon = "potpie.daemon.main:main"
+potpie-daemon = "potpie.daemon.__main__:main"
 
 [project.urls]
 Homepage = "https://potpie.ai"

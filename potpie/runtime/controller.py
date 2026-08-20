@@ -92,7 +92,7 @@ class DaemonBootSpec:
 DaemonBootFactory: TypeAlias = Callable[[], DaemonBootSpec]
 
 
-class TypedDaemonObserver:
+class DaemonObserver:
     """Observe readiness and stop through the authenticated typed protocol."""
 
     def __init__(
@@ -155,6 +155,13 @@ class TypedDaemonObserver:
                 return handshake
         return await self._client.shutdown(reason="controller_requested")
 
+    async def status(self):
+        if self._client.handshake_result is None:
+            handshake = await self._client.handshake()
+            if isinstance(handshake, Failure):
+                return handshake
+        return await self._client.status()
+
     async def close(self) -> None:
         await self._transport.close()
 
@@ -185,7 +192,9 @@ class DaemonController:
     @property
     def pid(self) -> int | None:
         process = self._process
-        return process.pid if process is not None and process.returncode is None else None
+        return (
+            process.pid if process is not None and process.returncode is None else None
+        )
 
     async def start(self) -> ControllerStartOutcome:
         async with self._lock:
@@ -350,9 +359,7 @@ class DaemonController:
                     )
             if isinstance(requested, Success):
                 try:
-                    await asyncio.wait_for(
-                        process.wait(), timeout=self._stop_timeout_s
-                    )
+                    await asyncio.wait_for(process.wait(), timeout=self._stop_timeout_s)
                     if process.returncode == 0:
                         result = StopResult(
                             mode="typed_shutdown", exit_code=process.returncode
@@ -391,14 +398,10 @@ class DaemonController:
         candidates.extend(path for path in self._log_paths if path not in candidates)
         for path in candidates:
             if path.exists():
-                return path.read_text(
-                    encoding="utf-8", errors="replace"
-                ).splitlines()
+                return path.read_text(encoding="utf-8", errors="replace").splitlines()
         return []
 
-    async def _bounded_terminate(
-        self, process: DaemonProcessHandle
-    ) -> StopResult:
+    async def _bounded_terminate(self, process: DaemonProcessHandle) -> StopResult:
         if process.returncode is not None:
             return StopResult(mode="already_stopped", exit_code=process.returncode)
         try:
@@ -466,5 +469,5 @@ __all__ = [
     "DaemonProcessHandle",
     "DaemonProcessObserver",
     "StopResult",
-    "TypedDaemonObserver",
+    "DaemonObserver",
 ]

@@ -77,6 +77,7 @@ class EngineOperation(StrEnum):
 
 class DaemonControlOperation(StrEnum):
     HANDSHAKE = "daemon.handshake"
+    STATUS = "daemon.status"
     SHUTDOWN = "daemon.shutdown"
 
 
@@ -115,9 +116,7 @@ _SPECS = (
     OperationSpec(EngineOperation.RESOLVE, ResolveRequest, _READ),
     OperationSpec(EngineOperation.SEARCH, SearchRequest, _READ),
     OperationSpec(EngineOperation.RECORD, RecordRequest, _WRITE),
-    OperationSpec(
-        EngineOperation.DATA_PLANE_STATUS, DataPlaneStatusRequest, _READ
-    ),
+    OperationSpec(EngineOperation.DATA_PLANE_STATUS, DataPlaneStatusRequest, _READ),
     OperationSpec(EngineOperation.CATALOG, CatalogRequest, _READ),
     OperationSpec(EngineOperation.DESCRIBE, DescribeRequest, _READ),
     OperationSpec(EngineOperation.READ, ReadRequest, _READ),
@@ -146,20 +145,14 @@ _SPECS = (
     OperationSpec(EngineOperation.INBOX_LIST, InboxListRequest, _READ),
     OperationSpec(EngineOperation.INBOX_SHOW, InboxShowRequest, _READ),
     OperationSpec(EngineOperation.INBOX_CLAIM, InboxClaimRequest, _WRITE),
-    OperationSpec(
-        EngineOperation.INBOX_MARK_APPLIED, InboxMarkAppliedRequest, _WRITE
-    ),
+    OperationSpec(EngineOperation.INBOX_MARK_APPLIED, InboxMarkAppliedRequest, _WRITE),
     OperationSpec(
         EngineOperation.INBOX_MARK_REJECTED, InboxMarkRejectedRequest, _WRITE
     ),
     OperationSpec(EngineOperation.INBOX_CLOSE, InboxCloseRequest, _WRITE),
     OperationSpec(EngineOperation.SUBMIT_EVENT, SubmitEventRequest, _WRITE),
-    OperationSpec(
-        EngineOperation.SUBMIT_ARTIFACT, SubmitArtifactRequest, _WRITE
-    ),
-    OperationSpec(
-        EngineOperation.PROCESSING_STATUS, ProcessingStatusRequest, _READ
-    ),
+    OperationSpec(EngineOperation.SUBMIT_ARTIFACT, SubmitArtifactRequest, _WRITE),
+    OperationSpec(EngineOperation.PROCESSING_STATUS, ProcessingStatusRequest, _READ),
     OperationSpec(EngineOperation.NUDGE, NudgeRequest, _WRITE),
 )
 
@@ -172,13 +165,12 @@ ENGINE_OPERATION_CATALOG: Mapping[EngineOperation, OperationSpec] = MappingProxy
     {spec.operation: spec for spec in _SPECS}
 )
 
-DAEMON_CONTROL_SAFETY: Mapping[DaemonControlOperation, SafetyClass] = (
-    MappingProxyType(
-        {
-            DaemonControlOperation.HANDSHAKE: SafetyClass.DAEMON_LIFECYCLE_CONTROL,
-            DaemonControlOperation.SHUTDOWN: SafetyClass.DAEMON_LIFECYCLE_CONTROL,
-        }
-    )
+DAEMON_CONTROL_SAFETY: Mapping[DaemonControlOperation, SafetyClass] = MappingProxyType(
+    {
+        DaemonControlOperation.HANDSHAKE: SafetyClass.DAEMON_LIFECYCLE_CONTROL,
+        DaemonControlOperation.STATUS: SafetyClass.DAEMON_LIFECYCLE_CONTROL,
+        DaemonControlOperation.SHUTDOWN: SafetyClass.DAEMON_LIFECYCLE_CONTROL,
+    }
 )
 
 

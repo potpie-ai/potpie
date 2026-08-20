@@ -4,7 +4,7 @@ Context-domain commands acquire a typed ``EngineClient``; root-owned commands
 continue to use explicit Potpie services while their callers migrate. This
 module owns the cross-cutting concerns so command bodies stay thin:
 
-- one cached legacy root host and context resource manager per process;
+- one cached root compatibility host and context resource manager per process;
 - ``--json`` output state + ``emit`` / ``fail`` helpers;
 - the ``contract()`` error boundary that maps domain errors to the documented
   exit codes (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth) and the
@@ -54,8 +54,8 @@ _state: dict[str, Any] = {
     "engine_runner": None,
     "engine_manager": None,
     "engine_host": None,
-    "engine_remote_host": None,
-    "engine_remote_home": None,
+    "engine_daemon_client": None,
+    "engine_daemon_key": None,
     "pot_service": None,
     "pot_service_host": None,
     "root_product_services": {},
@@ -110,17 +110,6 @@ def is_verbose() -> bool:
 def get_host():
     """Return the process-wide ``HostShell`` (built lazily)."""
     if _state["host"] is None:
-        mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "").strip().lower()
-        if mode != "in_process":
-            try:
-                from potpie.daemon.client import RemoteHostShell
-            except ModuleNotFoundError as exc:
-                if exc.name not in {"potpie.daemon", "potpie.daemon.client"}:
-                    raise
-            else:
-                _state["host"] = RemoteHostShell()
-                return _state["host"]
-
         from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 
         _state["host"] = build_host_shell()
@@ -132,6 +121,8 @@ def set_host(host: Any) -> None:
     _state["host"] = host
     _state["engine_manager"] = None
     _state["engine_host"] = None
+    _state["engine_daemon_client"] = None
+    _state["engine_daemon_key"] = None
     _state["pot_service"] = None
     _state["pot_service_host"] = None
     _state["root_product_services"] = {}
@@ -226,25 +217,60 @@ class EngineClientError(Exception):
 
 
 def get_engine_client(explicit_pot: str | None = None, *, host: Any | None = None):
-    """Compose the explicitly selected local or temporary daemon engine client."""
-    from potpie.runtime import LocalEngineClient
-    from potpie.runtime.legacy_host_adapter import (
-        build_legacy_engine_client,
-        build_local_resource_manager,
+    """Compose the explicitly selected local or canonical daemon engine client."""
+    from potpie.runtime import (
+        DaemonEngineClient,
+        HttpDaemonTransport,
+        LocalEngineClient,
+        ProtocolTransportError,
     )
+    from potpie.runtime.legacy_host_adapter import build_local_resource_manager
 
     selector = _context_selector(explicit_pot)
     mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "daemon").strip().lower()
     if mode != "in_process":
-        home = os.getenv("CONTEXT_ENGINE_HOME", "")
-        remote = _state.get("engine_remote_host")
-        if remote is None or _state.get("engine_remote_home") != home:
-            from potpie.daemon.client import RemoteHostShell
+        from potpie.daemon.discovery import (
+            DaemonDiscoveryError,
+            load_daemon_connection,
+        )
+        from potpie_context_engine.adapters.outbound.pots.local_pot_store import (
+            default_home,
+        )
 
-            remote = RemoteHostShell()
-            _state["engine_remote_host"] = remote
-            _state["engine_remote_home"] = home
-        return build_legacy_engine_client(host=remote, selector=selector)
+        home = Path(os.getenv("CONTEXT_ENGINE_HOME") or default_home()).resolve()
+        try:
+            connection = load_daemon_connection(home)
+        except DaemonDiscoveryError as exc:
+            raise EngineClientError(
+                ProtocolTransportError(
+                    code="daemon_discovery_unavailable",
+                    message="canonical daemon discovery is unavailable",
+                    recommended_next_action="run 'potpie daemon restart'",
+                    retry_posture="safe",
+                )
+            ) from exc
+        key = (
+            str(home),
+            connection.discovery.instance_id,
+            selector.kind,
+            selector.value,
+        )
+        client = _state.get("engine_daemon_client")
+        if client is None or _state.get("engine_daemon_key") != key:
+            client = DaemonEngineClient(
+                selector=selector,
+                transport=HttpDaemonTransport(
+                    endpoint=connection.discovery.endpoint,
+                    bearer_token=connection.bearer_token,
+                ),
+                expected_instance_id=connection.discovery.instance_id,
+            )
+            handshake = _run_engine_awaitable(client.handshake())
+            if not getattr(handshake, "ok", False):
+                raise EngineClientError(handshake.error)
+            _state["engine_daemon_client"] = client
+            _state["engine_daemon_key"] = key
+        return client
 
     host = host if host is not None else get_host()
     manager = _state.get("engine_manager")
@@ -261,14 +287,19 @@ def get_engine_client(explicit_pot: str | None = None, *, host: Any | None = Non
 
 def run_engine_operation(awaitable):
     """Run one async engine-client call and expose typed failures to contract()."""
+    outcome = _run_engine_awaitable(awaitable)
+    if not getattr(outcome, "ok", False):
+        raise EngineClientError(outcome.error)
+    return outcome.value
+
+
+def _run_engine_awaitable(awaitable):
     runner = _state.get("engine_runner")
     if runner is None:
         runner = asyncio.Runner()
         _state["engine_runner"] = runner
     outcome = runner.run(awaitable)
-    if not getattr(outcome, "ok", False):
-        raise EngineClientError(outcome.error)
-    return outcome.value
+    return outcome
 
 
 def _context_selector(explicit_pot: str | None):
@@ -920,8 +951,7 @@ def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
 
 def pot_source_count(host: Any, pot_id: str) -> int:
     return len(
-        _safe_call(lambda: get_pot_service(host).list_sources(pot_id=pot_id), [])
-        or []
+        _safe_call(lambda: get_pot_service(host).list_sources(pot_id=pot_id), []) or []
     )
 
 

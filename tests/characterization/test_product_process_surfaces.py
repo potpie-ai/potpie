@@ -90,8 +90,16 @@ def test_cli_top_level_command_surface_is_unchanged() -> None:
     assert set(command.commands) == EXPECTED_CLI_COMMANDS
 
 
-def test_shipped_reflective_daemon_routes_are_characterized(monkeypatch: Any) -> None:
+def test_shipped_daemon_entrypoint_is_canonical_and_nonreflective() -> None:
     module, _main = _load_script("potpie-daemon")
+    assert module.__name__ == "potpie.daemon.__main__"
+    assert not hasattr(module, "create_app")
+
+
+def test_temporary_unselected_reflective_routes_are_characterized(
+    monkeypatch: Any,
+) -> None:
+    module = import_module("potpie.daemon.main")
     host = SimpleNamespace(backend=SimpleNamespace(profile="characterization"))
     monkeypatch.setattr(module, "build_host_shell", lambda: host)
     monkeypatch.setattr(module, "build_ui_api_router", lambda _host: APIRouter())

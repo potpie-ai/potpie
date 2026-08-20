@@ -16,7 +16,7 @@ from potpie.runtime import (
     ProtocolTransportError,
     RuntimeEndpoint,
     StopResult,
-    TypedDaemonObserver,
+    DaemonObserver,
     generate_bearer_token,
 )
 from potpie_context_engine import Failure, Success
@@ -89,7 +89,7 @@ async def test_controller_starts_observes_and_typed_stops_real_foreground_child(
     token = generate_bearer_token()
     instance_id = "controller-instance"
     endpoint = RuntimeEndpoint(kind="uds", address=str(socket_path))
-    observer = TypedDaemonObserver(
+    observer = DaemonObserver(
         endpoint=endpoint,
         bearer_token=token,
         expected_instance_id=instance_id,
@@ -187,7 +187,7 @@ async def test_controller_restart_composes_fresh_boot_identity(
                     ),
                 },
             ),
-            observer=TypedDaemonObserver(
+            observer=DaemonObserver(
                 endpoint=endpoint,
                 bearer_token=token,
                 expected_instance_id=instance_id,
@@ -212,7 +212,9 @@ async def test_controller_restart_composes_fresh_boot_identity(
 
 
 @pytest.mark.anyio
-async def test_readiness_failure_terminates_owned_child_and_returns_typed_error() -> None:
+async def test_readiness_failure_terminates_owned_child_and_returns_typed_error() -> (
+    None
+):
     observer = _FallbackObserver(ready=False)
     controller = DaemonController(
         boot_factory=lambda: DaemonBootSpec(

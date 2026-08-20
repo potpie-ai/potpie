@@ -111,6 +111,20 @@ class ShutdownResult:
 
 
 @dataclass(frozen=True, slots=True)
+class DaemonStatusPayload:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class DaemonStatusResult:
+    instance_id: str
+    pid: int
+    lifecycle_state: LifecycleState
+    backend_profile: str
+    ui_url: str
+
+
+@dataclass(frozen=True, slots=True)
 class EngineOperationRequest:
     protocol_version: int
     request_id: str
@@ -154,7 +168,20 @@ class ShutdownRequest:
         _validate_request_identity(self.protocol_version, self.request_id)
 
 
-ProtocolRequest: TypeAlias = EngineOperationRequest | HandshakeRequest | ShutdownRequest
+@dataclass(frozen=True, slots=True)
+class DaemonStatusRequest:
+    protocol_version: int
+    request_id: str
+    payload: DaemonStatusPayload
+    operation: Literal[DaemonControlOperation.STATUS] = DaemonControlOperation.STATUS
+
+    def __post_init__(self) -> None:
+        _validate_request_identity(self.protocol_version, self.request_id)
+
+
+ProtocolRequest: TypeAlias = (
+    EngineOperationRequest | HandshakeRequest | DaemonStatusRequest | ShutdownRequest
+)
 
 T = TypeVar("T")
 
@@ -223,6 +250,9 @@ __all__ = [
     "PROTOCOL_MIN_VERSION",
     "PROTOCOL_VERSION",
     "DaemonInternalError",
+    "DaemonStatusPayload",
+    "DaemonStatusRequest",
+    "DaemonStatusResult",
     "EngineOperationRequest",
     "FailureResponse",
     "HandshakePayload",

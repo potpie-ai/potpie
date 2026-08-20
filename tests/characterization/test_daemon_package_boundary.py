@@ -81,7 +81,7 @@ def test_temporary_engine_to_daemon_imports_are_explicitly_bounded() -> None:
 def test_root_daemon_entrypoint_targets_relocated_package() -> None:
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert metadata["project"]["scripts"]["potpie-daemon"] == (
-        "potpie.daemon.main:main"
+        "potpie.daemon.__main__:main"
     )
 
 

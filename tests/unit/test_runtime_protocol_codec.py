@@ -10,6 +10,9 @@ from potpie.runtime import (
     AuthenticationError,
     ContextSelector,
     DaemonInternalError,
+    DaemonStatusPayload,
+    DaemonStatusRequest,
+    DaemonStatusResult,
     EngineOperation,
     EngineOperationRequest,
     FailureResponse,
@@ -66,6 +69,11 @@ def test_every_engine_operation_round_trips_without_python_class_identity(
             request_id="shutdown-1",
             payload=ShutdownPayload(reason="test"),
         ),
+        DaemonStatusRequest(
+            protocol_version=PROTOCOL_VERSION,
+            request_id="status-1",
+            payload=DaemonStatusPayload(),
+        ),
     ],
 )
 def test_control_requests_round_trip(protocol_request: object) -> None:
@@ -112,6 +120,32 @@ def test_shutdown_success_response_round_trips_to_typed_result() -> None:
         protocol_version=PROTOCOL_VERSION,
         request_id=request.request_id,
         outcome=Success(ShutdownResult(accepted=True)),
+    )
+
+    decoded = decode_response(encode_response(response), request=request)
+
+    assert isinstance(decoded, Success)
+    assert decoded.value == response
+
+
+def test_daemon_status_success_response_round_trips_to_typed_result() -> None:
+    request = DaemonStatusRequest(
+        protocol_version=PROTOCOL_VERSION,
+        request_id="status-1",
+        payload=DaemonStatusPayload(),
+    )
+    response = SuccessResponse(
+        protocol_version=PROTOCOL_VERSION,
+        request_id=request.request_id,
+        outcome=Success(
+            DaemonStatusResult(
+                instance_id="instance-1",
+                pid=42,
+                lifecycle_state="ready",
+                backend_profile="embedded",
+                ui_url="http://127.0.0.1:8765",
+            )
+        ),
     )
 
     decoded = decode_response(encode_response(response), request=request)

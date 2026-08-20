@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
+from datetime import date, datetime
+from enum import Enum
+from pathlib import Path
 from typing import TypeAlias, cast
+from uuid import UUID
 
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
@@ -13,6 +17,9 @@ from potpie.runtime.operations import (
 )
 from potpie.runtime.protocol import (
     DaemonInternalError,
+    DaemonStatusPayload,
+    DaemonStatusRequest,
+    DaemonStatusResult,
     EngineOperationRequest,
     FailureResponse,
     HandshakePayload,
@@ -51,9 +58,7 @@ DecodeRequestOutcome: TypeAlias = Success[ProtocolRequest] | Failure[ProtocolErr
 DecodeResponseOutcome: TypeAlias = Success[ProtocolResponse] | Failure[ProtocolError]
 
 _RETRY_POSTURES = frozenset({"safe", "unsafe", "unknown", "not_applicable"})
-_LIFECYCLE_STATES = frozenset(
-    {"starting", "ready", "draining", "failed", "stopped"}
-)
+_LIFECYCLE_STATES = frozenset({"starting", "ready", "draining", "failed", "stopped"})
 
 
 def encode_request(request: ProtocolRequest) -> dict[str, object]:
@@ -81,6 +86,9 @@ def encode_request(request: ProtocolRequest) -> dict[str, object]:
     if isinstance(request, HandshakeRequest):
         common["payload"] = _to_wire(request.payload)
         return common
+    if isinstance(request, DaemonStatusRequest):
+        common["payload"] = {}
+        return common
     if isinstance(request, ShutdownRequest):
         common["payload"] = _to_wire(request.payload)
         return common
@@ -89,7 +97,9 @@ def encode_request(request: ProtocolRequest) -> dict[str, object]:
 
 def decode_request(document: object) -> DecodeRequestOutcome:
     if not isinstance(document, Mapping):
-        return _protocol_failure("request_envelope_malformed", "request must be an object")
+        return _protocol_failure(
+            "request_envelope_malformed", "request must be an object"
+        )
     common = _decode_common_envelope(document)
     if isinstance(common, Failure):
         return common
@@ -192,6 +202,18 @@ def decode_request(document: object) -> DecodeRequestOutcome:
             return _protocol_failure(
                 "operation_payload_malformed", "handshake payload is invalid"
             )
+    if control_operation is DaemonControlOperation.STATUS:
+        if payload:
+            return _protocol_failure(
+                "operation_payload_malformed", "status payload must be empty"
+            )
+        return Success(
+            DaemonStatusRequest(
+                protocol_version=protocol_version,
+                request_id=request_id,
+                payload=DaemonStatusPayload(),
+            )
+        )
     if set(payload) != {"reason"} or not isinstance(payload.get("reason"), str):
         return _protocol_failure(
             "operation_payload_malformed", "shutdown payload is invalid"
@@ -327,7 +349,35 @@ def _decode_result(
                 "response_result_malformed", "shutdown result is invalid"
             )
         return Success(ShutdownResult(accepted=value["accepted"]))
-    return Success(value)
+    if isinstance(request, DaemonStatusRequest):
+        if not isinstance(value, Mapping) or set(value) != {
+            "instance_id",
+            "pid",
+            "lifecycle_state",
+            "backend_profile",
+            "ui_url",
+        }:
+            return _protocol_failure(
+                "response_result_malformed", "daemon status result is invalid"
+            )
+        try:
+            lifecycle_state = _required_string(value, "lifecycle_state")
+            if lifecycle_state not in _LIFECYCLE_STATES:
+                raise ValueError("invalid lifecycle state")
+            return Success(
+                DaemonStatusResult(
+                    instance_id=_required_string(value, "instance_id"),
+                    pid=_required_int(value, "pid"),
+                    lifecycle_state=cast(LifecycleState, lifecycle_state),
+                    backend_profile=_required_string(value, "backend_profile"),
+                    ui_url=_required_string(value, "ui_url"),
+                )
+            )
+        except (TypeError, ValueError):
+            return _protocol_failure(
+                "response_result_malformed", "daemon status result is invalid"
+            )
+    return Success(_from_wire(value))
 
 
 def _decode_error(
@@ -516,12 +566,48 @@ def _to_wire(value: object) -> object:
         return {str(key): _to_wire(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_to_wire(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [_to_wire(item) for item in sorted(value, key=str)]
+    if isinstance(value, Enum):
+        return _to_wire(value.value)
+    if isinstance(value, (datetime, date, Path, UUID)):
+        return str(value)
     if is_dataclass(value) and not isinstance(value, type):
         return {
-            item.name: _to_wire(getattr(value, item.name))
-            for item in fields(value)
+            item.name: _to_wire(getattr(value, item.name)) for item in fields(value)
         }
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return _to_wire(model_dump(mode="json"))
     raise TypeError(f"unsupported protocol value: {type(value).__name__}")
+
+
+class _WireObject(dict[str, object]):
+    """JSON object with mapping and attribute access for typed result consumers."""
+
+    def __getattribute__(self, name: str) -> object:
+        if not name.startswith("_") and dict.__contains__(self, name):
+            return dict.__getitem__(self, name)
+        return dict.__getattribute__(self, name)
+
+    def to_dict(self) -> dict[str, object]:
+        return {key: _plain_wire(value) for key, value in dict.items(self)}
+
+
+def _from_wire(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _WireObject({str(key): _from_wire(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return [_from_wire(item) for item in value]
+    return value
+
+
+def _plain_wire(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _plain_wire(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain_wire(item) for item in value]
+    return value
 
 
 __all__ = [

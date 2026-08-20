@@ -5,8 +5,9 @@ from __future__ import annotations
 # ruff: noqa: S101 - pytest assertions are intentional.
 
 import pathlib
+import sys
 
-from potpie.runtime import ControllerStatus
+from potpie.runtime import ControllerStatus, RuntimeEndpoint
 from potpie_context_engine import Success
 from potpie_context_engine.core.lifecycle import DONE, SKIPPED
 from potpie.daemon.lifecycle import Daemon
@@ -38,8 +39,16 @@ def test_detached_ensure_starts_when_not_running(tmp_path: pathlib.Path, monkeyp
                 )
             )
 
+        async def stop(self):
+            return Success(None)
+
     monkeypatch.setattr(Daemon, "_new_controller", lambda *_args, **_kw: _Controller())
     d = Daemon(home=tmp_path, in_process=False)
+    d._pending_endpoint = RuntimeEndpoint(
+        kind="uds", address=str(tmp_path / "daemon.sock")
+    )
+    d._pending_instance_id = "test-instance"
+    monkeypatch.setattr("potpie.daemon.lifecycle._pid_alive", lambda pid: True)
     res = d.ensure()
     assert res.state == DONE
     assert res.metadata["pid"] == 4242
@@ -63,3 +72,17 @@ def test_install_is_idempotent_noop(tmp_path: pathlib.Path):
     assert (
         out["installed"] is False
     )  # never raises; does not gate the installer setup step
+
+
+def test_boot_spec_launches_public_module_and_defers_discovery(
+    tmp_path: pathlib.Path,
+) -> None:
+    daemon = Daemon(home=tmp_path, in_process=False)
+
+    boot = daemon._boot_spec(backend="embedded")
+
+    assert boot.launch.command == (sys.executable, "-m", "potpie.daemon")
+    assert "foreground" not in " ".join(boot.launch.command)
+    assert (tmp_path / "daemon.credential").exists()
+    assert not (tmp_path / "discovery.json").exists()
+    daemon._run(boot.observer.close())

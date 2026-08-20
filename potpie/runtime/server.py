@@ -19,13 +19,18 @@ from aiohttp import web
 from potpie.runtime.clients import ClientOutcome
 from potpie.runtime.codec import decode_request, encode_response
 from potpie.runtime.coordinator import OperationCoordinator
-from potpie.runtime.operations import operation_capabilities, operation_catalog_fingerprint
+from potpie.runtime.operations import (
+    operation_capabilities,
+    operation_catalog_fingerprint,
+)
 from potpie.runtime.ownership import RuntimeOwnershipLock
 from potpie.runtime.protocol import (
     PROTOCOL_MAX_VERSION,
     PROTOCOL_MIN_VERSION,
     PROTOCOL_VERSION,
     DaemonInternalError,
+    DaemonStatusRequest,
+    DaemonStatusResult,
     EngineOperationRequest,
     FailureResponse,
     HandshakeRequest,
@@ -81,6 +86,8 @@ class CanonicalDaemonRuntime:
         instance_id: str | None = None,
         shutdown_resources: ShutdownResources | None = None,
         coordinator: OperationCoordinator | None = None,
+        backend_profile: str = "unknown",
+        ui_url: str = "http://127.0.0.1",
     ) -> None:
         if len(bearer_token.encode()) < 32:
             raise ValueError("daemon bearer token must contain at least 256 bits")
@@ -91,6 +98,8 @@ class CanonicalDaemonRuntime:
         self._ownership = RuntimeOwnershipLock(ownership_lock_path)
         self._shutdown_resources = shutdown_resources
         self._coordinator = coordinator or OperationCoordinator()
+        self._backend_profile = backend_profile
+        self._ui_url = ui_url
         self._state = "starting"
         self._runner: web.AppRunner | None = None
         self._shutdown_requested = asyncio.Event()
@@ -230,7 +239,11 @@ class CanonicalDaemonRuntime:
                 status=400,
             )
         typed_request = decoded.value
-        if not PROTOCOL_MIN_VERSION <= typed_request.protocol_version <= PROTOCOL_MAX_VERSION:
+        if (
+            not PROTOCOL_MIN_VERSION
+            <= typed_request.protocol_version
+            <= PROTOCOL_MAX_VERSION
+        ):
             return _json_response(
                 _failure_response(
                     typed_request,
@@ -275,9 +288,7 @@ class CanonicalDaemonRuntime:
                 status=500,
             )
 
-    async def _execute(
-        self, request: ProtocolRequest
-    ) -> tuple[ProtocolResponse, int]:
+    async def _execute(self, request: ProtocolRequest) -> tuple[ProtocolResponse, int]:
         if isinstance(request, HandshakeRequest):
             return self._handshake(request)
         if not self._handshake_completed:
@@ -301,6 +312,24 @@ class CanonicalDaemonRuntime:
                         protocol_version=request.protocol_version,
                         request_id=request.request_id,
                         outcome=Success(ShutdownResult(accepted=True)),
+                    ),
+                    200,
+                )
+        if isinstance(request, DaemonStatusRequest):
+            async with self._coordinator.lifecycle_control():
+                return (
+                    SuccessResponse(
+                        protocol_version=request.protocol_version,
+                        request_id=request.request_id,
+                        outcome=Success(
+                            DaemonStatusResult(
+                                instance_id=self.instance_id,
+                                pid=self.pid,
+                                lifecycle_state=self._state,  # type: ignore[arg-type]
+                                backend_profile=self._backend_profile,
+                                ui_url=self._ui_url,
+                            )
+                        ),
                     ),
                     200,
                 )
@@ -338,13 +367,10 @@ class CanonicalDaemonRuntime:
             )
         return _failure_response(request, outcome.error), _status_for(outcome.error)
 
-    def _handshake(
-        self, request: HandshakeRequest
-    ) -> tuple[ProtocolResponse, int]:
+    def _handshake(self, request: HandshakeRequest) -> tuple[ProtocolResponse, int]:
         payload = request.payload
         if not (
-            payload.client_protocol_min
-            <= PROTOCOL_MAX_VERSION
+            payload.client_protocol_min <= PROTOCOL_MAX_VERSION
             and PROTOCOL_MIN_VERSION <= payload.client_protocol_max
         ):
             return (

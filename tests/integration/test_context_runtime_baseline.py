@@ -1,9 +1,4 @@
-"""Behavior baseline for direct and shipped-daemon Context Runtime paths.
-
-The reflective daemon is characterized here only as the currently shipped
-transport. These tests preserve observable product behavior while later commits
-replace that transport; they do not approve its module, RPC, or discovery shape.
-"""
+"""Behavior baseline for direct and canonical-daemon Context Runtime paths."""
 
 # ruff: noqa: S101 - pytest characterization tests use assertions intentionally.
 
@@ -15,20 +10,25 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
 from potpie.cli import main as cli_main
 from potpie.cli.commands import _common
-from potpie.daemon.client import DaemonRpcClient, RemoteHostShell
 from potpie.daemon.lifecycle import Daemon
-from potpie_context_core.lifecycle import DONE, SKIPPED, SetupPlan
+from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan
 
 
 pytestmark = pytest.mark.integration
 
 _FACT = "phase-three-daemon-baseline"
-_DISCOVERY_FILES = ("daemon.pid", "discovery.json", "daemon.json")
+_DISCOVERY_FILES = (
+    "daemon.pid",
+    "discovery.json",
+    "daemon.credential",
+    "daemon.json",
+)
 
 
 def _configure_runtime(
@@ -47,18 +47,14 @@ def _configure_runtime(
     monkeypatch.setenv("HOME", str(user_home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
     monkeypatch.setenv("POTPIE_TELEMETRY_DISABLED", "1")
-    monkeypatch.setenv(
-        "PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring"
-    )
+    monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")
     monkeypatch.delenv("POTPIE_DAEMON_PORT", raising=False)
     monkeypatch.delenv("POTPIE_DAEMON_TOKEN", raising=False)
     _common.set_host(None)
 
 
 @pytest.fixture
-def isolated_daemon_runtime(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def isolated_daemon_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Provide a fully isolated filesystem and environment for a real daemon."""
     runtime_home = tmp_path / "runtime"
     _configure_runtime(monkeypatch, runtime_home, host_mode="daemon")
@@ -165,7 +161,7 @@ def test_daemon_restart_preserves_running_backend(
         _stop_daemon(runtime_home, pid=restarted_pid)
 
 
-def test_remote_host_runs_setup_inside_daemon(
+def test_canonical_daemon_uses_private_discovery_and_separate_credential(
     isolated_daemon_runtime: Path,
 ) -> None:
     runtime_home = isolated_daemon_runtime
@@ -174,27 +170,28 @@ def test_remote_host_runs_setup_inside_daemon(
     try:
         started = daemon.ensure(SetupPlan(backend="embedded", embeddings="none"))
         pid = int(started.metadata["pid"])
-        host = RemoteHostShell(rpc=DaemonRpcClient(daemon=daemon))
-
-        report = host.setup.run(
-            SetupPlan(
-                host_mode="daemon",
-                backend="embedded",
-                repo="potpie",
-                pot="default",
-                agent="claude",
-                assume_yes=True,
-                embeddings="none",
-            )
+        discovery = json.loads(
+            (runtime_home / "discovery.json").read_text(encoding="utf-8")
+        )
+        credential = (
+            (runtime_home / "daemon.credential").read_text(encoding="utf-8").strip()
         )
 
-        assert report.ok
-        assert any(
-            step.step == "daemon" and step.state == SKIPPED for step in report.steps
-        )
-        active = host.pots.active_pot()
-        assert active is not None
-        assert active.name == "default"
+        assert discovery["pid"] == pid
+        assert discovery["transport"]["kind"] in {"uds", "tcp"}
+        assert discovery["authentication"] == {
+            "scheme": "bearer",
+            "credential_file": str(runtime_home / "daemon.credential"),
+        }
+        assert credential and credential not in json.dumps(discovery)
+        assert not (runtime_home / "daemon.json").exists()
+        assert (runtime_home / "discovery.json").stat().st_mode & 0o077 == 0
+        assert (runtime_home / "daemon.credential").stat().st_mode & 0o077 == 0
+        status = daemon.status()
+        assert status["ready"] is True
+        assert httpx.get(f"{status['url']}/ui", timeout=3.0).status_code == 200
+        assert httpx.post(f"{status['url']}/rpc", timeout=3.0).status_code == 404
+        assert httpx.post(f"{status['url']}/attr", timeout=3.0).status_code == 404
     finally:
         _stop_daemon(runtime_home, pid=pid)
 
@@ -241,12 +238,8 @@ def test_direct_and_daemon_cli_paths_have_equivalent_domain_outcomes(
             "--scope",
             "service:context-engine",
         )
-        search = _invoke_json(
-            runner, "search", _FACT, "--include", "raw_graph"
-        )
-        resolve = _invoke_json(
-            runner, "resolve", _FACT, "--include", "raw_graph"
-        )
+        search = _invoke_json(runner, "search", _FACT, "--include", "raw_graph")
+        resolve = _invoke_json(runner, "resolve", _FACT, "--include", "raw_graph")
         status = _invoke_json(runner, "status")
         invalid = _invoke_json(
             runner,
@@ -262,12 +255,8 @@ def test_direct_and_daemon_cli_paths_have_equivalent_domain_outcomes(
             "setup_ok": setup["ok"],
             "record_status": record["status"],
             "mutations_applied": record["mutations_applied"],
-            "search_facts": [
-                item["payload"].get("fact") for item in search["items"]
-            ],
-            "resolve_facts": [
-                item["payload"].get("fact") for item in resolve["items"]
-            ],
+            "search_facts": [item["payload"].get("fact") for item in search["items"]],
+            "resolve_facts": [item["payload"].get("fact") for item in resolve["items"]],
             "backend_ready": status["backend_ready"],
             "backend_profile": status["data_plane"]["backend_profile"],
             "claim_count": status["data_plane"]["counts"]["claims"],
@@ -275,9 +264,7 @@ def test_direct_and_daemon_cli_paths_have_equivalent_domain_outcomes(
         }
     finally:
         if host_mode == "daemon":
-            stop_result = runner.invoke(
-                cli_main.app, ["--json", "daemon", "stop"]
-            )
+            stop_result = runner.invoke(cli_main.app, ["--json", "daemon", "stop"])
             if stop_result.exit_code != 0:
                 Daemon(home=runtime_home, in_process=False).stop()
             if daemon_pid is not None:
@@ -288,6 +275,8 @@ def test_direct_and_daemon_cli_paths_have_equivalent_domain_outcomes(
         assert stop_result is not None
         stop_payload = _assert_json_result(stop_result, "daemon stop")
         assert stop_payload["detail"] == "daemon stopped"
+    else:
+        assert all(not (runtime_home / name).exists() for name in _DISCOVERY_FILES)
 
     assert observation == {
         "setup_ok": True,
