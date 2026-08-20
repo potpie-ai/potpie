@@ -1,10 +1,12 @@
-"""The ``GraphBackend`` capability ports.
+"""Temporary compatibility re-export for :mod:`potpie_context_engine.core.ports.graph`."""
 
-One swappable backend = six narrow capability ports. ``mutation`` +
-``claim_query`` are the canonical source of truth; ``semantic`` ``inspection``
-``analytics`` ``snapshot`` are rebuildable projections. See ``backend.py``.
+from __future__ import annotations
 
-Import directly from the capability modules (``potpie_context_core.ports.graph.backend``,
-``.mutation``, ...); the canonical ``ClaimQueryPort`` lives at
-``potpie_context_core.ports.claim_query``.
-"""
+from potpie_context_engine.core.ports import graph as _canonical
+from potpie_context_engine.core.ports.graph import *  # noqa: F403
+
+__all__ = getattr(
+    _canonical,
+    "__all__",
+    tuple(name for name in vars(_canonical) if not name.startswith("_")),
+)

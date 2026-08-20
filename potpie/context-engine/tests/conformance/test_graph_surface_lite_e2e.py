@@ -19,17 +19,17 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
     HashingEmbedder,
 )
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
-from potpie_context_core.ports.agent_context import (
+from potpie_context_engine.core.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
-from potpie_context_core.ports.graph_service import (
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
-from potpie_context_core.semantic_mutations import SemanticMutationRequest
+from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 

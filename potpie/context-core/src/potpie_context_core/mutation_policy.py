@@ -1,24 +1,12 @@
-"""Runtime-scoped graph mutation policy."""
+"""Temporary compatibility re-export for :mod:`potpie_context_engine.core.mutation_policy`."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from potpie_context_engine.core import mutation_policy as _canonical
+from potpie_context_engine.core.mutation_policy import *  # noqa: F403
 
-
-@dataclass(frozen=True, slots=True)
-class GraphMutationPolicy:
-    """Composition-time defaults shared by direct mutation and workbench writes."""
-
-    default_plan_ttl_seconds: int = 3600
-    allow_auto_commit: bool = True
-    require_approval_for_review: bool = True
-
-    def __post_init__(self) -> None:
-        if self.default_plan_ttl_seconds < 1:
-            raise ValueError("default_plan_ttl_seconds must be at least 1")
-
-
-DEFAULT_MUTATION_POLICY = GraphMutationPolicy()
-
-
-__all__ = ["DEFAULT_MUTATION_POLICY", "GraphMutationPolicy"]
+__all__ = getattr(
+    _canonical,
+    "__all__",
+    tuple(name for name in vars(_canonical) if not name.startswith("_")),
+)

@@ -23,12 +23,12 @@ SQLAlchemy, Hatchet, OpenTelemetry, Sentry) at module import time.
 
 from __future__ import annotations
 
-from potpie_context_core.definition import (
+from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
     GraphExtension,
 )
-from potpie_context_core.runtime import GraphRuntime, build_graph_runtime
+from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
 from potpie_context_engine.context_engine import (
     ContextEngine,
     ContextIdentity,

@@ -39,7 +39,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytic
     ClaimQueryAnalytics,
 )
 from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_REPAIR_LIMIT,
     ENTITY_SUMMARY_SCAN_CYPHER,
@@ -52,17 +52,17 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     canonical_label_changes,
     repaired_entity_labels,
 )
-from potpie_context_core.graph_mutations import ProvenanceContext
-from potpie_context_core.lifecycle import SetupPlan, StepResult
-from potpie_context_core.ports.claim_query import ClaimQueryPort
-from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.mutation import BackendReadiness
-from potpie_context_core.ports.graph.mutation import (
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.lifecycle import SetupPlan, StepResult
+from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
+from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
+from potpie_context_engine.core.ports.graph.mutation import (
     MutationExecutionLookup,
     MutationExecutionState,
 )
-from potpie_context_core.reconciliation import MutationBatch, MutationResult
-from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 
 _PROFILE = "neo4j"
 
@@ -195,7 +195,7 @@ class _Neo4jMutation:
         self, *, pot_id: str, claim_keys: Any, reason: str | None = None
     ) -> int:
         # TODO(stage-N): cypher invalidation by claim key.
-        from potpie_context_core.errors import CapabilityNotImplemented
+        from potpie_context_engine.core.errors import CapabilityNotImplemented
 
         raise CapabilityNotImplemented(
             "graph.neo4j.mutation.invalidate",
@@ -319,7 +319,7 @@ class Neo4jGraphBackend:
         return replace(self, definition=definition)
 
     def provision(self, plan: SetupPlan) -> StepResult:
-        from potpie_context_core.lifecycle import DONE, FAILED
+        from potpie_context_engine.core.lifecycle import DONE, FAILED
 
         if not self.enabled:
             return StepResult(

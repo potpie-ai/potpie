@@ -16,7 +16,6 @@ classifiers = ["Typing :: Typed"]
 # storage backends live behind extras; importing the base package must not
 # require any of them.
 dependencies = [
-    "potpie-context-core==0.1.0",
     "pydantic>=2.0",
 ]
 
@@ -93,6 +92,7 @@ dev = [
 packages = ["src/potpie_context_engine"]
 include = [
     "src/potpie_context_engine/py.typed",
+    "src/potpie_context_engine/core/playbooks/**/*.md",
     "src/potpie_context_engine/benchmarks/use_cases/**/*.yaml",
     "src/potpie_context_engine/benchmarks/fixtures/raw_events/**/*.json",
     "src/potpie_context_engine/benchmarks/_legacy/data/**/*.json",

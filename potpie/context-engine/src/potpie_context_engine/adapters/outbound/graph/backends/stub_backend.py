@@ -21,10 +21,10 @@ from potpie_context_engine.adapters.outbound.graph.backends._unimplemented impor
     UnimplementedSemantic,
     UnimplementedSnapshot,
 )
-from potpie_context_core.definition import GraphDefinition
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.lifecycle import SetupPlan, StepResult
-from potpie_context_core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.definition import GraphDefinition
+from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.lifecycle import SetupPlan, StepResult
+from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 
 
 @dataclass(slots=True)

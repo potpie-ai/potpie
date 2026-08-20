@@ -15,7 +15,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
     InMemoryGraphBackend,
 )
 from potpie_context_engine.bootstrap.host_wiring import build_host_shell
-from potpie_context_core.ports.agent_context import (
+from potpie_context_engine.core.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
 )

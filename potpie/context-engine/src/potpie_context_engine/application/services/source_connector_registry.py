@@ -19,14 +19,14 @@ from __future__ import annotations
 import logging
 from typing import Iterable, Mapping, Sequence
 
-from potpie_context_core.context_events import ContextEvent
+from potpie_context_engine.core.context_events import ContextEvent
 from potpie_context_engine.domain.ports.source_connector import SourceConnectorPort
 from potpie_context_engine.domain.source_connector import (
     ConnectorManifest,
     SourceCapability,
     merge_capability_policies,
 )
-from potpie_context_core.source_references import (
+from potpie_context_engine.core.source_references import (
     SourceReferenceRecord,
     normalize_source_policy,
 )

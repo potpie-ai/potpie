@@ -15,7 +15,7 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.falkordb_reader import (
     FalkorDBClaimQueryStore,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 

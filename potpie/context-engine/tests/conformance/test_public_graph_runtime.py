@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from potpie_context_core.api import (
+from potpie_context_engine.core.api import (
     DEFAULT_GRAPH_DEFINITION,
     ClaimQueryFilter,
     EdgeTypeSpec,
@@ -21,23 +21,23 @@ from potpie_context_core.api import (
     SemanticMutationRequest,
     build_graph_runtime,
 )
-from potpie_context_core.graph_mutations import ProvenanceContext
-from potpie_context_core.ports.claim_query import (
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.ports.claim_query import (
     AsyncClaimQueryPort,
     ClaimQueryPort,
 )
-from potpie_context_core.ports.graph.backend import GraphBackend
-from potpie_context_core.ports.graph.inbox_store import (
+from potpie_context_engine.core.ports.graph.backend import GraphBackend
+from potpie_context_engine.core.ports.graph.inbox_store import (
     AsyncGraphInboxStorePort,
     GraphInboxStorePort,
 )
-from potpie_context_core.ports.graph.mutation import GraphMutationPort
-from potpie_context_core.ports.graph.plan_store import (
+from potpie_context_engine.core.ports.graph.mutation import GraphMutationPort
+from potpie_context_engine.core.ports.graph.plan_store import (
     AsyncGraphPlanStorePort,
     GraphPlanStorePort,
 )
-from potpie_context_core.reconciliation import MutationBatch, MutationResult
-from potpie_context_core.reconciliation_config import current_reconciliation_config
+from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.reconciliation_config import current_reconciliation_config
 from potpie_context_engine.api import Candidate, RankedItem, ReadResponse
 from potpie_context_engine.testing import (
     InMemoryGraphBackend,

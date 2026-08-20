@@ -22,8 +22,8 @@ from potpie_context_engine.application.use_cases.process_batch import (
     _chunk_size_default,
     process_batch,
 )
-from potpie_context_core.context_events import ContextEvent
-from potpie_context_core.ports.pot_resolution import (
+from potpie_context_engine.core.context_events import ContextEvent
+from potpie_context_engine.core.ports.pot_resolution import (
     ResolvedPot,
     ResolvedPotRepo,
 )

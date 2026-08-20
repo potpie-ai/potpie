@@ -55,19 +55,19 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     repaired_entity_labels,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.graph_mutations import ProvenanceContext
-from potpie_context_core.lifecycle import DONE, FAILED, SetupPlan, StepResult
-from potpie_context_core.ports.claim_query import ClaimQueryPort
-from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.mutation import BackendReadiness
-from potpie_context_core.ports.graph.mutation import (
+from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.lifecycle import DONE, FAILED, SetupPlan, StepResult
+from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
+from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
+from potpie_context_engine.core.ports.graph.mutation import (
     MutationExecutionLookup,
     MutationExecutionState,
 )
-from potpie_context_core.reconciliation import MutationBatch, MutationResult
-from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 
 _PROFILE = "falkordb"
 _LITE_PROFILE = "falkordb_lite"

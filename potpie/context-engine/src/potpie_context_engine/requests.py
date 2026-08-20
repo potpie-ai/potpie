@@ -1,7 +1,7 @@
 """Context-bound request markers for the public Context Engine façade.
 
-The migration intentionally owns these request identities before it moves the
-legacy request payloads out of ``potpie_context_core``. Payload fields remain
+The migration intentionally owns these request identities before it replaces
+the legacy request payload mappings with final typed fields. Payloads remain
 operation-specific mappings during that mechanical move; callers cannot supply
 or override an engine context selector here.
 """

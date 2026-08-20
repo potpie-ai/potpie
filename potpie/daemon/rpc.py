@@ -18,6 +18,7 @@ from typing import Any, Mapping
 TYPE_KEY = "__potpie_rpc_type__"
 _ALLOWED_CLASS_MODULE_PREFIXES = (
     "potpie_context_core.",
+    "potpie_context_engine.core.",
     "potpie_context_engine.domain.",
     "potpie.daemon.ports.",
 )

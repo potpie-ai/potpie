@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from typing import Any, Mapping
 
-from potpie_context_core.actor import Actor
+from potpie_context_engine.core.actor import Actor
 from potpie_context_engine.domain.ports.policy import (
     ACTION_APPLY_WRITE,
     ACTION_CONNECTOR_FETCH,
@@ -32,9 +32,9 @@ from potpie_context_engine.domain.ports.policy import (
     REASON_UNSUPPORTED_RESOURCE,
     PolicyDecision,
 )
-from potpie_context_core.ports.pot_resolution import PotResolutionPort
-from potpie_context_core.reconciliation_config import ReconciliationConfig
-from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.ports.pot_resolution import PotResolutionPort
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
 

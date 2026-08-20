@@ -51,7 +51,7 @@ from potpie_context_engine.adapters.outbound.skills.claude_target import (
 from potpie_context_engine.application.services.agent_context import AgentContextService
 from potpie_context_engine.application.services.auth_service import LocalAuthService
 from potpie_context_engine.application.services.config_service import LocalConfigService
-from potpie_context_core.api import build_graph_runtime
+from potpie_context_engine.core.api import build_graph_runtime
 from potpie_context_engine.application.services.nudge_service import NudgeService
 from potpie_context_engine.application.services.pot_management import (
     LocalPotManagementService,
@@ -64,9 +64,9 @@ from potpie_context_engine.bootstrap.logging_setup import configure_logging
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import set_observability
 from potpie_context_engine.bootstrap.observability_wiring import default_observability
-from potpie_context_core.coherence import assert_runtime_coherence
-from potpie_context_core.reconciliation_config import ReconciliationConfig
-from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.coherence import assert_runtime_coherence
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_engine.domain.ports.ledger.client import EventLedgerClientPort
 from potpie_context_engine.domain.ports.observability import ObservabilityPort
 from potpie_context_engine.domain.ports.provisioning import ProvisionableGraphBackend

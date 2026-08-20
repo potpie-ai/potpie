@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from potpie_context_core.graph_entity_summary import (
+from potpie_context_engine.core.graph_entity_summary import (
     normalize_entity_properties,
 )
 

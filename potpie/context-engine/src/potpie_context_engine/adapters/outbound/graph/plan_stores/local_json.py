@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from potpie_context_core.graph_plans import GraphMutationPlanRecord
+from potpie_context_engine.core.graph_plans import GraphMutationPlanRecord
 from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
     locked_json_store,
 )

@@ -22,18 +22,18 @@ from potpie_context_engine.bootstrap.host_wiring import (
     default_backend_profile,
 )
 from potpie_context_engine.bootstrap.ingestion_server import build_ingestion_server
-from potpie_context_core.context_events import EventRef
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
-from potpie_context_core.graph_mutations import (
+from potpie_context_engine.core.context_events import EventRef
+from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
+from potpie_context_engine.core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
     ProvenanceRef,
 )
-from potpie_context_core.lifecycle import SetupPlan
-from potpie_context_core.identity import IdentityClass
-from potpie_context_core.ontology import EntityTypeSpec
-from potpie_context_core.ports.graph.backend import GraphBackend
-from potpie_context_core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.lifecycle import SetupPlan
+from potpie_context_engine.core.identity import IdentityClass
+from potpie_context_engine.core.ontology import EntityTypeSpec
+from potpie_context_engine.core.ports.graph.backend import GraphBackend
+from potpie_context_engine.core.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.unit
 

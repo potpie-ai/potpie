@@ -23,13 +23,13 @@ import subprocess
 from typing import Callable
 from urllib.parse import urlparse
 
-from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.domain.embedding_modes import (
     EMBEDDING_MODEL_PREP_SKIPPED_ALIASES,
     SEMANTIC_EMBEDDER_ALIASES,
     normalize_embedding_mode,
 )
-from potpie_context_core.lifecycle import (
+from potpie_context_engine.core.lifecycle import (
     DONE,
     FAILED,
     NOT_IMPLEMENTED,

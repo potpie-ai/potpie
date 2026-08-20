@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.lifecycle import StepResult
+from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.lifecycle import StepResult
 from potpie_context_engine.domain.ports.services.auth import AuthIdentity
 
 

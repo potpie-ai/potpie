@@ -12,7 +12,7 @@ from typing import Any
 from potpie_context_engine.adapters.outbound.graph.falkordb_inspection import (
     FalkorDBInspection,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
 
 POT = "pot_test"
 

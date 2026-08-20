@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "potpie-context-core"
 version = "0.1.0"
-description = "Context graph core: ontology, workbench, records, mutations, and graph ports."
+description = "Temporary compatibility re-exports for the Potpie Context Engine core."
 requires-python = ">=3.12,<3.15"
 classifiers = ["Typing :: Typed"]
-# The core is a library: pydantic + stdlib only, no extras. If a module needs
-# anything else, it belongs in potpie-context-engine, not here.
+# This same-PR migration shim contains no implementation. It retires after all
+# root callers import the Context Engine distribution directly.
 dependencies = [
-    "pydantic>=2.0",
+    "potpie-context-engine==0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -25,13 +25,11 @@ dev = [
 packages = ["src/potpie_context_core"]
 include = [
     "src/potpie_context_core/py.typed",
-    "src/potpie_context_core/playbooks/**/*.md",
 ]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "src/potpie_context_core",
-    "src/potpie_context_core/playbooks/**/*.md",
 ]
 
 [tool.ruff]

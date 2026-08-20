@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 
-from potpie_context_core.entity_canonicalization import coherent_entity_labels
-from potpie_context_core.ontology import ENTITY_TYPES, EntityTypeSpec
+from potpie_context_engine.core.entity_canonicalization import coherent_entity_labels
+from potpie_context_engine.core.ontology import ENTITY_TYPES, EntityTypeSpec
 
 ENTITY_LABEL_TARGET = "entity_labels"
 ENTITY_LABEL_TARGETS = frozenset(

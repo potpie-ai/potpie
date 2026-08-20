@@ -2502,7 +2502,7 @@ name = "potpie-context-core"
 version = "0.1.0"
 source = { editable = "potpie/context-core" }
 dependencies = [
-    { name = "pydantic" },
+    { name = "potpie-context-engine" },
 ]
 
 [package.optional-dependencies]
@@ -2514,7 +2514,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pydantic", specifier = ">=2.0" },
+    { name = "potpie-context-engine", editable = "potpie/context-engine" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
@@ -2526,7 +2526,6 @@ name = "potpie-context-engine"
 version = "0.1.0"
 source = { editable = "potpie/context-engine" }
 dependencies = [
-    { name = "potpie-context-core" },
     { name = "pydantic" },
 ]
 
@@ -2629,7 +2628,6 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp", marker = "extra == 'observability'", specifier = ">=1.27.0" },
     { name = "opentelemetry-instrumentation-openai", marker = "extra == 'observability'", specifier = ">=0.40b0" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.27.0" },
-    { name = "potpie-context-core", editable = "potpie/context-core" },
     { name = "potpie-context-engine", extras = ["cli-auth", "http", "local", "neo4j", "postgres", "hatchet", "observability", "embeddings", "github", "reconciliation-agent"], marker = "extra == 'all'", editable = "potpie/context-engine" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.0" },

@@ -12,7 +12,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytic
 from potpie_context_engine.adapters.outbound.graph.backends.falkordb_analytics import (
     FalkorDBAnalytics,
 )
-from potpie_context_core.ports.claim_query import ClaimRow
+from potpie_context_engine.core.ports.claim_query import ClaimRow
 
 pytestmark = pytest.mark.unit
 

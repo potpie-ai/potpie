@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from potpie_context_core.lifecycle import SetupPlan, StepResult
-from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_engine.core.lifecycle import SetupPlan, StepResult
+from potpie_context_engine.core.ports.graph.backend import GraphBackend
 
 
 @runtime_checkable

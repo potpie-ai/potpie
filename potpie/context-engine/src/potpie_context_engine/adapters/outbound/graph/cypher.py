@@ -26,17 +26,17 @@ import re
 from datetime import date, datetime, time, timezone
 from typing import Any
 
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_core.graph_mutations import (
+from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,
     ProvenanceRef,
 )
-from potpie_context_core.entity_canonicalization import coherent_entity_labels
-from potpie_context_core.graph_entity_summary import compact_entity_summary
-from potpie_context_core.graph_contract import evidence_strength_for_truth
+from potpie_context_engine.core.entity_canonicalization import coherent_entity_labels
+from potpie_context_engine.core.graph_entity_summary import compact_entity_summary
+from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
 from potpie_context_engine.domain.retrieval_card import build_retrieval_card
 
 logger = logging.getLogger(__name__)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from potpie_context_engine.core.lifecycle import SetupPlan as CanonicalSetupPlan
 from potpie_context_core.lifecycle import SetupPlan
 from potpie.daemon.rpc import TYPE_KEY, decode, encode
 
@@ -15,7 +16,10 @@ def test_daemon_rpc_roundtrips_domain_dataclasses() -> None:
         assume_yes=True,
     )
 
-    assert decode(encode(plan)) == plan
+    round_tripped = decode(encode(plan))
+
+    assert round_tripped == plan  # noqa: S101
+    assert type(round_tripped) is CanonicalSetupPlan  # noqa: S101
 
 
 def test_daemon_rpc_rejects_non_domain_class_references() -> None:

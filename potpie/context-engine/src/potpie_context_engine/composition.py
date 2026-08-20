@@ -1,12 +1,12 @@
-"""Default implementation hook used by ``potpie_context_core.build_graph_runtime``."""
+"""Default implementation hook used by ``potpie_context_engine.core.build_graph_runtime``."""
 
 from __future__ import annotations
 
-from potpie_context_core.definition import GraphDefinition
-from potpie_context_core.mutation_policy import GraphMutationPolicy
-from potpie_context_core.ports.graph.backend import GraphBackend
-from potpie_context_core.reconciliation_config import ReconciliationConfig
-from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.definition import GraphDefinition
+from potpie_context_engine.core.mutation_policy import GraphMutationPolicy
+from potpie_context_engine.core.ports.graph.backend import GraphBackend
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
 
 

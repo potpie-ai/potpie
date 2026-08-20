@@ -7,7 +7,7 @@ from datetime import datetime
 import threading
 from typing import Callable
 
-from potpie_context_core.api import (
+from potpie_context_engine.core.api import (
     ClaimQueryFilter,
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,

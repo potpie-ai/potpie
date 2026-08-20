@@ -30,12 +30,12 @@ PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_SRC) not in sys.path:
     sys.path.insert(0, str(PACKAGE_SRC))
 
-from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (
+from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (  # noqa: E402
     create_context_router,
-)  # noqa: E402
-from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+)
+from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (  # noqa: E402
     get_active_pot_id,
-)  # noqa: E402
+)
 from potpie_context_engine.adapters.outbound.cli_auth.potpie_api_config import (  # noqa: E402
     resolve_potpie_api_base_url,
     resolve_potpie_api_key,
@@ -45,23 +45,23 @@ from potpie_context_engine.adapters.outbound.http.potpie_context_api_client impo
     PotpieContextApiClient,
     PotpieContextApiError,
 )
-from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
+from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (  # noqa: E402
     InMemoryClaimQueryStore,
-)  # noqa: E402
+)
 from potpie_context_engine.application.services.envelope_builder import envelope_to_dict  # noqa: E402
-from potpie_context_engine.application.services.read_orchestrator import (
+from potpie_context_engine.application.services.read_orchestrator import (  # noqa: E402
     ReadOrchestrator,
-)  # noqa: E402
+)
 from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer  # noqa: E402
 from potpie_context_engine.bootstrap.http_projects import ExplicitPotResolution  # noqa: E402
-from potpie_context_core.agent_context_port import (  # noqa: E402
+from potpie_context_engine.core.agent_context_port import (  # noqa: E402
     build_context_record_source_id,
     context_recipe_for_intent,
     normalize_record_type,
 )
-from potpie_context_engine.domain.ports.context_graph_job_queue import (
+from potpie_context_engine.domain.ports.context_graph_job_queue import (  # noqa: E402
     NoOpContextGraphJobQueue,
-)  # noqa: E402
+)
 
 DEFAULT_DATA = Path(__file__).with_name("mock_context_data.json")
 DEFAULT_REPORT = (

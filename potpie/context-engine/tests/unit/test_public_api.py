@@ -74,12 +74,12 @@ def test_supported_imports_do_not_load_optional_dependencies() -> None:
 
 def test_api_reexports_are_the_internal_contracts() -> None:
     from potpie_context_engine import api
-    from potpie_context_core.ports.graph.backend import GraphBackend
-    from potpie_context_core.ports.graph.inbox_store import (
+    from potpie_context_engine.core.ports.graph.backend import GraphBackend
+    from potpie_context_engine.core.ports.graph.inbox_store import (
         GraphInboxStorePort,
     )
-    from potpie_context_core.ports.graph.plan_store import GraphPlanStorePort
-    from potpie_context_core.ports.graph_service import GraphService
+    from potpie_context_engine.core.ports.graph.plan_store import GraphPlanStorePort
+    from potpie_context_engine.core.ports.graph_service import GraphService
 
     assert api.GraphBackend is GraphBackend
     assert api.GraphInboxStorePort is GraphInboxStorePort
@@ -102,12 +102,12 @@ def test_api_reexports_are_the_internal_contracts() -> None:
 
 def test_package_root_exports_the_documented_runtime_surface() -> None:
     import potpie_context_engine
-    from potpie_context_core.definition import (
+    from potpie_context_engine.core.definition import (
         DEFAULT_GRAPH_DEFINITION,
         GraphDefinition,
         GraphExtension,
     )
-    from potpie_context_core.runtime import GraphRuntime, build_graph_runtime
+    from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
 
     assert potpie_context_engine.DEFAULT_GRAPH_DEFINITION is DEFAULT_GRAPH_DEFINITION
     assert potpie_context_engine.GraphDefinition is GraphDefinition
@@ -153,6 +153,8 @@ def test_public_distributions_package_pep561_markers() -> None:
         assert marker.is_file()
         assert f"src/{package}/py.typed" in wheel_include
         assert "Typing :: Typed" in config["project"]["classifiers"]
+
+    assert (engine_root / "src/potpie_context_engine/core/py.typed").is_file()
 
 
 def test_legacy_top_level_packages_are_gone() -> None:

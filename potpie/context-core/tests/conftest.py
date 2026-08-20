@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the context-core test suite."""
+"""Shared fixtures for the temporary Context Core compatibility suite."""
 
 from __future__ import annotations
 
