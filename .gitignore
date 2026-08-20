@@ -117,3 +117,5 @@ seed/.state/
 .omo
 .prsplit
 .env_old
+# Written by hatch_build.py on every build; carried inside the wheel, never committed.
+potpie/_build.json

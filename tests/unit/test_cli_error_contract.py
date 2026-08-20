@@ -283,7 +283,7 @@ def test_a_trailing_version_flag_still_answers_in_json(
     assert _drive(["pot", "list", "--version", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
-    assert payload["name"] == "potpie-context-engine"
+    assert payload["name"] == "potpie"
 
 
 # --- a host that answered and refused the credential ------------------------
@@ -517,8 +517,14 @@ def test_json_version_emits_json(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
-    assert payload["name"] == "potpie-context-engine"
+    # The distribution that owns the command, not the library under it. The
+    # engine is still reported, under its own key, and the build rev is what
+    # actually identifies the code -- both version numbers are constants.
+    assert payload["name"] == "potpie"
     assert payload["version"]
+    assert set(payload["build"]) == {"rev", "dirty", "built_at"}
+    assert payload["engine"]["name"] == "potpie-context-engine"
+    assert payload["engine"]["version"]
     assert payload["python"] == platform.python_version()
     assert payload["executable"] == sys.executable
 
@@ -530,6 +536,9 @@ def test_human_version_is_unchanged(capsys: pytest.CaptureFixture[str]) -> None:
     host_cli.run_cli(["--version"])
 
     out = capsys.readouterr().out
+    lines = out.splitlines()
+    assert lines[0].startswith("potpie ")  # the distribution, with its build rev
+    assert "(" in lines[0] and lines[0].endswith(")")
     assert "potpie-context-engine " in out
     assert f"python {platform.python_version()} ({sys.executable})" in out
 

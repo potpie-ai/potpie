@@ -163,6 +163,18 @@ def app(monkeypatch, tmp_path):
     hosts.reset_for_tests()
 
 
+def test_health_says_which_build_is_answering(app) -> None:
+    """A daemon left running from an older install is otherwise
+    indistinguishable from the current one, and ``/health`` is the one route
+    every client already calls."""
+    body = TestClient(app).get("/health").json()
+
+    assert body["ok"] is True
+    assert body["mode"] == "daemon"
+    assert isinstance(body["version"], str) and body["version"]
+    assert set(body["build"]) == {"rev", "dirty", "built_at"}
+
+
 def test_the_daemon_advertises_its_surfaces_only_to_an_authorized_caller(app) -> None:
     """The answer to "what do you implement" is behind the daemon token.
 

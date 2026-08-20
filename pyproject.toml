@@ -120,11 +120,19 @@ exclude = [
 "potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json"
 "potpie/cli/templates/claude_plugin/hooks/hooks.json" = "potpie/cli/templates/claude_plugin/hooks/hooks.json"
 
+# Stamps `potpie/_build.json` (git rev, dirty flag, build time) into every
+# build. The version above is a constant while the code moves with every
+# commit, and consumers pin by rev; without this nothing installed can say
+# which rev it is. See hatch_build.py and potpie/build_info.py.
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",
+    "/hatch_build.py",
     "/scripts/generate-potpie-ascii.mjs",
     "/potpie/__init__.py",
     "/potpie/cli",

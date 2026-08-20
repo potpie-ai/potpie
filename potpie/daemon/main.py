@@ -35,6 +35,7 @@ from potpie_context_engine.domain.ports.observability import SPAN_KIND_SERVER
 from potpie.daemon.concurrency import RpcAccessLock
 from potpie.daemon.rpc import decode, encode
 from potpie.daemon.surfaces import RPC_SURFACES, is_read_only, surface_contract
+from potpie import build_info
 
 logger = logging.getLogger(__name__)
 
@@ -115,11 +116,17 @@ def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI
                 kind=SPAN_KIND_SERVER,
                 attributes={"backend": host.backend.profile, "pid": pid},
             ):
+                # Which build answers. `/health` is the one route every client
+                # already calls, and a daemon left running from an older
+                # install is otherwise indistinguishable from the current one.
+                identity = build_info.describe()
                 return {
                     "ok": True,
                     "mode": "daemon",
                     "pid": pid,
                     "backend": host.backend.profile,
+                    "version": identity["version"],
+                    "build": identity["build"],
                 }
 
     @app.get("/surfaces")

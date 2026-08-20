@@ -16,11 +16,11 @@ import platform
 import sys
 import traceback
 from collections.abc import Sequence
-from importlib import metadata
 from typing import Final
 
 import typer
 
+from potpie import build_info
 from potpie.cli.commands import auth as auth_cmds
 from potpie.cli.commands import (
     bootstrap,
@@ -53,16 +53,15 @@ from potpie.cli.commands._common import (
 from potpie.cli.telemetry.context import bind_telemetry_context
 
 
-def _package_version() -> str:
-    try:
-        return metadata.version("potpie-context-engine")
-    except metadata.PackageNotFoundError:
-        return "0.1.0"
-
-
 def _version_callback(value: bool) -> None:
     if not value:
         return
+    # The distribution that owns this command is `potpie`; the engine is what
+    # it is built on. Reporting the engine alone under its own name -- which is
+    # what this did -- told a reader the version of a library and nothing about
+    # the CLI they had run, and both numbers are constants anyway: the rev in
+    # `build` is the part that identifies the code (see potpie.build_info).
+    info = build_info.describe()
     # `--version` is eager: it fires before the root callback has decided
     # anything, so the only statement about output mode that belongs to *this*
     # command line is the argv scan `run_cli` did on the way in. Consulting it
@@ -81,15 +80,15 @@ def _version_callback(value: bool) -> None:
             json.dumps(
                 {
                     "ok": True,
-                    "name": "potpie-context-engine",
-                    "version": _package_version(),
+                    **info,
                     "python": platform.python_version(),
                     "executable": sys.executable,
                 }
             )
         )
     else:
-        typer.echo(f"potpie-context-engine {_package_version()}")
+        typer.echo(build_info.human_line(info))
+        typer.echo(f"{info['engine']['name']} {info['engine']['version']}")
         typer.echo(f"python {platform.python_version()} ({sys.executable})")
     raise typer.Exit()
 
