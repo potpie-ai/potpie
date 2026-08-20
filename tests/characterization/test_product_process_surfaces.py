@@ -54,7 +54,9 @@ EXPECTED_CLI_COMMANDS = {
     "use",
     "whoami",
 }
-EXPECTED_DAEMON_ROUTES = {
+# Temporary observation of the shipped reflective daemon. Phase 3 protects the
+# current entrypoint while later migration commits replace these routes entirely.
+OBSERVED_REFLECTIVE_DAEMON_ROUTES = {
     ("/attr", frozenset({"POST"})),
     ("/health", frozenset({"GET"})),
     ("/rpc", frozenset({"POST"})),
@@ -88,7 +90,7 @@ def test_cli_top_level_command_surface_is_unchanged() -> None:
     assert set(command.commands) == EXPECTED_CLI_COMMANDS
 
 
-def test_daemon_process_routes_are_unchanged(monkeypatch: Any) -> None:
+def test_shipped_reflective_daemon_routes_are_characterized(monkeypatch: Any) -> None:
     module, _main = _load_script("potpie-daemon")
     host = SimpleNamespace(backend=SimpleNamespace(profile="characterization"))
     monkeypatch.setattr(module, "build_host_shell", lambda: host)
@@ -106,4 +108,4 @@ def test_daemon_process_routes_are_unchanged(monkeypatch: Any) -> None:
         for route in app.routes
         if route.path in {"/health", "/rpc", "/attr"}
     }
-    assert routes == EXPECTED_DAEMON_ROUTES
+    assert routes == OBSERVED_REFLECTIVE_DAEMON_ROUTES
