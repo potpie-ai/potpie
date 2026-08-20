@@ -13,12 +13,12 @@ from potpie.cli.auth.gitlab_auth import run_gitlab_pat_auth
 from potpie.cli.auth.gitlab_read import (
     run_gitlab_select_flow,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.gitlab_read_client import (
+from potpie.auth.adapters.gitlab_read_client import (
     GitLabReadError,
     fetch_gitlab_projects,
 )
 from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE
-from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+from potpie.auth.adapters.credentials_store import (
     CredentialStoreError,
     ProviderCredentialError,
     get_integration_status,

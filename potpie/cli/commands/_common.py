@@ -36,7 +36,7 @@ from potpie_context_engine.core.errors import (
     ContextEngineDisabled,
     PotNotFound,
 )
-from potpie_context_engine.domain.ports.cli_auth.credentials import CredentialStore
+from potpie.auth.ports.credentials import CredentialStore
 
 # --- exit codes (cli-flow.md output contract) -------------------------------
 EXIT_OK = 0
@@ -322,12 +322,12 @@ def get_store() -> CredentialStore:
     """Return the process-wide ``CredentialStore`` (built lazily).
 
     The auth/credential subsystem persists through this domain port; the concrete
-    is chosen at the composition root (``potpie_context_engine.bootstrap.cli_auth_wiring``), so this
+    is chosen at the composition root (``potpie.auth.wiring``), so this
     inbound module never imports an adapter. The default is the real
     file-backed store; tests inject an in-memory fake via ``set_store``.
     """
     if _state["store"] is None:
-        from potpie_context_engine.bootstrap.cli_auth_wiring import (
+        from potpie.auth.wiring import (
             build_credential_store,
         )
 

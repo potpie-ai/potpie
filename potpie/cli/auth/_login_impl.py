@@ -15,17 +15,17 @@ from typing import NoReturn
 
 import typer
 
-from potpie_context_engine.adapters.outbound.cli_auth.firebase_session import (
+from potpie.auth.adapters.firebase_session import (
     FirebaseSessionError,
     exchange_custom_token,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.potpie import (
+from potpie.auth.adapters.potpie import (
     PotpieCliAuthError,
     resolve_potpie_api_url_for_auth,
     revoke_api_key_on_server,
     run_browser_login_flow,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+from potpie.auth.adapters.credentials_store import (
     CredentialStoreError,
 )
 from potpie.cli.commands._common import EXIT_AUTH, get_store

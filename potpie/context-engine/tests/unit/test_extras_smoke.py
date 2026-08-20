@@ -19,11 +19,6 @@ import importlib.util
 import pytest
 
 _EXTRA_SMOKES = (
-    (
-        "cli-auth",
-        "keyring",
-        "potpie_context_engine.adapters.outbound.cli_auth.e2e_keyring",
-    ),
     ("http", "fastapi", "potpie_context_engine.adapters.inbound.http.app"),
     # The falkordblite distribution installs the ``redislite`` module; gate on
     # the falkordb client, which the [local] extra also carries.

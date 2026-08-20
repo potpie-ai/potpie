@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar
 
-from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+from potpie.auth.adapters.credentials_store import (
     config_dir,
 )
 

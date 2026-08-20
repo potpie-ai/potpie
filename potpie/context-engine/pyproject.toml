@@ -20,12 +20,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Outbound credential-store + provider auth clients (adapters/outbound/cli_auth).
-# The inbound CLI itself lives in the root `potpie` distribution.
-cli-auth = [
-    "httpx>=0.28.0",
-    "keyring>=25.0.0",
-]
 http = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
@@ -80,7 +74,7 @@ observability = [
 # OSS distribution convenience set: everything the local potpie experience
 # uses. Excludes benchmarks (development harness) and dev tooling.
 all = [
-    "potpie-context-engine[cli-auth,http,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
+    "potpie-context-engine[http,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
 ]
 dev = [
     "pytest>=9.0.3",
@@ -123,7 +117,6 @@ asyncio_mode = "auto"
 markers = [
     "unit: unit tests",
     "integration: integration tests (no external services required, but exercise real third-party libs)",
-    "cli_auth_e2e: opt-in live CLI auth tests (Linear/Jira/Confluence); requires RUN_CLI_AUTH_E2E=1",
     "premerge_journey: dedicated pre-merge CLI journey test (Rust required; run in premerge-cli-journey job only)",
 ]
 

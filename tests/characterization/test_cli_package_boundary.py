@@ -80,6 +80,40 @@ def test_engine_metadata_does_not_depend_on_root_potpie() -> None:
     assert "potpie" not in dependency_names
 
 
+def test_product_authentication_is_owned_by_root_potpie() -> None:
+    legacy_auth_directories = (
+        ENGINE_ROOT
+        / "src"
+        / "potpie_context_engine"
+        / "adapters"
+        / "outbound"
+        / "cli_auth",
+        ENGINE_ROOT / "src" / "potpie_context_engine" / "domain" / "ports" / "cli_auth",
+    )
+    assert all(
+        not any(path.rglob("*.py")) for path in legacy_auth_directories if path.is_dir()
+    )
+    assert not (
+        ENGINE_ROOT
+        / "src"
+        / "potpie_context_engine"
+        / "bootstrap"
+        / "cli_auth_wiring.py"
+    ).exists()
+
+    engine_auth_importers = {
+        path.relative_to(ENGINE_ROOT).as_posix()
+        for path in ENGINE_ROOT.rglob("*.py")
+        if _imports_namespace(path, "potpie.auth")
+    }
+    assert engine_auth_importers == set()
+
+    engine_metadata = tomllib.loads(
+        (ENGINE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert "cli-auth" not in engine_metadata["project"]["optional-dependencies"]
+
+
 def test_root_console_script_targets_relocated_cli() -> None:
     root_metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert root_metadata["project"]["scripts"]["potpie"] == "potpie.cli.main:main"

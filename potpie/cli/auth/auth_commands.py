@@ -22,17 +22,17 @@ from potpie.cli.auth.atlassian_read import (
     run_confluence_use_flow,
     run_jira_use_flow,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.linear_read_client import (
+from potpie.auth.adapters.linear_read_client import (
     LinearReadError,
     fetch_linear_workspaces,
 )
 from potpie.cli.auth.linear_read import run_linear_use_flow
-from potpie_context_engine.adapters.outbound.cli_auth.callback_server import (
+from potpie.auth.adapters.callback_server import (
     OAuthCallbackResult,
     start_oauth_callback_server,
     wait_for_oauth_callback,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+from potpie.auth.adapters.credentials_store import (
     ProviderCredentialError,
     credentials_path,
     get_integration_status,
@@ -41,11 +41,11 @@ from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
 from potpie_context_engine.bootstrap.runtime_settings import (
     ensure_runtime_environment_loaded,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.integration_session import (
+from potpie.auth.adapters.integration_session import (
     ensure_valid_integration_tokens,
     token_needs_refresh,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.integration_verify import (
+from potpie.auth.adapters.integration_verify import (
     verify_integration_access,
 )
 from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
@@ -60,11 +60,11 @@ from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
 from potpie.cli.ui.output import emit_error, print_json_blob, print_plain_line
-from potpie_context_engine.adapters.outbound.cli_auth.pkce import generate_pkce_pair
-from potpie_context_engine.adapters.outbound.cli_auth.oauth_client_id_messages import (
+from potpie.auth.adapters.pkce import generate_pkce_pair
+from potpie.auth.adapters.oauth_client_id_messages import (
     missing_linear_client_id_message,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
+from potpie.auth.adapters.provider_config import (
     Provider,
     authorization_url,
     get_callback_host,
@@ -74,7 +74,7 @@ from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
     get_redirect_uri_for_port,
     get_scopes,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.token_exchange import (
+from potpie.auth.adapters.token_exchange import (
     exchange_authorization_code,
 )
 
@@ -273,7 +273,7 @@ def _run_linear_oauth_flow(*, force: bool = False, add: bool = False) -> None:
                     as_json=False,
                 )
         else:
-            from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+            from potpie.auth.adapters.credentials_store import (
                 list_linear_organizations,
             )
 

@@ -11,14 +11,14 @@ from typing import Any
 
 import typer
 
-from potpie_context_engine.adapters.outbound.cli_auth.gitlab_read_client import (
+from potpie.auth.adapters.gitlab_read_client import (
     GitLabReadError,
     fetch_gitlab_issues,
     fetch_gitlab_merge_requests,
     fetch_gitlab_projects,
     load_gitlab_read_credentials,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+from potpie.auth.adapters.credentials_store import (
     save_gitlab_workspace_prefs,
 )
 from potpie.cli.ui.output import print_plain_line

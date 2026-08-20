@@ -14,7 +14,7 @@ from click.exceptions import Abort
 from potpie_context_engine.bootstrap.runtime_settings import (
     ensure_runtime_environment_loaded,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.github import (
+from potpie.auth.adapters.github import (
     GitHubDeviceFlowError,
     build_provider_credentials,
     list_user_owned_repositories,
@@ -23,7 +23,7 @@ from potpie_context_engine.adapters.outbound.cli_auth.github import (
     verify_account,
 )
 from potpie.cli.commands._common import EXIT_AUTH, EXIT_UNAVAILABLE, get_store
-from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+from potpie.auth.adapters.credentials_store import (
     CredentialStoreError,
     ProviderCredentialError,
     _integration_secret_store_label,
