@@ -13,11 +13,12 @@ from typing import Any
 
 from potpie.cli.repo_location import repo_identity_key
 from potpie.runtime.clients import ClientOutcome, LegacyEngineClientAdapter
-from potpie.runtime.operations import EngineOperation
+from potpie.runtime.operations import ENGINE_OPERATION_CATALOG, EngineOperation
 from potpie.runtime.protocol import EngineOperationRequest
 from potpie.runtime.resource_manager import (
     AuthenticatedActor,
     AuthorizationScope,
+    AuthorizationError,
     CompositionFingerprint,
     ContextResourceManager,
     ContextSelector,
@@ -40,6 +41,9 @@ from potpie_context_engine.core.errors import (
     PotNotFound,
 )
 from potpie_context_engine.core.ports.agent_context import (
+    RecordRequest as HostRecordRequest,
+)
+from potpie_context_engine.core.ports.agent_context import (
     ResolveRequest as HostResolveRequest,
 )
 from potpie_context_engine.core.ports.agent_context import (
@@ -51,14 +55,31 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
+from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 from potpie_context_engine.requests import (
     CatalogRequest,
+    CommitRequest,
     DataPlaneStatusRequest,
     DescribeRequest,
     EngineRequest,
+    ExportSnapshotRequest,
+    HistoryRequest,
+    ImportSnapshotRequest,
+    InboxAddRequest,
+    InboxClaimRequest,
+    InboxCloseRequest,
+    InboxListRequest,
+    InboxMarkAppliedRequest,
+    InboxMarkRejectedRequest,
+    InboxShowRequest,
     InspectRequest,
+    MutateRequest,
     NeighborhoodRequest,
+    ProposeRequest,
+    QualityRequest,
     ReadRequest,
+    RecordRequest,
+    RepairRequest,
     ResolveRequest,
     SearchEntitiesRequest,
     SearchRequest,
@@ -238,6 +259,25 @@ class HostShellEngineOperations:
             )
         )
 
+    async def record(
+        self, context: ContextIdentity, request: RecordRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.agent_context.record(
+                HostRecordRequest(
+                    pot_id=context.value,
+                    record_type=_required_str(payload, "record_type"),
+                    summary=_required_str(payload, "summary"),
+                    details=_mapping(payload, "details"),
+                    scope=_mapping(payload, "scope"),
+                    source_refs=_tuple_of_str(payload, "source_refs"),
+                    idempotency_key=_optional_str(payload, "idempotency_key"),
+                    metadata=_mapping(payload, "metadata"),
+                )
+            )
+        )
+
     async def data_plane_status(
         self, context: ContextIdentity, request: DataPlaneStatusRequest
     ) -> Outcome[object]:
@@ -333,6 +373,16 @@ class HostShellEngineOperations:
             )
         )
 
+    async def mutate(
+        self, context: ContextIdentity, request: MutateRequest
+    ) -> Outcome[object]:
+        mutation = _mapping(request.payload, "mutation")
+        return await self._call(
+            lambda: self._host.graph.mutate(
+                SemanticMutationRequest.parse(mutation, pot_id=context.value)
+            )
+        )
+
     async def neighborhood(
         self, context: ContextIdentity, request: NeighborhoodRequest
     ) -> Outcome[object]:
@@ -349,6 +399,193 @@ class HostShellEngineOperations:
             lambda: self._inspection_neighborhood(context=context, payload=payload)
         )
 
+    async def export_snapshot(
+        self, context: ContextIdentity, request: ExportSnapshotRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._host.backend.snapshot.export(
+                pot_id=context.value,
+                destination=_required_str(request.payload, "destination"),
+            )
+        )
+
+    async def import_snapshot(
+        self, context: ContextIdentity, request: ImportSnapshotRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._host.backend.snapshot.import_(
+                pot_id=context.value,
+                source=_required_str(request.payload, "source"),
+            )
+        )
+
+    async def repair(
+        self, context: ContextIdentity, request: RepairRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._host.backend.analytics.repair(
+                context.value,
+                targets=_tuple_of_str(request.payload, "targets"),
+            )
+        )
+
+    async def propose(
+        self, context: ContextIdentity, request: ProposeRequest
+    ) -> Outcome[object]:
+        mutation = _mapping(request.payload, "mutation")
+        ttl_seconds = request.payload.get("ttl_seconds")
+        return await self._call(
+            lambda: self._host.graph_workbench.propose(
+                mutation,
+                pot_id=context.value,
+                ttl_seconds=int(ttl_seconds) if ttl_seconds is not None else None,
+            )
+        )
+
+    async def commit(
+        self, context: ContextIdentity, request: CommitRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.graph_workbench.commit(
+                _required_str(payload, "plan_id"),
+                pot_id=context.value,
+                approved_by=_optional_str(payload, "approved_by"),
+                verify=bool(payload.get("verify", False)),
+            )
+        )
+
+    async def history(
+        self, context: ContextIdentity, request: HistoryRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.graph_workbench.history(
+                pot_id=context.value,
+                entity_key=_optional_str(payload, "entity_key"),
+                claim_key=_optional_str(payload, "claim_key"),
+                subgraph=_optional_str(payload, "subgraph"),
+                plan_id=_optional_str(payload, "plan_id"),
+                mutation_id=_optional_str(payload, "mutation_id"),
+                since=payload.get("since"),  # type: ignore[arg-type]
+                until=payload.get("until"),  # type: ignore[arg-type]
+                limit=int(payload.get("limit") or 50),
+            )
+        )
+
+    async def quality(
+        self, context: ContextIdentity, request: QualityRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.graph_workbench.quality(
+                pot_id=context.value,
+                report=_required_str(payload, "report"),
+                subgraph=_optional_str(payload, "subgraph"),
+                limit=int(payload.get("limit") or 50),
+                confidence_threshold=float(
+                    payload.get("confidence_threshold") or 0.5
+                ),
+            )
+        )
+
+    async def inbox_add(
+        self, context: ContextIdentity, request: InboxAddRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.graph_workbench.inbox_add(
+                pot_id=context.value,
+                summary=_required_str(payload, "summary"),
+                details=_optional_str(payload, "details"),
+                evidence=_tuple_of_str(payload, "evidence"),
+                source_refs=_tuple_of_str(payload, "source_refs"),
+                suspected_subgraphs=_tuple_of_str(payload, "suspected_subgraphs"),
+                created_by=_mapping(payload, "created_by"),
+            )
+        )
+
+    async def inbox_list(
+        self, context: ContextIdentity, request: InboxListRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.graph_workbench.inbox_list(
+                pot_id=context.value,
+                status=_tuple_of_str(payload, "status"),
+                claimed_by=_optional_str(payload, "claimed_by"),
+                suspected_subgraph=_optional_str(payload, "suspected_subgraph"),
+                source_ref=_optional_str(payload, "source_ref"),
+                since=payload.get("since"),  # type: ignore[arg-type]
+                until=payload.get("until"),  # type: ignore[arg-type]
+                limit=int(payload.get("limit") or 50),
+            )
+        )
+
+    async def inbox_show(
+        self, context: ContextIdentity, request: InboxShowRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._host.graph_workbench.inbox_show(
+                pot_id=context.value,
+                item_id=_required_str(request.payload, "item_id"),
+            )
+        )
+
+    async def inbox_claim(
+        self, context: ContextIdentity, request: InboxClaimRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.graph_workbench.inbox_claim(
+                pot_id=context.value,
+                item_id=_required_str(payload, "item_id"),
+                claimed_by=_required_str(payload, "claimed_by"),
+            )
+        )
+
+    async def inbox_mark_applied(
+        self, context: ContextIdentity, request: InboxMarkAppliedRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.graph_workbench.inbox_mark_applied(
+                pot_id=context.value,
+                item_id=_required_str(payload, "item_id"),
+                closed_by=_required_str(payload, "closed_by"),
+                linked_plan_id=_optional_str(payload, "linked_plan_id"),
+                linked_mutation_id=_optional_str(payload, "linked_mutation_id"),
+            )
+        )
+
+    async def inbox_mark_rejected(
+        self, context: ContextIdentity, request: InboxMarkRejectedRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.graph_workbench.inbox_mark_rejected(
+                pot_id=context.value,
+                item_id=_required_str(payload, "item_id"),
+                closed_by=_required_str(payload, "closed_by"),
+                rejection_reason=_required_str(payload, "rejection_reason"),
+            )
+        )
+
+    async def inbox_close(
+        self, context: ContextIdentity, request: InboxCloseRequest
+    ) -> Outcome[object]:
+        payload = request.payload
+        return await self._call(
+            lambda: self._host.graph_workbench.inbox_close(
+                pot_id=context.value,
+                item_id=_required_str(payload, "item_id"),
+                closed_by=_required_str(payload, "closed_by"),
+                linked_plan_id=_optional_str(payload, "linked_plan_id"),
+                linked_mutation_id=_optional_str(payload, "linked_mutation_id"),
+                rejection_reason=_optional_str(payload, "rejection_reason"),
+            )
+        )
+
     async def invoke(
         self,
         operation: EngineOperation,
@@ -361,13 +598,29 @@ class HostShellEngineOperations:
         ] = {
             EngineOperation.RESOLVE: self.resolve,
             EngineOperation.SEARCH: self.search,
+            EngineOperation.RECORD: self.record,
             EngineOperation.DATA_PLANE_STATUS: self.data_plane_status,
             EngineOperation.CATALOG: self.catalog,
             EngineOperation.DESCRIBE: self.describe,
             EngineOperation.READ: self.read,
             EngineOperation.SEARCH_ENTITIES: self.search_entities,
+            EngineOperation.MUTATE: self.mutate,
             EngineOperation.NEIGHBORHOOD: self.neighborhood,
             EngineOperation.INSPECT: self.inspect,
+            EngineOperation.EXPORT_SNAPSHOT: self.export_snapshot,
+            EngineOperation.IMPORT_SNAPSHOT: self.import_snapshot,
+            EngineOperation.REPAIR: self.repair,
+            EngineOperation.PROPOSE: self.propose,
+            EngineOperation.COMMIT: self.commit,
+            EngineOperation.HISTORY: self.history,
+            EngineOperation.QUALITY: self.quality,
+            EngineOperation.INBOX_ADD: self.inbox_add,
+            EngineOperation.INBOX_LIST: self.inbox_list,
+            EngineOperation.INBOX_SHOW: self.inbox_show,
+            EngineOperation.INBOX_CLAIM: self.inbox_claim,
+            EngineOperation.INBOX_MARK_APPLIED: self.inbox_mark_applied,
+            EngineOperation.INBOX_MARK_REJECTED: self.inbox_mark_rejected,
+            EngineOperation.INBOX_CLOSE: self.inbox_close,
         }
         handler = handlers.get(operation)
         if handler is None:
@@ -517,6 +770,9 @@ def build_legacy_engine_client(
         )
         if isinstance(authorized, Failure):
             return authorized
+        destructive_failure = _validate_destructive_intent(request)
+        if destructive_failure is not None:
+            return Failure(destructive_failure)
         return await operations.invoke(
             request.operation,
             selection.value,
@@ -524,6 +780,26 @@ def build_legacy_engine_client(
         )
 
     return LegacyEngineClientAdapter(selector=selector, invoker=invoke)
+
+
+def _validate_destructive_intent(
+    request: EngineOperationRequest,
+) -> AuthorizationError | None:
+    if not ENGINE_OPERATION_CATALOG[request.operation].destructive:
+        return None
+    intent = request.destructive_intent
+    if (
+        intent is None
+        or not intent.confirmed
+        or intent.operation != request.operation.value
+        or intent.selector != request.selector
+        or intent.request_id != request.request_id
+    ):
+        return AuthorizationError(
+            code="destructive_intent_invalid",
+            message="destructive operation confirmation does not match the request",
+        )
+    return None
 
 
 def _required_str(payload: Mapping[str, object], field: str) -> str:

@@ -1,6 +1,6 @@
 """Query + memory commands: ``resolve`` / ``search`` / ``record``.
 
-Reads route through ``EngineClient``; record moves in the following write commit.
+All three operations route through the context-bound ``EngineClient``.
 These three (plus ``status``) are the four-tool agent contract; new use cases
 become new ``--intent`` / ``--include`` / ``--type`` values, never new commands.
 """
@@ -13,8 +13,6 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     get_engine_client,
-    get_host,
-    resolve_pot_id,
     run_engine_operation,
 )
 from potpie.cli.telemetry.onboarding_events import (
@@ -23,8 +21,8 @@ from potpie.cli.telemetry.onboarding_events import (
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from potpie_context_engine.core.ports.agent_context import RecordRequest
 from potpie_context_engine.requests import (
+    RecordRequest as EngineRecordRequest,
     ResolveRequest as EngineResolveRequest,
 )
 from potpie_context_engine.requests import SearchRequest as EngineSearchRequest
@@ -99,14 +97,15 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_record — write a durable project learning."""
         with contract():
-            host = get_host()
-            pot_id = resolve_pot_id(host, pot)
-            receipt = host.agent_context.record(
-                RecordRequest(
-                    pot_id=pot_id,
-                    record_type=type,
-                    summary=summary,
-                    scope=_parse_scope(scope),
+            receipt = run_engine_operation(
+                get_engine_client(pot).record(
+                    EngineRecordRequest(
+                        payload={
+                            "record_type": type,
+                            "summary": summary,
+                            "scope": _parse_scope(scope),
+                        }
+                    )
                 )
             )
             capture_usage_command_succeeded(

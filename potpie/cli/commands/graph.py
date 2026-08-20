@@ -1,4 +1,4 @@
-"""Graph + backend commands → ``HostShell.graph`` and the active ``GraphBackend``.
+"""Graph commands through ``EngineClient`` plus root-owned backend administration.
 
 CLI code never touches a store directly; everything goes through the capability
 ports. Unbuilt projections (semantic/inspection/analytics/snapshot on profiles
@@ -18,6 +18,7 @@ from typing import Any
 
 import typer
 
+from potpie.runtime import DestructiveConfirmation
 from potpie_context_engine.bootstrap.observability_runtime import get_observability
 from potpie_context_engine.core.workbench_service import (
     graph_error_envelope,
@@ -69,11 +70,25 @@ from potpie_context_engine.domain.ports.observability import SPAN_KIND_INTERNAL
 from potpie_context_engine.core.graph_views import INCLUDE_TO_VIEW
 from potpie_context_engine.requests import (
     CatalogRequest as EngineCatalogRequest,
+    CommitRequest as EngineCommitRequest,
     DataPlaneStatusRequest as EngineDataPlaneStatusRequest,
     DescribeRequest as EngineDescribeRequest,
+    ExportSnapshotRequest as EngineExportSnapshotRequest,
+    HistoryRequest as EngineHistoryRequest,
+    ImportSnapshotRequest as EngineImportSnapshotRequest,
+    InboxAddRequest as EngineInboxAddRequest,
+    InboxClaimRequest as EngineInboxClaimRequest,
+    InboxCloseRequest as EngineInboxCloseRequest,
+    InboxListRequest as EngineInboxListRequest,
+    InboxMarkAppliedRequest as EngineInboxMarkAppliedRequest,
+    InboxMarkRejectedRequest as EngineInboxMarkRejectedRequest,
+    InboxShowRequest as EngineInboxShowRequest,
     InspectRequest as EngineInspectRequest,
     NeighborhoodRequest as EngineNeighborhoodRequest,
+    ProposeRequest as EngineProposeRequest,
+    QualityRequest as EngineQualityRequest,
     ReadRequest as EngineReadRequest,
+    RepairRequest as EngineRepairRequest,
     SearchEntitiesRequest as EngineSearchEntitiesRequest,
 )
 from potpie_context_engine.domain.nudge import NUDGE_EVENT_HELP
@@ -847,7 +862,14 @@ def graph_mutate(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         payload = _load_json(file)
-        proposal = host.graph_workbench.propose(payload, pot_id=pot_id)
+        client = get_engine_client(pot, host=host)
+        proposal = run_engine_operation(
+            client.propose(
+                EngineProposeRequest(
+                    payload={"mutation": _context_bound_mutation(payload)}
+                )
+            )
+        )
         legacy_warning = _legacy_warning(
             "graph.mutate", "graph.propose and graph.commit"
         )
@@ -876,10 +898,17 @@ def graph_mutate(
             )
             return
 
-        result = host.graph_workbench.commit(
-            proposal.plan_id,
-            pot_id=pot_id,
-            approved_by=approved_by if allow_review_required else None,
+        result = run_engine_operation(
+            client.commit(
+                EngineCommitRequest(
+                    payload={
+                        "plan_id": proposal.plan_id,
+                        "approved_by": (
+                            approved_by if allow_review_required else None
+                        ),
+                    }
+                )
+            )
         )
         _emit_graph_result(
             ctx,
@@ -1497,10 +1526,15 @@ def graph_propose(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         payload = _load_json(file)
-        result = host.graph_workbench.propose(
-            payload,
-            pot_id=pot_id,
-            ttl_seconds=_parse_ttl_seconds(ttl),
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).propose(
+                EngineProposeRequest(
+                    payload={
+                        "mutation": _context_bound_mutation(payload),
+                        "ttl_seconds": _parse_ttl_seconds(ttl),
+                    }
+                )
+            )
         )
         _emit_graph_result(
             ctx,
@@ -1530,11 +1564,16 @@ def graph_commit(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph_workbench.commit(
-            plan_id,
-            pot_id=pot_id,
-            approved_by=approved_by,
-            verify=verify,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).commit(
+                EngineCommitRequest(
+                    payload={
+                        "plan_id": plan_id,
+                        "approved_by": approved_by,
+                        "verify": verify,
+                    }
+                )
+            )
         )
         _emit_graph_result(
             ctx,
@@ -1631,6 +1670,7 @@ def graph_bulk_apply(
             start_chunk=start_chunk,
             manifest=manifest,
         )
+        client = get_engine_client(pot, host=host)
         ok = True
 
         for chunk in chunks:
@@ -1642,10 +1682,15 @@ def graph_bulk_apply(
             entry = _bulk_chunk_entry(chunk)
             run["chunks_attempted"] += 1
             run["operations_attempted"] += entry["operation_count"]
-            proposal = host.graph_workbench.propose(
-                chunk["payload"],
-                pot_id=pot_id,
-                ttl_seconds=ttl_seconds,
+            proposal = run_engine_operation(
+                client.propose(
+                    EngineProposeRequest(
+                        payload={
+                            "mutation": _context_bound_mutation(chunk["payload"]),
+                            "ttl_seconds": ttl_seconds,
+                        }
+                    )
+                )
             )
             entry["proposal"] = _bulk_proposal_summary(proposal)
             entry["plan_id"] = proposal.plan_id
@@ -1691,10 +1736,15 @@ def graph_bulk_apply(
                     break
                 continue
 
-            commit = host.graph_workbench.commit(
-                proposal.plan_id,
-                pot_id=pot_id,
-                approved_by=approved_by,
+            commit = run_engine_operation(
+                client.commit(
+                    EngineCommitRequest(
+                        payload={
+                            "plan_id": proposal.plan_id,
+                            "approved_by": approved_by,
+                        }
+                    )
+                )
             )
             entry["commit"] = _bulk_commit_summary(commit)
             entry["ok"] = bool(commit.ok)
@@ -1722,7 +1772,9 @@ def graph_bulk_apply(
         run["ok"] = ok
         run["status"] = _bulk_run_status(run, dry_run=dry_run, ok=ok)
         if verify:
-            status = host.graph.data_plane_status(pot_id)
+            status = run_engine_operation(
+                client.data_plane_status(EngineDataPlaneStatusRequest())
+            )
             run["verification"] = _data_plane_status_payload(status)
 
         _write_bulk_manifest(manifest, run)
@@ -1753,16 +1805,21 @@ def graph_history(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
-        result = host.graph_workbench.history(
-            pot_id=pot_id,
-            entity_key=entity,
-            claim_key=claim,
-            subgraph=subgraph,
-            plan_id=plan,
-            mutation_id=mutation,
-            since=since_dt,
-            until=until_dt,
-            limit=limit,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).history(
+                EngineHistoryRequest(
+                    payload={
+                        "entity_key": entity,
+                        "claim_key": claim,
+                        "subgraph": subgraph,
+                        "plan_id": plan,
+                        "mutation_id": mutation,
+                        "since": since_dt,
+                        "until": until_dt,
+                        "limit": limit,
+                    }
+                )
+            )
         )
         _emit_graph_result(
             ctx,
@@ -1785,14 +1842,19 @@ def graph_inbox_add(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph_workbench.inbox_add(
-            pot_id=pot_id,
-            summary=summary,
-            details=details,
-            evidence=tuple(evidence or ()),
-            source_refs=tuple(source_ref or ()),
-            suspected_subgraphs=tuple(subgraph or ()),
-            created_by=_parse_created_by(created_by),
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).inbox_add(
+                EngineInboxAddRequest(
+                    payload={
+                        "summary": summary,
+                        "details": details,
+                        "evidence": tuple(evidence or ()),
+                        "source_refs": tuple(source_ref or ()),
+                        "suspected_subgraphs": tuple(subgraph or ()),
+                        "created_by": _parse_created_by(created_by),
+                    }
+                )
+            )
         )
         _emit_inbox_result(ctx, result)
 
@@ -1813,15 +1875,20 @@ def graph_inbox_list(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
-        result = host.graph_workbench.inbox_list(
-            pot_id=pot_id,
-            status=tuple(status or ()),
-            claimed_by=claimed_by,
-            suspected_subgraph=subgraph,
-            source_ref=source_ref,
-            since=since_dt,
-            until=until_dt,
-            limit=limit,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).inbox_list(
+                EngineInboxListRequest(
+                    payload={
+                        "status": tuple(status or ()),
+                        "claimed_by": claimed_by,
+                        "suspected_subgraph": subgraph,
+                        "source_ref": source_ref,
+                        "since": since_dt,
+                        "until": until_dt,
+                        "limit": limit,
+                    }
+                )
+            )
         )
         _emit_inbox_result(ctx, result)
 
@@ -1837,7 +1904,11 @@ def graph_inbox_show(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph_workbench.inbox_show(pot_id=pot_id, item_id=item_id)
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).inbox_show(
+                EngineInboxShowRequest(payload={"item_id": item_id})
+            )
+        )
         _emit_inbox_result(ctx, result)
 
 
@@ -1853,10 +1924,12 @@ def graph_inbox_claim(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph_workbench.inbox_claim(
-            pot_id=pot_id,
-            item_id=item_id,
-            claimed_by=claimed_by,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).inbox_claim(
+                EngineInboxClaimRequest(
+                    payload={"item_id": item_id, "claimed_by": claimed_by}
+                )
+            )
         )
         _emit_inbox_result(ctx, result)
 
@@ -1875,12 +1948,17 @@ def graph_inbox_mark_applied(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph_workbench.inbox_mark_applied(
-            pot_id=pot_id,
-            item_id=item_id,
-            closed_by=closed_by,
-            linked_plan_id=plan,
-            linked_mutation_id=mutation,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).inbox_mark_applied(
+                EngineInboxMarkAppliedRequest(
+                    payload={
+                        "item_id": item_id,
+                        "closed_by": closed_by,
+                        "linked_plan_id": plan,
+                        "linked_mutation_id": mutation,
+                    }
+                )
+            )
         )
         _emit_inbox_result(ctx, result)
 
@@ -1898,11 +1976,16 @@ def graph_inbox_mark_rejected(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph_workbench.inbox_mark_rejected(
-            pot_id=pot_id,
-            item_id=item_id,
-            closed_by=closed_by,
-            rejection_reason=reason,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).inbox_mark_rejected(
+                EngineInboxMarkRejectedRequest(
+                    payload={
+                        "item_id": item_id,
+                        "closed_by": closed_by,
+                        "rejection_reason": reason,
+                    }
+                )
+            )
         )
         _emit_inbox_result(ctx, result)
 
@@ -1922,13 +2005,18 @@ def graph_inbox_close(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph_workbench.inbox_close(
-            pot_id=pot_id,
-            item_id=item_id,
-            closed_by=closed_by,
-            linked_plan_id=plan,
-            linked_mutation_id=mutation,
-            rejection_reason=reason,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).inbox_close(
+                EngineInboxCloseRequest(
+                    payload={
+                        "item_id": item_id,
+                        "closed_by": closed_by,
+                        "linked_plan_id": plan,
+                        "linked_mutation_id": mutation,
+                        "rejection_reason": reason,
+                    }
+                )
+            )
         )
         _emit_inbox_result(ctx, result)
 
@@ -2060,12 +2148,17 @@ def _run_quality_report(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph_workbench.quality(
-            pot_id=pot_id,
-            report=report,
-            subgraph=subgraph,
-            limit=limit,
-            confidence_threshold=confidence_threshold,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).quality(
+                EngineQualityRequest(
+                    payload={
+                        "report": report,
+                        "subgraph": subgraph,
+                        "limit": limit,
+                        "confidence_threshold": confidence_threshold,
+                    }
+                )
+            )
         )
         _emit_quality_result(ctx, result)
 
@@ -2116,7 +2209,11 @@ def graph_export(
         )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        manifest = host.backend.snapshot.export(pot_id=pot_id, destination=file)
+        manifest = run_engine_operation(
+            get_engine_client(pot, host=host).export_snapshot(
+                EngineExportSnapshotRequest(payload={"destination": file})
+            )
+        )
         _emit_graph_result(
             ctx,
             {"location": manifest.location, "claims": manifest.claim_count},
@@ -2138,7 +2235,12 @@ def graph_import(
         )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        manifest = host.backend.snapshot.import_(pot_id=pot_id, source=file)
+        manifest = run_engine_operation(
+            get_engine_client(pot, host=host).import_snapshot(
+                EngineImportSnapshotRequest(payload={"source": file}),
+                confirmation=DestructiveConfirmation(confirmed=True),
+            )
+        )
         _emit_graph_result(
             ctx,
             {"location": manifest.location, "claims": manifest.claim_count},
@@ -2166,7 +2268,12 @@ def graph_repair(
                 targets.append("entity_summaries")
             if entity_labels:
                 targets.append("entity_labels")
-        report = host.backend.analytics.repair(pot_id, targets=targets)
+        report = run_engine_operation(
+            get_engine_client(pot, host=host).repair(
+                EngineRepairRequest(payload={"targets": tuple(targets)}),
+                confirmation=DestructiveConfirmation(confirmed=True),
+            )
+        )
         _emit_graph_result(
             ctx,
             {"targets": list(report.targets), "repaired": dict(report.repaired)},
@@ -3113,6 +3220,11 @@ def _read_payload(
         payload["event_count"] = len(events)
         payload["freshness"] = _timeline_freshness(events)
     return payload
+
+
+def _context_bound_mutation(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove the legacy selector field before crossing the engine boundary."""
+    return {key: value for key, value in payload.items() if key != "pot_id"}
 
 
 def _read_human(

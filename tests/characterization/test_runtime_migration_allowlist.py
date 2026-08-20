@@ -73,7 +73,6 @@ EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
         "potpie/cli/commands/graph.py",
         "potpie/cli/commands/ledger.py",
         "potpie/cli/commands/pots.py",
-        "potpie/cli/commands/query.py",
         "potpie/cli/commands/skills.py",
         "potpie/cli/commands/ui.py",
         "potpie/cli/ui/setup_ux.py",
