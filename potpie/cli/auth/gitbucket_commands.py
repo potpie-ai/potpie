@@ -40,7 +40,7 @@ from potpie.cli.ui.output import emit_error, print_json_blob, print_plain_line
 from potpie.auth.adapters.provider_config import (
     GITBUCKET_TOKEN_ENV_VARS,
 )
-from potpie_context_engine.bootstrap.runtime_settings import (
+from potpie.runtime.settings import (
     ensure_runtime_environment_loaded,
 )
 

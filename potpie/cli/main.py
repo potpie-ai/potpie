@@ -98,7 +98,7 @@ def build_app() -> typer.Typer:
             configure_cli_logging,
             configure_error_output,
         )
-        from potpie_context_engine.bootstrap.runtime_settings import (
+        from potpie.runtime.settings import (
             ensure_runtime_environment_loaded,
         )
         from potpie_context_engine.bootstrap import sentry_metrics_runtime

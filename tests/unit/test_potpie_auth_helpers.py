@@ -22,7 +22,7 @@ from potpie.cli import main as cli_main
 from potpie.cli.auth import _login_impl
 from potpie.auth.adapters import firebase_session
 from potpie.auth.adapters import potpie as potpie_auth
-from potpie_context_engine.bootstrap import runtime_settings
+from potpie.runtime import settings as runtime_settings
 from potpie.auth.adapters.firebase_session import (
     FirebaseSession,
     FirebaseSessionError,

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-from potpie_context_engine.bootstrap import env_bootstrap
+from potpie.runtime import env_bootstrap
 
 _CODE_DEFAULT_ENVIRONMENT: Final[str] = "dev"
 _CODE_DEFAULT_API_URL: Final[str] = "http://localhost:8001"
@@ -182,7 +182,7 @@ def project_child_environment(
 
 def load_distribution_defaults() -> Mapping[str, str]:
     try:
-        from potpie_context_engine.bootstrap._distribution_defaults import (
+        from potpie.runtime._distribution_defaults import (
             DISTRIBUTION_DEFAULTS,
         )
     except ImportError:
@@ -192,7 +192,7 @@ def load_distribution_defaults() -> Mapping[str, str]:
 
 def build_git_sha() -> str | None:
     try:
-        from potpie_context_engine.bootstrap._build_info import GIT_SHA
+        from potpie.runtime._build_info import GIT_SHA
     except ImportError:
         return None
     return _clean(GIT_SHA)

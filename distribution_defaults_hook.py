@@ -1,8 +1,8 @@
 """Hatch build hook: generate packaged distribution defaults.
 
 During ``hatch build`` / ``uv build``, this writes public packaged defaults for
-installed wheels to ``bootstrap/_distribution_defaults.py`` and runtime build
-metadata to ``bootstrap/_build_info.py``. Process environment variables still
+installed wheels to ``potpie/runtime/_distribution_defaults.py`` and runtime
+build metadata to ``potpie/runtime/_build_info.py``. Process environment variables still
 win at runtime.
 """
 
@@ -18,7 +18,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 _CONFIG_VALUES = "build_config_values.py"
 _GENERATED_BUILD_DIRS_KEY = "_potpie_generated_build_dirs"
-_GENERATED_DIR_PREFIX = "potpie-context-engine-build-"
+_GENERATED_DIR_PREFIX = "potpie-build-"
 
 
 class DistributionDefaultsHook(BuildHookInterface):

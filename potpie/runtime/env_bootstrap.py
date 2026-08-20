@@ -1,4 +1,4 @@
-"""Merge a trusted project ``.env`` when runtime settings allow dev dotenv loading."""
+"""Merge a trusted project ``.env`` when Potpie runtime settings allow it."""
 
 from __future__ import annotations
 

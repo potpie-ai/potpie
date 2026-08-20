@@ -11,7 +11,7 @@ from typing import NoReturn
 import typer
 from click.exceptions import Abort
 
-from potpie_context_engine.bootstrap.runtime_settings import (
+from potpie.runtime.settings import (
     ensure_runtime_environment_loaded,
 )
 from potpie.auth.adapters.github import (

@@ -6,7 +6,7 @@ import os
 import time
 from dataclasses import dataclass
 
-from potpie_context_engine.bootstrap.runtime_settings import load_runtime_settings
+from potpie.runtime.settings import load_runtime_settings
 from potpie.auth.adapters.firebase_session import (
     FirebaseSessionError,
     FirebaseSession,

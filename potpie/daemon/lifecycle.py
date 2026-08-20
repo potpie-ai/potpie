@@ -396,7 +396,7 @@ class Daemon:
         ui_port: int,
     ) -> DaemonLaunchSpec:
         from potpie.cli.telemetry.settings import load_cli_runtime_settings
-        from potpie_context_engine.bootstrap.runtime_settings import (
+        from potpie.runtime.settings import (
             project_child_environment,
         )
 

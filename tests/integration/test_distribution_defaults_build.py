@@ -63,11 +63,11 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
     uv = shutil.which("uv")
     if uv is None:
         pytest.skip("uv is required for the packaging smoke test")
-    context_engine = Path(__file__).resolve().parents[2]
+    product_root = Path(__file__).resolve().parents[2]
 
     result = subprocess.run(
         [uv, "build", "--out-dir", str(tmp_path)],
-        cwd=context_engine,
+        cwd=product_root,
         env=_build_smoke_env(),
         text=True,
         capture_output=True,
@@ -82,16 +82,16 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
         stray = [
             name
             for name in archive.namelist()
-            if not name.startswith("potpie_context_engine/")
+            if not name.startswith("potpie/")
             and ".dist-info/" not in name
         ]
         assert not stray, f"wheel ships members outside the namespace: {stray}"
     for artifact in (wheel, sdist):
         distribution_defaults = _archive_text(
-            artifact, "potpie_context_engine/bootstrap/_distribution_defaults.py"
+            artifact, "potpie/runtime/_distribution_defaults.py"
         )
         build_info = _archive_text(
-            artifact, "potpie_context_engine/bootstrap/_build_info.py"
+            artifact, "potpie/runtime/_build_info.py"
         )
         assert "DISTRIBUTION_DEFAULTS = {" in distribution_defaults
         assert "'environment': 'prod_oss'" in distribution_defaults
@@ -106,6 +106,6 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
         assert "'github_client_id': 'github-smoke-client'" in distribution_defaults
         assert "GIT_SHA = 'smoke-sha'" in build_info
         assert "BUILD_TIME = '2026-06-28T00:00:00Z'" in build_info
-    generated_dir = context_engine / "src" / "potpie_context_engine" / "bootstrap"
+    generated_dir = product_root / "potpie" / "runtime"
     assert not (generated_dir / "_distribution_defaults.py").exists()
     assert not (generated_dir / "_build_info.py").exists()

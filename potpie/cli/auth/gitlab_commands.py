@@ -6,7 +6,7 @@ from typing import Any
 
 import typer
 
-from potpie_context_engine.bootstrap.runtime_settings import (
+from potpie.runtime.settings import (
     ensure_runtime_environment_loaded,
 )
 from potpie.cli.auth.gitlab_auth import run_gitlab_pat_auth

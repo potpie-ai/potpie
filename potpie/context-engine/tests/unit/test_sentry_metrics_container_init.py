@@ -6,7 +6,6 @@ from types import ModuleType
 
 import pytest
 
-from potpie.cli.telemetry.settings import SentrySettings
 from potpie_context_engine.adapters.outbound.graph import Neo4jGraphWriter
 from potpie_context_engine.application.services.source_connector_registry import (
     SourceConnectorRegistry,
@@ -17,6 +16,7 @@ from potpie_context_engine.bootstrap import (
     standalone_container,
 )
 from potpie_context_engine.bootstrap.http_projects import ExplicitPotResolution
+from potpie_context_engine.bootstrap.sentry_settings import SentrySettings
 from potpie_context_engine.domain.ports.observability import NoOpObservability
 from potpie_context_engine.domain.ports.telemetry import NoOpTelemetry
 

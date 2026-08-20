@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from potpie_context_engine.bootstrap import env_bootstrap
-from potpie_context_engine.bootstrap.runtime_settings import (
+from potpie.runtime import env_bootstrap
+from potpie.runtime.settings import (
     RuntimeSettings,
     ensure_runtime_environment_loaded,
     load_runtime_settings,
@@ -37,7 +37,7 @@ def _clear_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(env_bootstrap, "_loaded", False)
     monkeypatch.setattr(
-        "potpie_context_engine.bootstrap.runtime_settings.load_distribution_defaults",
+        "potpie.runtime.settings.load_distribution_defaults",
         lambda: {},
     )
 

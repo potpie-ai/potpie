@@ -62,7 +62,7 @@ def _isolated_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(gb_cmds, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(
-        "potpie_context_engine.bootstrap.runtime_settings.ensure_runtime_environment_loaded",
+        "potpie.runtime.settings.ensure_runtime_environment_loaded",
         lambda *_args, **_kwargs: None,
     )
 

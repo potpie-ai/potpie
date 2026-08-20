@@ -20,7 +20,7 @@ from potpie.auth.adapters.http import (
     AuthHttpError,
     HttpClient,
 )
-from potpie_context_engine.bootstrap.runtime_settings import load_runtime_settings
+from potpie.runtime.settings import load_runtime_settings
 
 _DEFAULT_PORT_MIN = 9000
 _DEFAULT_PORT_MAX = 9999

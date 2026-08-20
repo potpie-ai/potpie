@@ -11,7 +11,7 @@ import httpx
 from potpie.auth.adapters.oauth_client_id_messages import (
     missing_github_client_id_message,
 )
-from potpie_context_engine.bootstrap.runtime_settings import load_runtime_settings
+from potpie.runtime.settings import load_runtime_settings
 from potpie.auth.adapters.errors import CliAuthError
 from potpie.auth.adapters.http import (
     AuthHttpClient,

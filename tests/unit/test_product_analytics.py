@@ -15,7 +15,7 @@ from potpie.cli.telemetry.product_analytics import (
     set_product_analytics_sink,
 )
 from potpie.cli.telemetry.settings import load_product_analytics_settings
-from potpie_context_engine.bootstrap import runtime_settings
+from potpie.runtime import settings as runtime_settings
 
 _PRODUCT_ANALYTICS_ENV_NAMES = (
     "POTPIE_ENVIRONMENT",

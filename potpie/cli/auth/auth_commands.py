@@ -38,7 +38,7 @@ from potpie.auth.adapters.credentials_store import (
     get_integration_status,
     get_integration_tokens,
 )
-from potpie_context_engine.bootstrap.runtime_settings import (
+from potpie.runtime.settings import (
     ensure_runtime_environment_loaded,
 )
 from potpie.auth.adapters.integration_session import (

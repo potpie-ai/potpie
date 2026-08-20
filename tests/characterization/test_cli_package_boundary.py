@@ -13,9 +13,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE_ROOT = ROOT / "potpie" / "context-engine"
 
-EXPECTED_ENGINE_CLI_IMPORTERS = {
-    "src/potpie_context_engine/bootstrap/sentry_metrics_runtime.py",
-}
+EXPECTED_ENGINE_CLI_IMPORTERS: set[str] = set()
 
 EXPECTED_ENGINE_PRODUCT_IMPORTERS = {
     "src/potpie_context_engine/bootstrap/host_wiring.py",
@@ -163,6 +161,40 @@ def test_engine_adapters_and_ports_do_not_depend_on_product_setup_types() -> Non
         if _imports_namespace(path, "potpie_context_engine.core.lifecycle")
     }
     assert offenders == set()
+
+
+def test_product_runtime_configuration_is_owned_by_root_potpie() -> None:
+    engine_bootstrap = ENGINE_ROOT / "src" / "potpie_context_engine" / "bootstrap"
+    assert not (engine_bootstrap / "runtime_settings.py").exists()
+    assert not (engine_bootstrap / "env_bootstrap.py").exists()
+    assert (ROOT / "potpie" / "runtime" / "settings.py").is_file()
+    assert (ROOT / "potpie" / "runtime" / "env_bootstrap.py").is_file()
+
+    root_runtime_importers = {
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "potpie").rglob("*.py")
+        if _references_namespace(
+            path, "potpie_context_engine.bootstrap.runtime_settings"
+        )
+        or _references_namespace(path, "potpie_context_engine.bootstrap.env_bootstrap")
+    }
+    assert root_runtime_importers == set()
+
+
+def test_product_build_defaults_are_not_packaged_by_context_engine() -> None:
+    engine_config = (ENGINE_ROOT / "sentry_defaults_hook.py").read_text(
+        encoding="utf-8"
+    )
+    for product_field in (
+        "posthog_api_key",
+        "posthog_host",
+        "linear_client_id",
+        "github_client_id",
+    ):
+        assert product_field not in engine_config
+
+    assert (ROOT / "build_config_values.py").is_file()
+    assert (ROOT / "distribution_defaults_hook.py").is_file()
 
 
 def test_root_console_script_targets_relocated_cli() -> None:
