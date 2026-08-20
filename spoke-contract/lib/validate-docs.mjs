@@ -1,13 +1,15 @@
 #!/usr/bin/env bun
 /**
  * Shared Spoke docs validation.
- * Rejects unsupported files, symlinks, path traversal, MDX, and missing frontmatter.
+ * Requires docs/index.md. Section dirs (getting-started, guides, reference, assets)
+ * are optional. Rejects unsupported files, symlinks, path traversal, MDX, and
+ * missing frontmatter.
  */
 
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep, extname, basename } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 
-const REQUIRED_DIRS = ['getting-started', 'guides', 'reference', 'assets'];
 const ALLOWED_ASSET_EXTS = new Set([
   '.png',
   '.jpg',
@@ -20,9 +22,21 @@ const ALLOWED_ASSET_EXTS = new Set([
   '.webm',
 ]);
 const KEBAB_CASE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const DEFAULT_MAX_ASSET_BYTES = 20 * 1024 * 1024;
+const HUB_EXACT_ROUTES = new Set([
+  '/',
+  '/products',
+  '/documentation-contract',
+  '/architecture',
+  '/contributing',
+]);
 
 function fail(errors, message) {
   errors.push(message);
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function isKebabName(name, { allowDotExt = false } = {}) {
@@ -35,25 +49,28 @@ function isKebabName(name, { allowDotExt = false } = {}) {
   return KEBAB_CASE.test(name);
 }
 
-function parseFrontmatter(content) {
-  if (!content.startsWith('---')) return null;
-  const end = content.indexOf('\n---', 3);
-  if (end === -1) return null;
-  const block = content.slice(4, end);
-  const data = {};
-  for (const line of block.split('\n')) {
-    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (!match) continue;
-    let value = match[2].trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    data[match[1]] = value;
+/**
+ * @param {string} content
+ * @returns {{ data: Record<string, unknown> | null, error: string | null }}
+ */
+export function parseFrontmatter(content) {
+  if (!content.startsWith('---')) {
+    return { data: null, error: 'Missing YAML frontmatter' };
   }
-  return data;
+  const end = content.indexOf('\n---', 3);
+  if (end === -1) {
+    return { data: null, error: 'Missing YAML frontmatter closing delimiter' };
+  }
+  const block = content.slice(4, end);
+  try {
+    const data = parseYaml(block);
+    if (data == null || typeof data !== 'object' || Array.isArray(data)) {
+      return { data: null, error: 'Frontmatter must be a YAML mapping' };
+    }
+    return { data, error: null };
+  } catch (err) {
+    return { data: null, error: `Invalid YAML frontmatter: ${err.message}` };
+  }
 }
 
 function walk(dir, files = []) {
@@ -79,31 +96,47 @@ function extractMarkdownLinks(content) {
   return links;
 }
 
+function normalizeHubPath(target) {
+  if (target.length > 1 && target.endsWith('/')) return target.slice(0, -1);
+  return target || '/';
+}
+
+/**
+ * @param {string} target path without hash/query
+ * @param {string | undefined} spokeId
+ * @returns {boolean}
+ */
+export function isAllowedAbsoluteHubRoute(target, spokeId) {
+  if (!target.startsWith('/')) return false;
+  const normalized = normalizeHubPath(target);
+  if (HUB_EXACT_ROUTES.has(normalized)) return true;
+  const productMatch = normalized.match(/^\/products\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/.*)?$/);
+  if (!productMatch) return false;
+  if (!spokeId) return true;
+  return productMatch[1] === spokeId;
+}
+
 /**
  * @param {string} docsRoot absolute path to Spoke docs/ directory
- * @param {{ spokeId?: string }} [options]
+ * @param {{ spokeId?: string, maxAssetBytes?: number }} [options]
  * @returns {{ ok: boolean, errors: string[], warnings: string[] }}
  */
 export function validateSpokeDocs(docsRoot, options = {}) {
   const errors = [];
   const warnings = [];
-  const root = resolve(docsRoot);
+  const requestedRoot = resolve(docsRoot);
+  const maxAssetBytes = options.maxAssetBytes ?? DEFAULT_MAX_ASSET_BYTES;
 
-  if (!existsSync(root)) {
-    fail(errors, `Missing docs directory: ${root}`);
+  if (!existsSync(requestedRoot)) {
+    fail(errors, `Missing docs directory: ${requestedRoot}`);
     return { ok: false, errors, warnings };
   }
+
+  const root = realpathSync(requestedRoot);
 
   const indexPath = join(root, 'index.md');
   if (!existsSync(indexPath)) {
     fail(errors, 'docs/index.md is mandatory');
-  }
-
-  for (const dir of REQUIRED_DIRS) {
-    const p = join(root, dir);
-    if (!existsSync(p) || !lstatSync(p).isDirectory()) {
-      fail(errors, `Missing required directory: docs/${dir}/`);
-    }
   }
 
   const files = walk(root);
@@ -116,7 +149,6 @@ export function validateSpokeDocs(docsRoot, options = {}) {
       continue;
     }
 
-    // Path traversal / absolute escape via realpath
     try {
       const real = realpathSync(file.path);
       if (!real.startsWith(root + sep) && real !== root) {
@@ -151,6 +183,17 @@ export function validateSpokeDocs(docsRoot, options = {}) {
       if (!isKebabName(name, { allowDotExt: true })) {
         fail(errors, `Asset filename must be kebab-case: ${rel}`);
       }
+      try {
+        const size = statSync(file.path).size;
+        if (size > maxAssetBytes) {
+          fail(
+            errors,
+            `Asset exceeds ${maxAssetBytes} byte limit (${rel} is ${size} bytes)`,
+          );
+        }
+      } catch {
+        fail(errors, `Unable to stat asset: ${rel}`);
+      }
       continue;
     }
 
@@ -175,33 +218,34 @@ export function validateSpokeDocs(docsRoot, options = {}) {
 
     const content = readFileSync(file.path, 'utf8');
     const fm = parseFrontmatter(content);
-    if (!fm) {
-      fail(errors, `Missing YAML frontmatter: ${rel}`);
+    if (fm.error) {
+      fail(errors, `${fm.error}: ${rel}`);
     } else {
-      if (!fm.title?.trim()) fail(errors, `Missing frontmatter title: ${rel}`);
-      if (!fm.description?.trim()) fail(errors, `Missing frontmatter description: ${rel}`);
+      if (!isNonEmptyString(fm.data.title)) {
+        fail(errors, `Missing frontmatter title: ${rel}`);
+      }
+      if (!isNonEmptyString(fm.data.description)) {
+        fail(errors, `Missing frontmatter description: ${rel}`);
+      }
     }
 
     if (/<[a-zA-Z][^>]*>/.test(content.replace(/^---[\s\S]*?---/, ''))) {
       fail(errors, `Raw HTML is not allowed: ${rel}`);
     }
 
-    // Local link checks
     for (const href of extractMarkdownLinks(content)) {
       const target = href.trim().split('#')[0].split('?')[0];
       if (!target) continue;
       if (/^(https?:|mailto:|tel:)/i.test(target)) continue;
-      if (target.startsWith('/products/')) continue; // permanent Hub routes
-      if (target.startsWith('/')) {
-        // other absolute hub routes are ok as cross-product links
-        continue;
-      }
-      if (target.startsWith('/') || /^[a-zA-Z]:\\/.test(target)) {
+      if (/^[a-zA-Z]:[\\/]/.test(target) || /^file:/i.test(target)) {
         fail(errors, `Absolute filesystem paths are not allowed in links (${rel}): ${href}`);
         continue;
       }
-      if (target.includes('..')) {
-        // relative parent is ok if it stays in docs; verify resolution
+      if (target.startsWith('/')) {
+        if (!isAllowedAbsoluteHubRoute(target, options.spokeId)) {
+          fail(errors, `Unknown absolute route (${rel}): ${href}`);
+        }
+        continue;
       }
       const resolved = resolve(file.path, '..', target);
       if (!resolved.startsWith(root + sep) && resolved !== root) {
@@ -209,21 +253,19 @@ export function validateSpokeDocs(docsRoot, options = {}) {
         continue;
       }
       if (!existsSync(resolved)) {
-        // try with .md
         if (!existsSync(resolved + '.md') && !existsSync(join(resolved, 'index.md'))) {
           fail(errors, `Broken local link (${rel}): ${href}`);
         }
       }
     }
 
-    // Images need alt text — flagged when empty alt
     const emptyAlt = /!\[\s*\]\(/g;
     if (emptyAlt.test(content)) {
       fail(errors, `Images must have meaningful alt text: ${rel}`);
     }
   }
 
-  if (options.spokeId && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(options.spokeId)) {
+  if (options.spokeId && !KEBAB_CASE.test(options.spokeId)) {
     fail(errors, `Invalid spoke id: ${options.spokeId}`);
   }
 

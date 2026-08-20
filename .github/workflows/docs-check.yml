@@ -1,0 +1,54 @@
+name: Docs check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  docs-check:
+    name: Docs check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Spoke
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: spoke-contract/package-lock.json
+
+      - name: Install docs-check dependencies
+        working-directory: spoke-contract
+        run: npm ci
+
+      - name: Run docs-check tests
+        working-directory: spoke-contract
+        run: node --test
+
+      - name: List changed files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
+            echo "::error::Docs check must run on pull_request so base/head SHAs are available."
+            exit 1
+          fi
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > /tmp/changed-files.txt
+          echo "Changed files:"
+          cat /tmp/changed-files.txt
+
+      - name: Run docs contract
+        env:
+          DOCS_CONFIG_PATH: ${{ github.workspace }}/config/docs.json
+          CHANGED_FILES_PATH: /tmp/changed-files.txt
+          SPOKE_ROOT: ${{ github.workspace }}
+        run: node spoke-contract/spoke-docs-check.mjs

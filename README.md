@@ -30,12 +30,7 @@ User-facing docs live under [`docs/`](./docs/) and follow the Hub and Spoke layo
 
 The published portal is [docs.potpie.ai](https://docs.potpie.ai).
 
-Validate the Spoke docs tree locally:
-
-```bash
-node scripts/validate-docs-cli.mjs docs potpie
-node --test scripts/validate-pr.test.mjs
-```
+Spoke documentation is checked in this repository when a PR touches `docs/` (`spoke-contract/` + [`config/docs.json`](./config/docs.json)). Code-only PRs are not required to update docs. The Hub fetches `docs/` at publish time and validates ingest again.
 
 ## Install
 

@@ -1,0 +1,16 @@
+{
+  "name": "potpie-spoke-docs-check",
+  "private": true,
+  "type": "module",
+  "description": "Copy this folder into a Spoke. Hub fetch-spokes remains the publish gate.",
+  "scripts": {
+    "check": "node spoke-docs-check.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "yaml": "^2.8.2"
+  }
+}

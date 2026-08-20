@@ -1,7 +1,8 @@
 name: Dispatch hub rebuild
 
-# Hub is notified only when trusted pushes to main touch docs/**.
-# Code-only merges do not trigger this workflow, so Hub takes no action.
+# If this workflow is enabled, Hub is notified only when trusted pushes to
+# main touch docs/**. Code-only merges do not trigger it.
+# Docs check is fast PR feedback. Hub fetch-spokes.mjs is the publish gate.
 on:
   push:
     branches: [main]
@@ -10,19 +11,20 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   dispatch:
     name: Dispatch hub rebuild
     runs-on: ubuntu-latest
-    # Only trusted pushes to main; no pull_request_target; no fork code execution.
     steps:
+      - name: Checkout Spoke
+        uses: actions/checkout@v4
+
       - name: Send repository_dispatch to Hub
         env:
           DOCS_HUB_DISPATCH_TOKEN: ${{ secrets.DOCS_HUB_DISPATCH_TOKEN }}
           HUB_REPO: ${{ vars.DOCS_HUB_REPO }}
-          DEFAULT_HUB_REPO: Nih1tGupta/potpie-docs
+          DEFAULT_HUB_REPO: potpie-ai/docs
           SPOKE_REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
@@ -35,8 +37,9 @@ jobs:
           if [ -z "${HUB_REPO:-}" ]; then
             HUB_REPO="$DEFAULT_HUB_REPO"
           fi
-          payload=$(printf '{"event_type":"spoke-docs-updated","client_payload":{"repository":"%s","branch":"%s","sha":"%s","spoke_id":"potpie"}}' \
-            "$SPOKE_REPO" "$BRANCH" "$SHA")
+          SPOKE_ID="$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync("config/docs.json","utf8")); if (!c.spokeId) process.exit(1); process.stdout.write(String(c.spokeId))')"
+          payload=$(printf '{"event_type":"spoke-docs-updated","client_payload":{"repository":"%s","branch":"%s","sha":"%s","spoke_id":"%s"}}' \
+            "$SPOKE_REPO" "$BRANCH" "$SHA" "$SPOKE_ID")
           code=$(curl -sS -o /tmp/dispatch-response.json -w "%{http_code}" \
             -X POST \
             -H "Accept: application/vnd.github+json" \
@@ -44,13 +47,11 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${HUB_REPO}/dispatches" \
             -d "$payload")
-          # Never print the token. Response body may be empty on 204.
           echo "Hub dispatch HTTP status: $code"
           if [ "$code" != "204" ]; then
             echo "::error::Hub repository_dispatch failed with HTTP $code"
-            # Show response without secrets
             head -c 2000 /tmp/dispatch-response.json || true
             echo
             exit 1
           fi
-          echo "Dispatched spoke-docs-updated to $HUB_REPO for $SPOKE_REPO@$SHA"
+          echo "Dispatched spoke-docs-updated to $HUB_REPO for $SPOKE_REPO@$SHA (spoke_id=$SPOKE_ID)"
