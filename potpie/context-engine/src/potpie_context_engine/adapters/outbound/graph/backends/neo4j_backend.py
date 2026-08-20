@@ -53,7 +53,6 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     repaired_entity_labels,
 )
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
-from potpie_context_engine.core.lifecycle import SetupPlan, StepResult
 from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
@@ -63,6 +62,7 @@ from potpie_context_engine.core.ports.graph.mutation import (
 )
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
 
 _PROFILE = "neo4j"
 
@@ -318,28 +318,23 @@ class Neo4jGraphBackend:
     def bind_definition(self, definition: GraphDefinition) -> Neo4jGraphBackend:
         return replace(self, definition=definition)
 
-    def provision(self, plan: SetupPlan) -> StepResult:
-        from potpie_context_engine.core.lifecycle import DONE, FAILED
-
+    def provision(self) -> BackendProvisionResult:
         if not self.enabled:
-            return StepResult(
-                step="backend.provision",
-                state=FAILED,
+            return BackendProvisionResult(
+                ok=False,
                 detail="neo4j backend is not configured or context graph is disabled",
                 metadata={"profile": _PROFILE},
             )
         try:
             ok = bool(_run_sync(self.graph_writer.ensure_indexes()))
         except Exception as exc:  # noqa: BLE001
-            return StepResult(
-                step="backend.provision",
-                state=FAILED,
+            return BackendProvisionResult(
+                ok=False,
                 detail=str(exc),
                 metadata={"profile": _PROFILE},
             )
-        return StepResult(
-            step="backend.provision",
-            state=DONE if ok else FAILED,
+        return BackendProvisionResult(
+            ok=ok,
             detail="neo4j backend ready" if ok else "neo4j index setup failed",
             metadata={"profile": _PROFILE},
         )

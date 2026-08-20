@@ -23,8 +23,8 @@ from potpie_context_engine.adapters.outbound.graph.backends._unimplemented impor
 )
 from potpie_context_engine.core.definition import GraphDefinition
 from potpie_context_engine.core.errors import CapabilityNotImplemented
-from potpie_context_engine.core.lifecycle import SetupPlan, StepResult
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
 
 
 @dataclass(slots=True)
@@ -74,7 +74,7 @@ class StubGraphBackend:
         del definition
         return self
 
-    def provision(self, plan: SetupPlan) -> StepResult:
+    def provision(self) -> BackendProvisionResult:
         raise CapabilityNotImplemented(
             f"graph.{self._profile}.provision",
             detail=f"the '{self._profile}' backend profile is registered but not implemented",

@@ -49,7 +49,6 @@ from potpie_context_engine.core.graph_entity_summary import (
     normalize_entity_properties,
 )
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
-from potpie_context_engine.core.lifecycle import DONE, SetupPlan, StepResult
 from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.core.ports.graph.analytics import RepairReport
@@ -67,6 +66,7 @@ from potpie_context_engine.core.reconciliation import (
     MutationSummary,
 )
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
 
 _PROFILE = "in_memory"
 
@@ -759,11 +759,10 @@ class InMemoryGraphBackend:
             snapshot=True,
         )
 
-    def provision(self, plan: SetupPlan) -> StepResult:
+    def provision(self) -> BackendProvisionResult:
         # Ephemeral store: nothing durable to stand up.
-        return StepResult(
-            step="backend.provision",
-            state=DONE,
+        return BackendProvisionResult(
+            ok=True,
             detail=f"'{self.profile_name}' backend ready (ephemeral, no store to provision)",
             metadata={"profile": self.profile_name},
         )

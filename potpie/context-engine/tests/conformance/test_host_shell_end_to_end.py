@@ -232,7 +232,7 @@ def test_stub_backend_profiles_registered_and_fail_closed():
         with pytest.raises(CapabilityNotImplemented):
             backend.inspection.neighborhood(pot_id="p", entity_key="e")
         with pytest.raises(CapabilityNotImplemented):
-            backend.provision(SetupPlan(backend=profile))
+            backend.provision()
 
 
 def test_host_shell_rejects_runtime_only_backend() -> None:

@@ -151,6 +151,20 @@ def test_product_lifecycle_sources_are_owned_by_root_potpie() -> None:
     )
 
 
+def test_engine_adapters_and_ports_do_not_depend_on_product_setup_types() -> None:
+    engine_source = ENGINE_ROOT / "src" / "potpie_context_engine"
+    offenders = {
+        path.relative_to(ENGINE_ROOT).as_posix()
+        for search_root in (
+            engine_source / "adapters",
+            engine_source / "domain" / "ports",
+        )
+        for path in search_root.rglob("*.py")
+        if _imports_namespace(path, "potpie_context_engine.core.lifecycle")
+    }
+    assert offenders == set()
+
+
 def test_root_console_script_targets_relocated_cli() -> None:
     root_metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert root_metadata["project"]["scripts"]["potpie"] == "potpie.cli.main:main"

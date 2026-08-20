@@ -37,6 +37,10 @@ from potpie.product.ports.pot_management import (
 runner = CliRunner()
 
 
+def test_setup_plan_defaults_to_local_lite_backend() -> None:
+    assert SetupPlan().backend == "falkordb_lite"
+
+
 @dataclass(frozen=True)
 class _MetricCall:
     name: str

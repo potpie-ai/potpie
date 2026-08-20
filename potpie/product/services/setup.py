@@ -203,7 +203,7 @@ class DefaultSetupOrchestrator:
             self._step(
                 "backend.provision",
                 hard("backend.provision"),
-                lambda: self.backend.provision(plan),
+                self._backend,
             ),
             self._step(
                 "pot.init",
@@ -291,6 +291,15 @@ class DefaultSetupOrchestrator:
         self.installer.install_cli()
         self.installer.register_service()
         return StepResult("installer", DONE, "CLI installed + service registered")
+
+    def _backend(self) -> StepResult:
+        result = self.backend.provision()
+        return StepResult(
+            "backend.provision",
+            DONE if result.ok else FAILED,
+            result.detail,
+            metadata=result.metadata,
+        )
 
     def _default_pot(self, plan: SetupPlan) -> str:
         pot = self.pots.create_pot(name=plan.pot, use=True)

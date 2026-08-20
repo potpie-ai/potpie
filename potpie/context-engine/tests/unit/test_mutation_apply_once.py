@@ -14,7 +14,6 @@ from potpie_context_engine.core.graph_mutations import (
     EntityUpsert,
     ProvenanceContext,
 )
-from potpie_context_engine.core.lifecycle import SetupPlan
 from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 from potpie_context_engine.core.ports.graph.mutation import MutationExecutionState
 from potpie_context_engine.core.reconciliation import MutationBatch
@@ -226,7 +225,7 @@ def test_embedded_stale_lifecycle_writes_preserve_newer_graph_and_receipt(
         == 0
     )
     assert stale.mutation.reset_pot("different-pot") == {"removed_claims": 0}
-    assert stale.provision(SetupPlan()).ok
+    assert stale.provision().ok
 
     fresh = EmbeddedGraphBackend(home=tmp_path)
     rows = fresh.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))

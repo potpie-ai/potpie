@@ -29,7 +29,6 @@ from potpie_context_engine.core.graph_mutations import (
     EntityUpsert,
     ProvenanceRef,
 )
-from potpie_context_engine.core.lifecycle import SetupPlan
 from potpie_context_engine.core.identity import IdentityClass
 from potpie_context_engine.core.ontology import EntityTypeSpec
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
@@ -244,7 +243,6 @@ def test_host_shell_defaults_to_falkordb_lite(tmp_path, monkeypatch) -> None:
 
     assert default_backend_profile() == "falkordb_lite"
     assert host.backend.profile == "falkordb_lite"
-    assert SetupPlan().backend == "falkordb_lite"
 
 
 def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:

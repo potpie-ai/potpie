@@ -41,8 +41,8 @@ from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
 from potpie_context_engine.adapters.outbound.local_paths import default_home
 from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
-from potpie_context_engine.core.lifecycle import DONE, SetupPlan, StepResult
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
+from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 from potpie_context_engine.core.ports.graph.mutation import MutationExecutionState
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
@@ -336,13 +336,12 @@ class EmbeddedGraphBackend:
             shared_execution_registry=self._inner.execution_registry,
         )
 
-    def provision(self, plan: SetupPlan) -> StepResult:
+    def provision(self) -> BackendProvisionResult:
         # Stand up the local store: ensure the home dir + persist the (possibly
         # empty) store file so resolve works immediately after setup. Idempotent.
         self._transact(lambda _inner: None)
-        return StepResult(
-            step="backend.provision",
-            state=DONE,
+        return BackendProvisionResult(
+            ok=True,
             detail=f"embedded store at {self._path}",
             metadata={"profile": _PROFILE, "path": str(self._path)},
         )
