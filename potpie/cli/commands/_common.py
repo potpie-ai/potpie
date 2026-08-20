@@ -1,9 +1,10 @@
-"""Shared CLI plumbing for the host-routed command surface.
+"""Shared CLI plumbing for the migrating runtime boundary.
 
-Every command in this package routes ``CLI -> HostShell -> service(s) -> ports``.
-This module owns the cross-cutting concerns so the command bodies stay thin:
+Context-domain commands acquire a typed ``EngineClient``; root-owned commands
+continue to use explicit Potpie services while their callers migrate. This
+module owns the cross-cutting concerns so command bodies stay thin:
 
-- one cached ``HostShell`` per process (``get_host``);
+- one cached legacy root host and context resource manager per process;
 - ``--json`` output state + ``emit`` / ``fail`` helpers;
 - the ``contract()`` error boundary that maps domain errors to the documented
   exit codes (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth) and the
@@ -14,12 +15,13 @@ This module owns the cross-cutting concerns so the command bodies stay thin:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Final, Iterator, NoReturn, Sequence
+from typing import Any, Callable, Final, Iterator, Mapping, NoReturn, Sequence
 
 import click
 import typer
@@ -29,7 +31,7 @@ from potpie.cli.repo_location import (
     normalize_repo_ref as shared_normalize_repo_ref,
     repo_identity_key,
 )
-from potpie_context_core.errors import (
+from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,
@@ -49,6 +51,11 @@ _state: dict[str, Any] = {
     "host": None,
     "store": None,
     "json_error_formatter": None,
+    "engine_runner": None,
+    "engine_manager": None,
+    "engine_host": None,
+    "engine_remote_host": None,
+    "engine_remote_home": None,
 }
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -117,6 +124,73 @@ def get_host():
 def set_host(host: Any) -> None:
     """Inject a host (tests / alternate wiring)."""
     _state["host"] = host
+    _state["engine_manager"] = None
+    _state["engine_host"] = None
+
+
+class EngineClientError(Exception):
+    """Root presentation error carrying one stable typed-boundary failure."""
+
+    def __init__(self, error: object) -> None:
+        super().__init__(str(getattr(error, "message", "Context operation failed.")))
+        self.error = error
+
+
+def get_engine_client(explicit_pot: str | None = None, *, host: Any | None = None):
+    """Compose the explicitly selected local or temporary daemon engine client."""
+    from potpie.runtime import LocalEngineClient
+    from potpie.runtime.legacy_host_adapter import (
+        build_legacy_engine_client,
+        build_local_resource_manager,
+    )
+
+    selector = _context_selector(explicit_pot)
+    mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "daemon").strip().lower()
+    if mode != "in_process":
+        home = os.getenv("CONTEXT_ENGINE_HOME", "")
+        remote = _state.get("engine_remote_host")
+        if remote is None or _state.get("engine_remote_home") != home:
+            from potpie.daemon.client import RemoteHostShell
+
+            remote = RemoteHostShell()
+            _state["engine_remote_host"] = remote
+            _state["engine_remote_home"] = home
+        return build_legacy_engine_client(host=remote, selector=selector)
+
+    host = host if host is not None else get_host()
+    manager = _state.get("engine_manager")
+    if manager is None or _state.get("engine_host") is not host:
+        manager = build_local_resource_manager(host)
+        _state["engine_manager"] = manager
+        _state["engine_host"] = host
+    return LocalEngineClient(
+        selector=selector,
+        authentication={"kind": "local_cli"},
+        resource_manager=manager,
+    )
+
+
+def run_engine_operation(awaitable):
+    """Run one async engine-client call and expose typed failures to contract()."""
+    runner = _state.get("engine_runner")
+    if runner is None:
+        runner = asyncio.Runner()
+        _state["engine_runner"] = runner
+    outcome = runner.run(awaitable)
+    if not getattr(outcome, "ok", False):
+        raise EngineClientError(outcome.error)
+    return outcome.value
+
+
+def _context_selector(explicit_pot: str | None):
+    from potpie.runtime import ContextSelector
+
+    if explicit_pot:
+        return ContextSelector(kind="explicit", value=explicit_pot)
+    repo = current_repo_identity_for_cli()
+    if repo:
+        return ContextSelector(kind="repository", value=repo_identity_key(repo))
+    return ContextSelector(kind="active")
 
 
 def get_store() -> CredentialStore:
@@ -220,6 +294,31 @@ def contract() -> Iterator[None]:
     error_code = "none"
     try:
         yield
+    except EngineClientError as exc:
+        error = exc.error
+        code = str(getattr(error, "code", "context_operation_failed"))
+        category = str(getattr(error, "category", "dependency"))
+        details = getattr(error, "details", None)
+        detail = details.get("detail") if isinstance(details, Mapping) else None
+        if detail is None and details:
+            detail = details
+        result = code
+        error_code = code
+        if code == "not_implemented":
+            exit_code = EXIT_UNAVAILABLE
+        elif category in {"authentication", "authorization"}:
+            exit_code = EXIT_AUTH
+        elif category in {"selection", "domain"}:
+            exit_code = EXIT_VALIDATION
+        else:
+            exit_code = EXIT_UNAVAILABLE
+        fail(
+            code=code,
+            message=str(getattr(error, "message", str(exc))),
+            detail=detail,
+            next_action=getattr(error, "recommended_next_action", None),
+            exit_code=exit_code,
+        )
     except CapabilityNotImplemented as exc:
         result = "not_implemented"
         error_code = "not_implemented"

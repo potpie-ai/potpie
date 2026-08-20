@@ -16,7 +16,7 @@ from potpie.cli import main as cli_main
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.commands._common import EXIT_DEGRADED
 from potpie_context_engine.bootstrap.host_wiring import default_host_mode
-from potpie_context_core.lifecycle import (
+from potpie_context_engine.core.lifecycle import (
     DONE,
     FAILED,
     PlannedSetupStep,
@@ -25,9 +25,14 @@ from potpie_context_core.lifecycle import (
     SetupReport,
     StepResult,
 )
-from potpie_context_core.ports.agent_context import StatusReport, StatusRequest
-from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_engine.core.ports.agent_context import StatusReport
+from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
+from potpie_context_engine.core.ports.graph_service import DataPlaneStatus
+from potpie_context_engine.domain.ports.services.pot_management import (
+    PotAggregateStatus,
+    PotInfo,
+)
 
 runner = CliRunner()
 
@@ -70,6 +75,32 @@ def _patch_local_setup_host(
     monkeypatch.setattr(bootstrap, "configured_embedding_model", lambda: "test-model")
 
 
+def _configure_status_host(mock_host: MagicMock, report: StatusReport) -> None:
+    active = (
+        PotInfo(pot_id=report.pot_id, name=report.active_pot, active=True)
+        if report.active_pot
+        else None
+    )
+    counts = dict(report.data_plane.get("counts", {}))
+    mock_host.profile = report.profile
+    mock_host.backend.profile = str(
+        report.data_plane.get("backend_profile", "embedded")
+    )
+    mock_host.pots.list_pots.return_value = [active] if active else []
+    mock_host.pots.active_pot.return_value = active
+    mock_host.pots.aggregate_status.return_value = PotAggregateStatus(
+        active_pot=active,
+        pot_count=int(report.pot_summary.get("pot_count", bool(active))),
+    )
+    mock_host.graph.data_plane_status.return_value = DataPlaneStatus(
+        pot_id=report.pot_id,
+        backend_profile=mock_host.backend.profile,
+        backend_ready=report.backend_ready,
+        counts=counts,
+    )
+    mock_host.skills.nudge.return_value = report.skills
+
+
 def test_root_version_option_exits_with_cli_and_python_details() -> None:
     result = runner.invoke(cli_main.app, ["--version"])
 
@@ -90,7 +121,7 @@ def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> No
         recommended_next_action="potpie ingest",
     )
     mock_host = MagicMock()
-    mock_host.agent_context.status.return_value = report
+    _configure_status_host(mock_host, report)
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
@@ -102,12 +133,9 @@ def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> No
     assert result.exit_code == 0, result.stdout
     assert "profile=local" in result.stdout
     assert "daemon=up" in result.stdout
-    assert "potpie ingest" in result.stdout
-    mock_host.agent_context.status.assert_called_once()
-    req = mock_host.agent_context.status.call_args[0][0]
-    assert isinstance(req, StatusRequest)
-    assert req.intent == "feature"
-    assert req.harness == "claude"
+    assert 'potpie resolve "<task>"' in result.stdout
+    mock_host.graph.data_plane_status.assert_called_once_with("foo-pot")
+    mock_host.skills.nudge.assert_called_once_with(agent="claude")
 
 
 def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,7 +147,7 @@ def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) ->
         backend_ready=True,
     )
     mock_host = MagicMock()
-    mock_host.agent_context.status.return_value = report
+    _configure_status_host(mock_host, report)
 
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
@@ -130,7 +158,7 @@ def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) ->
 
     assert result.exit_code == 0, result.stdout
     assert "profile=local" in result.stdout
-    mock_host.agent_context.status.assert_called_once()
+    mock_host.graph.data_plane_status.assert_called_once_with("foo-pot")
 
 
 def test_status_non_default_pot_triggers_host_path(
@@ -153,7 +181,7 @@ def test_status_non_default_pot_triggers_host_path(
         backend_ready=False,
     )
     mock_host = MagicMock()
-    mock_host.agent_context.status.return_value = report
+    _configure_status_host(mock_host, report)
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(
         bootstrap,
@@ -165,7 +193,8 @@ def test_status_non_default_pot_triggers_host_path(
 
     assert result.exit_code == 0, result.stdout
     assert called == []
-    assert "daemon=down" in result.stdout
+    assert "daemon=up" in result.stdout
+    mock_host.graph.data_plane_status.assert_called_once_with("custom-pot")
 
 
 def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,7 +206,7 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
         backend_ready=True,
     )
     mock_host = MagicMock()
-    mock_host.agent_context.status.return_value = report
+    _configure_status_host(mock_host, report)
     monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
     monkeypatch.setattr(bootstrap, "resolve_pot_id", lambda _host, pot: "foo-pot")
 

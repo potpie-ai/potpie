@@ -24,12 +24,8 @@ THIS_TEST = Path(__file__).resolve().relative_to(ROOT).as_posix()
 
 EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
     "context_core_importers": frozenset({
-        "potpie/cli/commands/_common.py",
-        "potpie/cli/commands/bootstrap.py",
         "potpie/cli/commands/cloud.py",
-        "potpie/cli/commands/graph.py",
         "potpie/cli/commands/pots.py",
-        "potpie/cli/commands/query.py",
         "potpie/cli/read_presenter.py",
         "potpie/cli/telemetry/onboarding_events.py",
         "potpie/cli/ui/setup_ux.py",
@@ -38,7 +34,6 @@ EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
         "potpie/daemon/main.py",
         "tests/integration/test_context_runtime_baseline.py",
         "tests/unit/test_agent_templates_v15.py",
-        "tests/unit/test_cli_bootstrap_status.py",
         "tests/unit/test_cli_ergonomics.py",
         "tests/unit/test_daemon_rpc.py",
         "tests/unit/test_graph_cli_contract.py",

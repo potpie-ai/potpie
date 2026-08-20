@@ -19,7 +19,7 @@ from typing import Any
 import typer
 
 from potpie_context_engine.bootstrap.observability_runtime import get_observability
-from potpie_context_core.workbench_service import (
+from potpie_context_engine.core.workbench_service import (
     graph_error_envelope,
     graph_not_implemented_envelope,
     graph_success_envelope,
@@ -34,12 +34,14 @@ from potpie.cli.commands._common import (
     empty_pot_warnings,
     emit,
     fail,
+    get_engine_client,
     get_host,
     is_json,
     json_error_formatter,
     pot_scope_human,
     pot_scope_info,
     resolve_pot_id,
+    run_engine_operation,
 )
 from potpie.cli.read_presenter import (
     build_presentation_context,
@@ -53,18 +55,27 @@ from potpie.cli.telemetry.product_analytics import AnalyticsValue
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.graph_contract import (
+from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.graph_contract import (
     GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
 )
-from potpie_context_core.graph_contract import ONTOLOGY_VERSION
-from potpie_context_core.graph_workbench import (
+from potpie_context_engine.core.graph_contract import ONTOLOGY_VERSION
+from potpie_context_engine.core.graph_workbench import (
     GRAPH_WORKBENCH_COMMANDS,
     GraphUnsupported,
     GraphWorkbenchStatus,
 )
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_INTERNAL
-from potpie_context_core.graph_views import INCLUDE_TO_VIEW
+from potpie_context_engine.core.graph_views import INCLUDE_TO_VIEW
+from potpie_context_engine.requests import (
+    CatalogRequest as EngineCatalogRequest,
+    DataPlaneStatusRequest as EngineDataPlaneStatusRequest,
+    DescribeRequest as EngineDescribeRequest,
+    InspectRequest as EngineInspectRequest,
+    NeighborhoodRequest as EngineNeighborhoodRequest,
+    ReadRequest as EngineReadRequest,
+    SearchEntitiesRequest as EngineSearchEntitiesRequest,
+)
 from potpie_context_engine.domain.nudge import NUDGE_EVENT_HELP
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
@@ -492,16 +503,16 @@ def graph_catalog(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Discover the graph contract: versions, views, mutation ops, ontology."""
-    from potpie_context_core.ports.graph_service import (
-        GraphCatalogRequest,
-    )
-
     with _graph_command("graph.catalog") as ctx:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph.catalog(
-            GraphCatalogRequest(pot_id=pot_id, task=task, subgraph=subgraph)
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).catalog(
+                EngineCatalogRequest(
+                    payload={"task": task, "subgraph": subgraph}
+                )
+            )
         )
         payload = normalize_catalog_result(result.to_dict(), task=task)
         payload = _catalog_payload_for_profile(payload, profile=profile)
@@ -579,10 +590,6 @@ def graph_read(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """V2-style read over a named view (routes through the read trunk)."""
-    from potpie_context_core.ports.graph_service import (
-        GraphReadRequest,
-    )
-
     with _graph_command("graph.read") as ctx:
         if not subgraph:
             raise ValueError("--subgraph is required")
@@ -613,28 +620,31 @@ def graph_read(
             format_=effective_format,
             requested_limit=limit,
         )
-        result = host.graph.read(
-            GraphReadRequest(
-                pot_id=pot_id,
-                subgraph=subgraph,
-                view=view,
-                query=query,
-                scope=parsed_scope,
-                environment=environment,
-                source_refs=tuple(source_ref or ()),
-                since=since_dt,
-                until=until_dt,
-                depth=depth,
-                direction=direction,
-                limit=read_limit,
-                detail=detail,
-                relations=relations,
-                query_threshold=query_threshold,
-                freshness_preference=(
-                    "fresh"
-                    if _is_timeline_view(f"{subgraph}.{view}") and not query
-                    else "balanced"
-                ),
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).read(
+                EngineReadRequest(
+                    payload={
+                        "subgraph": subgraph,
+                        "view": view,
+                        "query": query,
+                        "scope": parsed_scope,
+                        "environment": environment,
+                        "source_refs": tuple(source_ref or ()),
+                        "since": since_dt,
+                        "until": until_dt,
+                        "depth": depth,
+                        "direction": direction,
+                        "limit": read_limit,
+                        "detail": detail,
+                        "relations": relations,
+                        "query_threshold": query_threshold,
+                        "freshness_preference": (
+                            "fresh"
+                            if _is_timeline_view(f"{subgraph}.{view}") and not query
+                            else "balanced"
+                        ),
+                    }
+                )
             )
         )
         _emit_graph_read(
@@ -687,10 +697,6 @@ def timeline_recent(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Recent project events from the active/current pot, across all repo sources."""
-    from potpie_context_core.ports.graph_service import (
-        GraphReadRequest,
-    )
-
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
@@ -705,20 +711,25 @@ def timeline_recent(
             format_="events",
             requested_limit=limit,
         )
-        result = host.graph.read(
-            GraphReadRequest(
-                pot_id=pot_id,
-                subgraph="recent_changes",
-                view="timeline",
-                query=query,
-                scope=scope,
-                since=since_dt,
-                until=until_dt,
-                limit=read_limit,
-                detail=detail,
-                relations=relations,
-                query_threshold=query_threshold,
-                freshness_preference="fresh" if not query else "balanced",
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).read(
+                EngineReadRequest(
+                    payload={
+                        "subgraph": "recent_changes",
+                        "view": "timeline",
+                        "query": query,
+                        "scope": scope,
+                        "since": since_dt,
+                        "until": until_dt,
+                        "limit": read_limit,
+                        "detail": detail,
+                        "relations": relations,
+                        "query_threshold": query_threshold,
+                        "freshness_preference": (
+                            "fresh" if not query else "balanced"
+                        ),
+                    }
+                )
             )
         )
         _emit_read(
@@ -763,10 +774,6 @@ def graph_search_entities(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Narrow entity/claim lookup for identity resolution before a write."""
-    from potpie_context_core.ports.graph_service import (
-        GraphEntitySearchRequest,
-    )
-
     with _graph_command("graph.search-entities") as ctx:
         effective_query = query or query_arg
         if not effective_query:
@@ -777,24 +784,27 @@ def graph_search_entities(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
-        result = host.graph.search_entities(
-            GraphEntitySearchRequest(
-                pot_id=pot_id,
-                query=effective_query,
-                type=type_,
-                predicate=predicate,
-                subgraph=subgraph,
-                scope=_parse_scope(scope),
-                truth=truth,
-                source_system=source_system,
-                source_family=source_family,
-                since=since_dt,
-                until=until_dt,
-                environment=environment,
-                external_id=external_id,
-                source_refs=tuple(source_ref or ()),
-                limit=limit,
-                supporting_claims=supporting_claims,
+        result = run_engine_operation(
+            get_engine_client(pot, host=host).search_entities(
+                EngineSearchEntitiesRequest(
+                    payload={
+                        "query": effective_query,
+                        "type": type_,
+                        "predicate": predicate,
+                        "subgraph": subgraph,
+                        "scope": _parse_scope(scope),
+                        "truth": truth,
+                        "source_system": source_system,
+                        "source_family": source_family,
+                        "since": since_dt,
+                        "until": until_dt,
+                        "environment": environment,
+                        "external_id": external_id,
+                        "source_refs": tuple(source_ref or ()),
+                        "limit": limit,
+                        "supporting_claims": supporting_claims,
+                    }
+                )
             )
         )
         payload = result.to_dict()
@@ -1329,7 +1339,11 @@ def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        dp = host.graph.data_plane_status(pot_id)
+        dp = run_engine_operation(
+            get_engine_client(pot, host=host).data_plane_status(
+                EngineDataPlaneStatusRequest()
+            )
+        )
         versions = {"_global": int(dict(dp.counts).get("claims", 0))}
         ctx.set_subgraph_versions(versions)
         payload = _graph_status_payload(host, pot_id, dp)
@@ -1368,16 +1382,16 @@ def graph_describe(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.describe") as ctx:
-        from potpie_context_core.ports.graph_service import (
-            GraphDescribeRequest,
-        )
-
         _set_optional_pot(ctx, pot)
-        payload = get_host().graph.describe(
-            GraphDescribeRequest(
-                subgraph=subgraph,
-                view=view,
-                include_examples=examples,
+        payload = run_engine_operation(
+            get_engine_client(pot).describe(
+                EngineDescribeRequest(
+                    payload={
+                        "subgraph": subgraph,
+                        "view": view,
+                        "include_examples": examples,
+                    }
+                )
             )
         )
         subgraph_name = payload["subgraph"]["name"]
@@ -1417,22 +1431,21 @@ def graph_neighborhood(
         if detail_mode not in {"summary", "full"}:
             raise ValueError("--detail must be one of: summary, full")
         host = get_host()
-        _require_backend_capability(
-            host,
-            capability="inspection",
-            method="neighborhood",
-            command="graph neighborhood",
-        )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         predicates = _parse_predicates(predicate)
-        sl = host.backend.inspection.neighborhood(
-            pot_id=pot_id,
-            entity_key=entity,
-            depth=depth,
-            direction=normalized_direction,
-            predicates=predicates,
-            limit=limit,
+        sl = run_engine_operation(
+            get_engine_client(pot, host=host).neighborhood(
+                EngineNeighborhoodRequest(
+                    payload={
+                        "entity_key": entity,
+                        "depth": depth,
+                        "direction": normalized_direction,
+                        "predicates": predicates,
+                        "limit": limit,
+                    }
+                )
+            )
         )
         relations = [_neighborhood_relation(edge) for edge in sl.edges]
         payload = {
@@ -2065,16 +2078,14 @@ def graph_inspect(
 ) -> None:
     with _graph_command("graph.inspect") as ctx:
         host = get_host()
-        _require_backend_capability(
-            host,
-            capability="inspection",
-            method="neighborhood",
-            command="graph inspect",
-        )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        sl = host.backend.inspection.neighborhood(
-            pot_id=pot_id, entity_key=entity_key, depth=depth
+        sl = run_engine_operation(
+            get_engine_client(pot, host=host).inspect(
+                EngineInspectRequest(
+                    payload={"entity_key": entity_key, "depth": depth}
+                )
+            )
         )
         _emit_graph_result(
             ctx,

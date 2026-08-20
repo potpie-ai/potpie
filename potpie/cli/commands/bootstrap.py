@@ -23,11 +23,13 @@ from potpie.cli.commands._common import (
     current_repo_identity_for_cli,
     emit,
     fail,
+    get_engine_client,
     get_host,
     is_json,
     repo_default_pot_id,
     repo_effective_pot_info,
     resolve_pot_id,
+    run_engine_operation,
     use_pot_selection,
 )
 from potpie.cli.telemetry.onboarding_events import (
@@ -53,9 +55,10 @@ from potpie_context_engine.application.services.config_service import (
 )
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.lifecycle import SetupPlan, SetupReport
-from potpie_context_core.ports.agent_context import StatusRequest
+from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.lifecycle import SetupPlan, SetupReport
+from potpie_context_engine.core.ports.agent_context import StatusReport
+from potpie_context_engine.requests import DataPlaneStatusRequest
 
 
 def _effective_current_repo_pot_id(
@@ -353,8 +356,17 @@ def register(root: typer.Typer) -> None:
         with contract():
             shell = get_host()
             pot_id = resolve_pot_id(shell, pot)
-            report = shell.agent_context.status(
-                StatusRequest(pot_id=pot_id, intent=intent, harness=harness)
+            data_plane = run_engine_operation(
+                get_engine_client(pot, host=shell).data_plane_status(
+                    DataPlaneStatusRequest()
+                )
+            )
+            report = _build_context_status_report(
+                shell,
+                pot_id=pot_id,
+                intent=intent,
+                harness=harness,
+                data_plane=data_plane,
             )
             _capture_host_status_activation()
             emit(
@@ -533,6 +545,49 @@ def register(root: typer.Typer) -> None:
             )
 
     root.add_typer(config_app, name="config")
+
+
+def _build_context_status_report(
+    shell,
+    *,
+    pot_id: str,
+    intent: str,
+    harness: str,
+    data_plane,
+) -> StatusReport:
+    """Join root-owned status surfaces with the engine-owned data plane."""
+    aggregate = shell.pots.aggregate_status(pot_id=pot_id)
+    active = aggregate.active_pot
+    nudge = shell.skills.nudge(agent=harness) if harness else None
+    backend_ready = bool(data_plane.backend_ready)
+    if active is None:
+        next_action = "Run 'potpie setup' to create and activate a pot."
+    elif not backend_ready:
+        next_action = "Backend not ready — run 'potpie backend doctor'."
+    else:
+        next_action = "Run 'potpie resolve \"<task>\"' to pull context for your work."
+    return StatusReport(
+        pot_id=pot_id,
+        profile=shell.profile,
+        daemon_up=True,
+        active_pot=active.name if active else None,
+        backend_ready=backend_ready,
+        data_plane={
+            "backend_profile": data_plane.backend_profile,
+            "backend_ready": data_plane.backend_ready,
+            "reader_backed_includes": list(data_plane.reader_backed_includes),
+            "counts": dict(data_plane.counts),
+            "freshness": dict(data_plane.freshness),
+            "quality": dict(data_plane.quality),
+        },
+        pot_summary={
+            "pot_count": aggregate.pot_count,
+            "sources": [source.name for source in aggregate.sources],
+        },
+        skills=nudge,
+        recommended_next_action=next_action,
+        metadata={"intent": intent},
+    )
 
 
 def _nudge_dict(nudge) -> dict[str, object] | None:
