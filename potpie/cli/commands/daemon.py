@@ -11,8 +11,7 @@ from potpie.cli.commands._common import (
     fail,
     get_daemon_service,
 )
-from potpie.daemon.process.launcher import DaemonStartError
-from potpie.daemon.lifecycle import Daemon
+from potpie.daemon.lifecycle import Daemon, DaemonStartError
 
 daemon_app = typer.Typer(help="Local daemon lifecycle (recovery tools).")
 

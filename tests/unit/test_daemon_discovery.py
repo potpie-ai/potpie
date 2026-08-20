@@ -14,6 +14,7 @@ from potpie.daemon.discovery import (
     DaemonDiscoveryError,
     canonical_discovery,
     load_daemon_connection,
+    read_daemon_pid,
     read_daemon_discovery,
     remove_daemon_runtime_records,
     select_runtime_endpoint,
@@ -21,6 +22,16 @@ from potpie.daemon.discovery import (
     write_daemon_discovery,
     write_daemon_pid,
 )
+
+
+def test_canonical_pid_round_trip_and_invalid_state_is_stale(tmp_path: Path) -> None:
+    assert read_daemon_pid(tmp_path) is None
+
+    write_daemon_pid(tmp_path, 42)
+    assert read_daemon_pid(tmp_path) == 42
+
+    (tmp_path / "daemon.pid").write_text("invalid\n", encoding="utf-8")
+    assert read_daemon_pid(tmp_path) is None
 
 
 def test_discovery_references_separate_owner_only_credential(tmp_path: Path) -> None:

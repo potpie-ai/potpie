@@ -16,6 +16,7 @@ from potpie.daemon.discovery import (
     DaemonDiscoveryError,
     canonical_discovery,
     load_daemon_connection,
+    read_daemon_pid,
     read_daemon_discovery,
     remove_daemon_runtime_records,
     select_runtime_endpoint,
@@ -36,6 +37,14 @@ from potpie.runtime.transport import RuntimeEndpoint
 from potpie_context_engine import Failure, Success
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
+
+
+class DaemonStartError(Exception):
+    """Raised when the canonical local daemon cannot become ready."""
+
+    def __init__(self, message: str, *, log_path: Path | None = None) -> None:
+        super().__init__(message)
+        self.log_path = log_path
 
 
 def _pid_alive(pid: int) -> bool:
@@ -221,8 +230,6 @@ class Daemon:
         }
 
     def start(self, *, backend: str | None = None) -> dict[str, Any]:
-        from potpie.daemon.process.launcher import DaemonStartError
-
         pid = self._recorded_pid()
         if pid is not None and _pid_alive(pid):
             raise DaemonStartError(f"daemon already running (pid={pid})")
@@ -416,16 +423,10 @@ class Daemon:
         )
 
     def _recorded_pid(self) -> int | None:
-        from potpie.daemon.process.pidfile import read_pid_file
-
-        return read_pid_file(self.home / "daemon.pid")
+        return read_daemon_pid(self.home)
 
     def _cleanup_runtime_records(self) -> None:
         remove_daemon_runtime_records(self.home)
-        try:
-            (self.home / "daemon.json").unlink()
-        except FileNotFoundError:
-            pass
 
 
 def _available_loopback_port() -> int:
@@ -434,4 +435,4 @@ def _available_loopback_port() -> int:
         return int(sock.getsockname()[1])
 
 
-__all__ = ["Daemon"]
+__all__ = ["Daemon", "DaemonStartError"]

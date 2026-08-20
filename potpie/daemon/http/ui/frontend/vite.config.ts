@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 
 // Served by the daemon under /ui, so assets must resolve relative to /ui/.
 // For local dev (`npm run dev`) point the proxy at your running daemon port
-// (see `cat ~/.potpie/daemon.json`), then browse http://localhost:5173/ui/.
+// (see `potpie daemon status`), then browse http://localhost:5173/ui/.
 export default defineConfig({
   base: "/ui/",
   plugins: [react()],

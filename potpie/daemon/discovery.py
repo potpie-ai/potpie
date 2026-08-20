@@ -146,6 +146,20 @@ def write_daemon_pid(home: Path, pid: int) -> Path:
     return path
 
 
+def read_daemon_pid(home: Path) -> int | None:
+    """Read the canonical owner-only PID record, treating invalid state as stale."""
+
+    path = pid_path(Path(home).resolve())
+    if not path.exists():
+        return None
+    try:
+        _require_private_regular_file(path)
+        pid = int(path.read_text(encoding="utf-8").strip())
+    except (DaemonDiscoveryError, OSError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
 def read_daemon_discovery(home: Path) -> DaemonDiscovery | None:
     home = Path(home).resolve()
     path = discovery_path(home)

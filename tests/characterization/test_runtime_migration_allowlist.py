@@ -29,11 +29,8 @@ EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
             "potpie/cli/read_presenter.py",
             "potpie/cli/telemetry/onboarding_events.py",
             "potpie/cli/ui/setup_ux.py",
-            "potpie/daemon/client.py",
-            "potpie/daemon/main.py",
             "tests/unit/test_agent_templates_v15.py",
             "tests/unit/test_cli_ergonomics.py",
-            "tests/unit/test_daemon_rpc.py",
             "tests/unit/test_graph_cli_contract.py",
             "tests/unit/test_onboarding_analytics.py",
             "tests/unit/test_read_presenter.py",
@@ -63,7 +60,6 @@ EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
             "potpie/context-engine/tests/unit/test_setup_defer_pot.py",
             "potpie/context-engine/tests/unit/test_setup_defer_skills.py",
             "potpie/context-engine/tests/unit/test_skill_manager_global_targets.py",
-            "potpie/daemon/main.py",
             "potpie/daemon/__main__.py",
             "tests/unit/test_onboarding_analytics.py",
             "tests/unit/test_setup_first_pot.py",
@@ -87,11 +83,7 @@ EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
             "tests/unit/test_source_cli_contract.py",
         }
     ),
-    "remote_host": frozenset(
-        {
-            "potpie/daemon/client.py",
-        }
-    ),
+    "remote_host": frozenset(),
     "candidate_runtime": frozenset(),
     "discovery": frozenset(
         {
@@ -99,25 +91,12 @@ EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
             "potpie/daemon/__main__.py",
             "potpie/daemon/discovery.py",
             "potpie/daemon/lifecycle.py",
-            "potpie/daemon/main.py",
-            "potpie/daemon/process/ipc_client.py",
-            "potpie/daemon/process/launcher.py",
-            "potpie/daemon/process/pidfile.py",
             "tests/integration/test_context_runtime_baseline.py",
-            "tests/integration/test_daemon_ipc_client.py",
             "tests/unit/test_daemon_discovery.py",
-            "tests/unit/test_daemon_launcher.py",
-            "tests/unit/test_daemon_pidfile.py",
             "tests/unit/test_daemon_seam.py",
         }
     ),
-    "reflective_rpc": frozenset(
-        {
-            "potpie/daemon/client.py",
-            "potpie/daemon/main.py",
-            "tests/integration/test_context_runtime_baseline.py",
-        }
-    ),
+    "reflective_rpc": frozenset(),
 }
 
 SUPPORTED_PRODUCT_ENTRYPOINTS = frozenset(
@@ -135,7 +114,6 @@ POTENTIALLY_EXTERNAL_UNCONTRACTED = frozenset(
         "potpie/context-engine/src/potpie_context_engine/api.py",
         "potpie/context-engine/src/potpie_context_engine/bootstrap/host_wiring.py",
         "potpie/context-engine/src/potpie_context_engine/host/__init__.py",
-        "potpie/daemon/client.py",
     }
 )
 
@@ -193,7 +171,13 @@ def _uses_discovery_path(node: ast.AST) -> bool:
 
 def _uses_reflective_route(node: ast.AST) -> bool:
     routes = {"/rpc", "/attr"}
-    if isinstance(node, ast.Call) and _call_name(node) in {"get", "post"}:
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in {"app", "router"}
+        and _call_name(node) in {"get", "post"}
+    ):
         return bool(node.args) and _contains_literal(node.args[0], routes)
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -230,6 +214,7 @@ def _legacy_paths() -> dict[str, frozenset[str]]:
                 if _call_name(node) in {
                     "canonical_discovery",
                     "load_daemon_connection",
+                    "read_daemon_pid",
                     "read_daemon_credential",
                     "read_daemon_discovery",
                     "remove_daemon_runtime_records",
@@ -246,6 +231,7 @@ def _legacy_paths() -> dict[str, frozenset[str]]:
                 if node.name in {
                     "canonical_discovery",
                     "load_daemon_connection",
+                    "read_daemon_pid",
                     "read_daemon_credential",
                     "read_daemon_discovery",
                     "remove_daemon_runtime_records",
@@ -318,8 +304,6 @@ def _legacy_paths() -> dict[str, frozenset[str]]:
         }
     )
     groups["cli_host_acquisition"].add("potpie/cli/commands/_common.py")
-    groups["remote_host"].add("potpie/daemon/client.py")
-
     for metadata_path in (
         ROOT / "pyproject.toml",
         ROOT / "potpie" / "context-engine" / "pyproject.toml",

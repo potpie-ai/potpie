@@ -11,11 +11,10 @@ from __future__ import annotations
 
 from importlib import import_module
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import Any
 import tomllib
 
-from fastapi import APIRouter
 from typer.main import get_command
 
 
@@ -54,13 +53,6 @@ EXPECTED_CLI_COMMANDS = {
     "use",
     "whoami",
 }
-# Temporary observation of the shipped reflective daemon. Phase 3 protects the
-# current entrypoint while later migration commits replace these routes entirely.
-OBSERVED_REFLECTIVE_DAEMON_ROUTES = {
-    ("/attr", frozenset({"POST"})),
-    ("/health", frozenset({"GET"})),
-    ("/rpc", frozenset({"POST"})),
-}
 
 
 def _scripts() -> dict[str, str]:
@@ -94,26 +86,3 @@ def test_shipped_daemon_entrypoint_is_canonical_and_nonreflective() -> None:
     module, _main = _load_script("potpie-daemon")
     assert module.__name__ == "potpie.daemon.__main__"
     assert not hasattr(module, "create_app")
-
-
-def test_temporary_unselected_reflective_routes_are_characterized(
-    monkeypatch: Any,
-) -> None:
-    module = import_module("potpie.daemon.main")
-    host = SimpleNamespace(backend=SimpleNamespace(profile="characterization"))
-    monkeypatch.setattr(module, "build_host_shell", lambda: host)
-    monkeypatch.setattr(module, "build_ui_api_router", lambda _host: APIRouter())
-    monkeypatch.setattr(module, "mount_ui_static", lambda _app: None)
-
-    app = module.create_app(
-        token="characterization-token",  # noqa: S106 - non-secret test fixture
-        base_url="http://127.0.0.1:1",
-        pid=1,
-        log_file="characterization.log",
-    )
-    routes = {
-        (route.path, frozenset(route.methods or ()))
-        for route in app.routes
-        if route.path in {"/health", "/rpc", "/attr"}
-    }
-    assert routes == OBSERVED_REFLECTIVE_DAEMON_ROUTES

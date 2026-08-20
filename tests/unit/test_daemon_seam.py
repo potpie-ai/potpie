@@ -10,6 +10,7 @@ import sys
 from potpie.runtime import ControllerStatus, RuntimeEndpoint
 from potpie_context_engine import Success
 from potpie_context_engine.core.lifecycle import DONE, SKIPPED
+from potpie.daemon.discovery import write_daemon_pid
 from potpie.daemon.lifecycle import Daemon
 
 
@@ -57,7 +58,7 @@ def test_detached_ensure_starts_when_not_running(tmp_path: pathlib.Path, monkeyp
 
 def test_detached_ensure_reuses_running_daemon(tmp_path: pathlib.Path, monkeypatch):
     # Pretend a live daemon is already recorded.
-    (tmp_path / "daemon.pid").write_text("999999\n")
+    write_daemon_pid(tmp_path, 999999)
     (tmp_path / "discovery.json").write_text('{"bind": "unix:/x/daemon.sock"}')
     monkeypatch.setattr("potpie.daemon.lifecycle._pid_alive", lambda pid: True)
 
