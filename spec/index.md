@@ -119,10 +119,11 @@ read order.
 | ADR-0006 | [Deferred runtime concerns](decisions/ADR-0006-deferred-runtime-concerns.md) | accepted |
 | ADR-0007 | [Context runtime migration path](decisions/ADR-0007-context-runtime-migration-path.md) | accepted |
 | ADR-0008 | [Async Context Engine public contract](decisions/ADR-0008-async-context-engine-public-contract.md) | accepted |
+| ADR-0009 | [Typed local runtime execution contract](decisions/ADR-0009-typed-local-runtime-execution-contract.md) | accepted |
 
 ## Open Questions
 
-Nine intentionally deferred questions and three resolved implementation-readiness
+Three intentionally deferred questions and nine resolved implementation-readiness
 questions are recorded in [questions/open.md](questions/open.md). No accepted
 active behavior depends on a deferred question.
 
