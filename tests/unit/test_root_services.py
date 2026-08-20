@@ -7,7 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from potpie.runtime.root_services import build_pot_resource_service
+from potpie.runtime.root_services import (
+    build_pot_resource_service,
+    build_root_runtime_services,
+)
 
 
 def test_pot_resource_service_exposes_only_finite_control_plane_operations() -> None:
@@ -22,6 +25,32 @@ def test_pot_resource_service_exposes_only_finite_control_plane_operations() -> 
     backend.clear_repo_default.assert_called_once_with(repo="repo")
     with pytest.raises(AttributeError):
         getattr(service, "graph")
+
+
+def test_root_runtime_excludes_context_engine_surfaces() -> None:
+    host = SimpleNamespace(
+        pots=SimpleNamespace(),
+        backend="backend",
+        auth="auth",
+        config="config",
+        daemon="daemon",
+        installer="installer",
+        ledger="ledger",
+        setup="setup",
+        skills="skills",
+        profile="local",
+        agent_context="legacy-agent-context",
+        graph="legacy-graph",
+        graph_workbench="legacy-workbench",
+        nudge="legacy-nudge",
+    )
+
+    runtime = build_root_runtime_services(host)
+
+    assert runtime.profile == "local"
+    for name in ("agent_context", "graph", "graph_workbench", "nudge"):
+        with pytest.raises(AttributeError):
+            getattr(runtime, name)
 
 
 def test_create_pot_preserves_legacy_optional_repo_call_shape() -> None:

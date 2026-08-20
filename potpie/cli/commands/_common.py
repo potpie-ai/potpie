@@ -60,6 +60,8 @@ _state: dict[str, Any] = {
     "pot_service_host": None,
     "root_product_services": {},
     "root_product_services_host": None,
+    "root_runtime": None,
+    "root_runtime_host": None,
 }
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -134,6 +136,8 @@ def set_host(host: Any) -> None:
     _state["pot_service_host"] = None
     _state["root_product_services"] = {}
     _state["root_product_services_host"] = None
+    _state["root_runtime"] = None
+    _state["root_runtime_host"] = None
 
 
 def get_pot_service(host: Any | None = None):
@@ -147,6 +151,19 @@ def get_pot_service(host: Any | None = None):
         _state["pot_service"] = service
         _state["pot_service_host"] = host
     return service
+
+
+def get_root_runtime():
+    """Return root-only services composed at the legacy compatibility seam."""
+    from potpie.runtime.root_services import build_root_runtime_services
+
+    host = get_host()
+    runtime = _state.get("root_runtime")
+    if runtime is None or _state.get("root_runtime_host") is not host:
+        runtime = build_root_runtime_services(host)
+        _state["root_runtime"] = runtime
+        _state["root_runtime_host"] = host
+    return runtime
 
 
 def _get_root_product_service(
@@ -881,10 +898,14 @@ def use_pot_selection(
 
 
 def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
-    graph = getattr(host, "graph", None)
-    if graph is None:
-        return {}
-    status = _safe_call(lambda: graph.data_plane_status(pot_id), None)
+    from potpie_context_engine.requests import DataPlaneStatusRequest
+
+    status = _safe_call(
+        lambda: run_engine_operation(
+            get_engine_client(pot_id).data_plane_status(DataPlaneStatusRequest())
+        ),
+        None,
+    )
     if status is None:
         return {}
     counts = getattr(status, "counts", {}) or {}

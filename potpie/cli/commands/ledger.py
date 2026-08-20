@@ -16,7 +16,7 @@ from potpie.cli.commands._common import (
     emit,
     fail,
     get_config_service,
-    get_host,
+    get_root_runtime,
     get_ledger_service,
     resolve_pot_id,
 )
@@ -63,7 +63,7 @@ def ledger_status() -> None:
 @sources_app.command("list")
 def ledger_sources_list(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         sources = get_ledger_service(host).sources(pot_id=pot_id)
         emit(
@@ -84,7 +84,7 @@ def ledger_query(
 ) -> None:
     """Inspect ledger event history (read-only; does not advance the cursor)."""
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         page = get_ledger_service(host).query(
             pot_id=pot_id,
@@ -174,7 +174,7 @@ def ledger_pull(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         page = get_ledger_service(host).pull(pot_id=pot_id, source_id=source)
         emit(

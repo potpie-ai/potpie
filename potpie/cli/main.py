@@ -1,10 +1,10 @@
-"""Host-routed ``potpie`` CLI — the architecture's single spine.
+"""Typed-client ``potpie`` CLI — the architecture's product entrypoint.
 
 Assembles the per-group command sub-apps (``commands/``) into one Typer app and
-binds them to a ``HostShell``. Every command routes
-``CLI -> HostShell -> service(s) -> ports``. This is the ``potpie`` console
-entrypoint (see ``[project.scripts]``); the in-process ``HostShell`` is the only
-composition root for the agent surface.
+routes context operations through ``EngineClient`` and Potpie-owned operations
+through finite root services. This is the ``potpie`` console entrypoint (see
+``[project.scripts]``). The legacy host composition seam remains internal until
+the one-time daemon switch.
 
     Run: ``potpie --help`` (or ``python -m potpie.cli.main --help``)
 """
@@ -58,7 +58,7 @@ def _version_callback(value: bool) -> None:
 
 
 _ROOT_HELP = """\
-Potpie context graph CLI (host-routed: CLI → HostShell → services → ports).
+Potpie context graph CLI (typed context clients and Potpie-owned services).
 
 First run:
   potpie setup --repo . --agent <harness>

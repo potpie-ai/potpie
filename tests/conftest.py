@@ -93,6 +93,8 @@ def _reset_cli_state():
         _common._state["pot_service_host"] = None
         _common._state["root_product_services"] = {}
         _common._state["root_product_services_host"] = None
+        _common._state["root_runtime"] = None
+        _common._state["root_runtime_host"] = None
     except Exception:
         logging.getLogger(__name__).debug(
             "failed to reset CLI test state", exc_info=True

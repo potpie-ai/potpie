@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -82,9 +83,42 @@ class PotResourceService:
         return self._backend.aggregate_status(pot_id=pot_id)
 
 
+@dataclass(frozen=True, slots=True)
+class RootRuntimeServices:
+    """Potpie-only services; intentionally excludes Context Engine operations."""
+
+    pots: PotResourceService
+    backend: Any
+    auth: Any
+    config: Any
+    daemon: Any
+    installer: Any
+    ledger: Any
+    setup: Any
+    skills: Any
+    profile: str
+
+
 def build_pot_resource_service(host: Any) -> PotResourceService:
     """Compose the root service from the explicitly selected legacy backend."""
+    if isinstance(host, RootRuntimeServices):
+        return host.pots
     return PotResourceService(host.pots)
+
+
+def build_root_runtime_services(host: Any) -> RootRuntimeServices:
+    return RootRuntimeServices(
+        pots=build_pot_resource_service(host),
+        backend=getattr(host, "backend", None),
+        auth=getattr(host, "auth", None),
+        config=getattr(host, "config", None),
+        daemon=getattr(host, "daemon", None),
+        installer=getattr(host, "installer", None),
+        ledger=getattr(host, "ledger", None),
+        setup=getattr(host, "setup", None),
+        skills=getattr(host, "skills", None),
+        profile=str(getattr(host, "profile", "local")),
+    )
 
 
 def build_auth_service(host: Any):
@@ -113,11 +147,13 @@ def build_skill_service(host: Any):
 
 __all__ = [
     "PotResourceService",
+    "RootRuntimeServices",
     "build_auth_service",
     "build_config_service",
     "build_daemon_service",
     "build_ledger_service",
     "build_pot_resource_service",
+    "build_root_runtime_services",
     "build_setup_service",
     "build_skill_service",
 ]

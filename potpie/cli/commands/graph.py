@@ -36,7 +36,7 @@ from potpie.cli.commands._common import (
     emit,
     fail,
     get_engine_client,
-    get_host,
+    get_root_runtime,
     get_pot_service,
     is_json,
     json_error_formatter,
@@ -521,11 +521,11 @@ def graph_catalog(
 ) -> None:
     """Discover the graph contract: versions, views, mutation ops, ontology."""
     with _graph_command("graph.catalog") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).catalog(
+            get_engine_client(pot).catalog(
                 EngineCatalogRequest(
                     payload={"task": task, "subgraph": subgraph}
                 )
@@ -617,7 +617,7 @@ def graph_read(
                 "graph read now requires --subgraph <name> --view <view>; "
                 f"got fully-qualified view {view!r}"
             )
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         del current  # pot resolution already considers the current working tree.
@@ -638,7 +638,7 @@ def graph_read(
             requested_limit=limit,
         )
         result = run_engine_operation(
-            get_engine_client(pot, host=host).read(
+            get_engine_client(pot).read(
                 EngineReadRequest(
                     payload={
                         "subgraph": subgraph,
@@ -715,7 +715,7 @@ def timeline_recent(
 ) -> None:
     """Recent project events from the active/current pot, across all repo sources."""
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         since_dt, until_dt = _resolve_time_bounds(
             since=since, until=until, window=time_window
@@ -729,7 +729,7 @@ def timeline_recent(
             requested_limit=limit,
         )
         result = run_engine_operation(
-            get_engine_client(pot, host=host).read(
+            get_engine_client(pot).read(
                 EngineReadRequest(
                     payload={
                         "subgraph": "recent_changes",
@@ -797,12 +797,12 @@ def graph_search_entities(
             raise ValueError("query is required")
         if supporting_claims < 0:
             raise ValueError("--supporting-claims must be >= 0")
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).search_entities(
+            get_engine_client(pot).search_entities(
                 EngineSearchEntitiesRequest(
                     payload={
                         "query": effective_query,
@@ -860,11 +860,11 @@ def graph_mutate(
 ) -> None:
     """Legacy transition wrapper over graph propose + commit."""
     with _graph_command("graph.mutate") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         payload = _load_json(file)
-        client = get_engine_client(pot, host=host)
+        client = get_engine_client(pot)
         proposal = run_engine_operation(
             client.propose(
                 EngineProposeRequest(
@@ -1337,11 +1337,11 @@ def graph_nudge(
     Hooks forward their event + path here and inject the result.
     """
     with _graph_command("graph.nudge") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).nudge(
+            get_engine_client(pot).nudge(
                 EngineNudgeRequest(
                     payload={
                         "event": event,
@@ -1368,11 +1368,11 @@ def graph_nudge(
 @graph_app.command("status")
 def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
     with _graph_command("graph.status") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         dp = run_engine_operation(
-            get_engine_client(pot, host=host).data_plane_status(
+            get_engine_client(pot).data_plane_status(
                 EngineDataPlaneStatusRequest()
             )
         )
@@ -1462,12 +1462,12 @@ def graph_neighborhood(
         detail_mode = (detail or "summary").strip().lower()
         if detail_mode not in {"summary", "full"}:
             raise ValueError("--detail must be one of: summary, full")
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         predicates = _parse_predicates(predicate)
         sl = run_engine_operation(
-            get_engine_client(pot, host=host).neighborhood(
+            get_engine_client(pot).neighborhood(
                 EngineNeighborhoodRequest(
                     payload={
                         "entity_key": entity,
@@ -1525,12 +1525,12 @@ def graph_propose(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.propose") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         payload = _load_json(file)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).propose(
+            get_engine_client(pot).propose(
                 EngineProposeRequest(
                     payload={
                         "mutation": _context_bound_mutation(payload),
@@ -1564,11 +1564,11 @@ def graph_commit(
     with _graph_command("graph.commit") as ctx:
         if not plan_id:
             fail(code="validation_error", message="plan_id is required")
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).commit(
+            get_engine_client(pot).commit(
                 EngineCommitRequest(
                     payload={
                         "plan_id": plan_id,
@@ -1649,7 +1649,7 @@ def graph_bulk_apply(
         if start_chunk < 1:
             raise ValueError("--start-chunk must be >= 1")
 
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         ttl_seconds = _parse_ttl_seconds(ttl)
@@ -1673,7 +1673,7 @@ def graph_bulk_apply(
             start_chunk=start_chunk,
             manifest=manifest,
         )
-        client = get_engine_client(pot, host=host)
+        client = get_engine_client(pot)
         ok = True
 
         for chunk in chunks:
@@ -1804,12 +1804,12 @@ def graph_history(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.history") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).history(
+            get_engine_client(pot).history(
                 EngineHistoryRequest(
                     payload={
                         "entity_key": entity,
@@ -1842,11 +1842,11 @@ def graph_inbox_add(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.inbox.add") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).inbox_add(
+            get_engine_client(pot).inbox_add(
                 EngineInboxAddRequest(
                     payload={
                         "summary": summary,
@@ -1874,12 +1874,12 @@ def graph_inbox_list(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.inbox.list") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).inbox_list(
+            get_engine_client(pot).inbox_list(
                 EngineInboxListRequest(
                     payload={
                         "status": tuple(status or ()),
@@ -1904,11 +1904,11 @@ def graph_inbox_show(
     with _graph_command("graph.inbox.show") as ctx:
         if not item_id:
             raise ValueError("item_id is required")
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).inbox_show(
+            get_engine_client(pot).inbox_show(
                 EngineInboxShowRequest(payload={"item_id": item_id})
             )
         )
@@ -1924,11 +1924,11 @@ def graph_inbox_claim(
     with _graph_command("graph.inbox.claim") as ctx:
         if not item_id:
             raise ValueError("item_id is required")
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).inbox_claim(
+            get_engine_client(pot).inbox_claim(
                 EngineInboxClaimRequest(
                     payload={"item_id": item_id, "claimed_by": claimed_by}
                 )
@@ -1948,11 +1948,11 @@ def graph_inbox_mark_applied(
     with _graph_command("graph.inbox.mark-applied") as ctx:
         if not item_id:
             raise ValueError("item_id is required")
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).inbox_mark_applied(
+            get_engine_client(pot).inbox_mark_applied(
                 EngineInboxMarkAppliedRequest(
                     payload={
                         "item_id": item_id,
@@ -1976,11 +1976,11 @@ def graph_inbox_mark_rejected(
     with _graph_command("graph.inbox.mark-rejected") as ctx:
         if not item_id:
             raise ValueError("item_id is required")
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).inbox_mark_rejected(
+            get_engine_client(pot).inbox_mark_rejected(
                 EngineInboxMarkRejectedRequest(
                     payload={
                         "item_id": item_id,
@@ -2005,11 +2005,11 @@ def graph_inbox_close(
     with _graph_command("graph.inbox.close") as ctx:
         if not item_id:
             raise ValueError("item_id is required")
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).inbox_close(
+            get_engine_client(pot).inbox_close(
                 EngineInboxCloseRequest(
                     payload={
                         "item_id": item_id,
@@ -2148,11 +2148,11 @@ def _run_quality_report(
     confidence_threshold: float = 0.5,
 ) -> None:
     with _graph_command(command) as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot, host=host).quality(
+            get_engine_client(pot).quality(
                 EngineQualityRequest(
                     payload={
                         "report": report,
@@ -2173,11 +2173,11 @@ def graph_inspect(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.inspect") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         sl = run_engine_operation(
-            get_engine_client(pot, host=host).inspect(
+            get_engine_client(pot).inspect(
                 EngineInspectRequest(
                     payload={"entity_key": entity_key, "depth": depth}
                 )
@@ -2203,7 +2203,7 @@ def graph_export(
     file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
 ) -> None:
     with _graph_command("graph.export") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         _require_backend_capability(
             host,
             capability="snapshot",
@@ -2213,7 +2213,7 @@ def graph_export(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         manifest = run_engine_operation(
-            get_engine_client(pot, host=host).export_snapshot(
+            get_engine_client(pot).export_snapshot(
                 EngineExportSnapshotRequest(payload={"destination": file})
             )
         )
@@ -2229,7 +2229,7 @@ def graph_import(
     file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
 ) -> None:
     with _graph_command("graph.import") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         _require_backend_capability(
             host,
             capability="snapshot",
@@ -2239,7 +2239,7 @@ def graph_import(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         manifest = run_engine_operation(
-            get_engine_client(pot, host=host).import_snapshot(
+            get_engine_client(pot).import_snapshot(
                 EngineImportSnapshotRequest(payload={"source": file}),
                 confirmation=DestructiveConfirmation(confirmed=True),
             )
@@ -2260,7 +2260,7 @@ def graph_repair(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.repair") as ctx:
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         targets = []
@@ -2272,7 +2272,7 @@ def graph_repair(
             if entity_labels:
                 targets.append("entity_labels")
         report = run_engine_operation(
-            get_engine_client(pot, host=host).repair(
+            get_engine_client(pot).repair(
                 EngineRepairRequest(payload={"targets": tuple(targets)}),
                 confirmation=DestructiveConfirmation(confirmed=True),
             )
@@ -2291,7 +2291,7 @@ def backend_list() -> None:
             KNOWN_PROFILES,
         )
 
-        active = get_host().backend.profile
+        active = get_root_runtime().backend.profile
         emit(
             {"profiles": list(KNOWN_PROFILES), "active": active},
             human="\n".join(
@@ -2303,7 +2303,7 @@ def backend_list() -> None:
 @backend_app.command("status")
 def backend_status() -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         caps = host.backend.capabilities()
         emit(
             {"profile": host.backend.profile, "capabilities": list(caps.implemented())},
@@ -2325,7 +2325,7 @@ def backend_use(profile: str) -> None:
 @backend_app.command("doctor")
 def backend_doctor() -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         pot = get_pot_service(host).active_pot()
         readiness = host.backend.mutation.readiness(pot.pot_id if pot else "")
         emit(
@@ -2343,7 +2343,7 @@ def backend_doctor() -> None:
 
 
 def _set_optional_pot(ctx: _GraphCliCommandContext, pot: str | None) -> None:
-    host = get_host()
+    host = get_root_runtime()
     if pot:
         ctx.set_pot_id(resolve_pot_id(host, pot))
         return
@@ -2356,7 +2356,7 @@ def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
     caps = _safe(lambda: host.backend.capabilities(), None)
     implemented = list(caps.implemented()) if caps is not None else []
     pot_info = pot_scope_info(host, pot_id)
-    quality_summary = _graph_status_quality_summary(host, pot_id, dp)
+    quality_summary = _graph_status_quality_summary(pot_id, dp)
     health_status = str(quality_summary.get("health_status") or "unknown")
     status = GraphWorkbenchStatus(
         host={
@@ -2410,18 +2410,20 @@ def _graph_status_payload(host: Any, pot_id: str, dp) -> dict[str, Any]:
     return payload
 
 
-def _graph_status_quality_summary(host: Any, pot_id: str, dp) -> dict[str, Any]:
+def _graph_status_quality_summary(pot_id: str, dp) -> dict[str, Any]:
     fallback = _data_plane_quality_summary(dp)
-    workbench = getattr(host, "graph_workbench", None)
-    if workbench is None or not getattr(workbench, "quality", None):
-        return fallback
     try:
-        result = workbench.quality(
-            pot_id=pot_id,
-            report="summary",
-            subgraph=None,
-            limit=20,
-            confidence_threshold=0.5,
+        result = run_engine_operation(
+            get_engine_client(pot_id).quality(
+                EngineQualityRequest(
+                    payload={
+                        "report": "summary",
+                        "subgraph": None,
+                        "limit": 20,
+                        "confidence_threshold": 0.5,
+                    }
+                )
+            )
         )
     except CapabilityNotImplemented as exc:
         fallback["health_status"] = "unavailable"

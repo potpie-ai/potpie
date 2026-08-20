@@ -27,7 +27,7 @@ from potpie.cli.commands._common import (
     get_config_service,
     get_daemon_service,
     get_engine_client,
-    get_host,
+    get_root_runtime,
     get_ledger_service,
     get_pot_service,
     get_setup_service,
@@ -158,7 +158,7 @@ def register(root: typer.Typer) -> None:
                     default_backend=default_backend_profile(),
                 )
             else:
-                host = get_host()
+                host = get_root_runtime()
                 in_process = getattr(get_daemon_service(host), "in_process", False)
                 selected_backend = backend or (
                     getattr(host.backend, "profile", default_backend_profile())
@@ -361,10 +361,10 @@ def register(root: typer.Typer) -> None:
             )
 
         with contract():
-            shell = get_host()
+            shell = get_root_runtime()
             pot_id = resolve_pot_id(shell, pot)
             data_plane = run_engine_operation(
-                get_engine_client(pot, host=shell).data_plane_status(
+                get_engine_client(pot).data_plane_status(
                     DataPlaneStatusRequest()
                 )
             )
@@ -394,7 +394,7 @@ def register(root: typer.Typer) -> None:
     def doctor() -> None:
         """Local diagnostics: daemon, backend capabilities, skill drift."""
         with contract():
-            host = get_host()
+            host = get_root_runtime()
             caps = host.backend.capabilities()
             pot = get_pot_service(host).active_pot()
             pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
@@ -489,7 +489,7 @@ def register(root: typer.Typer) -> None:
                     detail="managed pot routing is not implemented",
                     recommended_next_action="select a local pot; managed routing lands in HU3",
                 )
-            host = get_host()
+            host = get_root_runtime()
             payload, human = use_pot_selection(
                 host,
                 ref,

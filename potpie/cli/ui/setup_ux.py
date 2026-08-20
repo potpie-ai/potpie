@@ -758,7 +758,7 @@ def maybe_prompt_github_login(
 
 
 def _register_repo_source(*, repo: str) -> str:
-    from potpie.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_root_runtime
     from potpie.cli.commands.pots import register_repo_source
 
     started_ms = now_ms()
@@ -767,7 +767,7 @@ def _register_repo_source(*, repo: str) -> str:
         entrypoint="post_setup_first_pot",
         properties={"source_kind": "repo"},
     )
-    host = get_host()
+    host = get_root_runtime()
     from potpie.cli.commands._common import get_pot_service
 
     pots = get_pot_service(host)

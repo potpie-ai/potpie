@@ -18,7 +18,7 @@ from potpie.cli.commands._common import (
     emit,
     fail,
     get_daemon_service,
-    get_host,
+    get_root_runtime,
     resolve_pot_id,
 )
 
@@ -35,7 +35,7 @@ def ui_command(
 ) -> None:
     """Launch the local graph-explorer UI (served by the daemon)."""
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         daemon = get_daemon_service(host)
         # Bring the detached daemon up if needed (in-process host is a no-op).
         try:
