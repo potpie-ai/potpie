@@ -396,20 +396,37 @@ def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any
     return results
 
 
+def _skill_manager():
+    """The skill installer, built in process — never the active host's.
+
+    The same pin ``potpie skills`` carries (see ``potpie.cli.commands.skills``):
+    a skill install copies template files into *this* machine's harness
+    directories, so which host is active has no bearing on where it writes.
+    Reached through ``get_host()`` instead, a persisted ``managed`` pointer —
+    the normal state after ``host set`` — sent ``skills.install`` to the service,
+    which refuses it (correctly: it cannot write into the caller's agent home)
+    with "run this against the local host", advice that ``setup`` had no way to
+    take. ``setup`` provisions the local machine by definition (see
+    ``bootstrap``'s ``--host`` refusal), so its skills step is local too.
+    """
+    from potpie_context_engine.bootstrap.host_wiring import build_skill_manager
+
+    return build_skill_manager()
+
+
 def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
     """Install packaged skill bundles into each harness's global skill location."""
-    from potpie.cli.commands._common import get_host
     from potpie_context_engine.adapters.outbound.skills.agent_installer import (
         AGENT_TYPES,
     )
 
-    host = get_host()
+    skills = _skill_manager()
     results: list[tuple[str, Any]] = []
     for agent in agents:
         key = agent.strip().lower()
         if key not in AGENT_TYPES or key == "default":
             continue
-        results.append((key, host.skills.install(agent=key, scope="global")))
+        results.append((key, skills.install(agent=key, scope="global")))
     return results
 
 
@@ -508,15 +525,13 @@ def _agent_usage_hint(agent_ids: list[str]) -> str | None:
 
 def _globally_installed_harnesses() -> list[str]:
     """Harnesses that already have Potpie skills on disk (any prior setup run)."""
-    from potpie.cli.commands._common import get_host
-
-    host = get_host()
+    skills = _skill_manager()
     installed: list[str] = []
     for agent in POST_SETUP_AGENT_ORDER:
         if agent == "default":
             continue
         try:
-            status = host.skills.status(agent=agent, scope="global")
+            status = skills.status(agent=agent, scope="global")
         except ValueError:
             continue
         if status.installed:

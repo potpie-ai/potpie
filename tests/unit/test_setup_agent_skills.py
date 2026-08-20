@@ -61,12 +61,55 @@ def test_globally_installed_harnesses_reports_all_agents_with_skills(
             skills = (SimpleNamespace(id="potpie-cli"),) if installed else ()
             return SimpleNamespace(installed=skills)
 
-    monkeypatch.setattr(
-        "potpie.cli.commands._common.get_host",
-        lambda: SimpleNamespace(skills=_Skills()),
-    )
+    monkeypatch.setattr(setup_ux, "_skill_manager", lambda: _Skills())
 
     assert setup_ux._globally_installed_harnesses() == ["cursor", "opencode"]
+
+
+def test_setup_skills_never_go_through_the_active_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Skills are written on this machine whatever host is active.
+
+    Routed through ``get_host()``, a persisted ``managed`` pointer sent
+    ``skills.install`` to the service, which refuses it. Both the install and
+    the "already installed" probe must build the installer in process.
+    """
+    from types import SimpleNamespace
+
+    def _no_host():
+        raise AssertionError("setup's skills step consulted the active host")
+
+    monkeypatch.setattr("potpie.cli.commands._common.get_host", _no_host)
+
+    seen: list[tuple[str, str, str]] = []
+
+    class _Skills:
+        def install(self, *, agent: str, scope: str) -> SimpleNamespace:
+            seen.append(("install", agent, scope))
+            return SimpleNamespace(changed=("SKILL.md",))
+
+        def status(self, *, agent: str, scope: str) -> SimpleNamespace:
+            seen.append(("status", agent, scope))
+            return SimpleNamespace(installed=())
+
+    monkeypatch.setattr(setup_ux, "_skill_manager", lambda: _Skills())
+
+    results = setup_ux.install_agents_globally(["claude", "default", "cursor"])
+    assert [agent for agent, _ in results] == ["claude", "cursor"]
+    assert setup_ux._globally_installed_harnesses() == []
+    assert ("install", "claude", "global") in seen
+    assert ("install", "cursor", "global") in seen
+    assert all(scope == "global" for _, _, scope in seen)
+
+
+def test_skill_manager_is_the_in_process_one() -> None:
+    """The seam resolves to ``build_skill_manager`` — no host, no daemon."""
+    from potpie_context_engine.application.services.skill_manager import (
+        DefaultSkillManager,
+    )
+
+    assert isinstance(setup_ux._skill_manager(), DefaultSkillManager)
 
 
 def test_agent_usage_hint_formats_installed_harnesses() -> None:
