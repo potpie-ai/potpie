@@ -2,6 +2,7 @@
 
 from potpie.runtime.clients import (
     ClientOutcome,
+    DaemonControlClient,
     DaemonEngineClient,
     DaemonTransport,
     DestructiveConfirmation,
@@ -10,6 +11,23 @@ from potpie.runtime.clients import (
     LegacyRequestInvoker,
     LocalEngineClient,
     TypedEngineOperationHandler,
+)
+from potpie.runtime.codec import (
+    decode_request,
+    decode_response,
+    encode_request,
+    encode_response,
+)
+from potpie.runtime.coordinator import ConflictKey, OperationCoordinator
+from potpie.runtime.controller import (
+    ControllerStatus,
+    DaemonBootFactory,
+    DaemonBootSpec,
+    DaemonController,
+    DaemonLaunchSpec,
+    DaemonProcessObserver,
+    StopResult,
+    TypedDaemonObserver,
 )
 from potpie.runtime.operations import (
     DAEMON_CONTROL_SAFETY,
@@ -21,6 +39,7 @@ from potpie.runtime.operations import (
     operation_capabilities,
     operation_catalog_fingerprint,
 )
+from potpie.runtime.ownership import RuntimeOwnershipLock
 from potpie.runtime.protocol import (
     PROTOCOL_MAX_VERSION,
     PROTOCOL_MIN_VERSION,
@@ -59,6 +78,14 @@ from potpie.runtime.resource_manager import (
     ResourceLifecycleError,
     SelectionError,
 )
+from potpie.runtime.server import (
+    AuthenticatedDaemonCaller,
+    CanonicalDaemonRuntime,
+    EngineOperationHandler,
+    generate_bearer_token,
+    run_foreground,
+)
+from potpie.runtime.transport import HttpDaemonTransport, RuntimeEndpoint
 
 __all__ = [
     "DAEMON_CONTROL_SAFETY",
@@ -67,40 +94,55 @@ __all__ = [
     "PROTOCOL_MIN_VERSION",
     "PROTOCOL_VERSION",
     "AcquisitionRequest",
+    "AuthenticatedDaemonCaller",
     "AuthenticatedActor",
     "AuthenticationError",
     "AuthorizationError",
     "AuthorizationScope",
     "AuthorizedContextLease",
     "CompositionFingerprint",
+    "ConflictKey",
     "ClientOutcome",
+    "CanonicalDaemonRuntime",
     "DaemonControlOperation",
+    "DaemonControlClient",
+    "DaemonBootFactory",
+    "DaemonBootSpec",
     "DaemonEngineClient",
     "DaemonInternalError",
     "DaemonTransport",
     "DestructiveConfirmation",
     "ContextResourceManager",
     "ContextSelector",
+    "ControllerStatus",
+    "DaemonController",
+    "DaemonLaunchSpec",
+    "DaemonProcessObserver",
     "DestructiveIntent",
     "EngineClient",
     "EngineOperation",
+    "EngineOperationHandler",
     "EngineOperationRequest",
     "FailureResponse",
     "HandshakePayload",
     "HandshakeRequest",
     "HandshakeResult",
     "HostResource",
+    "HttpDaemonTransport",
     "LegacyEngineClientAdapter",
     "LegacyRequestInvoker",
     "LeaseOwnership",
     "LocalEngineClient",
     "OperationSpec",
+    "OperationCoordinator",
     "ProtocolError",
     "ProtocolRequest",
     "ProtocolResponse",
     "ProtocolTransportError",
     "ResourceComposition",
     "ResourceLifecycleError",
+    "RuntimeEndpoint",
+    "RuntimeOwnershipLock",
     "RuntimeBoundaryError",
     "SafetyClass",
     "SelectionError",
@@ -108,8 +150,16 @@ __all__ = [
     "ShutdownRequest",
     "ShutdownResult",
     "SuccessResponse",
+    "StopResult",
     "TransportFailure",
+    "TypedDaemonObserver",
     "TypedEngineOperationHandler",
+    "decode_request",
+    "decode_response",
+    "encode_request",
+    "encode_response",
+    "generate_bearer_token",
     "operation_capabilities",
     "operation_catalog_fingerprint",
+    "run_foreground",
 ]

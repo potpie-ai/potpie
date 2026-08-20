@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol, TypeAlias, cast
 from uuid import uuid4
 
+from potpie.runtime.coordinator import OperationCoordinator
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
     EngineOperation,
@@ -30,6 +31,9 @@ from potpie.runtime.protocol import (
     ProtocolResponse,
     ProtocolTransportError,
     RuntimeBoundaryError,
+    ShutdownPayload,
+    ShutdownRequest,
+    ShutdownResult,
     SuccessResponse,
     TransportFailure,
     response_validation_error,
@@ -401,8 +405,14 @@ if set(_ENGINE_HANDLERS) != set(ENGINE_OPERATION_CATALOG):
 class TypedEngineOperationHandler:
     """Shared transport-neutral lease-to-engine operation handler."""
 
-    def __init__(self, resource_manager: ContextResourceManager) -> None:
+    def __init__(
+        self,
+        resource_manager: ContextResourceManager,
+        *,
+        coordinator: OperationCoordinator | None = None,
+    ) -> None:
         self._resource_manager = resource_manager
+        self._coordinator = coordinator or OperationCoordinator()
 
     async def handle(
         self,
@@ -436,9 +446,14 @@ class TypedEngineOperationHandler:
         lease = acquisition.value
         try:
             try:
-                return await _ENGINE_HANDLERS[request.operation](
-                    lease.engine, request.payload
-                )
+                async with self._coordinator.coordinate(
+                    spec=spec,
+                    context=lease.context,
+                    request=request.payload,
+                ):
+                    return await _ENGINE_HANDLERS[request.operation](
+                        lease.engine, request.payload
+                    )
             except Exception:
                 return Failure(
                     DaemonInternalError(
@@ -461,11 +476,15 @@ class LocalEngineClient(EngineClient):
         selector: ContextSelector,
         authentication: object,
         resource_manager: ContextResourceManager,
+        coordinator: OperationCoordinator | None = None,
         request_id_factory: RequestIdFactory | None = None,
     ) -> None:
         self._selector = selector
         self._authentication = authentication
-        self._handler = TypedEngineOperationHandler(resource_manager)
+        self._handler = TypedEngineOperationHandler(
+            resource_manager,
+            coordinator=coordinator,
+        )
         self._request_id_factory = request_id_factory or (lambda: str(uuid4()))
 
     async def _dispatch(
@@ -580,102 +599,111 @@ class DaemonEngineClient(EngineClient):
         *,
         safety: SafetyClass | None,
     ) -> Success[ProtocolResponse] | Failure[RuntimeBoundaryError]:
-        try:
-            response = await self._transport.send(request)
-        except TransportFailure as exc:
-            outcome_unknown = _outcome_may_be_unknown(
-                safety, dispatched=exc.dispatched
-            )
-            return Failure(
-                ProtocolTransportError(
-                    code=exc.code,
-                    message="the daemon transport failed",
-                    details={
-                        "dispatched": exc.dispatched,
-                        "outcome_unknown": outcome_unknown,
-                    },
-                    recommended_next_action=(
-                        "inspect operation state before retrying"
-                        if outcome_unknown
-                        else "retry after daemon readiness is restored"
-                    ),
-                    retry_posture="unknown" if outcome_unknown else "safe",
-                )
-            )
-        except Exception:
-            outcome_unknown = _outcome_may_be_unknown(safety, dispatched=True)
-            return Failure(
-                ProtocolTransportError(
-                    code="transport_defect",
-                    message="the daemon transport failed unexpectedly",
-                    details={
-                        "dispatched": "unknown",
-                        "outcome_unknown": outcome_unknown,
-                    },
-                    recommended_next_action=(
-                        "inspect operation state and daemon client logs before retrying"
-                        if outcome_unknown
-                        else "inspect daemon client logs"
-                    ),
-                    retry_posture="unknown" if outcome_unknown else "safe",
-                )
-            )
-        if not isinstance(response, (SuccessResponse, FailureResponse)):
-            return Failure(
-                ProtocolError(
-                    code="response_envelope_malformed",
-                    message="daemon returned an invalid response envelope",
-                )
-            )
-        validation_error = response_validation_error(request, response)
-        if validation_error is not None:
-            return Failure(validation_error)
-        return Success(response)
+        return await _send_protocol_request(
+            transport=self._transport,
+            request=request,
+            safety=safety,
+        )
 
     def _validate_handshake(self, result: HandshakeResult) -> ProtocolError | None:
-        if self._expected_instance_id is not None:
-            if result.instance_id != self._expected_instance_id:
-                return ProtocolError(
-                    code="daemon_instance_mismatch",
-                    message="daemon instance identity does not match discovery",
-                    recommended_next_action="refresh discovery and reconnect",
+        return _validate_handshake_result(
+            result,
+            expected_instance_id=self._expected_instance_id,
+        )
+
+
+class DaemonControlClient:
+    """Finite typed client for live daemon handshake and shutdown control."""
+
+    def __init__(
+        self,
+        *,
+        transport: DaemonTransport,
+        expected_instance_id: str | None,
+        request_id_factory: RequestIdFactory | None = None,
+    ) -> None:
+        self._transport = transport
+        self._expected_instance_id = expected_instance_id
+        self._request_id_factory = request_id_factory or (lambda: str(uuid4()))
+        self._handshake_result: HandshakeResult | None = None
+
+    @property
+    def handshake_result(self) -> HandshakeResult | None:
+        return self._handshake_result
+
+    async def handshake(self) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
+        request = HandshakeRequest(
+            protocol_version=PROTOCOL_VERSION,
+            request_id=self._request_id_factory(),
+            payload=HandshakePayload(
+                client_protocol_min=PROTOCOL_MIN_VERSION,
+                client_protocol_max=PROTOCOL_MAX_VERSION,
+                expected_instance_id=self._expected_instance_id,
+            ),
+        )
+        response_or_error = await _send_protocol_request(
+            transport=self._transport,
+            request=request,
+            safety=None,
+        )
+        if isinstance(response_or_error, Failure):
+            return response_or_error
+        response = response_or_error.value
+        if isinstance(response, FailureResponse):
+            return response.outcome
+        result = response.outcome.value
+        if not isinstance(result, HandshakeResult):
+            return Failure(
+                ProtocolError(
+                    code="handshake_result_malformed",
+                    message="daemon handshake returned an invalid result",
                 )
-        if not result.ready:
-            return ProtocolError(
-                code="daemon_not_ready",
-                message="daemon handshake did not report ready state",
-                details={"lifecycle_state": result.lifecycle_state},
-                recommended_next_action="wait for daemon readiness",
-                retry_posture="safe",
             )
-        if not (
-            result.protocol_min <= PROTOCOL_VERSION <= result.protocol_max
-        ):
-            return ProtocolError(
-                code="protocol_version_incompatible",
-                message="daemon and client protocol versions are incompatible",
-                details={
-                    "client_version": PROTOCOL_VERSION,
-                    "daemon_min": result.protocol_min,
-                    "daemon_max": result.protocol_max,
-                },
-                recommended_next_action="install compatible Potpie versions",
+        validation_error = _validate_handshake_result(
+            result,
+            expected_instance_id=self._expected_instance_id,
+        )
+        if validation_error is not None:
+            return Failure(validation_error)
+        self._handshake_result = result
+        return Success(result)
+
+    async def shutdown(
+        self, *, reason: str = "client_requested"
+    ) -> Success[ShutdownResult] | Failure[RuntimeBoundaryError]:
+        if self._handshake_result is None:
+            return Failure(
+                ProtocolError(
+                    code="handshake_required",
+                    message="a compatible daemon handshake is required",
+                    recommended_next_action="perform an authenticated handshake",
+                    retry_posture="safe",
+                )
             )
-        if result.operation_catalog_fingerprint != operation_catalog_fingerprint():
-            return ProtocolError(
-                code="operation_catalog_mismatch",
-                message="daemon and client operation catalogs do not match",
-                recommended_next_action="restart with a compatible Potpie version",
+        request = ShutdownRequest(
+            protocol_version=PROTOCOL_VERSION,
+            request_id=self._request_id_factory(),
+            payload=ShutdownPayload(reason=reason),
+        )
+        response_or_error = await _send_protocol_request(
+            transport=self._transport,
+            request=request,
+            safety=SafetyClass.DAEMON_LIFECYCLE_CONTROL,
+        )
+        if isinstance(response_or_error, Failure):
+            return response_or_error
+        response = response_or_error.value
+        if isinstance(response, FailureResponse):
+            return response.outcome
+        result = response.outcome.value
+        if not isinstance(result, ShutdownResult):
+            return Failure(
+                ProtocolError(
+                    code="shutdown_result_malformed",
+                    message="daemon shutdown returned an invalid result",
+                )
             )
-        missing = sorted(set(operation_capabilities()) - set(result.capabilities))
-        if missing:
-            return ProtocolError(
-                code="daemon_capability_missing",
-                message="daemon does not support the required operation catalog",
-                details={"missing_capabilities": tuple(missing)},
-                recommended_next_action="install compatible Potpie versions",
-            )
-        return None
+        return Success(result)
 
 
 class LegacyEngineClientAdapter(EngineClient):
@@ -784,8 +812,115 @@ def _outcome_may_be_unknown(
     }
 
 
+async def _send_protocol_request(
+    *,
+    transport: DaemonTransport,
+    request: ProtocolRequest,
+    safety: SafetyClass | None,
+) -> Success[ProtocolResponse] | Failure[RuntimeBoundaryError]:
+    try:
+        response = await transport.send(request)
+    except TransportFailure as exc:
+        outcome_unknown = _outcome_may_be_unknown(
+            safety, dispatched=exc.dispatched
+        )
+        return Failure(
+            ProtocolTransportError(
+                code=exc.code,
+                message="the daemon transport failed",
+                details={
+                    "dispatched": exc.dispatched,
+                    "outcome_unknown": outcome_unknown,
+                },
+                recommended_next_action=(
+                    "inspect operation state before retrying"
+                    if outcome_unknown
+                    else "retry after daemon readiness is restored"
+                ),
+                retry_posture="unknown" if outcome_unknown else "safe",
+            )
+        )
+    except Exception:
+        outcome_unknown = _outcome_may_be_unknown(safety, dispatched=True)
+        return Failure(
+            ProtocolTransportError(
+                code="transport_defect",
+                message="the daemon transport failed unexpectedly",
+                details={
+                    "dispatched": "unknown",
+                    "outcome_unknown": outcome_unknown,
+                },
+                recommended_next_action=(
+                    "inspect operation state and daemon client logs before retrying"
+                    if outcome_unknown
+                    else "inspect daemon client logs"
+                ),
+                retry_posture="unknown" if outcome_unknown else "safe",
+            )
+        )
+    if not isinstance(response, (SuccessResponse, FailureResponse)):
+        return Failure(
+            ProtocolError(
+                code="response_envelope_malformed",
+                message="daemon returned an invalid response envelope",
+            )
+        )
+    validation_error = response_validation_error(request, response)
+    if validation_error is not None:
+        return Failure(validation_error)
+    return Success(response)
+
+
+def _validate_handshake_result(
+    result: HandshakeResult,
+    *,
+    expected_instance_id: str | None,
+) -> ProtocolError | None:
+    if expected_instance_id is not None and result.instance_id != expected_instance_id:
+        return ProtocolError(
+            code="daemon_instance_mismatch",
+            message="daemon instance identity does not match discovery",
+            recommended_next_action="refresh discovery and reconnect",
+        )
+    if not result.ready:
+        return ProtocolError(
+            code="daemon_not_ready",
+            message="daemon handshake did not report ready state",
+            details={"lifecycle_state": result.lifecycle_state},
+            recommended_next_action="wait for daemon readiness",
+            retry_posture="safe",
+        )
+    if not result.protocol_min <= PROTOCOL_VERSION <= result.protocol_max:
+        return ProtocolError(
+            code="protocol_version_incompatible",
+            message="daemon and client protocol versions are incompatible",
+            details={
+                "client_version": PROTOCOL_VERSION,
+                "daemon_min": result.protocol_min,
+                "daemon_max": result.protocol_max,
+            },
+            recommended_next_action="install compatible Potpie versions",
+        )
+    if result.operation_catalog_fingerprint != operation_catalog_fingerprint():
+        return ProtocolError(
+            code="operation_catalog_mismatch",
+            message="daemon and client operation catalogs do not match",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    missing = sorted(set(operation_capabilities()) - set(result.capabilities))
+    if missing:
+        return ProtocolError(
+            code="daemon_capability_missing",
+            message="daemon does not support the required operation catalog",
+            details={"missing_capabilities": tuple(missing)},
+            recommended_next_action="install compatible Potpie versions",
+        )
+    return None
+
+
 __all__ = [
     "ClientOutcome",
+    "DaemonControlClient",
     "DaemonEngineClient",
     "DaemonTransport",
     "DestructiveConfirmation",
