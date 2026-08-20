@@ -768,7 +768,10 @@ def _register_repo_source(*, repo: str) -> str:
         properties={"source_kind": "repo"},
     )
     host = get_host()
-    active = host.pots.active_pot()
+    from potpie.cli.commands._common import get_pot_service
+
+    pots = get_pot_service(host)
+    active = pots.active_pot()
     if active is None:
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_completed",
@@ -776,7 +779,7 @@ def _register_repo_source(*, repo: str) -> str:
             properties={"step_state": "skipped", "duration_ms": elapsed_ms(started_ms)},
         )
         return "skipped"
-    existing = host.pots.list_sources(pot_id=active.pot_id)
+    existing = pots.list_sources(pot_id=active.pot_id)
     resolved = resolve_repo_location(repo)
     if any(
         s.kind == "repo"
@@ -817,7 +820,6 @@ def _maybe_prompt_first_pot(
     repo: Path | None,
     default_pot_name: str,
 ) -> None:
-    from potpie.cli.commands._common import get_host
     from potpie.cli.ui.interactive_prompts import prompt_first_pot_name
 
     capture_project_binding_event(
@@ -839,7 +841,9 @@ def _maybe_prompt_first_pot(
 
     repo_str = str(repo.resolve()) if repo is not None else None
     name_source = "default" if name == default_pot_name else "custom"
-    pot = get_host().pots.create_pot(name=name, use=True)
+    from potpie.cli.commands._common import get_pot_service
+
+    pot = get_pot_service().create_pot(name=name, use=True)
     capture_project_binding_event(
         "cli_onboarding_first_pot_created",
         entrypoint="post_setup_first_pot",

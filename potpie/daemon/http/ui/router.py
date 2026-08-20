@@ -11,12 +11,12 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
-from potpie_context_core.errors import CapabilityNotImplemented, PotNotFound
-from potpie_context_core.graph_entity_summary import (
+from potpie_context_engine.core.errors import CapabilityNotImplemented, PotNotFound
+from potpie_context_engine.core.graph_entity_summary import (
     normalize_entity_properties,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
-from potpie_context_core.ports.graph_service import (
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
@@ -52,7 +52,9 @@ _PREFIX_LABEL = {
 
 def _resolve_pot(host: Any, pot: str | None) -> str:
     """Explicit ``pot`` ref → id, else the active pot. 400 if neither resolves."""
-    pots = host.pots
+    from potpie.cli.commands._common import get_pot_service
+
+    pots = get_pot_service(host)
     if pot:
         for p in pots.list_pots():
             if pot in (p.pot_id, p.name):
@@ -104,7 +106,9 @@ def _counts(host: Any, pot_id: str) -> dict[str, int]:
 
 def _source_count(host: Any, pot_id: str) -> int:
     try:
-        return len(host.pots.list_sources(pot_id=pot_id))
+        from potpie.cli.commands._common import get_pot_service
+
+        return len(get_pot_service(host).list_sources(pot_id=pot_id))
     except Exception:  # noqa: BLE001
         return 0
 
@@ -162,8 +166,11 @@ def build_ui_api_router(host: Any) -> APIRouter:
     @router.get("/api/pots")
     def list_pots() -> dict[str, Any]:
         def go():
-            pots = host.pots.list_pots()
-            active = host.pots.active_pot()
+            from potpie.cli.commands._common import get_pot_service
+
+            service = get_pot_service(host)
+            pots = service.list_pots()
+            active = service.active_pot()
             return {
                 "pots": [
                     {
@@ -185,7 +192,9 @@ def build_ui_api_router(host: Any) -> APIRouter:
     @router.post("/api/pots/use")
     def use_pot(ref: str = Body(..., embed=True)) -> dict[str, Any]:
         def go():
-            pot = host.pots.use_pot(ref=ref)
+            from potpie.cli.commands._common import get_pot_service
+
+            pot = get_pot_service(host).use_pot(ref=ref)
             return {"id": pot.pot_id, "name": pot.name, "active": True}
 
         return _guarded(go)

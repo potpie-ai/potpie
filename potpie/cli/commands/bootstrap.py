@@ -25,6 +25,7 @@ from potpie.cli.commands._common import (
     fail,
     get_engine_client,
     get_host,
+    get_pot_service,
     is_json,
     repo_default_pot_id,
     repo_effective_pot_info,
@@ -389,7 +390,7 @@ def register(root: typer.Typer) -> None:
         with contract():
             host = get_host()
             caps = host.backend.capabilities()
-            pot = host.pots.active_pot()
+            pot = get_pot_service(host).active_pot()
             pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
             readiness = host.backend.mutation.readiness(pot_id)
             daemon_status = host.daemon.status()
@@ -556,7 +557,7 @@ def _build_context_status_report(
     data_plane,
 ) -> StatusReport:
     """Join root-owned status surfaces with the engine-owned data plane."""
-    aggregate = shell.pots.aggregate_status(pot_id=pot_id)
+    aggregate = get_pot_service(shell).aggregate_status(pot_id=pot_id)
     active = aggregate.active_pot
     nudge = shell.skills.nudge(agent=harness) if harness else None
     backend_ready = bool(data_plane.backend_ready)

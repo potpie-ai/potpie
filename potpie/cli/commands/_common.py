@@ -56,6 +56,8 @@ _state: dict[str, Any] = {
     "engine_host": None,
     "engine_remote_host": None,
     "engine_remote_home": None,
+    "pot_service": None,
+    "pot_service_host": None,
 }
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -126,6 +128,21 @@ def set_host(host: Any) -> None:
     _state["host"] = host
     _state["engine_manager"] = None
     _state["engine_host"] = None
+    _state["pot_service"] = None
+    _state["pot_service_host"] = None
+
+
+def get_pot_service(host: Any | None = None):
+    """Return the finite Potpie-owned pot/source control-plane service."""
+    from potpie.runtime.root_services import build_pot_resource_service
+
+    host = host if host is not None else get_host()
+    service = _state.get("pot_service")
+    if service is None or _state.get("pot_service_host") is not host:
+        service = build_pot_resource_service(host)
+        _state["pot_service"] = service
+        _state["pot_service_host"] = host
+    return service
 
 
 class EngineClientError(Exception):
@@ -456,7 +473,7 @@ def resolve_pot_scope(
     from existing registrations would route the new source to the wrong pot
     (or fail as ambiguous when other pots already track the same repo).
     """
-    pots = host.pots
+    pots = get_pot_service(host)
     if explicit:
         for pot in pots.list_pots():
             if explicit in (pot.pot_id, pot.name):
@@ -514,7 +531,7 @@ def repo_pot_candidates(
         else _pots_matching_repo_identity(host, repo_identity)
     )
     default_pot_id = _repo_default_pot_id(host, repo_identity)
-    active = _safe_call(lambda: host.pots.active_pot(), None)
+    active = _safe_call(lambda: get_pot_service(host).active_pot(), None)
     rows: list[dict[str, Any]] = []
     for pot_id, name in matches:
         row = {
@@ -544,7 +561,7 @@ def repo_effective_pot_info(host: Any, repo: str | None = None) -> dict[str, Any
         else _pots_matching_repo_identity(host, repo_identity)
     )
     default_pot_id = _repo_default_pot_id(host, repo_identity)
-    active = _safe_call(lambda: host.pots.active_pot(), None)
+    active = _safe_call(lambda: get_pot_service(host).active_pot(), None)
     active_id = getattr(active, "pot_id", None) if active is not None else None
     match_ids = {pot_id for pot_id, _ in matches}
 
@@ -768,10 +785,11 @@ def use_pot_selection(
         if not repo_key:
             raise ValueError("--also-default-for-current-repo requires a repo")
 
-    pot = host.pots.use_pot(ref=ref)
+    pots = get_pot_service(host)
+    pot = pots.use_pot(ref=ref)
     repo_default_set = False
     if repo_key:
-        host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
+        pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
         repo_default_set = True
 
     routing = repo_effective_pot_info(host)
@@ -825,7 +843,10 @@ def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
 
 
 def pot_source_count(host: Any, pot_id: str) -> int:
-    return len(_safe_call(lambda: host.pots.list_sources(pot_id=pot_id), []) or [])
+    return len(
+        _safe_call(lambda: get_pot_service(host).list_sources(pot_id=pot_id), [])
+        or []
+    )
 
 
 def _repo_identity_from_option(repo: str | None) -> str | None:
@@ -865,12 +886,13 @@ def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
     remote = _current_git_remote(cwd)
     matches: list[tuple[str, str]] = []
     try:
-        pots = list(host.pots.list_pots())
+        service = get_pot_service(host)
+        pots = list(service.list_pots())
     except Exception:  # noqa: BLE001 - pot resolution should not mask commands
         return []
     for pot in pots:
         try:
-            sources = host.pots.list_sources(pot_id=pot.pot_id)
+            sources = service.list_sources(pot_id=pot.pot_id)
         except Exception:  # noqa: BLE001
             continue
         for source in sources:
@@ -897,12 +919,13 @@ def _pots_matching_repo_identity(
         return []
     matches: list[tuple[str, str]] = []
     try:
-        pots = list(host.pots.list_pots())
+        service = get_pot_service(host)
+        pots = list(service.list_pots())
     except Exception:  # noqa: BLE001
         return []
     for pot in pots:
         try:
-            sources = host.pots.list_sources(pot_id=pot.pot_id)
+            sources = service.list_sources(pot_id=pot.pot_id)
         except Exception:  # noqa: BLE001
             continue
         for source in sources:
@@ -930,7 +953,7 @@ def repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
     """Return the locally persisted default pot id for a repo identity, if valid."""
     if not repo_identity:
         return None
-    getter = getattr(host.pots, "repo_default", None)
+    getter = getattr(get_pot_service(host), "repo_default", None)
     if not callable(getter):
         return None
     pot_id = _safe_call(lambda: getter(repo=repo_identity), None)
@@ -951,7 +974,7 @@ def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
 
 
 def _pot_for_id(host: Any, pot_id: str):
-    for pot in _safe_call(lambda: host.pots.list_pots(), []) or []:
+    for pot in _safe_call(lambda: get_pot_service(host).list_pots(), []) or []:
         if getattr(pot, "pot_id", None) == pot_id:
             return pot
     return None

@@ -37,6 +37,7 @@ from potpie.cli.commands._common import (
     fail,
     get_engine_client,
     get_host,
+    get_pot_service,
     is_json,
     json_error_formatter,
     pot_scope_human,
@@ -2325,7 +2326,7 @@ def backend_use(profile: str) -> None:
 def backend_doctor() -> None:
     with contract():
         host = get_host()
-        pot = host.pots.active_pot()
+        pot = get_pot_service(host).active_pot()
         readiness = host.backend.mutation.readiness(pot.pot_id if pot else "")
         emit(
             {
@@ -2346,7 +2347,7 @@ def _set_optional_pot(ctx: _GraphCliCommandContext, pot: str | None) -> None:
     if pot:
         ctx.set_pot_id(resolve_pot_id(host, pot))
         return
-    active = _safe(lambda: host.pots.active_pot(), None)
+    active = _safe(lambda: get_pot_service(host).active_pot(), None)
     if active is not None:
         ctx.set_pot_id(getattr(active, "pot_id", None))
 
