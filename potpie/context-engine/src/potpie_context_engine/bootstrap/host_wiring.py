@@ -166,6 +166,18 @@ def default_host_mode() -> str:
     return mode
 
 
+def build_skill_manager() -> DefaultSkillManager:
+    return DefaultSkillManager(
+        targets={
+            "claude": ClaudeAgentTarget(),
+            "claude-plugin": ClaudePluginAgentTarget(),
+            "codex": CodexAgentTarget(),
+            "cursor": CursorAgentTarget(),
+            "opencode": OpenCodeAgentTarget(),
+        }
+    )
+
+
 def build_host_shell(
     *,
     backend: ProvisionableGraphBackend | None = None,

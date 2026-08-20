@@ -1,8 +1,8 @@
 """``--path`` has to be resolved in the caller's process, not the daemon's.
 
-Every ``skills`` subcommand crosses an RPC to a daemon running with whatever
-working directory it was launched from — often ``/``, or a directory belonging
-to a terminal closed weeks ago. A relative ``--path`` therefore resolved *there*:
+Every daemon-backed ``skills`` subcommand crosses an RPC to a daemon running with
+whatever working directory it was launched from — often ``/``, or a directory
+belonging to a terminal closed weeks ago. A relative ``--path`` therefore resolved *there*:
 ``skills install --path .`` wrote eleven skill directories into the daemon's cwd
 and reported the install as done for the repo the user was standing in. A quoted
 ``~/project`` was worse, because nothing expanded it and the daemon created a
@@ -119,6 +119,7 @@ def test_a_tilde_path_is_expanded_before_it_crosses_the_boundary(
     recorded, monkeypatch, tmp_path
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     (tmp_path / "project").mkdir()
     monkeypatch.chdir(tmp_path)
 
@@ -139,6 +140,18 @@ def test_no_path_stays_unset(recorded, monkeypatch, tmp_path) -> None:
 
     assert result.exit_code == 0, result.output
     assert recorded.paths == [None]
+
+
+def test_install_can_bypass_the_daemon(recorded, monkeypatch, tmp_path) -> None:
+    local = _Skills()
+    monkeypatch.setattr(skills, "_local_skills", lambda: local)
+    monkeypatch.chdir(tmp_path)
+
+    result = _run("install", "--no-daemon", cwd=tmp_path)
+
+    assert result.exit_code == 0, result.output
+    assert local.paths == [None]
+    assert recorded.paths == []
 
 
 @pytest.mark.parametrize(

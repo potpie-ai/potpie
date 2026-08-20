@@ -373,7 +373,24 @@ def _clip(line: str) -> str:
 
 
 def _is_stale_pid_error(exc: OSError) -> bool:
-    return os.name == "nt" and getattr(exc, "winerror", None) in {6, 11, 87}
+    return os.name == "nt" and getattr(exc, "winerror", None) in {5, 6, 11, 87}
+
+
+def _force_kill(pid: int) -> None:
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except OSError:
+            pass
+        return
+    os.kill(pid, signal.SIGKILL)
 
 
 def stop_daemon(home: pathlib.Path) -> str:
@@ -413,10 +430,7 @@ def stop_daemon(home: pathlib.Path) -> str:
         if not pid_file.exists():
             return "daemon stopped"
         time.sleep(0.1)
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    _force_kill(pid)
     _unlink(pid_file)
     return "daemon killed (forced after timeout)"
 

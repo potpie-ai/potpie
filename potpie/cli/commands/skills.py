@@ -3,6 +3,9 @@
 Skills are CLI-managed recipes; agents only ever see the advisory nudge in
 ``context_status``. These commands manage the catalog and per-harness installs.
 
+The install command also supports ``--no-daemon`` for filesystem-only bundle
+staging, which is useful during first-run setup before the local daemon exists.
+
 They are pinned to the local host. A skill install writes files into *this*
 machine's harness directory (``~/.claude/skills`` and friends) — routed to a
 managed host it would install onto the server's filesystem, where no harness of
@@ -45,6 +48,12 @@ def _skills():
     return build_skill_manager()
 
 
+def _local_skills():
+    from potpie_context_engine.bootstrap.host_wiring import build_skill_manager
+
+    return build_skill_manager()
+
+
 @skills_app.command("list")
 def skills_list(
     agent: str = typer.Option("claude", "--agent"),
@@ -82,6 +91,11 @@ def skills_install(
     agent: str = typer.Option("claude", "--agent"),
     path: str | None = typer.Option(None, "--path"),
     scope: str = typer.Option("global", "--scope"),
+    no_daemon: bool = typer.Option(
+        False,
+        "--no-daemon",
+        help="Install from the packaged skill catalog without contacting the local daemon.",
+    ),
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
@@ -93,7 +107,8 @@ def skills_install(
             properties={"agent": agent, "scope": effective_scope},
         )
         try:
-            res = _skills().install(
+            manager = _local_skills() if no_daemon else _skills()
+            res = manager.install(
                 agent=agent,
                 skill_id=skill_id,
                 path=path,

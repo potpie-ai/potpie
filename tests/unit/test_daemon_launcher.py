@@ -40,15 +40,6 @@ class _HealthHandler(BaseHTTPRequestHandler):
         return
 
 
-class _UnixHealthServer(socketserver.ThreadingUnixStreamServer):
-    """``/health`` over a unix socket — the other address a daemon publishes."""
-
-    def get_request(self):
-        request, _client = super().get_request()
-        # BaseHTTPRequestHandler indexes client_address; a UDS peer has none.
-        return request, ("localhost", 0)
-
-
 @contextlib.contextmanager
 def _daemon_serving(pid: int) -> Iterator[str]:
     """A live address that answers ``/health`` as the daemon with ``pid``."""
@@ -66,6 +57,16 @@ def _daemon_serving(pid: int) -> Iterator[str]:
 def _daemon_serving_on_socket(pid: int) -> Iterator[pathlib.Path]:
     """The same, over a unix socket. Its own short temp dir, not ``tmp_path``:
     an ``AF_UNIX`` path is capped near 104 bytes and pytest's is longer."""
+    server_type = getattr(socketserver, "ThreadingUnixStreamServer", None)
+    if server_type is None:
+        pytest.skip("Unix-domain socket server is unavailable on this platform")
+
+    class _UnixHealthServer(server_type):
+        def get_request(self):
+            request, _client = super().get_request()
+            # BaseHTTPRequestHandler indexes client_address; a UDS peer has none.
+            return request, ("localhost", 0)
+
     with tempfile.TemporaryDirectory() as short_dir:
         path = pathlib.Path(short_dir) / "daemon.sock"
         server = _UnixHealthServer(str(path), _HealthHandler)
@@ -580,6 +581,26 @@ def test_a_pid_that_cannot_be_identified_is_left_to_the_old_behaviour(
     assert signalled == [424242]
 
 
+def test_windows_access_denied_pid_is_treated_as_stale(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+) -> None:
+    monkeypatch.setattr(launcher.os, "name", "nt")
+    monkeypatch.setattr(launcher, "_process_command_line", lambda pid: None)
+    pid_file = tmp_path / "daemon.pid"
+    pid_file.write_text("424242\n")
+
+    def _access_denied(_pid: int, _sig: int) -> None:
+        error = OSError("access denied")
+        error.winerror = 5
+        raise error
+
+    monkeypatch.setattr(launcher.os, "kill", _access_denied)
+
+    assert launcher.stop_daemon(tmp_path) == "stale pid file removed"
+    assert not pid_file.exists()
+
+
 def test_a_recognised_daemon_is_still_signalled(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
@@ -596,6 +617,31 @@ def test_a_recognised_daemon_is_still_signalled(
 
     assert launcher.stop_daemon(tmp_path) == "daemon stopped"
     assert signalled == [424243]
+
+
+def test_force_kill_uses_taskkill_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(launcher.os, "name", "nt")
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def _run(args: list[str], **kwargs: object) -> None:
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(launcher.subprocess, "run", _run)
+
+    launcher._force_kill(424244)
+
+    assert calls == [
+        (
+            ["taskkill", "/PID", "424244", "/T", "/F"],
+            {
+                "stdin": launcher.subprocess.DEVNULL,
+                "stdout": launcher.subprocess.DEVNULL,
+                "stderr": launcher.subprocess.DEVNULL,
+                "check": False,
+                "creationflags": getattr(launcher.subprocess, "CREATE_NO_WINDOW", 0),
+            },
+        )
+    ]
 
 
 def _captured_child_env(
