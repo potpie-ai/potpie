@@ -23,9 +23,15 @@ from potpie.cli.commands._common import (
     current_repo_identity_for_cli,
     emit,
     fail,
+    get_auth_service,
+    get_config_service,
+    get_daemon_service,
     get_engine_client,
     get_host,
+    get_ledger_service,
     get_pot_service,
+    get_setup_service,
+    get_skill_service,
     is_json,
     repo_default_pot_id,
     repo_effective_pot_info,
@@ -153,7 +159,7 @@ def register(root: typer.Typer) -> None:
                 )
             else:
                 host = get_host()
-                in_process = getattr(host.daemon, "in_process", False)
+                in_process = getattr(get_daemon_service(host), "in_process", False)
                 selected_backend = backend or (
                     getattr(host.backend, "profile", default_backend_profile())
                     if in_process
@@ -178,12 +184,12 @@ def register(root: typer.Typer) -> None:
                     backend=build_backend(backend), profile=host.profile
                 )
                 set_host(host)
-                in_process = getattr(host.daemon, "in_process", False)
+                in_process = getattr(get_daemon_service(host), "in_process", False)
                 selected_backend = host.backend.profile
             if (
                 not use_live
                 and daemon is not None
-                and host.daemon.in_process != (not daemon)
+                and get_daemon_service(host).in_process != (not daemon)
             ):
                 import os
 
@@ -200,7 +206,7 @@ def register(root: typer.Typer) -> None:
                     backend=build_backend(selected_backend), profile=host.profile
                 )
                 set_host(host)
-                in_process = getattr(host.daemon, "in_process", False)
+                in_process = getattr(get_daemon_service(host), "in_process", False)
                 selected_backend = host.backend.profile
             plan = SetupPlan(
                 mode=host.profile if host.profile in ("local", "managed") else "local",
@@ -219,7 +225,7 @@ def register(root: typer.Typer) -> None:
             setup_started_ms = now_ms()
             begin_setup_run()
             if in_process:
-                host.setup.set_observer(CliSetupAnalyticsObserver())
+                get_setup_service(host).set_observer(CliSetupAnalyticsObserver())
             capture_setup_started(
                 plan,
                 interactive=interactive_onboarding,
@@ -227,15 +233,15 @@ def register(root: typer.Typer) -> None:
             )
 
             if dry_run:
-                if in_process or host.daemon.status().get("up"):
-                    preview = host.setup.preview(plan)
+                if in_process or get_daemon_service(host).status().get("up"):
+                    preview = get_setup_service(host).preview(plan)
                 else:
                     from potpie_context_engine.bootstrap.host_wiring import (
                         build_host_shell,
                     )
 
                     preview_host = build_host_shell()
-                    preview = preview_host.setup.preview(plan)
+                    preview = get_setup_service(preview_host).preview(plan)
                 capture_setup_dry_run_completed(
                     plan=plan,
                     planned_step_count=len(preview.steps),
@@ -246,8 +252,8 @@ def register(root: typer.Typer) -> None:
                 return
 
             if not in_process and not human_output:
-                host.daemon.ensure(plan)
-                daemon_status = host.daemon.status()
+                get_daemon_service(host).ensure(plan)
+                daemon_status = get_daemon_service(host).status()
                 running_backend = daemon_status.get("backend")
                 if backend:
                     _raise_if_backend_mismatch(running_backend, backend)
@@ -257,18 +263,18 @@ def register(root: typer.Typer) -> None:
 
             if use_live:
                 report = setup_ux.run_setup_live(
-                    host.setup,
+                    get_setup_service(host),
                     plan,
                     repo=Path(repo),
                     agent=agent,
                     scan=scan,
                     use_rich=True,
-                    config_home=getattr(host.daemon, "home", None),
+                    config_home=getattr(get_daemon_service(host), "home", None),
                     observer=CliSetupAnalyticsObserver(),
                 )
             elif stream_plain_progress:
                 report = setup_ux.run_setup_plain(
-                    host.setup,
+                    get_setup_service(host),
                     plan,
                     repo=Path(repo),
                     agent=agent,
@@ -276,7 +282,7 @@ def register(root: typer.Typer) -> None:
                     observer=CliSetupAnalyticsObserver(),
                 )
             else:
-                report = host.setup.run(plan)
+                report = get_setup_service(host).run(plan)
             capture_setup_completed(
                 plan=plan,
                 ok=report.ok,
@@ -393,7 +399,7 @@ def register(root: typer.Typer) -> None:
             pot = get_pot_service(host).active_pot()
             pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
             readiness = host.backend.mutation.readiness(pot_id)
-            daemon_status = host.daemon.status()
+            daemon_status = get_daemon_service(host).status()
 
             repo_identity = current_repo_identity_for_cli()
             effective_current_repo_pot = _effective_current_repo_pot_id(
@@ -424,8 +430,8 @@ def register(root: typer.Typer) -> None:
                     if readiness.ready
                     else "Run `potpie backend doctor` or inspect `potpie graph status --json`.",
                     "ledger": {
-                        "available": host.ledger.status().available,
-                        "binding": host.ledger.status().binding,
+                        "available": get_ledger_service(host).status().available,
+                        "binding": get_ledger_service(host).status().binding,
                     },
                 },
                 human=(
@@ -433,8 +439,8 @@ def register(root: typer.Typer) -> None:
                     f"{cli_install_human(cli_install)}\n"
                     f"backend: {host.backend.profile} ready={readiness.ready} "
                     f"caps={', '.join(caps.implemented())}\n"
-                    f"ledger: {host.ledger.status().binding} "
-                    f"available={host.ledger.status().available}"
+                    f"ledger: {get_ledger_service(host).status().binding} "
+                    f"available={get_ledger_service(host).status().available}"
                     + (
                         f"\nrepo: {repo_identity} → {effective_current_repo_pot}"
                         + (
@@ -452,7 +458,7 @@ def register(root: typer.Typer) -> None:
     def whoami() -> None:
         """Show the current host identity (local OSS reports a 'none' identity)."""
         with contract():
-            ident = get_host().auth.whoami()
+            ident = get_auth_service().whoami()
             emit(
                 {"subject": ident.subject, "mode": ident.mode, "detail": ident.detail},
                 human=f"{ident.subject} (mode={ident.mode})"
@@ -500,7 +506,7 @@ def register(root: typer.Typer) -> None:
     )
 
     def _emit_config_list() -> None:
-        config = get_host().config.list_public()
+        config = get_config_service().list_public()
         payload = {
             "config": config,
             "known_keys": list(KNOWN_CONFIG_KEYS),
@@ -532,14 +538,14 @@ def register(root: typer.Typer) -> None:
             if key is None:
                 _emit_config_list()
                 return
-            value = get_host().config.get(key)
+            value = get_config_service().get(key)
             value = public_config_value(key, value)
             emit({key: value}, human=f"{key}={value}")
 
     @config_app.command("set")
     def config_set(key: str, value: str) -> None:
         with contract():
-            get_host().config.set(key, value)
+            get_config_service().set(key, value)
             emit(
                 {"key": key, "value": value, "persisted": True},
                 human=f"set {key}={value}",
@@ -559,7 +565,7 @@ def _build_context_status_report(
     """Join root-owned status surfaces with the engine-owned data plane."""
     aggregate = get_pot_service(shell).aggregate_status(pot_id=pot_id)
     active = aggregate.active_pot
-    nudge = shell.skills.nudge(agent=harness) if harness else None
+    nudge = get_skill_service(shell).nudge(agent=harness) if harness else None
     backend_ready = bool(data_plane.backend_ready)
     if active is None:
         next_action = "Run 'potpie setup' to create and activate a pot."
@@ -736,13 +742,17 @@ def _build_local_setup_host(
         os.environ["CONTEXT_ENGINE_HOST_MODE"] = "daemon" if daemon else "in_process"
     host = build_host_shell(backend=build_backend(selected_backend))
     set_host(host)
-    return host, host.backend.profile, getattr(host.daemon, "in_process", False)
+    return (
+        host,
+        host.backend.profile,
+        getattr(get_daemon_service(host), "in_process", False),
+    )
 
 
 def _validate_existing_daemon_backend(host, *, requested_backend: str | None) -> None:
     if not requested_backend:
         return
-    daemon_status = host.daemon.status()
+    daemon_status = get_daemon_service(host).status()
     if not daemon_status.get("up"):
         return
     running_backend = daemon_status.get("backend")

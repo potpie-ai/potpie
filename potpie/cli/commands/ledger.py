@@ -1,4 +1,4 @@
-"""Event Ledger commands → ``HostShell.ledger`` (LedgerFacade).
+"""Event Ledger commands through Potpie-owned ledger/config services.
 
 The ledger is a separate source-event service. ``ledger query`` and
 ``ledger pull`` inspect event history only; graph updates are intentionally left
@@ -15,7 +15,9 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
+    get_config_service,
     get_host,
+    get_ledger_service,
     resolve_pot_id,
 )
 
@@ -46,7 +48,7 @@ def _parse_instant(value: str | None) -> datetime | None:
 @ledger_app.command("status")
 def ledger_status() -> None:
     with contract():
-        health = get_host().ledger.status()
+        health = get_ledger_service().status()
         emit(
             {
                 "available": health.available,
@@ -63,7 +65,7 @@ def ledger_sources_list(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        sources = host.ledger.sources(pot_id=pot_id)
+        sources = get_ledger_service(host).sources(pot_id=pot_id)
         emit(
             {"sources": [{"id": s.source_id, "provider": s.provider} for s in sources]},
             human="\n".join(f"  {s.provider}: {s.source_id}" for s in sources)
@@ -84,7 +86,7 @@ def ledger_query(
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        page = host.ledger.query(
+        page = get_ledger_service(host).query(
             pot_id=pot_id,
             source_id=source,
             kind=type_,
@@ -133,7 +135,7 @@ def ledger_use(
                 message="self-hosted ledger requires a URL",
                 next_action="run 'potpie ledger use self-hosted <url>'",
             )
-        config = get_host().config
+        config = get_config_service()
         config.set("ledger.binding", normalized)
         if org:
             config.set("ledger.org", org)
@@ -159,7 +161,7 @@ def ledger_use(
 def ledger_disconnect() -> None:
     """Clear the Event Ledger binding."""
     with contract():
-        get_host().config.set("ledger.binding", "none")
+        get_config_service().set("ledger.binding", "none")
         emit({"binding": "none", "persisted": True}, human="ledger disconnected")
 
 
@@ -174,7 +176,7 @@ def ledger_pull(
     with contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        page = host.ledger.pull(pot_id=pot_id, source_id=source)
+        page = get_ledger_service(host).pull(pot_id=pot_id, source_id=source)
         emit(
             {
                 "pulled": len(page.events),

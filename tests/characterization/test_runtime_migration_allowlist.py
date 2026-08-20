@@ -67,11 +67,9 @@ EXPECTED_LEGACY_PATHS: dict[str, frozenset[str]] = {
     "cli_host_acquisition": frozenset({
         "potpie/cli/commands/_common.py",
         "potpie/cli/commands/bootstrap.py",
-        "potpie/cli/commands/daemon.py",
         "potpie/cli/commands/graph.py",
         "potpie/cli/commands/ledger.py",
         "potpie/cli/commands/pots.py",
-        "potpie/cli/commands/skills.py",
         "potpie/cli/commands/ui.py",
         "potpie/cli/ui/setup_ux.py",
         "tests/integration/test_context_runtime_baseline.py",

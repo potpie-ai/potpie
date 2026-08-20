@@ -398,18 +398,18 @@ def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any
 
 def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
     """Install packaged skill bundles into each harness's global skill location."""
-    from potpie.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_skill_service
     from potpie_context_engine.adapters.outbound.skills.agent_installer import (
         AGENT_TYPES,
     )
 
-    host = get_host()
+    skills = get_skill_service()
     results: list[tuple[str, Any]] = []
     for agent in agents:
         key = agent.strip().lower()
         if key not in AGENT_TYPES or key == "default":
             continue
-        results.append((key, host.skills.install(agent=key, scope="global")))
+        results.append((key, skills.install(agent=key, scope="global")))
     return results
 
 
@@ -508,15 +508,15 @@ def _agent_usage_hint(agent_ids: list[str]) -> str | None:
 
 def _globally_installed_harnesses() -> list[str]:
     """Harnesses that already have Potpie skills on disk (any prior setup run)."""
-    from potpie.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_skill_service
 
-    host = get_host()
+    skills = get_skill_service()
     installed: list[str] = []
     for agent in POST_SETUP_AGENT_ORDER:
         if agent == "default":
             continue
         try:
-            status = host.skills.status(agent=agent, scope="global")
+            status = skills.status(agent=agent, scope="global")
         except ValueError:
             continue
         if status.installed:

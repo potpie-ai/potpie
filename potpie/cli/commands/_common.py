@@ -58,6 +58,8 @@ _state: dict[str, Any] = {
     "engine_remote_home": None,
     "pot_service": None,
     "pot_service_host": None,
+    "root_product_services": {},
+    "root_product_services_host": None,
 }
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -130,6 +132,8 @@ def set_host(host: Any) -> None:
     _state["engine_host"] = None
     _state["pot_service"] = None
     _state["pot_service_host"] = None
+    _state["root_product_services"] = {}
+    _state["root_product_services_host"] = None
 
 
 def get_pot_service(host: Any | None = None):
@@ -143,6 +147,57 @@ def get_pot_service(host: Any | None = None):
         _state["pot_service"] = service
         _state["pot_service_host"] = host
     return service
+
+
+def _get_root_product_service(
+    name: str,
+    builder: Callable[[Any], object],
+    host: Any | None = None,
+):
+    host = host if host is not None else get_host()
+    if _state.get("root_product_services_host") is not host:
+        _state["root_product_services"] = {}
+        _state["root_product_services_host"] = host
+    services = _state["root_product_services"]
+    if name not in services:
+        services[name] = builder(host)
+    return services[name]
+
+
+def get_auth_service(host: Any | None = None):
+    from potpie.runtime.root_services import build_auth_service
+
+    return _get_root_product_service("auth", build_auth_service, host)
+
+
+def get_config_service(host: Any | None = None):
+    from potpie.runtime.root_services import build_config_service
+
+    return _get_root_product_service("config", build_config_service, host)
+
+
+def get_daemon_service(host: Any | None = None):
+    from potpie.runtime.root_services import build_daemon_service
+
+    return _get_root_product_service("daemon", build_daemon_service, host)
+
+
+def get_ledger_service(host: Any | None = None):
+    from potpie.runtime.root_services import build_ledger_service
+
+    return _get_root_product_service("ledger", build_ledger_service, host)
+
+
+def get_setup_service(host: Any | None = None):
+    from potpie.runtime.root_services import build_setup_service
+
+    return _get_root_product_service("setup", build_setup_service, host)
+
+
+def get_skill_service(host: Any | None = None):
+    from potpie.runtime.root_services import build_skill_service
+
+    return _get_root_product_service("skills", build_skill_service, host)
 
 
 class EngineClientError(Exception):

@@ -87,4 +87,37 @@ def build_pot_resource_service(host: Any) -> PotResourceService:
     return PotResourceService(host.pots)
 
 
-__all__ = ["PotResourceService", "build_pot_resource_service"]
+def build_auth_service(host: Any):
+    return host.auth
+
+
+def build_config_service(host: Any):
+    return host.config
+
+
+def build_daemon_service(host: Any):
+    return host.daemon
+
+
+def build_ledger_service(host: Any):
+    return host.ledger
+
+
+def build_setup_service(host: Any):
+    return host.setup
+
+
+def build_skill_service(host: Any):
+    return host.skills
+
+
+__all__ = [
+    "PotResourceService",
+    "build_auth_service",
+    "build_config_service",
+    "build_daemon_service",
+    "build_ledger_service",
+    "build_pot_resource_service",
+    "build_setup_service",
+    "build_skill_service",
+]

@@ -17,6 +17,7 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
+    get_daemon_service,
     get_host,
     resolve_pot_id,
 )
@@ -35,12 +36,13 @@ def ui_command(
     """Launch the local graph-explorer UI (served by the daemon)."""
     with contract():
         host = get_host()
+        daemon = get_daemon_service(host)
         # Bring the detached daemon up if needed (in-process host is a no-op).
         try:
-            host.daemon.ensure()
+            daemon.ensure()
         except Exception:  # noqa: BLE001 — fall through to the discovery check
             pass
-        disc = host.daemon.discovery()
+        disc = daemon.discovery()
         if not disc or not disc.get("base_url"):
             fail(
                 code="daemon_unavailable",

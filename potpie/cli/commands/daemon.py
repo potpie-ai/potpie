@@ -1,4 +1,4 @@
-"""Daemon admin commands -> ``HostShell.daemon`` local recovery tools."""
+"""Daemon admin commands through the Potpie-owned lifecycle service."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
-    get_host,
+    get_daemon_service,
 )
 from potpie.daemon.process.launcher import DaemonStartError
 from potpie.daemon.lifecycle import Daemon
@@ -18,7 +18,7 @@ daemon_app = typer.Typer(help="Local daemon lifecycle (recovery tools).")
 
 
 def _detached_daemon() -> Daemon:
-    daemon = get_host().daemon
+    daemon = get_daemon_service()
     if not daemon.in_process:
         return daemon
     return Daemon(home=daemon.home, in_process=False)
