@@ -28,6 +28,7 @@ import atexit
 import json
 import logging
 import os
+import platform
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, Coroutine, Iterator, TypeVar
@@ -226,13 +227,29 @@ def _naming_the_missing_extra(module: str) -> Iterator[None]:
             f"the local graph backend needs the {module!r} driver, which this "
             "installation does not have — the base 'potpie' distribution is a "
             "remote-only client and the graph-native backend ships as an extra",
-            recommended_next_action=(
-                "install the local backend with `pip install 'potpie[local]'`, "
-                "or point this machine at a managed host with `potpie host use "
-                "managed`. On Windows and on Linux older than glibc 2.39 no "
-                "local wheel exists yet: use the managed host."
-            ),
+            recommended_next_action=_local_extra_next_action(),
         ) from exc
+
+
+def _local_extra_next_action(system: str | None = None) -> str:
+    """The repair, which is not the same sentence on every platform.
+
+    ``potpie[local]`` is marked out of Windows entirely -- no falkordblite
+    wheel exists there -- so telling a Windows user to install it sends them
+    to install a package they already have, and back here.
+    """
+    if (system or platform.system()) == "Windows":
+        return (
+            "no local graph backend exists for Windows (falkordblite publishes "
+            "no Windows wheel, and `potpie[local]` installs nothing there): "
+            "point this machine at a managed host with `potpie host use managed`"
+        )
+    return (
+        "install the local backend with `pip install 'potpie[local]'`, "
+        "or point this machine at a managed host with `potpie host use "
+        "managed`. On Linux older than glibc 2.39 no local wheel exists yet: "
+        "use the managed host."
+    )
 
 
 def _settings_file(path: str) -> str:

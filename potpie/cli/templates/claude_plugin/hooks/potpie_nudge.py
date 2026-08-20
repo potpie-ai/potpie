@@ -490,6 +490,10 @@ def main(argv: list[str] | None = None) -> int:
             text=True,
             timeout=float(os.environ.get("POTPIE_HOOK_TIMEOUT", "15")),
             check=False,
+            stdin=subprocess.DEVNULL,
+            # The hook runs under an editor with no console of its own; without
+            # this every nudge flashes a cmd window on Windows.
+            **({"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)} if os.name == "nt" else {}),
         )
         if proc.returncode != 0:
             _debug(f"nudge exited {proc.returncode}: {proc.stderr.strip()[:200]}")

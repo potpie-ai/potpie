@@ -142,16 +142,15 @@ def test_no_path_stays_unset(recorded, monkeypatch, tmp_path) -> None:
     assert recorded.paths == [None]
 
 
-def test_install_can_bypass_the_daemon(recorded, monkeypatch, tmp_path) -> None:
-    local = _Skills()
-    monkeypatch.setattr(skills, "_local_skills", lambda: local)
+def test_install_still_accepts_no_daemon(recorded, monkeypatch, tmp_path) -> None:
+    """The flag is inert -- every install is daemon-free -- but installers that
+    predate that still pass it, so it must parse and reach the same manager."""
     monkeypatch.chdir(tmp_path)
 
     result = _run("install", "--no-daemon", cwd=tmp_path)
 
     assert result.exit_code == 0, result.output
-    assert local.paths == [None]
-    assert recorded.paths == []
+    assert recorded.paths == [None]
 
 
 @pytest.mark.parametrize(

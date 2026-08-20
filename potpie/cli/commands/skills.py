@@ -3,8 +3,10 @@
 Skills are CLI-managed recipes; agents only ever see the advisory nudge in
 ``context_status``. These commands manage the catalog and per-harness installs.
 
-The install command also supports ``--no-daemon`` for filesystem-only bundle
-staging, which is useful during first-run setup before the local daemon exists.
+``--no-daemon`` on ``install`` is accepted and does nothing: every skill
+command is filesystem-only and never contacts the daemon (see ``_skills``). It
+stays, hidden, because installers that predate that -- the VS Code extension
+among them -- still pass it.
 
 They are pinned to the local host. A skill install writes files into *this*
 machine's harness directory (``~/.claude/skills`` and friends) — routed to a
@@ -43,12 +45,6 @@ def _skills():
     daemon is not running" on precisely the fresh installs that need skills
     most.
     """
-    from potpie_context_engine.bootstrap.host_wiring import build_skill_manager
-
-    return build_skill_manager()
-
-
-def _local_skills():
     from potpie_context_engine.bootstrap.host_wiring import build_skill_manager
 
     return build_skill_manager()
@@ -94,7 +90,8 @@ def skills_install(
     no_daemon: bool = typer.Option(
         False,
         "--no-daemon",
-        help="Install from the packaged skill catalog without contacting the local daemon.",
+        hidden=True,
+        help="Accepted for compatibility; installs never contact the daemon.",
     ),
 ) -> None:
     with contract():
@@ -107,8 +104,8 @@ def skills_install(
             properties={"agent": agent, "scope": effective_scope},
         )
         try:
-            manager = _local_skills() if no_daemon else _skills()
-            res = manager.install(
+            del no_daemon  # every install is daemon-free; see the module docstring
+            res = _skills().install(
                 agent=agent,
                 skill_id=skill_id,
                 path=path,
