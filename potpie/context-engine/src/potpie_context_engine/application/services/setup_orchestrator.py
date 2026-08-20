@@ -19,7 +19,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-import subprocess
 from typing import Callable
 
 from potpie_context_core.errors import CapabilityNotImplemented
@@ -28,6 +27,7 @@ from potpie_context_engine.domain.embedding_modes import (
     SEMANTIC_EMBEDDER_ALIASES,
     normalize_embedding_mode,
 )
+from potpie_context_engine.domain.git_probe import current_git_remote
 from potpie_context_engine.domain.repo_identity import (
     normalize_repo_ref,
     repo_identity_key,
@@ -471,19 +471,9 @@ def _resolve_setup_repo_location(location: str) -> str:
 
 
 def _current_git_remote(cwd: Path) -> str | None:
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(cwd), "remote", "get-url", "origin"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except Exception:
-        return None
-    if proc.returncode != 0:
-        return None
     # This used to call a private copy of the shared normalizer that had lost its
     # ``.lower()``, so setup persisted ``github.com/Potpie-AI/Potpie`` where
     # ``source add repo .`` persisted ``github.com/potpie-ai/potpie`` for one repo.
-    return normalize_repo_ref(proc.stdout.strip())
+    # It also used to spawn git with a pipe and a timeout, the pairing that
+    # wedges on Windows (see domain.git_probe). One shared probe now.
+    return current_git_remote(cwd)
