@@ -8,19 +8,20 @@ owners:
 
 # Context Runtime Open Questions
 
-Ten questions remain intentionally deferred and are not referenced by active
-behavior nodes. Two implementation-readiness questions are resolved by
-ADR-0007. Each deferred question becomes a separate decision before an
+Nine questions remain intentionally deferred and are not referenced by active
+behavior nodes. Three implementation-readiness questions are resolved by
+ADR-0007 and ADR-0008. Each deferred question becomes a separate decision before an
 implementation commit depends on its answer.
 
-OQ-CE-API-001 [deferred]: What exact operation groups and synchronous or asynchronous surfaces should the public ContextEngine façade expose?
-  > decision [active]: decision:ADR-0006
+OQ-CE-API-001 [resolved]: What exact operation groups and synchronous or asynchronous surfaces should the public ContextEngine façade expose?
+  > decision [superseded]: decision:ADR-0006
+  > decision [active]: decision:ADR-0008
   owner: team:potpie
   option: asynchronous façade with explicit sync adapters outside the engine
   option: paired synchronous and asynchronous façade methods
   option: operation objects with one canonical execution model
   decision-trigger: before proposing the public ContextEngine API implementation contract
-  resolution: null
+  resolution: ADR-0008
 
 OQ-RM-LIFETIME-001 [deferred]: What reuse, eviction, and idle-shutdown policy should govern Resource Manager engine and resource lifetimes?
   > decision [active]: decision:ADR-0006

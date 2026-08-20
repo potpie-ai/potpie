@@ -118,10 +118,11 @@ read order.
 | ADR-0005 | [Typed daemon and CLI boundary](decisions/ADR-0005-typed-daemon-and-cli-boundary.md) | accepted |
 | ADR-0006 | [Deferred runtime concerns](decisions/ADR-0006-deferred-runtime-concerns.md) | accepted |
 | ADR-0007 | [Context runtime migration path](decisions/ADR-0007-context-runtime-migration-path.md) | accepted |
+| ADR-0008 | [Async Context Engine public contract](decisions/ADR-0008-async-context-engine-public-contract.md) | accepted |
 
 ## Open Questions
 
-Ten intentionally deferred questions and two resolved implementation-readiness
+Nine intentionally deferred questions and three resolved implementation-readiness
 questions are recorded in [questions/open.md](questions/open.md). No accepted
 active behavior depends on a deferred question.
 
