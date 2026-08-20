@@ -78,12 +78,19 @@ def _git(root: Path, *args: str) -> str | None:
 
 def collect_build_info(root: Path, version: str, *, now: datetime | None = None) -> dict[str, Any]:
     """The stamp for the checkout at ``root``. ``rev``/``dirty`` are None
-    outside a repository; ``dirty`` counts untracked files, since a file that
-    was never ``git add``ed is just as invisible to the rev as an edit."""
+    outside a repository.
+
+    ``dirty`` means modified *tracked* files -- the ``git describe --dirty``
+    definition -- and deliberately not untracked ones. Installers build from
+    checkouts they own and drop markers into: uv writes an untracked ``.ok``
+    beside the sources it clones, so counting untracked files stamped every
+    uv-built wheel of a clean rev as dirty, which is the one reading the flag
+    exists to rule out.
+    """
     rev = _git(root, "rev-parse", "HEAD")
     dirty: bool | None = None
     if rev:
-        status = _git(root, "status", "--porcelain")
+        status = _git(root, "status", "--porcelain", "--untracked-files=no")
         dirty = None if status is None else bool(status)
     stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     return {

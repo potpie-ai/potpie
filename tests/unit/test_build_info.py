@@ -62,12 +62,23 @@ def test_hook_stamps_rev_and_dirty_from_a_checkout(tmp_path: Path) -> None:
     assert info["dirty"] is False
     assert info["built_at"].endswith("+00:00")
 
-    (tmp_path / "untracked.txt").write_text("x", encoding="utf-8")
+    # Untracked files are not dirt: uv drops an untracked `.ok` marker into
+    # every checkout it builds from, and a clean rev must stamp as clean there.
+    (tmp_path / ".ok").write_text("", encoding="utf-8")
+    assert hatch_build.collect_build_info(tmp_path, "2.0.0")["dirty"] is False
+
+    # A modified tracked file is.
+    (tmp_path / "tracked.txt").write_text("a", encoding="utf-8")
+    _git(tmp_path, "add", "tracked.txt")
+    _git(tmp_path, "commit", "-q", "-m", "track")
+    (tmp_path / "tracked.txt").write_text("b", encoding="utf-8")
     assert hatch_build.collect_build_info(tmp_path, "2.0.0")["dirty"] is True
 
     target = hatch_build.write_build_info(tmp_path, "2.0.0")
     assert target == tmp_path / "potpie" / "_build.json"
-    assert json.loads(target.read_text(encoding="utf-8"))["rev"] == info["rev"]
+    written = json.loads(target.read_text(encoding="utf-8"))
+    assert written["rev"] == hatch_build.collect_build_info(tmp_path, "2.0.0")["rev"]
+    assert written["dirty"] is True
 
 
 def test_hook_outside_git_keeps_an_existing_stamp_rather_than_nulling_it(tmp_path: Path) -> None:
