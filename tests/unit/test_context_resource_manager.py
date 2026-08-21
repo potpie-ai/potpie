@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -68,9 +68,9 @@ class _Authenticator:
 class _Authorizer:
     events: list[Event]
     failure: AuthorizationError | None = None
-    scope_factory: Callable[
-        [AuthenticatedActor, str, ContextIdentity], AuthorizationScope
-    ] | None = None
+    scope_factory: (
+        Callable[[AuthenticatedActor, str, ContextIdentity], AuthorizationScope] | None
+    ) = None
 
     async def authorize(
         self,
@@ -101,6 +101,11 @@ class _Composer:
         fingerprint_failure: ResourceLifecycleError | None = None,
         composition_failure: ResourceLifecycleError | None = None,
         fingerprint_for: Callable[[ContextIdentity], str] | None = None,
+        composition_fingerprint_for: Callable[[ContextIdentity], str] | None = None,
+        dependencies_for: Callable[[ContextIdentity], EngineDependencies] | None = None,
+        host_resource_ownership: dict[str, Literal["retained", "transferred"]]
+        | None = None,
+        release_failures: set[str] | None = None,
         compose_gate: asyncio.Event | None = None,
         expected_concurrent_compositions: int = 0,
     ) -> None:
@@ -111,6 +116,12 @@ class _Composer:
         self.fingerprint_for = fingerprint_for or (
             lambda context: f"fingerprint:{context.value}"
         )
+        self.composition_fingerprint_for = (
+            composition_fingerprint_for or self.fingerprint_for
+        )
+        self.dependencies_for = dependencies_for or (lambda _context: _dependencies())
+        self.host_resource_ownership = host_resource_ownership or {}
+        self.release_failures = release_failures or set()
         self.compose_gate = compose_gate
         self.compose_count = 0
         self.concurrent_compositions_reached = asyncio.Event()
@@ -136,32 +147,61 @@ class _Composer:
 
         async def release_first() -> None:
             self.cleanup_events.append(f"release:{context.value}:first")
+            if "first" in self.release_failures:
+                raise RuntimeError("first cleanup failed")
 
         async def release_second() -> None:
             self.cleanup_events.append(f"release:{context.value}:second")
+            if "second" in self.release_failures:
+                raise RuntimeError("second cleanup failed")
 
         return Success(
             ResourceComposition(
-                fingerprint=fingerprint,
+                fingerprint=CompositionFingerprint(
+                    self.composition_fingerprint_for(context)
+                ),
                 config=EngineConfig(values={"context": context.value}),
-                dependencies=_dependencies(),
+                dependencies=self.dependencies_for(context),
                 resources=(
-                    HostResource(name="first", release=release_first),
-                    HostResource(name="second", release=release_second),
+                    HostResource(
+                        name="first",
+                        release=release_first,
+                        ownership=self.host_resource_ownership.get("first", "retained"),
+                    ),
+                    HostResource(
+                        name="second",
+                        release=release_second,
+                        ownership=self.host_resource_ownership.get(
+                            "second", "retained"
+                        ),
+                    ),
                 ),
             )
         )
 
 
 class _FakeEngine:
-    def __init__(self, context: ContextIdentity, cleanup_events: list[str]) -> None:
+    def __init__(
+        self,
+        context: ContextIdentity,
+        cleanup_events: list[str],
+        resources: tuple[EngineResource, ...],
+        close_failure: Exception | None = None,
+    ) -> None:
         self.context = context
         self.cleanup_events = cleanup_events
+        self.resources = resources
+        self.close_failure = close_failure
         self.close_count = 0
 
     async def close(self):
         self.close_count += 1
         self.cleanup_events.append(f"close:{self.context.value}")
+        if self.close_failure is not None:
+            raise self.close_failure
+        for resource in reversed(self.resources):
+            if resource.ownership == "transferred" and resource.close is not None:
+                await resource.close()
         return Success(None)
 
 
@@ -172,10 +212,12 @@ class _EngineFactory:
         cleanup_events: list[str] | None = None,
         *,
         failure: EngineLifecycleError | None = None,
+        close_failure: Exception | None = None,
     ) -> None:
         self.events = events
         self.cleanup_events = cleanup_events if cleanup_events is not None else []
         self.failure = failure
+        self.close_failure = close_failure
         self.engines: list[_FakeEngine] = []
 
     async def __call__(
@@ -185,11 +227,15 @@ class _EngineFactory:
         config: EngineConfig,
         dependencies: EngineDependencies,
     ) -> Outcome[ContextEngine]:
-        del dependencies
         self.events.append(("create_engine", context.value, str(config.values)))
         if self.failure is not None:
             return Failure(self.failure)
-        engine = _FakeEngine(context, self.cleanup_events)
+        engine = _FakeEngine(
+            context,
+            self.cleanup_events,
+            dependencies.resources,
+            self.close_failure,
+        )
         self.engines.append(engine)
         return Success(cast(ContextEngine, engine))
 
@@ -203,6 +249,30 @@ def _dependencies() -> EngineDependencies:
         ingestion=cast("object", operations),
         nudge=cast("object", operations),
         resources=(EngineResource(name="backend", ownership="borrowed"),),
+    )
+
+
+def _dependencies_with_transferred_resource(
+    cleanup_events: list[str],
+) -> EngineDependencies:
+    dependencies = _dependencies()
+
+    async def close_second() -> None:
+        cleanup_events.append("engine-release:second")
+
+    return EngineDependencies(
+        context=dependencies.context,
+        graph=dependencies.graph,
+        workbench=dependencies.workbench,
+        ingestion=dependencies.ingestion,
+        nudge=dependencies.nudge,
+        resources=(
+            EngineResource(
+                name="second",
+                ownership="transferred",
+                close=close_second,
+            ),
+        ),
     )
 
 
@@ -322,7 +392,9 @@ async def test_different_contexts_receive_different_cached_engines() -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("failure_stage", ["selection", "authentication", "authorization"])
+@pytest.mark.parametrize(
+    "failure_stage", ["selection", "authentication", "authorization"]
+)
 async def test_boundary_failure_stops_before_composition(failure_stage: str) -> None:
     events: list[Event] = []
     resolver = _Resolver(events)
@@ -439,13 +511,176 @@ async def test_failed_engine_construction_releases_resources_in_reverse_order() 
 
     assert isinstance(outcome, Failure)
     assert outcome.error.code == "engine_construction_failed"
-    assert outcome.error.details == {"engine_error_code": "bad_dependencies"}
+    assert outcome.error.details == {
+        "engine_error_code": "bad_dependencies",
+        "acquisition_failure": {
+            "category": "engine_lifecycle",
+            "code": "bad_dependencies",
+            "retry_posture": "unknown",
+        },
+    }
     assert "secret" not in outcome.error.message
     assert cleanup_events == [
         "release:context-a:second",
         "release:context-a:first",
     ]
     assert manager.cached_engine_count == 0
+    assert isinstance(await manager.shutdown(), Success)
+
+
+@pytest.mark.anyio
+async def test_fingerprint_mismatch_preserves_cleanup_failure_detail() -> None:
+    events: list[Event] = []
+    cleanup_events: list[str] = []
+    composer = _Composer(
+        events,
+        cleanup_events,
+        composition_fingerprint_for=lambda context: f"changed:{context.value}",
+        release_failures={"second"},
+    )
+    manager, _, factory = _manager(
+        events,
+        cleanup_events=cleanup_events,
+        composer=composer,
+    )
+
+    outcome = await manager.acquire(_request())
+
+    assert isinstance(outcome, Failure)
+    assert outcome.error.code == "composition_fingerprint_changed"
+    assert outcome.error.details == {
+        "acquisition_failure": {
+            "category": "resource_lifecycle",
+            "code": "composition_fingerprint_changed",
+            "retry_posture": "safe",
+        },
+        "cleanup_failures": ({"resource": "second", "error_type": "RuntimeError"},),
+    }
+    assert cleanup_events == [
+        "release:context-a:second",
+        "release:context-a:first",
+    ]
+    assert factory.engines == []
+    assert manager.cached_engine_count == 0
+    assert isinstance(await manager.shutdown(), Success)
+
+
+@pytest.mark.anyio
+async def test_failed_engine_construction_preserves_acquisition_and_cleanup() -> None:
+    events: list[Event] = []
+    cleanup_events: list[str] = []
+    composer = _Composer(
+        events,
+        cleanup_events,
+        release_failures={"first"},
+    )
+    factory = _EngineFactory(
+        events,
+        cleanup_events,
+        failure=EngineLifecycleError(
+            code="bad_dependencies",
+            message="sensitive dependency failure",
+            retry_posture="unknown",
+        ),
+    )
+    manager, _, _ = _manager(
+        events,
+        cleanup_events=cleanup_events,
+        composer=composer,
+        factory=factory,
+    )
+
+    outcome = await manager.acquire(_request())
+
+    assert isinstance(outcome, Failure)
+    assert outcome.error.details == {
+        "engine_error_code": "bad_dependencies",
+        "acquisition_failure": {
+            "category": "engine_lifecycle",
+            "code": "bad_dependencies",
+            "retry_posture": "unknown",
+        },
+        "cleanup_failures": ({"resource": "first", "error_type": "RuntimeError"},),
+    }
+    assert "sensitive" not in str(outcome.error.details)
+    assert cleanup_events == [
+        "release:context-a:second",
+        "release:context-a:first",
+    ]
+    assert isinstance(await manager.shutdown(), Success)
+
+
+@pytest.mark.anyio
+async def test_transferred_resource_has_one_terminal_cleanup_owner() -> None:
+    events: list[Event] = []
+    cleanup_events: list[str] = []
+    composer = _Composer(
+        events,
+        cleanup_events,
+        dependencies_for=lambda _context: _dependencies_with_transferred_resource(
+            cleanup_events
+        ),
+        host_resource_ownership={"second": "transferred"},
+    )
+    manager, _, _ = _manager(
+        events,
+        cleanup_events=cleanup_events,
+        composer=composer,
+    )
+
+    acquired = await manager.acquire(_request())
+
+    assert isinstance(acquired, Success)
+    assert acquired.value.ownership.host_resources == ("first",)
+    assert tuple(
+        resource.name for resource in acquired.value.ownership.engine_resources
+    ) == ("second",)
+    await acquired.value.release()
+    assert isinstance(await manager.shutdown(), Success)
+    assert cleanup_events == [
+        "close:context-a",
+        "engine-release:second",
+        "release:context-a:first",
+    ]
+
+
+@pytest.mark.anyio
+async def test_mismatched_transfer_declarations_fail_and_release_host_resources() -> (
+    None
+):
+    events: list[Event] = []
+    cleanup_events: list[str] = []
+    composer = _Composer(
+        events,
+        cleanup_events,
+        dependencies_for=lambda _context: _dependencies_with_transferred_resource(
+            cleanup_events
+        ),
+    )
+    manager, _, factory = _manager(
+        events,
+        cleanup_events=cleanup_events,
+        composer=composer,
+    )
+
+    outcome = await manager.acquire(_request())
+
+    assert isinstance(outcome, Failure)
+    assert outcome.error.code == "composition_ownership_invalid"
+    assert outcome.error.details == {
+        "host_transfer_resources": (),
+        "engine_transfer_resources": ("second",),
+        "acquisition_failure": {
+            "category": "resource_lifecycle",
+            "code": "composition_ownership_invalid",
+            "retry_posture": "unknown",
+        },
+    }
+    assert cleanup_events == [
+        "release:context-a:second",
+        "release:context-a:first",
+    ]
+    assert factory.engines == []
     assert isinstance(await manager.shutdown(), Success)
 
 
@@ -477,6 +712,46 @@ async def test_shutdown_drains_leases_and_closes_in_reverse_acquisition_order() 
         "close:context-b",
         "release:context-b:second",
         "release:context-b:first",
+        "close:context-a",
+        "release:context-a:second",
+        "release:context-a:first",
+    ]
+    assert isinstance(await manager.shutdown(), Success)
+
+
+@pytest.mark.anyio
+async def test_engine_cleanup_exception_does_not_skip_host_resource_release() -> None:
+    events: list[Event] = []
+    cleanup_events: list[str] = []
+    factory = _EngineFactory(
+        events,
+        cleanup_events,
+        close_failure=RuntimeError("sensitive engine cleanup failure"),
+    )
+    manager, _, _ = _manager(
+        events,
+        cleanup_events=cleanup_events,
+        factory=factory,
+    )
+    acquired = await manager.acquire(_request())
+    assert isinstance(acquired, Success)
+    await acquired.value.release()
+
+    shutdown = await manager.shutdown()
+
+    assert isinstance(shutdown, Failure)
+    assert shutdown.error.code == "resource_manager_shutdown_failed"
+    assert shutdown.error.details == {
+        "failures": (
+            {
+                "kind": "engine",
+                "context": "context-a",
+                "error_type": "RuntimeError",
+            },
+        )
+    }
+    assert "sensitive" not in str(shutdown.error.details)
+    assert cleanup_events == [
         "close:context-a",
         "release:context-a:second",
         "release:context-a:first",

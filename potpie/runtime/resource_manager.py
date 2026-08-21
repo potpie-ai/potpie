@@ -64,7 +64,9 @@ class ResourceLifecycleError:
 ResourceManagerError: TypeAlias = (
     SelectionError | AuthenticationError | AuthorizationError | ResourceLifecycleError
 )
-LeaseOutcome: TypeAlias = Success["AuthorizedContextLease"] | Failure[ResourceManagerError]
+LeaseOutcome: TypeAlias = (
+    Success["AuthorizedContextLease"] | Failure[ResourceManagerError]
+)
 ShutdownOutcome: TypeAlias = Success[None] | Failure[ResourceLifecycleError]
 CacheKey: TypeAlias = tuple[ContextIdentity, "CompositionFingerprint"]
 
@@ -137,10 +139,11 @@ class CompositionFingerprint:
 
 @dataclass(frozen=True, slots=True)
 class HostResource:
-    """Potpie-owned resource released after its cached engine closes."""
+    """Resource opened by Potpie and either retained or explicitly transferred."""
 
     name: str
     release: Callable[[], Awaitable[None]]
+    ownership: Literal["retained", "transferred"] = "retained"
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,9 +160,7 @@ class LeaseOwnership:
 
     host_resources: tuple[str, ...] = ()
     engine_resources: tuple[EngineResource, ...] = ()
-    engine_lifetime: Literal["resource_manager_shutdown"] = (
-        "resource_manager_shutdown"
-    )
+    engine_lifetime: Literal["resource_manager_shutdown"] = "resource_manager_shutdown"
     release_closes_engine: Literal[False] = False
 
 
@@ -256,7 +257,9 @@ class ContextResourceManager:
         authenticator: ActorAuthenticator,
         authorizer: OperationAuthorizer,
         composer: ContextResourceComposer,
-        engine_factory: Callable[..., Awaitable[Outcome[ContextEngine]]] = create_engine,
+        engine_factory: Callable[
+            ..., Awaitable[Outcome[ContextEngine]]
+        ] = create_engine,
     ) -> None:
         self._resolver = resolver
         self._authenticator = authenticator
@@ -379,24 +382,36 @@ class ContextResourceManager:
                     return Success(None)
                 self._accepting = False
                 await self._state.wait_for(
-                    lambda: self._inflight_acquisitions == 0
-                    and all(
-                        entry.active_leases == 0 for entry in self._cache.values()
+                    lambda: (
+                        self._inflight_acquisitions == 0
+                        and all(
+                            entry.active_leases == 0 for entry in self._cache.values()
+                        )
                     )
                 )
 
             failures: list[dict[str, str]] = []
             for cache_key in reversed(self._creation_order):
                 cached = self._cache[cache_key]
-                closed = await cached.engine.close()
-                if isinstance(closed, Failure):
+                try:
+                    closed = await cached.engine.close()
+                except Exception as exc:  # host cleanup must still be attempted
                     failures.append(
                         {
                             "kind": "engine",
                             "context": cached.context.value,
-                            "code": closed.error.code,
+                            "error_type": type(exc).__name__,
                         }
                     )
+                else:
+                    if isinstance(closed, Failure):
+                        failures.append(
+                            {
+                                "kind": "engine",
+                                "context": cached.context.value,
+                                "code": closed.error.code,
+                            }
+                        )
                 for resource in reversed(cached.resources):
                     try:
                         await resource.release()
@@ -445,14 +460,31 @@ class ContextResourceManager:
             return composed
         composition = composed.value
         if composition.fingerprint != fingerprint:
-            await self._release_resources(composition.resources)
+            acquisition_error = ResourceLifecycleError(
+                code="composition_fingerprint_changed",
+                message="resource composition changed during acquisition",
+                retry_posture="safe",
+            )
             return Failure(
-                ResourceLifecycleError(
-                    code="composition_fingerprint_changed",
-                    message="resource composition changed during acquisition",
-                    retry_posture="safe",
+                self._with_failed_acquisition_cleanup(
+                    acquisition_error=acquisition_error,
+                    cleanup_failures=await self._release_resources(
+                        composition.resources
+                    ),
                 )
             )
+
+        ownership = self._validate_composition_ownership(composition)
+        if isinstance(ownership, Failure):
+            return Failure(
+                self._with_failed_acquisition_cleanup(
+                    acquisition_error=ownership.error,
+                    cleanup_failures=await self._release_resources(
+                        composition.resources
+                    ),
+                )
+            )
+        retained_resources = ownership.value
 
         engine_outcome = await self._engine_factory(
             context=context,
@@ -461,15 +493,17 @@ class ContextResourceManager:
         )
         if isinstance(engine_outcome, Failure):
             cleanup_failures = await self._release_resources(composition.resources)
-            details: dict[str, object] = {"engine_error_code": engine_outcome.error.code}
-            if cleanup_failures:
-                details["cleanup_failures"] = cleanup_failures
+            acquisition_error = ResourceLifecycleError(
+                code="engine_construction_failed",
+                message="Context Engine construction failed",
+                details={"engine_error_code": engine_outcome.error.code},
+                retry_posture=engine_outcome.error.retry_posture,
+            )
             return Failure(
-                ResourceLifecycleError(
-                    code="engine_construction_failed",
-                    message="Context Engine construction failed",
-                    details=details,
-                    retry_posture=engine_outcome.error.retry_posture,
+                self._with_failed_acquisition_cleanup(
+                    acquisition_error=acquisition_error,
+                    cleanup_failures=cleanup_failures,
+                    source_error=engine_outcome.error,
                 )
             )
 
@@ -478,14 +512,113 @@ class ContextResourceManager:
                 context=context,
                 fingerprint=fingerprint,
                 engine=engine_outcome.value,
-                resources=composition.resources,
+                resources=retained_resources,
                 ownership=LeaseOwnership(
                     host_resources=tuple(
-                        resource.name for resource in composition.resources
+                        resource.name for resource in retained_resources
                     ),
                     engine_resources=composition.dependencies.resources,
                 ),
             )
+        )
+
+    @staticmethod
+    def _validate_composition_ownership(
+        composition: ResourceComposition,
+    ) -> Success[tuple[HostResource, ...]] | Failure[ResourceLifecycleError]:
+        host_resources = composition.resources
+        engine_resources = composition.dependencies.resources
+        host_names = tuple(resource.name for resource in host_resources)
+        engine_names = tuple(resource.name for resource in engine_resources)
+        if len(set(host_names)) != len(host_names) or len(set(engine_names)) != len(
+            engine_names
+        ):
+            return Failure(
+                ResourceLifecycleError(
+                    code="composition_ownership_invalid",
+                    message="resource composition contains duplicate resource names",
+                )
+            )
+
+        transferred_host_names = {
+            resource.name
+            for resource in host_resources
+            if resource.ownership == "transferred"
+        }
+        transferred_engine_names = {
+            resource.name
+            for resource in engine_resources
+            if resource.ownership == "transferred"
+        }
+        if transferred_host_names != transferred_engine_names:
+            return Failure(
+                ResourceLifecycleError(
+                    code="composition_ownership_invalid",
+                    message=(
+                        "host-to-engine resource transfers must have matching "
+                        "ownership declarations"
+                    ),
+                    details={
+                        "host_transfer_resources": tuple(
+                            sorted(transferred_host_names)
+                        ),
+                        "engine_transfer_resources": tuple(
+                            sorted(transferred_engine_names)
+                        ),
+                    },
+                )
+            )
+
+        retained_names = {
+            resource.name
+            for resource in host_resources
+            if resource.ownership == "retained"
+        }
+        conflicting_names = retained_names.intersection(transferred_engine_names)
+        if conflicting_names:
+            return Failure(
+                ResourceLifecycleError(
+                    code="composition_ownership_invalid",
+                    message=(
+                        "a transferred Context Engine resource cannot retain host "
+                        "cleanup ownership"
+                    ),
+                    details={"conflicting_resources": tuple(sorted(conflicting_names))},
+                )
+            )
+
+        return Success(
+            tuple(
+                resource
+                for resource in host_resources
+                if resource.ownership == "retained"
+            )
+        )
+
+    @staticmethod
+    def _with_failed_acquisition_cleanup(
+        *,
+        acquisition_error: ResourceLifecycleError,
+        cleanup_failures: tuple[dict[str, str], ...],
+        source_error: object | None = None,
+    ) -> ResourceLifecycleError:
+        source = source_error or acquisition_error
+        details = dict(acquisition_error.details)
+        details["acquisition_failure"] = {
+            "category": str(getattr(source, "category", "resource_lifecycle")),
+            "code": str(getattr(source, "code", acquisition_error.code)),
+            "retry_posture": str(
+                getattr(source, "retry_posture", acquisition_error.retry_posture)
+            ),
+        }
+        if cleanup_failures:
+            details["cleanup_failures"] = cleanup_failures
+        return ResourceLifecycleError(
+            code=acquisition_error.code,
+            message=acquisition_error.message,
+            details=details,
+            recommended_next_action=acquisition_error.recommended_next_action,
+            retry_posture=acquisition_error.retry_posture,
         )
 
     async def _release_resources(
