@@ -18,7 +18,7 @@ export function loadDocsConfig(configPath) {
   }
 
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('config/docs.json must be a JSON object');
+    throw new Error(`docs check config must be a JSON object: ${configPath}`);
   }
 
   const spokeId = raw.spokeId;

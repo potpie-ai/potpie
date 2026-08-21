@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
+  DOCS_CONFIG_REPO_PATH,
   docsChanged,
   docsContractChanged,
   isUnderDocs,
@@ -37,8 +38,8 @@ describe('docsChanged', () => {
     assert.equal(docsChanged(['docs/index.md'], 'website/docs'), false);
   });
 
-  test('docs contract changes when config/docs.json changes', () => {
-    assert.equal(docsContractChanged(['config/docs.json'], 'website/docs'), true);
+  test('docs contract changes when scripts/docs-check/config.json changes', () => {
+    assert.equal(docsContractChanged([DOCS_CONFIG_REPO_PATH], 'website/docs'), true);
     assert.equal(docsContractChanged(['website/docs/index.md'], 'website/docs'), true);
     assert.equal(docsContractChanged(['src/cli.py'], 'website/docs'), false);
   });

@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { runSpokeDocsCheck } from './spoke-docs-check.mjs';
+import { runSpokeDocsCheck } from './docs-check.mjs';
+import { DOCS_CONFIG_REPO_PATH } from './lib/docs-changed.mjs';
 
 const page = `---
 title: Home
@@ -82,7 +83,7 @@ describe('runSpokeDocsCheck', () => {
     const { root, configPath } = makeSpoke({ 'docs/index.md': page });
     const result = runSpokeDocsCheck({
       configPath,
-      changedFilesPath: writeChanged(root, ['config/docs.json']),
+      changedFilesPath: writeChanged(root, [DOCS_CONFIG_REPO_PATH]),
       spokeRoot: root,
       ...silent,
     });
@@ -94,7 +95,7 @@ describe('runSpokeDocsCheck', () => {
     const { root, configPath } = makeSpoke({ 'docs/index.md': '# broken\n' });
     const result = runSpokeDocsCheck({
       configPath,
-      changedFilesPath: writeChanged(root, ['config/docs.json']),
+      changedFilesPath: writeChanged(root, [DOCS_CONFIG_REPO_PATH]),
       spokeRoot: root,
       ...silent,
     });

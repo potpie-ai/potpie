@@ -22,14 +22,14 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: scripts/spoke-contract/package-lock.json
+          cache-dependency-path: scripts/docs-check/package-lock.json
 
       - name: Install docs-check dependencies
-        working-directory: scripts/spoke-contract
+        working-directory: scripts/docs-check
         run: npm ci
 
       - name: Run docs-check tests
-        working-directory: scripts/spoke-contract
+        working-directory: scripts/docs-check
         run: node --test
 
       - name: List changed files
@@ -48,7 +48,7 @@ jobs:
 
       - name: Run docs contract
         env:
-          DOCS_CONFIG_PATH: ${{ github.workspace }}/config/docs.json
+          DOCS_CONFIG_PATH: ${{ github.workspace }}/scripts/docs-check/config.json
           CHANGED_FILES_PATH: /tmp/changed-files.txt
           SPOKE_ROOT: ${{ github.workspace }}
-        run: node scripts/spoke-contract/spoke-docs-check.mjs
+        run: node scripts/docs-check/docs-check.mjs

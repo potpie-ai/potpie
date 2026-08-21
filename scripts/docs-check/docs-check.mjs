@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Spoke PR docs check. Copy this folder into the Spoke; do not call private Hub workflows.
- * Validates the docs tree only when docs/ changed. Does not require docs for code changes.
- * Hub scripts/fetch-spokes.mjs remains the authoritative publish gate.
+ * Spoke PR docs check. Lives in this repo; do not call private Hub workflows.
+ * Validates the docs tree only when docs/ or this config changed. Does not require
+ * docs for code changes. Hub scripts/fetch-spokes.mjs remains the publish gate.
  */
 
 import { resolve } from 'node:path';
@@ -33,7 +33,7 @@ export function runSpokeDocsCheck(options) {
   log(`docsChanged=${docsTouched}`);
 
   if (!docsTouched) {
-    log(`No ${config.docsPath}/** or config/docs.json changes; skipping docs tree validation.`);
+    log(`No ${config.docsPath}/** or scripts/docs-check/config.json changes; skipping docs tree validation.`);
     return { ok: true, docsChanged: false };
   }
 
@@ -57,7 +57,7 @@ export function runSpokeDocsCheck(options) {
 function main() {
   try {
     const result = runSpokeDocsCheck({
-      configPath: resolve(process.env.DOCS_CONFIG_PATH || 'config/docs.json'),
+      configPath: resolve(process.env.DOCS_CONFIG_PATH || 'scripts/docs-check/config.json'),
       changedFilesPath: process.env.CHANGED_FILES_PATH,
       spokeRoot: resolve(process.env.SPOKE_ROOT || '.'),
     });

@@ -1,10 +1,10 @@
 {
-  "name": "potpie-spoke-docs-check",
+  "name": "potpie-docs-check",
   "private": true,
   "type": "module",
-  "description": "Copy this folder into a Spoke. Hub fetch-spokes remains the publish gate.",
+  "description": "Spoke-owned docs check. Hub fetch-spokes remains the publish gate.",
   "scripts": {
-    "check": "node spoke-docs-check.mjs",
+    "check": "node docs-check.mjs",
     "test": "node --test"
   },
   "engines": {

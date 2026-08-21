@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import { shouldDispatchDocs } from './docs-dispatch-check.mjs';
+import { DOCS_CONFIG_REPO_PATH } from './lib/docs-changed.mjs';
 
 function makeInputs(changedPaths, docsPath = 'docs') {
   const root = mkdtempSync(join(tmpdir(), 'docs-dispatch-'));
@@ -23,8 +24,8 @@ describe('shouldDispatchDocs', () => {
     );
   });
 
-  test('dispatches when config/docs.json changes', () => {
-    assert.equal(shouldDispatchDocs(makeInputs(['config/docs.json'], 'website/docs')), true);
+  test('dispatches when scripts/docs-check/config.json changes', () => {
+    assert.equal(shouldDispatchDocs(makeInputs([DOCS_CONFIG_REPO_PATH], 'website/docs')), true);
   });
 
   test('skips code-only changes', () => {
