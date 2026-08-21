@@ -61,9 +61,28 @@ const RAW_HTML_TAGS = new Set([
  * @param {string} text
  */
 export function markdownWithoutCode(text) {
-  return String(text || '')
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/`[^`\n]*`/g, '');
+  const proseLines = [];
+  let fence = null;
+
+  for (const line of String(text || '').split('\n')) {
+    if (fence) {
+      const closing = line.match(/^ {0,3}(`+|~+)[ \t]*$/);
+      if (closing && closing[1][0] === fence.marker && closing[1].length >= fence.length) {
+        fence = null;
+      }
+      continue;
+    }
+
+    const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (opening) {
+      fence = { marker: opening[1][0], length: opening[1].length };
+      continue;
+    }
+
+    proseLines.push(line);
+  }
+
+  return proseLines.join('\n').replace(/`[^`\n]*`/g, '');
 }
 
 /**
@@ -175,14 +194,97 @@ function walk(dir, files = []) {
   return files;
 }
 
-/** @param {string} content @returns {string[]} */
+/**
+ * Find the closing parenthesis after an optional quoted Markdown link title.
+ * @param {string} content
+ * @param {number} start
+ * @returns {number}
+ */
+function findLinkClose(content, start) {
+  let cursor = start;
+  while (cursor < content.length && /[ \t]/.test(content[cursor])) cursor += 1;
+  if (content[cursor] === ')') return cursor;
+
+  const quote = content[cursor];
+  if (quote !== '"' && quote !== "'") return -1;
+  cursor += 1;
+  while (cursor < content.length) {
+    if (content[cursor] === '\\') {
+      cursor += 2;
+      continue;
+    }
+    if (content[cursor] === quote) {
+      cursor += 1;
+      while (cursor < content.length && /[ \t]/.test(content[cursor])) cursor += 1;
+      return content[cursor] === ')' ? cursor : -1;
+    }
+    if (content[cursor] === '\n') return -1;
+    cursor += 1;
+  }
+  return -1;
+}
+
+/**
+ * Extract inline Markdown link destinations while preserving balanced parentheses.
+ * @param {string} content
+ * @returns {string[]}
+ */
 function extractMarkdownLinks(content) {
   const links = [];
-  const re =
-    /!?\[[^\]]*\]\(\s*(?:<([^>\n]*)>|((?:[^\s()]|\([^\s()]*\))+))\s*(?:"[^"]*"|'[^']*')?\s*\)/g;
-  let match;
-  while ((match = re.exec(content)) !== null) {
-    links.push(match[1] ?? match[2]);
+  for (let index = 0; index < content.length - 1; index += 1) {
+    if (content[index] !== ']' || content[index + 1] !== '(') continue;
+
+    let cursor = index + 2;
+    while (cursor < content.length && /[ \t]/.test(content[cursor])) cursor += 1;
+    const destinationStart = cursor;
+
+    if (content[cursor] === '<') {
+      cursor += 1;
+      const angleStart = cursor;
+      while (cursor < content.length && content[cursor] !== '\n') {
+        if (content[cursor] === '\\') {
+          cursor += 2;
+          continue;
+        }
+        if (content[cursor] === '>') {
+          const close = findLinkClose(content, cursor + 1);
+          if (close !== -1) {
+            links.push(content.slice(angleStart, cursor));
+            index = close;
+          }
+          break;
+        }
+        cursor += 1;
+      }
+      continue;
+    }
+
+    let depth = 0;
+    while (cursor < content.length && content[cursor] !== '\n') {
+      const character = content[cursor];
+      if (character === '\\') {
+        cursor += 2;
+        continue;
+      }
+      if (character === '(') {
+        depth += 1;
+      } else if (character === ')') {
+        if (depth === 0) {
+          if (cursor > destinationStart) links.push(content.slice(destinationStart, cursor));
+          index = cursor;
+          break;
+        }
+        depth -= 1;
+      } else if (/[ \t]/.test(character) && depth === 0) {
+        const close = findLinkClose(content, cursor);
+        if (close !== -1 && cursor > destinationStart) {
+          links.push(content.slice(destinationStart, cursor));
+          index = close;
+        }
+        break;
+      }
+      cursor += 1;
+    }
   }
   return links;
 }

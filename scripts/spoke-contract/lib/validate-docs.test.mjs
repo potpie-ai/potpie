@@ -273,6 +273,37 @@ Inline code is also ignored: \`[missing](./also-missing.md)\`.
     assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
   });
 
+  test('links and empty image syntax inside tilde fences are not validated', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+~~~markdown
+See [unknown route](/random/), [missing](./nope.md), and ![](./missing.svg).
+~~~
+`,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
+  test('longer backtick fences are closed only by a matching fence length', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+\`\`\`\`markdown
+\`\`\`
+See [missing](./nope.md) and ![](./missing.svg).
+\`\`\`\`
+`,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
   test('link-like frontmatter text is not validated', () => {
     const root = makeDocs({
       'index.md': `---
@@ -297,6 +328,34 @@ See [spec](https://example.com/a_(b)).
 `,
     });
     assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
+  test('link destinations with deeply nested parentheses are accepted', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+See [spec](https://example.com/a(((b)))).
+`,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
+  test('unsafe schemes with deeply nested parentheses are rejected', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+[Run](javascript:alert(((1))))
+`,
+    });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('Disallowed link scheme')), true);
   });
 
   test('angle-bracket link destinations are accepted without their wrappers', () => {
