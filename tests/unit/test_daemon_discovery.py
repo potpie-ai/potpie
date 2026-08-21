@@ -34,6 +34,23 @@ def test_canonical_pid_round_trip_and_invalid_state_is_stale(tmp_path: Path) -> 
     assert read_daemon_pid(tmp_path) is None
 
 
+def test_runtime_endpoint_falls_back_to_authenticated_loopback_tcp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_uds_selection(*_args: object, **_kwargs: object) -> Path:
+        raise OSError("UDS unavailable")
+
+    monkeypatch.setattr("potpie.daemon.discovery._uds_path", fail_uds_selection)
+
+    endpoint = select_runtime_endpoint(tmp_path, instance_id="instance-1")
+
+    assert endpoint.kind == "tcp"
+    assert endpoint.address == "127.0.0.1"
+    assert isinstance(endpoint.port, int)
+    assert endpoint.port > 0
+
+
 def test_discovery_references_separate_owner_only_credential(tmp_path: Path) -> None:
     token = "x" * 43
     endpoint = select_runtime_endpoint(tmp_path, instance_id="instance-1")

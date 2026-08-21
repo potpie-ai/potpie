@@ -183,6 +183,43 @@ async def test_bad_bearer_token_returns_typed_authentication_failure(
 
 
 @pytest.mark.anyio
+async def test_incompatible_protocol_version_returns_correlated_typed_failure(
+    tmp_path: Path,
+) -> None:
+    handler = _Handler()
+    async with _running_runtime("tcp", tmp_path, handler) as (
+        _runtime,
+        _serve_task,
+        endpoint,
+        token,
+    ):
+        base_url = f"http://{endpoint.address}:{endpoint.port}"
+        headers = {"Authorization": f"Bearer {token}"}
+        request_id = "incompatible-version-1"
+        async with httpx.AsyncClient(base_url=base_url) as client:
+            response = await client.post(
+                "/v1/operations",
+                json={
+                    "protocol_version": PROTOCOL_VERSION + 1,
+                    "request_id": request_id,
+                    "operation": "search",
+                    "selector": {"kind": "explicit", "value": "context-a"},
+                    "payload": {"query": "typed"},
+                },
+                headers=headers,
+            )
+
+        body = response.json()
+        assert response.status_code == 409
+        assert body["protocol_version"] == PROTOCOL_VERSION + 1
+        assert body["request_id"] == request_id
+        assert body["outcome"]["error"]["category"] == "protocol"
+        assert body["outcome"]["error"]["code"] == "protocol_version_incompatible"
+        assert "traceback" not in str(body).lower()
+        assert handler.calls == []
+
+
+@pytest.mark.anyio
 async def test_domain_operation_is_rejected_before_handshake(tmp_path: Path) -> None:
     handler = _Handler()
     async with _running_runtime("tcp", tmp_path, handler) as (

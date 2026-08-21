@@ -295,6 +295,10 @@ async def test_daemon_client_handshake_then_typed_operation() -> None:
         (_handshake_result(instance_id="other"), "daemon_instance_mismatch"),
         (_handshake_result(lifecycle_state="starting"), "daemon_not_ready"),
         (
+            _handshake_result(protocol_min=2, protocol_max=2),
+            "protocol_version_incompatible",
+        ),
+        (
             _handshake_result(operation_catalog_fingerprint="different"),
             "operation_catalog_mismatch",
         ),

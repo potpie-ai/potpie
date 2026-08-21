@@ -41,6 +41,13 @@ REMOVED_PATHS = (
     ROOT / "potpie" / "runtime" / "legacy_host_adapter.py",
 )
 
+CANONICAL_RUNTIME_DEFINITIONS = {
+    "CanonicalDaemonRuntime": "potpie/runtime/server.py",
+    "DaemonController": "potpie/runtime/controller.py",
+    "DaemonEngineClient": "potpie/runtime/clients.py",
+    "write_daemon_discovery": "potpie/daemon/discovery.py",
+}
+
 
 def _python_files() -> list[Path]:
     return [
@@ -169,6 +176,43 @@ def test_reflective_routes_and_legacy_discovery_are_absent_from_production() -> 
 
     assert reflective_routes == set()
     assert legacy_discovery_mentions == set()
+
+
+def test_canonical_runtime_has_one_entrypoint_launcher_and_definition_set() -> None:
+    definitions = {name: set() for name in CANONICAL_RUNTIME_DEFINITIONS}
+    launchers: set[str] = set()
+
+    for path in (ROOT / "potpie").rglob("*.py"):
+        relative = path.relative_to(ROOT).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if node.name in definitions:
+                    definitions[node.name].add(relative)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Tuple):
+                continue
+            values = tuple(
+                item.value if isinstance(item, ast.Constant) else None
+                for item in node.elts
+            )
+            if values[-2:] == ("-m", "potpie.daemon"):
+                launchers.add(relative)
+
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    scripts = metadata["project"]["scripts"]
+    daemon_scripts = {
+        name: target
+        for name, target in scripts.items()
+        if isinstance(target, str) and "potpie.daemon" in target
+    }
+
+    assert definitions == {
+        name: {relative} for name, relative in CANONICAL_RUNTIME_DEFINITIONS.items()
+    }
+    assert daemon_scripts == {"potpie-daemon": "potpie.daemon.__main__:main"}
+    assert launchers == {"potpie/daemon/lifecycle.py"}
+    assert (ROOT / "potpie" / "daemon" / "__main__.py").is_file()
 
 
 def test_metadata_and_ci_do_not_restore_context_core() -> None:

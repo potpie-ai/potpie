@@ -1,4 +1,4 @@
-"""Behavior baseline for direct and canonical-daemon Context Runtime paths."""
+"""Final behavior contract for local and canonical-daemon runtime paths."""
 
 # ruff: noqa: S101 - pytest characterization tests use assertions intentionally.
 
@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import time
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,7 @@ from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan
 
 pytestmark = pytest.mark.integration
 
-_FACT = "phase-three-daemon-baseline"
+_FACT = "final-context-runtime-contract"
 _DISCOVERY_FILES = (
     "daemon.pid",
     "discovery.json",
@@ -161,6 +162,30 @@ def test_daemon_restart_preserves_running_backend(
         _stop_daemon(runtime_home, pid=restarted_pid)
 
 
+def test_daemon_crash_status_recovers_stale_runtime_records(
+    isolated_daemon_runtime: Path,
+) -> None:
+    runtime_home = isolated_daemon_runtime
+    daemon = Daemon(home=runtime_home, in_process=False, startup_timeout_s=15)
+    pid: int | None = None
+    try:
+        started = daemon.ensure(SetupPlan(backend="embedded", embeddings="none"))
+        pid = int(started.metadata["pid"])
+
+        os.kill(pid, signal.SIGKILL)
+        deadline = time.monotonic() + 2.0
+        while _process_alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        status = daemon.status()
+
+        assert status["up"] is False
+        assert status["pid"] is None
+        assert all(not (runtime_home / name).exists() for name in _DISCOVERY_FILES)
+    finally:
+        _stop_daemon(runtime_home, pid=pid)
+
+
 def test_canonical_daemon_uses_private_discovery_and_separate_credential(
     isolated_daemon_runtime: Path,
 ) -> None:
@@ -197,7 +222,7 @@ def test_canonical_daemon_uses_private_discovery_and_separate_credential(
 
 
 @pytest.mark.parametrize("host_mode", ("in_process", "daemon"))
-def test_direct_and_daemon_cli_paths_have_equivalent_domain_outcomes(
+def test_local_and_daemon_cli_paths_have_equivalent_domain_and_error_outcomes(
     host_mode: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
