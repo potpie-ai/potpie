@@ -16,10 +16,11 @@ It indexes code, structure, decisions, source history, team knowledge and engine
 - [First steps](./getting-started/first-steps.md)
 - [Integrations and coding harnesses](./guides/integrations.md)
 - [CLI reference](./reference/cli.md)
+- [Context Graph](./context-graph/index.md)
 
 ## Architecture
 
-Potpie's current architecture is CLI-first. CLI is designed to be used by both humans and agents. Read the deeper architecture notes in [`internal-docs/context-graph/architecture.md`](https://github.com/potpie-ai/potpie/blob/main/internal-docs/context-graph/architecture.md).
+Potpie's current architecture is CLI-first. CLI is designed to be used by both humans and agents. Read the deeper architecture notes in [Context graph architecture](./context-graph/architecture.md).
 
 ## License
 

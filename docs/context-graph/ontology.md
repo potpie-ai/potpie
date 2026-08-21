@@ -1,4 +1,9 @@
-# Ontology & Graph Contract
+---
+title: Ontology and graph contract
+description: "Entity types, predicates, truth classes, and named graph views."
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 

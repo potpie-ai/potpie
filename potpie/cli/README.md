@@ -39,11 +39,9 @@ use `potpie auth status [--verify]` for local provider auth state.
 ## Authoritative reference
 
 The full command catalog, flags, profiles (local vs managed), and the output
-contract live in **[`internal-docs/context-graph/cli-flow.md`](../../internal-docs/context-graph/cli-flow.md)**.
+contract live in **[`docs/context-graph/cli-flow.md`](../../docs/context-graph/cli-flow.md)**.
 The end-state architecture (services, ports, composition roots) is in
-**[`internal-docs/context-graph/architecture.md`](../../internal-docs/context-graph/architecture.md)**.
-The in-progress Graph V1.5 handover plan is
-**[`internal-docs/context-graph/graphv1-5-implementation-plan.md`](../../internal-docs/context-graph/graphv1-5-implementation-plan.md)**.
+**[`docs/context-graph/architecture.md`](../../docs/context-graph/architecture.md)**.
 
 Run `potpie --help` (or `python -m potpie.cli.main --help`) to list
 the live commands.

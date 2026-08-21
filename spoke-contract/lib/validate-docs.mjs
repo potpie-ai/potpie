@@ -36,6 +36,57 @@ const HUB_EXACT_ROUTES = new Set([
 ]);
 const ALLOWED_LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:', 'tel:']);
 
+const RAW_HTML_TAGS = new Set([
+  'a', 'article', 'aside', 'audio',
+  'base', 'body', 'br', 'button',
+  'canvas', 'col', 'colgroup',
+  'div',
+  'embed',
+  'fieldset', 'figcaption', 'figure', 'footer', 'form',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header', 'hgroup', 'hr', 'html',
+  'iframe', 'img', 'input',
+  'label', 'legend', 'li', 'link',
+  'main', 'meta',
+  'nav', 'noscript',
+  'object', 'ol',
+  'p', 'picture', 'pre',
+  'script', 'section', 'select', 'span', 'style', 'svg',
+  'table', 'tbody', 'td', 'template', 'textarea', 'tfoot', 'th', 'thead', 'tr',
+  'ul',
+  'video',
+]);
+
+/**
+ * Drop fenced and inline code so CLI placeholders and mermaid <br/> stay allowed.
+ * @param {string} text
+ */
+export function markdownWithoutCode(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`\n]*`/g, '');
+}
+
+/**
+ * True when Markdown prose contains an HTML element or MDX component tag.
+ * Angle-bracket CLI placeholders such as <id>, <source>, and <s> are allowed.
+ * @param {string} text
+ */
+export function containsRawHtml(text) {
+  const scanned = markdownWithoutCode(text);
+  const re = /<\/?([A-Za-z][A-Za-z0-9:-]*)\b([^>]*)>/g;
+  let match;
+  while ((match = re.exec(scanned)) !== null) {
+    const name = match[1];
+    const attrs = match[2] || '';
+    if (/^[A-Z]/.test(name)) return true;
+    const isHtml = RAW_HTML_TAGS.has(name.toLowerCase());
+    if (!isHtml) continue;
+    if (name.length === 1 && !attrs.trim()) continue;
+    return true;
+  }
+  return false;
+}
+
 function fail(errors, message) {
   errors.push(message);
 }
@@ -271,7 +322,7 @@ export function validateSpokeDocs(docsRoot, options = {}) {
       }
     }
 
-    if (/<[a-zA-Z][^>]*>/.test(body)) {
+    if (containsRawHtml(body)) {
       fail(errors, `Raw HTML is not allowed: ${rel}`);
     }
 

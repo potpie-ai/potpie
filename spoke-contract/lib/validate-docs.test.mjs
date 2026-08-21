@@ -332,6 +332,47 @@ description: Home
     assert.equal(result.errors.some((e) => e.includes('Raw HTML')), true);
   });
 
+  test('MDX component tags fail', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+<Tabs>
+nope
+</Tabs>
+`,
+    });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('Raw HTML')), true);
+  });
+
+  test('CLI placeholders and mermaid br in fences pass', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+Run \`potpie pot use <id-or-name>\`.
+
+See potpie graph read --subgraph <s> --view <v>.
+
+\`\`\`mermaid
+flowchart TB
+  n["Agents<br/>(Claude)"]
+\`\`\`
+
+\`\`\`bash
+potpie graph commit <plan_id> --verify
+\`\`\`
+`,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
   test('unsafe SVG fails without rewriting the file', () => {
     const raw = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
   <script>alert(1)</script>

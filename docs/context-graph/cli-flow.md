@@ -1,4 +1,9 @@
-# Potpie CLI Flow & Command Reference
+---
+title: CLI flow and command reference
+description: "Full potpie CLI command catalog, flags, and the canonical journey."
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `49e12528`, last reviewed 2026-07-02.
 
@@ -7,7 +12,7 @@ with flags, the shared plumbing every command goes through, and the canonical
 journey. It is the one doc that may restate flags in full; conceptual depth lives
 in the sibling docs linked under each group and in [See also](#see-also).
 
-This file lives at repo-root `internal-docs/context-graph/cli-flow.md`. The code it
+This file lives at `docs/context-graph/cli-flow.md`. The code it
 describes lives under repo-root `potpie/context-engine/` (paths below are
 relative to that root).
 
@@ -585,7 +590,7 @@ potpie graph commit <plan_id> --verify
 
 ## See also
 
-- [README.md](./README.md) — front door and the Start Here index.
+- [Context Graph](./index.md) — front door and the Start Here index.
 - [vision.md](./vision.md) — what the Context Graph is and the product boundaries.
 - [architecture.md](./architecture.md) — composition roots, daemon model, GraphBackend ports & coverage.
 - [ontology.md](./ontology.md) — the catalogs the `catalog`/`describe` commands return.

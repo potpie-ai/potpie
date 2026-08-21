@@ -1,4 +1,9 @@
-# Querying / Reading the Context Graph
+---
+title: Querying the Context Graph
+description: How agents and humans read ranked evidence from project memory.
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 
