@@ -3,8 +3,8 @@
 Assembles the per-group command sub-apps (``commands/``) into one Typer app and
 routes context operations through ``EngineClient`` and Potpie-owned operations
 through finite root services. This is the ``potpie`` console entrypoint (see
-``[project.scripts]``). The legacy host composition seam remains internal until
-the one-time daemon switch.
+``[project.scripts]``). ``CONTEXT_ENGINE_HOST_MODE`` selects the local or
+canonical daemon ``EngineClient`` without changing command contracts.
 
     Run: ``potpie --help`` (or ``python -m potpie.cli.main --help``)
 """
