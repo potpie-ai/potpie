@@ -9,7 +9,8 @@ Thank you for your interest in contributing to Potpie! We welcome and appreciate
 3. [Getting Started](#getting-started)
 4. [Development Workflow](#development-workflow)
 5. [Submitting Pull Requests](#submitting-pull-requests)
-6. [Community and Support](#community-and-support)
+6. [Documentation](#documentation)
+7. [Community and Support](#community-and-support)
 
 ---
 
@@ -100,7 +101,7 @@ When you’re ready to submit your changes:
 
 1. **Open a Pull Request (PR)**:
    - Go to the Potpie repository and select **New Pull Request**.
-   - Describe the change clearly in the title and body.
+   - Choose your branch and provide a meaningful title and description.
 
 2. **Describe Your Changes**:
    - Include a detailed description of what you have done and why.
@@ -112,7 +113,9 @@ When you’re ready to submit your changes:
 4. **Respond to Feedback**:
    - Be responsive to any feedback you receive. Once changes are approved, a maintainer will merge your PR.
 
-The **Docs check** workflow runs on every pull request. If the PR touches `docs/`, it validates that Markdown tree. Code-only PRs pass this check. It is owned by this repository ([`spoke-contract/`](../spoke-contract/), [`config/docs.json`](../config/docs.json)) and does not call `potpie-ai/docs` Actions.
+## Documentation
+
+User-facing docs live under [`docs/`](../docs/). If your change affects a command, setup step, or integration that users see, update the matching page there.
 
 ## Community and Support
 

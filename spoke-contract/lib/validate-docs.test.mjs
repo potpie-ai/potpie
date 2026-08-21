@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import {
   isAllowedAbsoluteHubRoute,
   parseFrontmatter,
+  splitFrontmatter,
   validateSpokeDocs,
 } from './validate-docs.mjs';
 
@@ -30,6 +31,8 @@ description: A valid page
 
 See [home](./index.md).
 `;
+
+const cleanSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>`;
 
 describe('parseFrontmatter', () => {
   test('parses quoted values with colons', () => {
@@ -62,6 +65,33 @@ title: [unterminated
 `);
     assert.equal(data, null);
     assert.match(error, /Invalid YAML/);
+  });
+
+  test('rejects YAML aliases', () => {
+    const { data, error } = parseFrontmatter(`---
+title: Hello
+description: &x alias-bomb
+also: *x
+---
+`);
+    assert.equal(data, null);
+    assert.match(error, /Invalid YAML|alias/i);
+  });
+
+  test('splitFrontmatter body excludes the YAML block', () => {
+    const split = splitFrontmatter(`---
+title: Hello
+description: "mentions <div> in copy"
+---
+
+## Body
+`);
+    assert.equal('body' in split, true);
+    if ('body' in split) {
+      assert.match(split.body, /## Body/);
+      assert.equal(split.body.includes('mentions <div>'), false);
+      assert.match(split.block, /mentions <div>/);
+    }
   });
 });
 
@@ -235,7 +265,7 @@ description: Home
 
 ![](./assets/logo.svg)
 `,
-      'assets/logo.svg': '<svg></svg>',
+      'assets/logo.svg': cleanSvg,
     });
     const result = validateSpokeDocs(root, { spokeId: 'demo' });
     assert.equal(result.ok, false);
@@ -255,5 +285,84 @@ See [disk](C:\\Windows\\notes.md).
     const result = validateSpokeDocs(root, { spokeId: 'demo' });
     assert.equal(result.ok, false);
     assert.equal(result.errors.some((e) => e.includes('Absolute filesystem paths')), true);
+  });
+
+  test('javascript, data, and vbscript link schemes fail', () => {
+    for (const href of ['javascript:alert(1)', 'data:text/html,hi', 'vbscript:msgbox(1)']) {
+      const root = makeDocs({
+        'index.md': `---
+title: Home
+description: Home
+---
+
+See [x](${href}).
+`,
+      });
+      const result = validateSpokeDocs(root, { spokeId: 'demo' });
+      assert.equal(result.ok, false);
+      assert.equal(result.errors.some((e) => e.includes('Disallowed link scheme')), true);
+    }
+  });
+
+  test('HTML in frontmatter description does not fail raw HTML check', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: "how to write a <div> in Markdown"
+---
+
+## Overview
+`,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
+  test('HTML in page body fails', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+<div>nope</div>
+`,
+    });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('Raw HTML')), true);
+  });
+
+  test('unsafe SVG fails without rewriting the file', () => {
+    const raw = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+  <script>alert(1)</script>
+  <circle cx="5" cy="5" r="4" fill="blue"/>
+</svg>`;
+    const root = makeDocs({
+      'index.md': validPage,
+      'assets/logo.svg': raw,
+    });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('Unsafe SVG content')), true);
+    assert.equal(readFileSync(join(root, 'assets/logo.svg'), 'utf8'), raw);
+  });
+
+  test('rejects SVG with DOCTYPE or ENTITY', () => {
+    const root = makeDocs({
+      'index.md': validPage,
+      'assets/logo.svg': `<!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<svg xmlns="http://www.w3.org/2000/svg">&xxe;</svg>`,
+    });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('DOCTYPE') || e.includes('ENTITY')), true);
+  });
+
+  test('clean SVG asset passes', () => {
+    const root = makeDocs({
+      'index.md': validPage,
+      'assets/logo.svg': cleanSvg,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
   });
 });

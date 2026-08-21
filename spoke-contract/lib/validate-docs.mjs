@@ -1,14 +1,18 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
- * Shared Spoke docs validation.
+ * Shared Spoke docs validation. Keep aligned with Hub scripts/lib/validate-docs.mjs.
  * Requires docs/index.md. Section dirs (getting-started, guides, reference, assets)
  * are optional. Rejects unsupported files, symlinks, path traversal, MDX, and
  * missing frontmatter.
+ *
+ * Hub ingest may rewrite a generated SVG copy. This Spoke check never writes
+ * Spoke git files; unsafe SVG fails closed instead.
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep, extname, basename } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { sanitizeSvg } from './sanitize-svg.mjs';
 
 const ALLOWED_ASSET_EXTS = new Set([
   '.png',
@@ -30,6 +34,7 @@ const HUB_EXACT_ROUTES = new Set([
   '/architecture',
   '/contributing',
 ]);
+const ALLOWED_LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:', 'tel:']);
 
 function fail(errors, message) {
   errors.push(message);
@@ -50,24 +55,44 @@ function isKebabName(name, { allowDotExt = false } = {}) {
 }
 
 /**
+ * Single frontmatter boundary used by both YAML parse and body HTML checks.
  * @param {string} content
- * @returns {{ data: Record<string, unknown> | null, error: string | null }}
+ * @returns {{ block: string, body: string } | { error: string }}
  */
-export function parseFrontmatter(content) {
+export function splitFrontmatter(content) {
   if (!content.startsWith('---')) {
-    return { data: null, error: 'Missing YAML frontmatter' };
+    return { error: 'Missing YAML frontmatter' };
   }
   const end = content.indexOf('\n---', 3);
   if (end === -1) {
-    return { data: null, error: 'Missing YAML frontmatter closing delimiter' };
+    return { error: 'Missing YAML frontmatter closing delimiter' };
   }
-  const block = content.slice(4, end);
+  return {
+    block: content.slice(4, end),
+    body: content.slice(end + 4),
+  };
+}
+
+function linkScheme(target) {
+  const match = target.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:)/);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * @param {string} content
+ * @returns {{ data: Record<string, unknown> | null, error: string | null, body?: string }}
+ */
+export function parseFrontmatter(content) {
+  const split = splitFrontmatter(content);
+  if ('error' in split) {
+    return { data: null, error: split.error };
+  }
   try {
-    const data = parseYaml(block);
+    const data = parseYaml(split.block, { maxAliasCount: 0 });
     if (data == null || typeof data !== 'object' || Array.isArray(data)) {
       return { data: null, error: 'Frontmatter must be a YAML mapping' };
     }
-    return { data, error: null };
+    return { data, error: null, body: split.body };
   } catch (err) {
     return { data: null, error: `Invalid YAML frontmatter: ${err.message}` };
   }
@@ -183,6 +208,7 @@ export function validateSpokeDocs(docsRoot, options = {}) {
       if (!isKebabName(name, { allowDotExt: true })) {
         fail(errors, `Asset filename must be kebab-case: ${rel}`);
       }
+      let sizeOk = true;
       try {
         const size = statSync(file.path).size;
         if (size > maxAssetBytes) {
@@ -190,9 +216,23 @@ export function validateSpokeDocs(docsRoot, options = {}) {
             errors,
             `Asset exceeds ${maxAssetBytes} byte limit (${rel} is ${size} bytes)`,
           );
+          sizeOk = false;
         }
       } catch {
         fail(errors, `Unable to stat asset: ${rel}`);
+        sizeOk = false;
+      }
+      if (sizeOk && ext === '.svg') {
+        const raw = readFileSync(file.path, 'utf8');
+        const svg = sanitizeSvg(raw);
+        if (!svg.ok) {
+          fail(errors, `Unsafe or invalid SVG (${rel}): ${svg.error}`);
+        } else if (svg.stripped) {
+          fail(
+            errors,
+            `Unsafe SVG content (${rel}): remove scripts, event handlers, and disallowed URLs. Hub ingest sanitizes a generated copy; this check does not rewrite Spoke files.`,
+          );
+        }
       }
       continue;
     }
@@ -217,6 +257,8 @@ export function validateSpokeDocs(docsRoot, options = {}) {
     }
 
     const content = readFileSync(file.path, 'utf8');
+    const split = splitFrontmatter(content);
+    const body = 'body' in split ? split.body : content;
     const fm = parseFrontmatter(content);
     if (fm.error) {
       fail(errors, `${fm.error}: ${rel}`);
@@ -229,16 +271,22 @@ export function validateSpokeDocs(docsRoot, options = {}) {
       }
     }
 
-    if (/<[a-zA-Z][^>]*>/.test(content.replace(/^---[\s\S]*?---/, ''))) {
+    if (/<[a-zA-Z][^>]*>/.test(body)) {
       fail(errors, `Raw HTML is not allowed: ${rel}`);
     }
 
     for (const href of extractMarkdownLinks(content)) {
       const target = href.trim().split('#')[0].split('?')[0];
       if (!target) continue;
-      if (/^(https?:|mailto:|tel:)/i.test(target)) continue;
-      if (/^[a-zA-Z]:[\\/]/.test(target) || /^file:/i.test(target)) {
+      if (/^[a-zA-Z]:[\\/]/.test(target)) {
         fail(errors, `Absolute filesystem paths are not allowed in links (${rel}): ${href}`);
+        continue;
+      }
+      const scheme = linkScheme(target);
+      if (scheme) {
+        if (!ALLOWED_LINK_SCHEMES.has(scheme)) {
+          fail(errors, `Disallowed link scheme (${rel}): ${href}`);
+        }
         continue;
       }
       if (target.startsWith('/')) {

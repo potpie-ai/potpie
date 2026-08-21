@@ -11,6 +11,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@xmldom/xmldom": "^0.9.11",
     "yaml": "^2.8.2"
   }
 }
