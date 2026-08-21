@@ -61,7 +61,8 @@ const ALLOWED_ELEMENTS = new Set([
   'feturbulence',
 ]);
 
-const HREF_ATTRS = new Set(['href', 'xlink:href', 'src']);
+const HREF_ATTRS = new Set(['href', 'src']);
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
 /** @param {Node} node */
 function localName(node) {
@@ -71,6 +72,26 @@ function localName(node) {
 /** @param {Attr} attr */
 function attrName(attr) {
   return String(attr.name || '').toLowerCase();
+}
+
+/** @param {Attr} attr */
+function attrLocalName(attr) {
+  const qualified = String(attr.name || '');
+  const local = String(attr.localName || qualified.split(':').pop() || '');
+  return local.toLowerCase();
+}
+
+/**
+ * Match href/src by local name and namespace so aliased XLink
+ * (`xl:href`) and unqualified href/src are both recognized.
+ * @param {Attr} attr
+ */
+function isHrefAttr(attr) {
+  const local = attrLocalName(attr);
+  if (!HREF_ATTRS.has(local)) return false;
+  const ns = attr.namespaceURI;
+  if (!ns) return true;
+  return local === 'href' && ns === XLINK_NS;
 }
 
 /**
@@ -165,7 +186,7 @@ export function sanitizeSvg(input) {
         node.removeAttribute(attr.name);
         continue;
       }
-      if (HREF_ATTRS.has(an)) {
+      if (isHrefAttr(attr)) {
         const kept = sanitizeSvgUrl(attr.value, name);
         if (kept == null) {
           stripped.current = true;

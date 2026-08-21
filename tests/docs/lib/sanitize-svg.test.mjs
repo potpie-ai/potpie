@@ -41,6 +41,24 @@ describe('sanitizeSvg', () => {
     assert.equal(svg.toLowerCase().includes('javascript'), false);
   });
 
+  test('strips aliased xlink href regardless of prefix', () => {
+    const { ok, svg, stripped } = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xl="http://www.w3.org/1999/xlink"><a xl:href="javascript:alert(1)"><text>x</text></a></svg>`,
+    );
+    assert.equal(ok, true);
+    assert.equal(stripped, true);
+    assert.equal(svg.toLowerCase().includes('javascript'), false);
+  });
+
+  test('strips unqualified src on image', () => {
+    const { ok, svg, stripped } = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><image src="javascript:alert(1)"/></svg>`,
+    );
+    assert.equal(ok, true);
+    assert.equal(stripped, true);
+    assert.equal(svg.toLowerCase().includes('javascript'), false);
+  });
+
   test('strips style elements, including escaped unsafe CSS', () => {
     const { ok, svg, stripped } = sanitizeSvg(
       `<svg xmlns="http://www.w3.org/2000/svg"><style>@im\\port url(https://evil.test/a.css);</style><rect/></svg>`,
@@ -64,6 +82,15 @@ describe('sanitizeSvg', () => {
   test('strips external use references', () => {
     const { ok, svg, stripped } = sanitizeSvg(
       `<svg xmlns="http://www.w3.org/2000/svg"><use href="https://evil.test/a.svg#x"/></svg>`,
+    );
+    assert.equal(ok, true);
+    assert.equal(stripped, true);
+    assert.equal(svg.includes('evil.test'), false);
+  });
+
+  test('strips aliased xlink href on external use', () => {
+    const { ok, svg, stripped } = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xl="http://www.w3.org/1999/xlink"><use xl:href="https://evil.test/a.svg#x"/></svg>`,
     );
     assert.equal(ok, true);
     assert.equal(stripped, true);

@@ -80,8 +80,6 @@ yarn-error.log*
 next-env.d.ts
 
 certificates
-package-lock.json
-!tests/docs/package-lock.json
 
 .next
 .vscode/
