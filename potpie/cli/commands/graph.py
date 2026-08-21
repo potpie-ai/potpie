@@ -526,9 +526,7 @@ def graph_catalog(
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
             get_engine_client(pot).catalog(
-                EngineCatalogRequest(
-                    payload={"task": task, "subgraph": subgraph}
-                )
+                EngineCatalogRequest(task=task, subgraph=subgraph)
             )
         )
         payload = normalize_catalog_result(result.to_dict(), task=task)
@@ -640,27 +638,25 @@ def graph_read(
         result = run_engine_operation(
             get_engine_client(pot).read(
                 EngineReadRequest(
-                    payload={
-                        "subgraph": subgraph,
-                        "view": view,
-                        "query": query,
-                        "scope": parsed_scope,
-                        "environment": environment,
-                        "source_refs": tuple(source_ref or ()),
-                        "since": since_dt,
-                        "until": until_dt,
-                        "depth": depth,
-                        "direction": direction,
-                        "limit": read_limit,
-                        "detail": detail,
-                        "relations": relations,
-                        "query_threshold": query_threshold,
-                        "freshness_preference": (
-                            "fresh"
-                            if _is_timeline_view(f"{subgraph}.{view}") and not query
-                            else "balanced"
-                        ),
-                    }
+                    subgraph=subgraph,
+                    view=view,
+                    query=query,
+                    scope=parsed_scope,
+                    environment=environment,
+                    source_refs=tuple(source_ref or ()),
+                    since=since_dt,
+                    until=until_dt,
+                    depth=depth,
+                    direction=direction,
+                    limit=read_limit,
+                    detail=detail,
+                    relations=relations,
+                    query_threshold=query_threshold,
+                    freshness_preference=(
+                        "fresh"
+                        if _is_timeline_view(f"{subgraph}.{view}") and not query
+                        else "balanced"
+                    ),
                 )
             )
         )
@@ -731,21 +727,17 @@ def timeline_recent(
         result = run_engine_operation(
             get_engine_client(pot).read(
                 EngineReadRequest(
-                    payload={
-                        "subgraph": "recent_changes",
-                        "view": "timeline",
-                        "query": query,
-                        "scope": scope,
-                        "since": since_dt,
-                        "until": until_dt,
-                        "limit": read_limit,
-                        "detail": detail,
-                        "relations": relations,
-                        "query_threshold": query_threshold,
-                        "freshness_preference": (
-                            "fresh" if not query else "balanced"
-                        ),
-                    }
+                    subgraph="recent_changes",
+                    view="timeline",
+                    query=query,
+                    scope=scope,
+                    since=since_dt,
+                    until=until_dt,
+                    limit=read_limit,
+                    detail=detail,
+                    relations=relations,
+                    query_threshold=query_threshold,
+                    freshness_preference=("fresh" if not query else "balanced"),
                 )
             )
         )
@@ -804,23 +796,21 @@ def graph_search_entities(
         result = run_engine_operation(
             get_engine_client(pot).search_entities(
                 EngineSearchEntitiesRequest(
-                    payload={
-                        "query": effective_query,
-                        "type": type_,
-                        "predicate": predicate,
-                        "subgraph": subgraph,
-                        "scope": _parse_scope(scope),
-                        "truth": truth,
-                        "source_system": source_system,
-                        "source_family": source_family,
-                        "since": since_dt,
-                        "until": until_dt,
-                        "environment": environment,
-                        "external_id": external_id,
-                        "source_refs": tuple(source_ref or ()),
-                        "limit": limit,
-                        "supporting_claims": supporting_claims,
-                    }
+                    query=effective_query,
+                    type=type_,
+                    predicate=predicate,
+                    subgraph=subgraph,
+                    scope=_parse_scope(scope),
+                    truth=truth,
+                    source_system=source_system,
+                    source_family=source_family,
+                    since=since_dt,
+                    until=until_dt,
+                    environment=environment,
+                    external_id=external_id,
+                    source_refs=tuple(source_ref or ()),
+                    limit=limit,
+                    supporting_claims=supporting_claims,
                 )
             )
         )
@@ -867,9 +857,7 @@ def graph_mutate(
         client = get_engine_client(pot)
         proposal = run_engine_operation(
             client.propose(
-                EngineProposeRequest(
-                    payload={"mutation": _context_bound_mutation(payload)}
-                )
+                EngineProposeRequest(mutation=_context_bound_mutation(payload))
             )
         )
         legacy_warning = _legacy_warning(
@@ -903,12 +891,8 @@ def graph_mutate(
         result = run_engine_operation(
             client.commit(
                 EngineCommitRequest(
-                    payload={
-                        "plan_id": proposal.plan_id,
-                        "approved_by": (
-                            approved_by if allow_review_required else None
-                        ),
-                    }
+                    plan_id=proposal.plan_id,
+                    approved_by=(approved_by if allow_review_required else None),
                 )
             )
         )
@@ -1343,14 +1327,12 @@ def graph_nudge(
         result = run_engine_operation(
             get_engine_client(pot).nudge(
                 EngineNudgeRequest(
-                    payload={
-                        "event": event,
-                        "session_id": session,
-                        "scope": _parse_scope(scope),
-                        "path": path,
-                        "query": query,
-                        "limit": limit,
-                    }
+                    event=event,
+                    session_id=session,
+                    scope=_parse_scope(scope),
+                    path=path,
+                    query=query,
+                    limit=limit,
                 )
             )
         )
@@ -1372,9 +1354,7 @@ def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         dp = run_engine_operation(
-            get_engine_client(pot).data_plane_status(
-                EngineDataPlaneStatusRequest()
-            )
+            get_engine_client(pot).data_plane_status(EngineDataPlaneStatusRequest())
         )
         versions = {"_global": int(dict(dp.counts).get("claims", 0))}
         ctx.set_subgraph_versions(versions)
@@ -1418,11 +1398,9 @@ def graph_describe(
         payload = run_engine_operation(
             get_engine_client(pot).describe(
                 EngineDescribeRequest(
-                    payload={
-                        "subgraph": subgraph,
-                        "view": view,
-                        "include_examples": examples,
-                    }
+                    subgraph=subgraph,
+                    view=view,
+                    include_examples=examples,
                 )
             )
         )
@@ -1469,13 +1447,11 @@ def graph_neighborhood(
         sl = run_engine_operation(
             get_engine_client(pot).neighborhood(
                 EngineNeighborhoodRequest(
-                    payload={
-                        "entity_key": entity,
-                        "depth": depth,
-                        "direction": normalized_direction,
-                        "predicates": predicates,
-                        "limit": limit,
-                    }
+                    entity_key=entity,
+                    depth=depth,
+                    direction=normalized_direction,
+                    predicates=predicates,
+                    limit=limit,
                 )
             )
         )
@@ -1532,10 +1508,8 @@ def graph_propose(
         result = run_engine_operation(
             get_engine_client(pot).propose(
                 EngineProposeRequest(
-                    payload={
-                        "mutation": _context_bound_mutation(payload),
-                        "ttl_seconds": _parse_ttl_seconds(ttl),
-                    }
+                    mutation=_context_bound_mutation(payload),
+                    ttl_seconds=_parse_ttl_seconds(ttl),
                 )
             )
         )
@@ -1570,11 +1544,9 @@ def graph_commit(
         result = run_engine_operation(
             get_engine_client(pot).commit(
                 EngineCommitRequest(
-                    payload={
-                        "plan_id": plan_id,
-                        "approved_by": approved_by,
-                        "verify": verify,
-                    }
+                    plan_id=plan_id,
+                    approved_by=approved_by,
+                    verify=verify,
                 )
             )
         )
@@ -1688,10 +1660,8 @@ def graph_bulk_apply(
             proposal = run_engine_operation(
                 client.propose(
                     EngineProposeRequest(
-                        payload={
-                            "mutation": _context_bound_mutation(chunk["payload"]),
-                            "ttl_seconds": ttl_seconds,
-                        }
+                        mutation=_context_bound_mutation(chunk["payload"]),
+                        ttl_seconds=ttl_seconds,
                     )
                 )
             )
@@ -1742,10 +1712,8 @@ def graph_bulk_apply(
             commit = run_engine_operation(
                 client.commit(
                     EngineCommitRequest(
-                        payload={
-                            "plan_id": proposal.plan_id,
-                            "approved_by": approved_by,
-                        }
+                        plan_id=proposal.plan_id,
+                        approved_by=approved_by,
                     )
                 )
             )
@@ -1811,16 +1779,14 @@ def graph_history(
         result = run_engine_operation(
             get_engine_client(pot).history(
                 EngineHistoryRequest(
-                    payload={
-                        "entity_key": entity,
-                        "claim_key": claim,
-                        "subgraph": subgraph,
-                        "plan_id": plan,
-                        "mutation_id": mutation,
-                        "since": since_dt,
-                        "until": until_dt,
-                        "limit": limit,
-                    }
+                    entity_key=entity,
+                    claim_key=claim,
+                    subgraph=subgraph,
+                    plan_id=plan,
+                    mutation_id=mutation,
+                    since=since_dt,
+                    until=until_dt,
+                    limit=limit,
                 )
             )
         )
@@ -1848,14 +1814,12 @@ def graph_inbox_add(
         result = run_engine_operation(
             get_engine_client(pot).inbox_add(
                 EngineInboxAddRequest(
-                    payload={
-                        "summary": summary,
-                        "details": details,
-                        "evidence": tuple(evidence or ()),
-                        "source_refs": tuple(source_ref or ()),
-                        "suspected_subgraphs": tuple(subgraph or ()),
-                        "created_by": _parse_created_by(created_by),
-                    }
+                    summary=summary,
+                    details=details,
+                    evidence=tuple(evidence or ()),
+                    source_refs=tuple(source_ref or ()),
+                    suspected_subgraphs=tuple(subgraph or ()),
+                    created_by=_parse_created_by(created_by),
                 )
             )
         )
@@ -1881,15 +1845,13 @@ def graph_inbox_list(
         result = run_engine_operation(
             get_engine_client(pot).inbox_list(
                 EngineInboxListRequest(
-                    payload={
-                        "status": tuple(status or ()),
-                        "claimed_by": claimed_by,
-                        "suspected_subgraph": subgraph,
-                        "source_ref": source_ref,
-                        "since": since_dt,
-                        "until": until_dt,
-                        "limit": limit,
-                    }
+                    status=tuple(status or ()),
+                    claimed_by=claimed_by,
+                    suspected_subgraph=subgraph,
+                    source_ref=source_ref,
+                    since=since_dt,
+                    until=until_dt,
+                    limit=limit,
                 )
             )
         )
@@ -1908,9 +1870,7 @@ def graph_inbox_show(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).inbox_show(
-                EngineInboxShowRequest(payload={"item_id": item_id})
-            )
+            get_engine_client(pot).inbox_show(EngineInboxShowRequest(item_id=item_id))
         )
         _emit_inbox_result(ctx, result)
 
@@ -1929,9 +1889,7 @@ def graph_inbox_claim(
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
             get_engine_client(pot).inbox_claim(
-                EngineInboxClaimRequest(
-                    payload={"item_id": item_id, "claimed_by": claimed_by}
-                )
+                EngineInboxClaimRequest(item_id=item_id, claimed_by=claimed_by)
             )
         )
         _emit_inbox_result(ctx, result)
@@ -1954,12 +1912,10 @@ def graph_inbox_mark_applied(
         result = run_engine_operation(
             get_engine_client(pot).inbox_mark_applied(
                 EngineInboxMarkAppliedRequest(
-                    payload={
-                        "item_id": item_id,
-                        "closed_by": closed_by,
-                        "linked_plan_id": plan,
-                        "linked_mutation_id": mutation,
-                    }
+                    item_id=item_id,
+                    closed_by=closed_by,
+                    linked_plan_id=plan,
+                    linked_mutation_id=mutation,
                 )
             )
         )
@@ -1982,11 +1938,9 @@ def graph_inbox_mark_rejected(
         result = run_engine_operation(
             get_engine_client(pot).inbox_mark_rejected(
                 EngineInboxMarkRejectedRequest(
-                    payload={
-                        "item_id": item_id,
-                        "closed_by": closed_by,
-                        "rejection_reason": reason,
-                    }
+                    item_id=item_id,
+                    closed_by=closed_by,
+                    rejection_reason=reason,
                 )
             )
         )
@@ -2011,13 +1965,11 @@ def graph_inbox_close(
         result = run_engine_operation(
             get_engine_client(pot).inbox_close(
                 EngineInboxCloseRequest(
-                    payload={
-                        "item_id": item_id,
-                        "closed_by": closed_by,
-                        "linked_plan_id": plan,
-                        "linked_mutation_id": mutation,
-                        "rejection_reason": reason,
-                    }
+                    item_id=item_id,
+                    closed_by=closed_by,
+                    linked_plan_id=plan,
+                    linked_mutation_id=mutation,
+                    rejection_reason=reason,
                 )
             )
         )
@@ -2154,12 +2106,10 @@ def _run_quality_report(
         result = run_engine_operation(
             get_engine_client(pot).quality(
                 EngineQualityRequest(
-                    payload={
-                        "report": report,
-                        "subgraph": subgraph,
-                        "limit": limit,
-                        "confidence_threshold": confidence_threshold,
-                    }
+                    report=report,
+                    subgraph=subgraph,
+                    limit=limit,
+                    confidence_threshold=confidence_threshold,
                 )
             )
         )
@@ -2178,9 +2128,7 @@ def graph_inspect(
         ctx.set_pot_id(pot_id)
         sl = run_engine_operation(
             get_engine_client(pot).inspect(
-                EngineInspectRequest(
-                    payload={"entity_key": entity_key, "depth": depth}
-                )
+                EngineInspectRequest(entity_key=entity_key, depth=depth)
             )
         )
         _emit_graph_result(
@@ -2214,7 +2162,7 @@ def graph_export(
         ctx.set_pot_id(pot_id)
         manifest = run_engine_operation(
             get_engine_client(pot).export_snapshot(
-                EngineExportSnapshotRequest(payload={"destination": file})
+                EngineExportSnapshotRequest(destination=file)
             )
         )
         _emit_graph_result(
@@ -2240,7 +2188,7 @@ def graph_import(
         ctx.set_pot_id(pot_id)
         manifest = run_engine_operation(
             get_engine_client(pot).import_snapshot(
-                EngineImportSnapshotRequest(payload={"source": file}),
+                EngineImportSnapshotRequest(source=file),
                 confirmation=DestructiveConfirmation(confirmed=True),
             )
         )
@@ -2273,7 +2221,7 @@ def graph_repair(
                 targets.append("entity_labels")
         report = run_engine_operation(
             get_engine_client(pot).repair(
-                EngineRepairRequest(payload={"targets": tuple(targets)}),
+                EngineRepairRequest(targets=tuple(targets)),
                 confirmation=DestructiveConfirmation(confirmed=True),
             )
         )
@@ -2416,12 +2364,10 @@ def _graph_status_quality_summary(pot_id: str, dp) -> dict[str, Any]:
         result = run_engine_operation(
             get_engine_client(pot_id).quality(
                 EngineQualityRequest(
-                    payload={
-                        "report": "summary",
-                        "subgraph": None,
-                        "limit": 20,
-                        "confidence_threshold": 0.5,
-                    }
+                    report="summary",
+                    subgraph=None,
+                    limit=20,
+                    confidence_threshold=0.5,
                 )
             )
         )

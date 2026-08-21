@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,6 +51,9 @@ from potpie_context_engine.core.ports.graph_service import (
 )
 from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 from potpie_context_engine.domain.nudge import GraphNudgeRequest
+from potpie_context_engine.domain.ingestion_event_models import (
+    IngestionSubmissionRequest,
+)
 from potpie_context_engine.requests import (
     CatalogRequest,
     CommitRequest,
@@ -79,7 +82,11 @@ from potpie_context_engine.requests import (
     ResolveRequest,
     SearchEntitiesRequest,
     SearchRequest,
+    SubmitArtifactRequest,
+    SubmitEventRequest,
+    ProcessingStatusRequest,
 )
+from potpie_context_engine.results import DescribeResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +99,8 @@ class LocalEngineServices:
     graph_workbench: Any
     backend: Any
     nudge: Any
+    ingestion: Any | None = None
+    ingestion_events: Any | None = None
 
 
 class LocalContextSelectorResolver:
@@ -219,29 +228,24 @@ class LocalEngineOperations:
     async def resolve(
         self, context: ContextIdentity, request: ResolveRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.agent_context.resolve(
                 AgentResolveRequest(
                     pot_id=context.value,
-                    task=_optional_str(payload, "task"),
-                    intent=_optional_str(payload, "intent"),
-                    include=_tuple_of_str(payload, "include"),
-                    exclude=_tuple_of_str(payload, "exclude"),
-                    scope=_mapping(payload, "scope"),
-                    mode=str(payload.get("mode") or "fast"),
-                    source_policy=str(
-                        payload.get("source_policy") or "references_only"
-                    ),
-                    max_items=int(payload.get("max_items") or 12),
-                    as_of=payload.get("as_of"),  # type: ignore[arg-type]
-                    since=payload.get("since"),  # type: ignore[arg-type]
-                    until=payload.get("until"),  # type: ignore[arg-type]
-                    include_invalidated=bool(payload.get("include_invalidated", False)),
-                    freshness_preference=str(
-                        payload.get("freshness_preference") or "balanced"
-                    ),
-                    metadata=_mapping(payload, "metadata"),
+                    task=request.task,
+                    intent=request.intent,
+                    include=request.include,
+                    exclude=request.exclude,
+                    scope=request.scope,
+                    mode=request.mode,
+                    source_policy=request.source_policy,
+                    max_items=request.max_items,
+                    as_of=request.as_of,
+                    since=request.since,
+                    until=request.until,
+                    include_invalidated=request.include_invalidated,
+                    freshness_preference=request.freshness_preference,
+                    metadata=request.metadata,
                 )
             )
         )
@@ -249,20 +253,17 @@ class LocalEngineOperations:
     async def search(
         self, context: ContextIdentity, request: SearchRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.agent_context.search(
                 AgentSearchRequest(
                     pot_id=context.value,
-                    query=_required_str(payload, "query"),
-                    include=_tuple_of_str(payload, "include"),
-                    scope=_mapping(payload, "scope"),
-                    mode=str(payload.get("mode") or "fast"),
-                    source_policy=str(
-                        payload.get("source_policy") or "references_only"
-                    ),
-                    max_items=int(payload.get("max_items") or 12),
-                    metadata=_mapping(payload, "metadata"),
+                    query=_required_value(request.query, "query"),
+                    include=request.include,
+                    scope=request.scope,
+                    mode=request.mode,
+                    source_policy=request.source_policy,
+                    max_items=request.max_items,
+                    metadata=request.metadata,
                 )
             )
         )
@@ -270,18 +271,17 @@ class LocalEngineOperations:
     async def record(
         self, context: ContextIdentity, request: RecordRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.agent_context.record(
                 AgentRecordRequest(
                     pot_id=context.value,
-                    record_type=_required_str(payload, "record_type"),
-                    summary=_required_str(payload, "summary"),
-                    details=_mapping(payload, "details"),
-                    scope=_mapping(payload, "scope"),
-                    source_refs=_tuple_of_str(payload, "source_refs"),
-                    idempotency_key=_optional_str(payload, "idempotency_key"),
-                    metadata=_mapping(payload, "metadata"),
+                    record_type=_required_value(request.record_type, "record_type"),
+                    summary=_required_value(request.summary, "summary"),
+                    details=request.details,
+                    scope=request.scope,
+                    source_refs=request.source_refs,
+                    idempotency_key=request.idempotency_key,
+                    metadata=request.metadata,
                 )
             )
         )
@@ -297,13 +297,12 @@ class LocalEngineOperations:
     async def catalog(
         self, context: ContextIdentity, request: CatalogRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph.catalog(
                 GraphCatalogRequest(
                     pot_id=context.value,
-                    task=_optional_str(payload, "task"),
-                    subgraph=_optional_str(payload, "subgraph"),
+                    task=request.task,
+                    subgraph=request.subgraph,
                 )
             )
         )
@@ -312,13 +311,14 @@ class LocalEngineOperations:
         self, context: ContextIdentity, request: DescribeRequest
     ) -> Outcome[object]:
         del context
-        payload = request.payload
         return await self._call(
-            lambda: self._services.graph.describe(
-                GraphDescribeRequest(
-                    subgraph=_required_str(payload, "subgraph"),
-                    view=_optional_str(payload, "view"),
-                    include_examples=bool(payload.get("include_examples", False)),
+            lambda: DescribeResult(
+                self._services.graph.describe(
+                    GraphDescribeRequest(
+                        subgraph=_required_value(request.subgraph, "subgraph"),
+                        view=request.view,
+                        include_examples=request.include_examples,
+                    )
                 )
             )
         )
@@ -326,30 +326,27 @@ class LocalEngineOperations:
     async def read(
         self, context: ContextIdentity, request: ReadRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph.read(
                 GraphReadRequest(
                     pot_id=context.value,
-                    subgraph=_required_str(payload, "subgraph"),
-                    view=_required_str(payload, "view"),
-                    query=_optional_str(payload, "query"),
-                    scope=_mapping(payload, "scope"),
-                    limit=int(payload.get("limit") or 12),
-                    as_of=payload.get("as_of"),  # type: ignore[arg-type]
-                    since=payload.get("since"),  # type: ignore[arg-type]
-                    until=payload.get("until"),  # type: ignore[arg-type]
-                    include_invalidated=bool(payload.get("include_invalidated", False)),
-                    freshness_preference=str(
-                        payload.get("freshness_preference") or "balanced"
-                    ),
-                    depth=payload.get("depth"),  # type: ignore[arg-type]
-                    direction=_optional_str(payload, "direction"),
-                    environment=_optional_str(payload, "environment"),
-                    source_refs=_tuple_of_str(payload, "source_refs"),
-                    detail=str(payload.get("detail") or "compact"),
-                    relations=str(payload.get("relations") or "summary"),
-                    query_threshold=float(payload.get("query_threshold") or 0.70),
+                    subgraph=_required_value(request.subgraph, "subgraph"),
+                    view=_required_value(request.view, "view"),
+                    query=request.query,
+                    scope=request.scope,
+                    limit=request.limit,
+                    as_of=request.as_of,
+                    since=request.since,
+                    until=request.until,
+                    include_invalidated=request.include_invalidated,
+                    freshness_preference=request.freshness_preference,
+                    depth=request.depth,
+                    direction=request.direction,
+                    environment=request.environment,
+                    source_refs=request.source_refs,
+                    detail=request.detail,
+                    relations=request.relations,
+                    query_threshold=request.query_threshold,
                 )
             )
         )
@@ -357,26 +354,25 @@ class LocalEngineOperations:
     async def search_entities(
         self, context: ContextIdentity, request: SearchEntitiesRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph.search_entities(
                 GraphEntitySearchRequest(
                     pot_id=context.value,
-                    query=_required_str(payload, "query"),
-                    type=_optional_str(payload, "type"),
-                    predicate=_optional_str(payload, "predicate"),
-                    subgraph=_optional_str(payload, "subgraph"),
-                    scope=_mapping(payload, "scope"),
-                    truth=_optional_str(payload, "truth"),
-                    source_system=_optional_str(payload, "source_system"),
-                    source_family=_optional_str(payload, "source_family"),
-                    since=payload.get("since"),  # type: ignore[arg-type]
-                    until=payload.get("until"),  # type: ignore[arg-type]
-                    environment=_optional_str(payload, "environment"),
-                    external_id=_optional_str(payload, "external_id"),
-                    source_refs=_tuple_of_str(payload, "source_refs"),
-                    limit=int(payload.get("limit") or 10),
-                    supporting_claims=int(payload.get("supporting_claims") or 0),
+                    query=_required_value(request.query, "query"),
+                    type=request.type,
+                    predicate=request.predicate,
+                    subgraph=request.subgraph,
+                    scope=request.scope,
+                    truth=request.truth,
+                    source_system=request.source_system,
+                    source_family=request.source_family,
+                    since=request.since,
+                    until=request.until,
+                    environment=request.environment,
+                    external_id=request.external_id,
+                    source_refs=request.source_refs,
+                    limit=request.limit,
+                    supporting_claims=request.supporting_claims,
                 )
             )
         )
@@ -384,27 +380,24 @@ class LocalEngineOperations:
     async def mutate(
         self, context: ContextIdentity, request: MutateRequest
     ) -> Outcome[object]:
-        mutation = _mapping(request.payload, "mutation")
         return await self._call(
             lambda: self._services.graph.mutate(
-                SemanticMutationRequest.parse(mutation, pot_id=context.value)
+                SemanticMutationRequest.parse(request.mutation, pot_id=context.value)
             )
         )
 
     async def neighborhood(
         self, context: ContextIdentity, request: NeighborhoodRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
-            lambda: self._inspection_neighborhood(context=context, payload=payload)
+            lambda: self._inspection_neighborhood(context=context, request=request)
         )
 
     async def inspect(
         self, context: ContextIdentity, request: InspectRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
-            lambda: self._inspection_neighborhood(context=context, payload=payload)
+            lambda: self._inspection_neighborhood(context=context, request=request)
         )
 
     async def export_snapshot(
@@ -413,7 +406,7 @@ class LocalEngineOperations:
         return await self._call(
             lambda: self._services.backend.snapshot.export(
                 pot_id=context.value,
-                destination=_required_str(request.payload, "destination"),
+                destination=_required_value(request.destination, "destination"),
             )
         )
 
@@ -423,7 +416,7 @@ class LocalEngineOperations:
         return await self._call(
             lambda: self._services.backend.snapshot.import_(
                 pot_id=context.value,
-                source=_required_str(request.payload, "source"),
+                source=_required_value(request.source, "source"),
             )
         )
 
@@ -433,98 +426,91 @@ class LocalEngineOperations:
         return await self._call(
             lambda: self._services.backend.analytics.repair(
                 context.value,
-                targets=_tuple_of_str(request.payload, "targets"),
+                targets=request.targets,
             )
         )
 
     async def propose(
         self, context: ContextIdentity, request: ProposeRequest
     ) -> Outcome[object]:
-        mutation = _mapping(request.payload, "mutation")
-        ttl_seconds = request.payload.get("ttl_seconds")
         return await self._call(
             lambda: self._services.graph_workbench.propose(
-                mutation,
+                request.mutation,
                 pot_id=context.value,
-                ttl_seconds=int(ttl_seconds) if ttl_seconds is not None else None,
+                ttl_seconds=request.ttl_seconds,
             )
         )
 
     async def commit(
         self, context: ContextIdentity, request: CommitRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph_workbench.commit(
-                _required_str(payload, "plan_id"),
+                _required_value(request.plan_id, "plan_id"),
                 pot_id=context.value,
-                approved_by=_optional_str(payload, "approved_by"),
-                verify=bool(payload.get("verify", False)),
+                approved_by=request.approved_by,
+                verify=request.verify,
             )
         )
 
     async def history(
         self, context: ContextIdentity, request: HistoryRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph_workbench.history(
                 pot_id=context.value,
-                entity_key=_optional_str(payload, "entity_key"),
-                claim_key=_optional_str(payload, "claim_key"),
-                subgraph=_optional_str(payload, "subgraph"),
-                plan_id=_optional_str(payload, "plan_id"),
-                mutation_id=_optional_str(payload, "mutation_id"),
-                since=payload.get("since"),  # type: ignore[arg-type]
-                until=payload.get("until"),  # type: ignore[arg-type]
-                limit=int(payload.get("limit") or 50),
+                entity_key=request.entity_key,
+                claim_key=request.claim_key,
+                subgraph=request.subgraph,
+                plan_id=request.plan_id,
+                mutation_id=request.mutation_id,
+                since=request.since,
+                until=request.until,
+                limit=request.limit,
             )
         )
 
     async def quality(
         self, context: ContextIdentity, request: QualityRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph_workbench.quality(
                 pot_id=context.value,
-                report=_required_str(payload, "report"),
-                subgraph=_optional_str(payload, "subgraph"),
-                limit=int(payload.get("limit") or 50),
-                confidence_threshold=float(payload.get("confidence_threshold") or 0.5),
+                report=_required_value(request.report, "report"),
+                subgraph=request.subgraph,
+                limit=request.limit,
+                confidence_threshold=request.confidence_threshold,
             )
         )
 
     async def inbox_add(
         self, context: ContextIdentity, request: InboxAddRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph_workbench.inbox_add(
                 pot_id=context.value,
-                summary=_required_str(payload, "summary"),
-                details=_optional_str(payload, "details"),
-                evidence=_tuple_of_str(payload, "evidence"),
-                source_refs=_tuple_of_str(payload, "source_refs"),
-                suspected_subgraphs=_tuple_of_str(payload, "suspected_subgraphs"),
-                created_by=_mapping(payload, "created_by"),
+                summary=_required_value(request.summary, "summary"),
+                details=request.details,
+                evidence=request.evidence,
+                source_refs=request.source_refs,
+                suspected_subgraphs=request.suspected_subgraphs,
+                created_by=request.created_by,
             )
         )
 
     async def inbox_list(
         self, context: ContextIdentity, request: InboxListRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph_workbench.inbox_list(
                 pot_id=context.value,
-                status=_tuple_of_str(payload, "status"),
-                claimed_by=_optional_str(payload, "claimed_by"),
-                suspected_subgraph=_optional_str(payload, "suspected_subgraph"),
-                source_ref=_optional_str(payload, "source_ref"),
-                since=payload.get("since"),  # type: ignore[arg-type]
-                until=payload.get("until"),  # type: ignore[arg-type]
-                limit=int(payload.get("limit") or 50),
+                status=request.status,
+                claimed_by=request.claimed_by,
+                suspected_subgraph=request.suspected_subgraph,
+                source_ref=request.source_ref,
+                since=request.since,
+                until=request.until,
+                limit=request.limit,
             )
         )
 
@@ -534,78 +520,159 @@ class LocalEngineOperations:
         return await self._call(
             lambda: self._services.graph_workbench.inbox_show(
                 pot_id=context.value,
-                item_id=_required_str(request.payload, "item_id"),
+                item_id=_required_value(request.item_id, "item_id"),
             )
         )
 
     async def inbox_claim(
         self, context: ContextIdentity, request: InboxClaimRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph_workbench.inbox_claim(
                 pot_id=context.value,
-                item_id=_required_str(payload, "item_id"),
-                claimed_by=_required_str(payload, "claimed_by"),
+                item_id=_required_value(request.item_id, "item_id"),
+                claimed_by=_required_value(request.claimed_by, "claimed_by"),
             )
         )
 
     async def inbox_mark_applied(
         self, context: ContextIdentity, request: InboxMarkAppliedRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph_workbench.inbox_mark_applied(
                 pot_id=context.value,
-                item_id=_required_str(payload, "item_id"),
-                closed_by=_required_str(payload, "closed_by"),
-                linked_plan_id=_optional_str(payload, "linked_plan_id"),
-                linked_mutation_id=_optional_str(payload, "linked_mutation_id"),
+                item_id=_required_value(request.item_id, "item_id"),
+                closed_by=_required_value(request.closed_by, "closed_by"),
+                linked_plan_id=request.linked_plan_id,
+                linked_mutation_id=request.linked_mutation_id,
             )
         )
 
     async def inbox_mark_rejected(
         self, context: ContextIdentity, request: InboxMarkRejectedRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph_workbench.inbox_mark_rejected(
                 pot_id=context.value,
-                item_id=_required_str(payload, "item_id"),
-                closed_by=_required_str(payload, "closed_by"),
-                rejection_reason=_required_str(payload, "rejection_reason"),
+                item_id=_required_value(request.item_id, "item_id"),
+                closed_by=_required_value(request.closed_by, "closed_by"),
+                rejection_reason=_required_value(
+                    request.rejection_reason, "rejection_reason"
+                ),
             )
         )
 
     async def inbox_close(
         self, context: ContextIdentity, request: InboxCloseRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.graph_workbench.inbox_close(
                 pot_id=context.value,
-                item_id=_required_str(payload, "item_id"),
-                closed_by=_required_str(payload, "closed_by"),
-                linked_plan_id=_optional_str(payload, "linked_plan_id"),
-                linked_mutation_id=_optional_str(payload, "linked_mutation_id"),
-                rejection_reason=_optional_str(payload, "rejection_reason"),
+                item_id=_required_value(request.item_id, "item_id"),
+                closed_by=_required_value(request.closed_by, "closed_by"),
+                linked_plan_id=request.linked_plan_id,
+                linked_mutation_id=request.linked_mutation_id,
+                rejection_reason=request.rejection_reason,
             )
         )
+
+    async def submit_event(
+        self, context: ContextIdentity, request: SubmitEventRequest
+    ) -> Outcome[object]:
+        submission = IngestionSubmissionRequest(
+            pot_id=context.value,
+            ingestion_kind=request.ingestion_kind,
+            source_channel=request.source_channel,
+            source_system=_required_value(request.source_system, "source_system"),
+            event_type=_required_value(request.event_type, "event_type"),
+            action=_required_value(request.action, "action"),
+            source_id=_required_value(request.source_id, "source_id"),
+            payload=dict(request.payload),
+            metadata=dict(request.metadata),
+            idempotency_key=request.idempotency_key,
+            dedup_key=request.dedup_key,
+            event_id=request.event_id,
+            provider=request.provider,
+            provider_host=request.provider_host,
+            repo_name=request.repo_name,
+            source_event_id=request.source_event_id,
+            artifact_refs=request.artifact_refs,
+            occurred_at=request.occurred_at,
+            actor=request.actor,
+        )
+        return await self._call(
+            lambda: self._ingestion_submission().submit(
+                submission,
+                wait=request.wait,
+                timeout_seconds=request.timeout_seconds,
+            )
+        )
+
+    async def submit_artifact(
+        self, context: ContextIdentity, request: SubmitArtifactRequest
+    ) -> Outcome[object]:
+        source_ref = request.source_ref or (
+            f"{request.source_system}:{request.artifact_type}:{request.artifact_id}"
+        )
+        submission = IngestionSubmissionRequest(
+            pot_id=context.value,
+            ingestion_kind="artifact_evidence",
+            source_channel=request.source_channel,
+            source_system=_required_value(request.source_system, "source_system"),
+            event_type="artifact",
+            action=_required_value(request.artifact_type, "artifact_type"),
+            source_id=_required_value(request.artifact_id, "artifact_id"),
+            payload={"artifact": dict(request.artifact), "source_ref": source_ref},
+            metadata=dict(request.metadata),
+            idempotency_key=request.idempotency_key,
+            provider=request.provider,
+            provider_host=request.provider_host,
+            repo_name=request.repo_name,
+            artifact_refs=(source_ref,),
+            occurred_at=request.occurred_at,
+            actor=request.actor,
+        )
+        return await self._call(
+            lambda: self._ingestion_submission().submit(
+                submission,
+                wait=request.wait,
+                timeout_seconds=request.timeout_seconds,
+            )
+        )
+
+    async def processing_status(
+        self, context: ContextIdentity, request: ProcessingStatusRequest
+    ) -> Outcome[object]:
+        event_id = _required_value(request.event_id, "event_id")
+        try:
+            event = await asyncio.to_thread(
+                self._ingestion_event_store().get_event, event_id
+            )
+        except Exception as exc:
+            return await self._dependency_failure("processing_status", exc)
+        if event is None or event.pot_id != context.value:
+            return Failure(
+                DomainError(
+                    code="processing_status_not_found",
+                    message="the requested evidence-processing event was not found",
+                    details={"event_id": event_id},
+                )
+            )
+        return Success(event)
 
     async def nudge(
         self, context: ContextIdentity, request: NudgeRequest
     ) -> Outcome[object]:
-        payload = request.payload
         return await self._call(
             lambda: self._services.nudge.nudge(
                 GraphNudgeRequest(
                     pot_id=context.value,
-                    event=_required_str(payload, "event"),
-                    session_id=_required_str(payload, "session_id"),
-                    scope=_mapping(payload, "scope"),
-                    path=_optional_str(payload, "path"),
-                    query=_optional_str(payload, "query"),
-                    limit=int(payload.get("limit") or 5),
+                    event=_required_value(request.event, "event"),
+                    session_id=_required_value(request.session_id, "session_id"),
+                    scope=request.scope,
+                    path=request.path,
+                    query=request.query,
+                    limit=request.limit,
                 )
             )
         )
@@ -645,6 +712,9 @@ class LocalEngineOperations:
             EngineOperation.INBOX_MARK_APPLIED: self.inbox_mark_applied,
             EngineOperation.INBOX_MARK_REJECTED: self.inbox_mark_rejected,
             EngineOperation.INBOX_CLOSE: self.inbox_close,
+            EngineOperation.SUBMIT_EVENT: self.submit_event,
+            EngineOperation.SUBMIT_ARTIFACT: self.submit_artifact,
+            EngineOperation.PROCESSING_STATUS: self.processing_status,
             EngineOperation.NUDGE: self.nudge,
         }
         handler = handlers.get(operation)
@@ -658,7 +728,10 @@ class LocalEngineOperations:
         return await handler(context, request)
 
     def _inspection_neighborhood(
-        self, *, context: ContextIdentity, payload: Mapping[str, object]
+        self,
+        *,
+        context: ContextIdentity,
+        request: NeighborhoodRequest | InspectRequest,
     ) -> object:
         capabilities = self._services.backend.capabilities()
         if not bool(getattr(capabilities, "inspection", False)):
@@ -680,11 +753,35 @@ class LocalEngineOperations:
             )
         return self._services.backend.inspection.neighborhood(
             pot_id=context.value,
-            entity_key=_required_str(payload, "entity_key"),
-            depth=int(payload.get("depth") or 2),
-            direction=str(payload.get("direction") or "both"),
-            predicates=_tuple_of_str(payload, "predicates"),
-            limit=int(payload.get("limit") or 50),
+            entity_key=_required_value(request.entity_key, "entity_key"),
+            depth=request.depth,
+            direction=request.direction,
+            predicates=request.predicates,
+            limit=request.limit,
+        )
+
+    def _ingestion_submission(self) -> Any:
+        service = self._services.ingestion
+        if service is None:
+            raise ContextEngineDisabled("evidence submission is not composed")
+        return service
+
+    def _ingestion_event_store(self) -> Any:
+        store = self._services.ingestion_events
+        if store is None:
+            raise ContextEngineDisabled("evidence status storage is not composed")
+        return store
+
+    async def _dependency_failure(
+        self, operation: str, exc: Exception
+    ) -> Failure[DependencyError]:
+        return Failure(
+            DependencyError(
+                code="local_engine_operation_failed",
+                message="the local engine operation failed",
+                details={"operation": operation, "error_type": type(exc).__name__},
+                recommended_next_action="inspect runtime logs",
+            )
         )
 
     async def _call(self, call: Callable[[], object]) -> Outcome[object]:
@@ -773,30 +870,10 @@ def build_local_resource_manager(services: Any) -> ContextResourceManager:
     )
 
 
-def _required_str(payload: Mapping[str, object], field: str) -> str:
-    value = payload.get(field)
+def _required_value(value: str | None, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} is required")
     return value
-
-
-def _optional_str(payload: Mapping[str, object], field: str) -> str | None:
-    value = payload.get(field)
-    return str(value) if value is not None else None
-
-
-def _tuple_of_str(payload: Mapping[str, object], field: str) -> tuple[str, ...]:
-    value = payload.get(field)
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        return (value,)
-    return tuple(str(item) for item in value)  # type: ignore[union-attr]
-
-
-def _mapping(payload: Mapping[str, object], field: str) -> Mapping[str, Any]:
-    value = payload.get(field)
-    return value if isinstance(value, Mapping) else {}
 
 
 def _no_active_pot_error() -> SelectionError:

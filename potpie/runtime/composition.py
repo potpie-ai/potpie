@@ -58,7 +58,7 @@ from potpie_context_engine.bootstrap.logging_setup import configure_logging
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import set_observability
 from potpie_context_engine.bootstrap.observability_wiring import default_observability
-from potpie_context_engine.core.api import build_graph_runtime
+from potpie_context_engine.core.runtime import build_graph_runtime
 from potpie_context_engine.core.coherence import assert_runtime_coherence
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 from potpie_context_engine.core.reconciliation_flags import (

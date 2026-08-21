@@ -29,16 +29,19 @@ from potpie_context_engine.requests import (
 class _Operations:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ContextIdentity, Mapping[str, object]]] = []
+        self.raise_on_resolve = False
 
     async def _record(self, name, context, request):
-        self.calls.append((name, context, request.payload))
+        if name == "resolve" and self.raise_on_resolve:
+            raise RuntimeError("sensitive dependency detail")
+        self.calls.append((name, context, request.to_payload()))
         return {"operation": name, "context": context.value}
 
     async def resolve(self, context, request):
         return await self._record("resolve", context, request)
 
     async def search(self, context, request):
-        self.calls.append(("search", context, request.payload))
+        self.calls.append(("search", context, request.to_payload()))
         return Failure(DomainError(code="not_found", message="not found"))
 
     async def catalog(self, context, request):
@@ -77,11 +80,19 @@ async def _engine(
 @pytest.mark.parametrize(
     ("method", "request_value"),
     [
-        ("resolve", ResolveRequest({"task": "find the boundary"})),
+        ("resolve", ResolveRequest(task="find the boundary")),
         ("catalog", CatalogRequest()),
-        ("inbox_add", InboxAddRequest({"summary": "review"})),
-        ("submit_event", SubmitEventRequest({"kind": "change"})),
-        ("nudge", NudgeRequest({"event": "prompt"})),
+        ("inbox_add", InboxAddRequest(summary="review")),
+        (
+            "submit_event",
+            SubmitEventRequest(
+                source_system="test",
+                event_type="change",
+                action="record",
+                source_id="change-1",
+            ),
+        ),
+        ("nudge", NudgeRequest(event="prompt", session_id="session-1")),
     ],
 )
 async def test_facade_delegates_with_the_bound_context(method, request_value) -> None:
@@ -97,25 +108,37 @@ async def test_facade_delegates_with_the_bound_context(method, request_value) ->
 async def test_facade_preserves_typed_failures() -> None:
     engine, _ = await _engine()
 
-    outcome = await engine.search(SearchRequest({"query": "missing"}))
+    outcome = await engine.search(SearchRequest(query="missing"))
 
     assert isinstance(outcome, Failure)
     assert isinstance(outcome.error, DomainError)
     assert outcome.error.code == "not_found"
 
 
-async def test_request_cannot_override_bound_context() -> None:
-    engine, operations = await _engine()
+def test_request_types_do_not_accept_context_selectors() -> None:
+    with pytest.raises(TypeError, match="pot_id"):
+        ResolveRequest(pot_id="other")  # type: ignore[call-arg]
 
-    outcome = await engine.resolve(ResolveRequest({"pot_id": "other"}))
+
+async def test_dependency_exceptions_become_redacted_typed_failures() -> None:
+    engine, operations = await _engine()
+    operations.raise_on_resolve = True
+
+    outcome = await engine.resolve(ResolveRequest(task="fail"))
 
     assert isinstance(outcome, Failure)
-    assert isinstance(outcome.error, DomainError)
-    assert outcome.error.code == "context_selector_forbidden"
-    assert operations.calls == []
+    assert outcome.error.category == "dependency"
+    assert outcome.error.code == "engine_dependency_failed"
+    assert outcome.error.details == {
+        "operation": "resolve",
+        "error_type": "RuntimeError",
+    }
+    assert "sensitive dependency detail" not in str(outcome.error)
 
 
-async def test_close_is_idempotent_and_releases_transferred_resources_in_reverse() -> None:
+async def test_close_is_idempotent_and_releases_transferred_resources_in_reverse() -> (
+    None
+):
     closed: list[str] = []
 
     async def close(name: str) -> None:

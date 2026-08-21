@@ -27,7 +27,6 @@ from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
     GraphDefinitionError,
-    GraphExtension,
     GraphReader,
     GraphReaderFactory,
     GraphReaderSpec,
@@ -135,13 +134,13 @@ from potpie_context_engine.core.reconciliation_config import (
     DEFAULT_RECONCILIATION_CONFIG,
     ReconciliationConfig,
 )
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 from potpie_context_engine.core.runtime import (
     GraphObserver,
-    GraphRuntime,
     NoOpGraphObserver,
     RuntimeCompositionError,
-    build_graph_runtime,
 )
 from potpie_context_engine.core.lifecycle import SetupPlan, StepResult
 from potpie_context_engine.core.serialization import from_transport, to_transport
@@ -218,7 +217,6 @@ __all__ = [
     "DEFAULT_GRAPH_DEFINITION",
     "GraphDefinition",
     "GraphDefinitionError",
-    "GraphExtension",
     "GraphReader",
     "GraphReaderFactory",
     "GraphReaderSpec",
@@ -293,12 +291,10 @@ __all__ = [
     "ReconciliationConfig",
     "reconciliation_config_from_env",
     "GraphObserver",
-    "GraphRuntime",
     "NoOpGraphObserver",
     "RuntimeCompositionError",
     "SetupPlan",
     "StepResult",
-    "build_graph_runtime",
     "from_transport",
     "to_transport",
     # ports

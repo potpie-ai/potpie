@@ -1,13 +1,9 @@
-"""Potpie Context Engine — the extensible project-context graph runtime.
+"""Potpie Context Engine — the context-bound project-memory library.
 
 Supported imports live in two places:
 
-- ``potpie_context_engine`` (this module) — the graph definition/runtime
-  surface. The definition and runtime-factory exports
-  (``GraphDefinition``, ``GraphExtension``, ``GraphRuntime``,
-  ``build_graph_runtime``, ``DEFAULT_GRAPH_DEFINITION``) land with the
-  definition-injection and runtime-factory milestones of the
-  modularization plan.
+- ``potpie_context_engine`` (this module) — the context-bound engine factory,
+  lifecycle, outcomes, and non-extensible default graph definition.
 - ``potpie_context_engine.api`` — stable contract DTOs and ports for
   consumers composing their own runtime (``GraphBackend``,
   ``GraphPlanStorePort``, ``GraphInboxStorePort``, ``GraphService``).
@@ -26,9 +22,7 @@ from __future__ import annotations
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
-    GraphExtension,
 )
-from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
 from potpie_context_engine.context_engine import (
     ContextEngine,
     ContextIdentity,
@@ -60,10 +54,7 @@ __all__ = [
     "EngineResource",
     "Failure",
     "GraphDefinition",
-    "GraphExtension",
-    "GraphRuntime",
     "Outcome",
     "Success",
-    "build_graph_runtime",
     "create_engine",
 ]

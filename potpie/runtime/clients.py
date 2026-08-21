@@ -1,4 +1,4 @@
-"""Named local, daemon, and temporary legacy Context Engine clients."""
+"""Named local and daemon Context Engine clients."""
 
 from __future__ import annotations
 

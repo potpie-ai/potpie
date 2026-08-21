@@ -13,9 +13,8 @@ from potpie_context_engine.core.api import (
     GraphDefinition,
     GraphInboxItem,
     GraphMutationPlanRecord,
-    GraphRuntime,
-    build_graph_runtime,
 )
+from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )

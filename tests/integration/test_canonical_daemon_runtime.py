@@ -29,6 +29,7 @@ from potpie.runtime import (
     generate_bearer_token,
 )
 from potpie_context_engine import Failure, Success
+from potpie_context_engine.core.agent_envelope import AgentEnvelope
 from potpie_context_engine.requests import SearchRequest
 from tests.conftest import free_port
 
@@ -51,7 +52,13 @@ class _Handler:
         if self.unsupported_result:
             return Success(object())
         return Success(
-            {"operation": request.operation.value, "payload": request.payload.payload}
+            AgentEnvelope(
+                pot_id=request.selector.value or "",
+                intent="search",
+                items=(),
+                coverage=(),
+                metadata={"query": request.payload.query},
+            )
         )
 
 
@@ -110,9 +117,7 @@ async def test_authenticated_runtime_handshake_operation_and_typed_stop(
         )
 
         handshake = await engine_client.handshake()
-        operation = await engine_client.search(
-            SearchRequest(payload={"query": "typed"})
-        )
+        operation = await engine_client.search(SearchRequest(query="typed"))
         control_handshake = await control_client.handshake()
         status = await control_client.status()
         shutdown = await control_client.shutdown(reason="integration_test")
@@ -122,8 +127,13 @@ async def test_authenticated_runtime_handshake_operation_and_typed_stop(
         assert isinstance(status, Success)
         assert status.value.backend_profile == "embedded"
         assert status.value.ui_url == "http://127.0.0.1:8765"
-        assert operation == Success(
-            {"operation": "search", "payload": {"query": "typed"}}
+        assert isinstance(operation, Success)
+        assert operation.value == AgentEnvelope(
+            pot_id="context-a",
+            intent="search",
+            items=(),
+            coverage=(),
+            metadata={"query": "typed"},
         )
         assert isinstance(shutdown, Success)
         assert shutdown.value.accepted is True

@@ -41,6 +41,37 @@ from potpie_context_engine.requests import (
     SubmitArtifactRequest,
     SubmitEventRequest,
 )
+from potpie_context_engine.results import (
+    CatalogResult,
+    CommitResult,
+    DataPlaneStatusResult,
+    DescribeResult,
+    ExportSnapshotResult,
+    HistoryResult,
+    ImportSnapshotResult,
+    InboxAddResult,
+    InboxClaimResult,
+    InboxCloseResult,
+    InboxListResult,
+    InboxMarkAppliedResult,
+    InboxMarkRejectedResult,
+    InboxShowResult,
+    InspectResult,
+    MutateResult,
+    NeighborhoodResult,
+    NudgeResult,
+    ProcessingStatusResult,
+    ProposeResult,
+    QualityResult,
+    ReadResult,
+    RecordResult,
+    RepairResult,
+    ResolveResult,
+    SearchEntitiesResult,
+    SearchResult,
+    SubmitArtifactResult,
+    SubmitEventResult,
+)
 
 
 class EngineOperation(StrEnum):
@@ -92,6 +123,7 @@ class SafetyClass(StrEnum):
 class OperationSpec:
     operation: EngineOperation
     request_type: type[EngineRequest]
+    result_type: type[object]
     safety: SafetyClass
     destructive: bool = False
     resource_type: str | None = None
@@ -113,47 +145,96 @@ _READ = SafetyClass.SHARED_CONTEXT_READ
 _WRITE = SafetyClass.EXCLUSIVE_CONTEXT_MUTATION
 
 _SPECS = (
-    OperationSpec(EngineOperation.RESOLVE, ResolveRequest, _READ),
-    OperationSpec(EngineOperation.SEARCH, SearchRequest, _READ),
-    OperationSpec(EngineOperation.RECORD, RecordRequest, _WRITE),
-    OperationSpec(EngineOperation.DATA_PLANE_STATUS, DataPlaneStatusRequest, _READ),
-    OperationSpec(EngineOperation.CATALOG, CatalogRequest, _READ),
-    OperationSpec(EngineOperation.DESCRIBE, DescribeRequest, _READ),
-    OperationSpec(EngineOperation.READ, ReadRequest, _READ),
-    OperationSpec(EngineOperation.SEARCH_ENTITIES, SearchEntitiesRequest, _READ),
-    OperationSpec(EngineOperation.MUTATE, MutateRequest, _WRITE),
-    OperationSpec(EngineOperation.NEIGHBORHOOD, NeighborhoodRequest, _READ),
-    OperationSpec(EngineOperation.INSPECT, InspectRequest, _READ),
-    OperationSpec(EngineOperation.EXPORT_SNAPSHOT, ExportSnapshotRequest, _READ),
+    OperationSpec(EngineOperation.RESOLVE, ResolveRequest, ResolveResult, _READ),
+    OperationSpec(EngineOperation.SEARCH, SearchRequest, SearchResult, _READ),
+    OperationSpec(EngineOperation.RECORD, RecordRequest, RecordResult, _WRITE),
+    OperationSpec(
+        EngineOperation.DATA_PLANE_STATUS,
+        DataPlaneStatusRequest,
+        DataPlaneStatusResult,
+        _READ,
+    ),
+    OperationSpec(EngineOperation.CATALOG, CatalogRequest, CatalogResult, _READ),
+    OperationSpec(EngineOperation.DESCRIBE, DescribeRequest, DescribeResult, _READ),
+    OperationSpec(EngineOperation.READ, ReadRequest, ReadResult, _READ),
+    OperationSpec(
+        EngineOperation.SEARCH_ENTITIES,
+        SearchEntitiesRequest,
+        SearchEntitiesResult,
+        _READ,
+    ),
+    OperationSpec(EngineOperation.MUTATE, MutateRequest, MutateResult, _WRITE),
+    OperationSpec(
+        EngineOperation.NEIGHBORHOOD,
+        NeighborhoodRequest,
+        NeighborhoodResult,
+        _READ,
+    ),
+    OperationSpec(EngineOperation.INSPECT, InspectRequest, InspectResult, _READ),
+    OperationSpec(
+        EngineOperation.EXPORT_SNAPSHOT,
+        ExportSnapshotRequest,
+        ExportSnapshotResult,
+        _READ,
+    ),
     OperationSpec(
         EngineOperation.IMPORT_SNAPSHOT,
         ImportSnapshotRequest,
+        ImportSnapshotResult,
         _WRITE,
         destructive=True,
     ),
     OperationSpec(
         EngineOperation.REPAIR,
         RepairRequest,
+        RepairResult,
         _WRITE,
         destructive=True,
     ),
-    OperationSpec(EngineOperation.PROPOSE, ProposeRequest, _WRITE),
-    OperationSpec(EngineOperation.COMMIT, CommitRequest, _WRITE),
-    OperationSpec(EngineOperation.HISTORY, HistoryRequest, _READ),
-    OperationSpec(EngineOperation.QUALITY, QualityRequest, _READ),
-    OperationSpec(EngineOperation.INBOX_ADD, InboxAddRequest, _WRITE),
-    OperationSpec(EngineOperation.INBOX_LIST, InboxListRequest, _READ),
-    OperationSpec(EngineOperation.INBOX_SHOW, InboxShowRequest, _READ),
-    OperationSpec(EngineOperation.INBOX_CLAIM, InboxClaimRequest, _WRITE),
-    OperationSpec(EngineOperation.INBOX_MARK_APPLIED, InboxMarkAppliedRequest, _WRITE),
+    OperationSpec(EngineOperation.PROPOSE, ProposeRequest, ProposeResult, _WRITE),
+    OperationSpec(EngineOperation.COMMIT, CommitRequest, CommitResult, _WRITE),
+    OperationSpec(EngineOperation.HISTORY, HistoryRequest, HistoryResult, _READ),
+    OperationSpec(EngineOperation.QUALITY, QualityRequest, QualityResult, _READ),
+    OperationSpec(EngineOperation.INBOX_ADD, InboxAddRequest, InboxAddResult, _WRITE),
+    OperationSpec(EngineOperation.INBOX_LIST, InboxListRequest, InboxListResult, _READ),
+    OperationSpec(EngineOperation.INBOX_SHOW, InboxShowRequest, InboxShowResult, _READ),
     OperationSpec(
-        EngineOperation.INBOX_MARK_REJECTED, InboxMarkRejectedRequest, _WRITE
+        EngineOperation.INBOX_CLAIM, InboxClaimRequest, InboxClaimResult, _WRITE
     ),
-    OperationSpec(EngineOperation.INBOX_CLOSE, InboxCloseRequest, _WRITE),
-    OperationSpec(EngineOperation.SUBMIT_EVENT, SubmitEventRequest, _WRITE),
-    OperationSpec(EngineOperation.SUBMIT_ARTIFACT, SubmitArtifactRequest, _WRITE),
-    OperationSpec(EngineOperation.PROCESSING_STATUS, ProcessingStatusRequest, _READ),
-    OperationSpec(EngineOperation.NUDGE, NudgeRequest, _WRITE),
+    OperationSpec(
+        EngineOperation.INBOX_MARK_APPLIED,
+        InboxMarkAppliedRequest,
+        InboxMarkAppliedResult,
+        _WRITE,
+    ),
+    OperationSpec(
+        EngineOperation.INBOX_MARK_REJECTED,
+        InboxMarkRejectedRequest,
+        InboxMarkRejectedResult,
+        _WRITE,
+    ),
+    OperationSpec(
+        EngineOperation.INBOX_CLOSE, InboxCloseRequest, InboxCloseResult, _WRITE
+    ),
+    OperationSpec(
+        EngineOperation.SUBMIT_EVENT,
+        SubmitEventRequest,
+        SubmitEventResult,
+        _WRITE,
+    ),
+    OperationSpec(
+        EngineOperation.SUBMIT_ARTIFACT,
+        SubmitArtifactRequest,
+        SubmitArtifactResult,
+        _WRITE,
+    ),
+    OperationSpec(
+        EngineOperation.PROCESSING_STATUS,
+        ProcessingStatusRequest,
+        ProcessingStatusResult,
+        _READ,
+    ),
+    OperationSpec(EngineOperation.NUDGE, NudgeRequest, NudgeResult, _WRITE),
 )
 
 if len({spec.operation for spec in _SPECS}) != len(_SPECS):
@@ -182,6 +263,7 @@ def operation_catalog_fingerprint() -> str:
             "kind": "engine",
             "operation": spec.operation.value,
             "request_type": spec.request_type.__name__,
+            "result_type": spec.result_type.__name__,
             "safety": spec.safety.value,
             "destructive": spec.destructive,
             "resource_type": spec.resource_type,
@@ -194,6 +276,7 @@ def operation_catalog_fingerprint() -> str:
             "kind": "daemon_control",
             "operation": operation.value,
             "request_type": None,
+            "result_type": None,
             "safety": safety.value,
             "destructive": False,
             "resource_type": None,

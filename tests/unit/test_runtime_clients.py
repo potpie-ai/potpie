@@ -52,21 +52,21 @@ class _RecordingEngine:
         self.raise_on_record = False
 
     async def resolve(self, request: ResolveRequest):
-        self.calls.append(("resolve", request.payload))
-        return Success({"resolved": request.payload})
+        self.calls.append(("resolve", request.to_payload()))
+        return Success({"resolved": request.to_payload()})
 
     async def search(self, request: SearchRequest):
-        self.calls.append(("search", request.payload))
-        return Success({"matches": (request.payload["query"],)})
+        self.calls.append(("search", request.to_payload()))
+        return Success({"matches": (request.query,)})
 
     async def record(self, request: RecordRequest):
-        self.calls.append(("record", request.payload))
+        self.calls.append(("record", request.to_payload()))
         if self.raise_on_record:
             raise RuntimeError("sensitive handler detail")
         return Success({"applied": 1})
 
     async def repair(self, request: RepairRequest):
-        self.calls.append(("repair", request.payload))
+        self.calls.append(("repair", request.to_payload()))
         return Success({"repaired": True})
 
 
@@ -177,10 +177,10 @@ async def test_local_client_acquires_lease_invokes_named_handler_and_releases() 
         request_id_factory=_request_ids("request-1"),
     )
 
-    outcome = await client.search(SearchRequest(payload={"query": "typed"}))
+    outcome = await client.search(SearchRequest(query="typed"))
 
     assert outcome == Success({"matches": ("typed",)})
-    assert engine.calls == [("search", {"query": "typed"})]
+    assert engine.calls == [("search", SearchRequest(query="typed").to_payload())]
     assert manager.requests == [
         AcquisitionRequest(
             request_id="request-1",
@@ -205,7 +205,7 @@ async def test_local_client_binds_destructive_confirmation_to_exact_request() ->
     )
 
     outcome = await client.repair(
-        RepairRequest(payload={"target": "labels"}),
+        RepairRequest(targets=("labels",)),
         confirmation=DestructiveConfirmation(confirmed=True),
     )
 
@@ -261,9 +261,7 @@ async def test_daemon_client_handshake_then_typed_operation() -> None:
         if isinstance(request, HandshakeRequest):
             return _success_response(request, _handshake_result())
         assert isinstance(request, EngineOperationRequest)
-        return _success_response(
-            request, {"matches": (request.payload.payload["query"],)}
-        )
+        return _success_response(request, {"matches": (request.payload.query,)})
 
     transport = _Transport(respond)
     client = DaemonEngineClient(
@@ -274,7 +272,7 @@ async def test_daemon_client_handshake_then_typed_operation() -> None:
     )
 
     handshake = await client.handshake()
-    outcome = await client.search(SearchRequest(payload={"query": "typed"}))
+    outcome = await client.search(SearchRequest(query="typed"))
 
     assert isinstance(handshake, Success)
     assert client.handshake_result == _handshake_result()

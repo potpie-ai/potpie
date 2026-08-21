@@ -114,9 +114,10 @@ async def test_resource_mutations_conflict_on_typed_resource_identity() -> None:
     spec = OperationSpec(
         operation=EngineOperation.RECORD,
         request_type=RecordRequest,
+        result_type=object,
         safety=SafetyClass.EXCLUSIVE_RESOURCE_MUTATION,
         resource_type="source",
-        resource_identity_fields=("source_id",),
+        resource_identity_fields=("idempotency_key",),
     )
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
@@ -126,7 +127,7 @@ async def test_resource_mutations_conflict_on_typed_resource_identity() -> None:
         async with coordinator.coordinate(
             spec=spec,
             context=ContextIdentity("context-a"),
-            request=RecordRequest(payload={"source_id": "source-1"}),
+            request=RecordRequest(idempotency_key="source-1"),
         ):
             first_entered.set()
             await release_first.wait()
@@ -135,7 +136,7 @@ async def test_resource_mutations_conflict_on_typed_resource_identity() -> None:
         async with coordinator.coordinate(
             spec=spec,
             context=ContextIdentity("context-b"),
-            request=RecordRequest(payload={"source_id": "source-1"}),
+            request=RecordRequest(idempotency_key="source-1"),
         ):
             second_entered.set()
 

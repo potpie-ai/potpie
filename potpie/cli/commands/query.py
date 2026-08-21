@@ -53,12 +53,10 @@ def register(root: typer.Typer) -> None:
             env = run_engine_operation(
                 client.resolve(
                     EngineResolveRequest(
-                        payload={
-                            "task": task,
-                            "intent": intent,
-                            "include": _split(include),
-                            "mode": mode,
-                        }
+                        task=task,
+                        intent=intent,
+                        include=_split(include),
+                        mode=mode,
                     )
                 )
             )
@@ -75,11 +73,7 @@ def register(root: typer.Typer) -> None:
         with contract():
             client = get_engine_client(pot)
             env = run_engine_operation(
-                client.search(
-                    EngineSearchRequest(
-                        payload={"query": query, "include": _split(include)}
-                    )
-                )
+                client.search(EngineSearchRequest(query=query, include=_split(include)))
             )
             _capture_context_activation(command="search", item_count=len(env.items))
             emit(_envelope_payload(env), human=_envelope_human(env))
@@ -100,11 +94,9 @@ def register(root: typer.Typer) -> None:
             receipt = run_engine_operation(
                 get_engine_client(pot).record(
                     EngineRecordRequest(
-                        payload={
-                            "record_type": type,
-                            "summary": summary,
-                            "scope": _parse_scope(scope),
-                        }
+                        record_type=type,
+                        summary=summary,
+                        scope=_parse_scope(scope),
                     )
                 )
             )

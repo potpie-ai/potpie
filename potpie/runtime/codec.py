@@ -52,6 +52,8 @@ from potpie_context_engine import (
     Success,
 )
 from potpie_context_engine.outcomes import RetryPosture
+from potpie_context_engine.requests import request_from_payload
+from potpie_context_engine.results import result_from_payload
 
 
 DecodeRequestOutcome: TypeAlias = Success[ProtocolRequest] | Failure[ProtocolError]
@@ -74,7 +76,7 @@ def encode_request(request: ProtocolRequest) -> dict[str, object]:
                     "kind": request.selector.kind,
                     "value": request.selector.value,
                 },
-                "payload": _to_wire(request.payload.payload),
+                "payload": _to_wire(request.payload.to_payload()),
                 "destructive_intent": (
                     _to_wire(request.destructive_intent)
                     if request.destructive_intent is not None
@@ -142,7 +144,7 @@ def decode_request(document: object) -> DecodeRequestOutcome:
                     request_id=request_id,
                     operation=engine_operation,
                     selector=selector.value,
-                    payload=request_type(payload=dict(payload)),
+                    payload=request_from_payload(request_type, dict(payload)),
                     destructive_intent=intent.value,
                 )
             )
@@ -377,6 +379,16 @@ def _decode_result(
             return _protocol_failure(
                 "response_result_malformed", "daemon status result is invalid"
             )
+    if isinstance(request, EngineOperationRequest):
+        result_type = ENGINE_OPERATION_CATALOG[request.operation].result_type
+        try:
+            return Success(result_from_payload(result_type, value))
+        except (TypeError, ValueError, KeyError):
+            return _protocol_failure(
+                "response_result_malformed",
+                "operation result does not match the operation catalog",
+                details={"operation": request.operation.value},
+            )
     return Success(_from_wire(value))
 
 
@@ -560,6 +572,10 @@ def _protocol_failure(
 def _to_wire(value: object) -> object:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            item.name: _to_wire(getattr(value, item.name)) for item in fields(value)
+        }
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("protocol mappings require string keys")
@@ -572,10 +588,6 @@ def _to_wire(value: object) -> object:
         return _to_wire(value.value)
     if isinstance(value, (datetime, date, Path, UUID)):
         return str(value)
-    if is_dataclass(value) and not isinstance(value, type):
-        return {
-            item.name: _to_wire(getattr(value, item.name)) for item in fields(value)
-        }
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
         return _to_wire(model_dump(mode="json"))

@@ -80,40 +80,39 @@ def test_api_reexports_are_the_internal_contracts() -> None:
     )
     from potpie_context_engine.core.ports.graph.plan_store import GraphPlanStorePort
     from potpie_context_engine.core.ports.graph_service import GraphService
+    from potpie_context_engine.requests import ReadRequest
 
     assert api.GraphBackend is GraphBackend
     assert api.GraphInboxStorePort is GraphInboxStorePort
     assert api.GraphPlanStorePort is GraphPlanStorePort
     assert api.GraphService is GraphService
+    assert api.ReadRequest is ReadRequest
     assert {
         "GraphBackend",
         "GraphInboxStorePort",
         "GraphPlanStorePort",
         "GraphService",
     } <= set(api.__all__)
+    assert {"DEFAULT_GRAPH_DEFINITION", "GraphDefinition"} <= set(api.__all__)
     assert {
-        "DEFAULT_GRAPH_DEFINITION",
-        "GraphDefinition",
         "GraphExtension",
         "GraphRuntime",
         "build_graph_runtime",
-    } <= set(api.__all__)
+    }.isdisjoint(api.__all__)
 
 
-def test_package_root_exports_the_documented_runtime_surface() -> None:
+def test_package_root_exports_the_context_engine_surface() -> None:
     import potpie_context_engine
     from potpie_context_engine.core.definition import (
         DEFAULT_GRAPH_DEFINITION,
         GraphDefinition,
-        GraphExtension,
     )
-    from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
 
     assert potpie_context_engine.DEFAULT_GRAPH_DEFINITION is DEFAULT_GRAPH_DEFINITION
     assert potpie_context_engine.GraphDefinition is GraphDefinition
-    assert potpie_context_engine.GraphExtension is GraphExtension
-    assert potpie_context_engine.GraphRuntime is GraphRuntime
-    assert potpie_context_engine.build_graph_runtime is build_graph_runtime
+    assert not hasattr(potpie_context_engine, "GraphExtension")
+    assert not hasattr(potpie_context_engine, "GraphRuntime")
+    assert not hasattr(potpie_context_engine, "build_graph_runtime")
     assert set(potpie_context_engine.__all__) == {
         "DEFAULT_GRAPH_DEFINITION",
         "ContextEngine",
@@ -127,11 +126,8 @@ def test_package_root_exports_the_documented_runtime_surface() -> None:
         "EngineResource",
         "Failure",
         "GraphDefinition",
-        "GraphExtension",
-        "GraphRuntime",
         "Outcome",
         "Success",
-        "build_graph_runtime",
         "create_engine",
     }
 

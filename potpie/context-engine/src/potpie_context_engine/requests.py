@@ -1,37 +1,64 @@
-"""Context-bound request markers for the public Context Engine façade.
-
-The migration intentionally owns these request identities before it replaces
-the legacy request payload mappings with final typed fields. Payloads remain
-operation-specific mappings during that mechanical move; callers cannot supply
-or override an engine context selector here.
-"""
+"""Typed, context-bound requests for the public Context Engine facade."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Mapping
+from dataclasses import dataclass, field, fields
+from datetime import datetime
+from typing import Any, Mapping, TypeVar
+
+from potpie_context_engine.core.actor import Actor
 
 
-@dataclass(frozen=True, slots=True)
 class EngineRequest:
-    """Base for one explicitly named, context-bound engine operation request."""
+    """Base for one explicitly named request with no context selector."""
 
-    payload: Mapping[str, object] = field(default_factory=dict)
+    def to_payload(self) -> dict[str, object]:
+        """Return the operation payload used by the typed daemon codec."""
+
+        return {field.name: getattr(self, field.name) for field in fields(self)}
+
+
+RequestT = TypeVar("RequestT", bound=EngineRequest)
 
 
 @dataclass(frozen=True, slots=True)
 class ResolveRequest(EngineRequest):
-    pass
+    task: str | None = None
+    intent: str | None = None
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+    scope: Mapping[str, Any] = field(default_factory=dict)
+    mode: str = "fast"
+    source_policy: str = "references_only"
+    max_items: int = 12
+    as_of: datetime | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    include_invalidated: bool = False
+    freshness_preference: str = "balanced"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class SearchRequest(EngineRequest):
-    pass
+    query: str = ""
+    include: tuple[str, ...] = ()
+    scope: Mapping[str, Any] = field(default_factory=dict)
+    mode: str = "fast"
+    source_policy: str = "references_only"
+    max_items: int = 12
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class RecordRequest(EngineRequest):
-    pass
+    record_type: str = ""
+    summary: str = ""
+    details: Mapping[str, Any] = field(default_factory=dict)
+    scope: Mapping[str, Any] = field(default_factory=dict)
+    source_refs: tuple[str, ...] = ()
+    idempotency_key: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,127 +68,254 @@ class DataPlaneStatusRequest(EngineRequest):
 
 @dataclass(frozen=True, slots=True)
 class CatalogRequest(EngineRequest):
-    pass
+    task: str | None = None
+    subgraph: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class DescribeRequest(EngineRequest):
-    pass
+    subgraph: str = ""
+    view: str | None = None
+    include_examples: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class ReadRequest(EngineRequest):
-    pass
+    subgraph: str = ""
+    view: str = ""
+    query: str | None = None
+    scope: Mapping[str, Any] = field(default_factory=dict)
+    limit: int = 12
+    as_of: datetime | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    include_invalidated: bool = False
+    freshness_preference: str = "balanced"
+    depth: int | None = None
+    direction: str | None = None
+    environment: str | None = None
+    source_refs: tuple[str, ...] = ()
+    detail: str = "compact"
+    relations: str = "summary"
+    query_threshold: float = 0.70
 
 
 @dataclass(frozen=True, slots=True)
 class SearchEntitiesRequest(EngineRequest):
-    pass
+    query: str = ""
+    type: str | None = None
+    predicate: str | None = None
+    subgraph: str | None = None
+    scope: Mapping[str, Any] = field(default_factory=dict)
+    truth: str | None = None
+    source_system: str | None = None
+    source_family: str | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    environment: str | None = None
+    external_id: str | None = None
+    source_refs: tuple[str, ...] = ()
+    limit: int = 10
+    supporting_claims: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class MutateRequest(EngineRequest):
-    pass
+    mutation: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class NeighborhoodRequest(EngineRequest):
-    pass
+    entity_key: str = ""
+    depth: int = 2
+    direction: str = "both"
+    predicates: tuple[str, ...] = ()
+    limit: int = 50
 
 
 @dataclass(frozen=True, slots=True)
-class InspectRequest(EngineRequest):
+class InspectRequest(NeighborhoodRequest):
     pass
 
 
 @dataclass(frozen=True, slots=True)
 class ExportSnapshotRequest(EngineRequest):
-    pass
+    destination: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class ImportSnapshotRequest(EngineRequest):
-    pass
+    source: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class RepairRequest(EngineRequest):
-    pass
+    targets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class ProposeRequest(EngineRequest):
-    pass
+    mutation: Mapping[str, Any] = field(default_factory=dict)
+    ttl_seconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class CommitRequest(EngineRequest):
-    pass
+    plan_id: str = ""
+    approved_by: str | None = None
+    verify: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class HistoryRequest(EngineRequest):
-    pass
+    entity_key: str | None = None
+    claim_key: str | None = None
+    subgraph: str | None = None
+    plan_id: str | None = None
+    mutation_id: str | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    limit: int = 50
 
 
 @dataclass(frozen=True, slots=True)
 class QualityRequest(EngineRequest):
-    pass
+    report: str = "summary"
+    subgraph: str | None = None
+    limit: int = 50
+    confidence_threshold: float = 0.5
 
 
 @dataclass(frozen=True, slots=True)
 class InboxAddRequest(EngineRequest):
-    pass
+    summary: str = ""
+    details: str | None = None
+    evidence: tuple[str, ...] = ()
+    source_refs: tuple[str, ...] = ()
+    suspected_subgraphs: tuple[str, ...] = ()
+    created_by: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class InboxListRequest(EngineRequest):
-    pass
+    status: tuple[str, ...] = ()
+    claimed_by: str | None = None
+    suspected_subgraph: str | None = None
+    source_ref: str | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    limit: int = 50
 
 
 @dataclass(frozen=True, slots=True)
 class InboxShowRequest(EngineRequest):
-    pass
+    item_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class InboxClaimRequest(EngineRequest):
-    pass
+    item_id: str = ""
+    claimed_by: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class InboxMarkAppliedRequest(EngineRequest):
-    pass
+    item_id: str = ""
+    closed_by: str | None = None
+    linked_plan_id: str | None = None
+    linked_mutation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class InboxMarkRejectedRequest(EngineRequest):
-    pass
+    item_id: str = ""
+    closed_by: str | None = None
+    rejection_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class InboxCloseRequest(EngineRequest):
-    pass
+    item_id: str = ""
+    closed_by: str | None = None
+    linked_plan_id: str | None = None
+    linked_mutation_id: str | None = None
+    rejection_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class SubmitEventRequest(EngineRequest):
-    pass
+    source_system: str = ""
+    event_type: str = ""
+    action: str = ""
+    source_id: str = ""
+    payload: Mapping[str, Any] = field(default_factory=dict)
+    ingestion_kind: str = "agent_reconciliation"
+    source_channel: str = "engine"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    idempotency_key: str | None = None
+    dedup_key: str | None = None
+    event_id: str | None = None
+    provider: str | None = None
+    provider_host: str | None = None
+    repo_name: str | None = None
+    source_event_id: str | None = None
+    artifact_refs: tuple[str, ...] = ()
+    occurred_at: datetime | None = None
+    actor: Actor | None = None
+    wait: bool = False
+    timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class SubmitArtifactRequest(EngineRequest):
-    pass
+    source_system: str = ""
+    artifact_type: str = ""
+    artifact_id: str = ""
+    artifact: Mapping[str, Any] = field(default_factory=dict)
+    source_ref: str | None = None
+    source_channel: str = "engine"
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    idempotency_key: str | None = None
+    provider: str | None = None
+    provider_host: str | None = None
+    repo_name: str | None = None
+    occurred_at: datetime | None = None
+    actor: Actor | None = None
+    wait: bool = False
+    timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ProcessingStatusRequest(EngineRequest):
-    pass
+    event_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class NudgeRequest(EngineRequest):
-    pass
+    event: str = ""
+    session_id: str = ""
+    scope: Mapping[str, Any] = field(default_factory=dict)
+    path: str | None = None
+    query: str | None = None
+    limit: int = 5
 
 
-__all__ = [name for name in globals() if name.endswith("Request")]
+def request_from_payload(
+    request_type: type[RequestT], payload: Mapping[str, object]
+) -> RequestT:
+    """Decode a wire mapping into one exact operation request type."""
+
+    from potpie_context_engine.typed_serialization import decode_dataclass
+
+    return decode_dataclass(request_type, payload)
+
+
+__all__ = [
+    "EngineRequest",
+    "request_from_payload",
+    *[
+        name
+        for name in globals()
+        if name.endswith("Request") and name != "EngineRequest"
+    ],
+]

@@ -110,8 +110,7 @@ class OperationCoordinator:
             return ((context_key, "write"),)
         if spec.safety is SafetyClass.EXCLUSIVE_RESOURCE_MUTATION:
             resource_identity = ":".join(
-                str(request.payload[field])
-                for field in spec.resource_identity_fields
+                str(getattr(request, field)) for field in spec.resource_identity_fields
             )
             resource_key = ConflictKey(
                 "resource", f"{spec.resource_type}:{resource_identity}"

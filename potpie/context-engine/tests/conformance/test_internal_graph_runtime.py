@@ -1,3 +1,5 @@
+"""Internal graph-runtime conformance behind the public ContextEngine facade."""
+
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +13,6 @@ from potpie_context_engine.core.api import (
     EntityTypeSpec,
     GraphCatalogRequest,
     GraphDescribeRequest,
-    GraphExtension,
     GraphMutationPlanStatus,
     GraphReadRequest,
     GraphReaderSpec,
@@ -19,8 +20,9 @@ from potpie_context_engine.core.api import (
     IdentityClass,
     ReconciliationConfig,
     SemanticMutationRequest,
-    build_graph_runtime,
 )
+from potpie_context_engine.core.definition import GraphExtension
+from potpie_context_engine.core.runtime import build_graph_runtime
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.ports.claim_query import (
     AsyncClaimQueryPort,
@@ -37,7 +39,9 @@ from potpie_context_engine.core.ports.graph.plan_store import (
     GraphPlanStorePort,
 )
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
-from potpie_context_engine.core.reconciliation_config import current_reconciliation_config
+from potpie_context_engine.core.reconciliation_config import (
+    current_reconciliation_config,
+)
 from potpie_context_engine.api import Candidate, RankedItem, ReadResponse
 from potpie_context_engine.testing import (
     InMemoryGraphBackend,

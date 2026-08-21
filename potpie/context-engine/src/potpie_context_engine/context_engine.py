@@ -8,10 +8,42 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol, TypeVar
 
 from potpie_context_engine.outcomes import (
+    DependencyError,
     EngineLifecycleError,
     Failure,
     Outcome,
     Success,
+)
+from potpie_context_engine.results import (
+    CatalogResult,
+    CommitResult,
+    DataPlaneStatusResult,
+    DescribeResult,
+    ExportSnapshotResult,
+    HistoryResult,
+    ImportSnapshotResult,
+    InboxAddResult,
+    InboxClaimResult,
+    InboxCloseResult,
+    InboxListResult,
+    InboxMarkAppliedResult,
+    InboxMarkRejectedResult,
+    InboxShowResult,
+    InspectResult,
+    MutateResult,
+    NeighborhoodResult,
+    NudgeResult,
+    ProcessingStatusResult,
+    ProposeResult,
+    QualityResult,
+    ReadResult,
+    RecordResult,
+    RepairResult,
+    ResolveResult,
+    SearchEntitiesResult,
+    SearchResult,
+    SubmitArtifactResult,
+    SubmitEventResult,
 )
 from potpie_context_engine.requests import (
     CatalogRequest,
@@ -85,127 +117,127 @@ class EngineResource:
 class ContextOperations(Protocol):
     async def resolve(
         self, context: ContextIdentity, request: ResolveRequest
-    ) -> object | Outcome[object]: ...
+    ) -> ResolveResult | Outcome[ResolveResult]: ...
 
     async def search(
         self, context: ContextIdentity, request: SearchRequest
-    ) -> object | Outcome[object]: ...
+    ) -> SearchResult | Outcome[SearchResult]: ...
 
     async def record(
         self, context: ContextIdentity, request: RecordRequest
-    ) -> object | Outcome[object]: ...
+    ) -> RecordResult | Outcome[RecordResult]: ...
 
     async def data_plane_status(
         self, context: ContextIdentity, request: DataPlaneStatusRequest
-    ) -> object | Outcome[object]: ...
+    ) -> DataPlaneStatusResult | Outcome[DataPlaneStatusResult]: ...
 
 
 class GraphOperations(Protocol):
     async def catalog(
         self, context: ContextIdentity, request: CatalogRequest
-    ) -> object | Outcome[object]: ...
+    ) -> CatalogResult | Outcome[CatalogResult]: ...
 
     async def describe(
         self, context: ContextIdentity, request: DescribeRequest
-    ) -> object | Outcome[object]: ...
+    ) -> DescribeResult | Outcome[DescribeResult]: ...
 
     async def read(
         self, context: ContextIdentity, request: ReadRequest
-    ) -> object | Outcome[object]: ...
+    ) -> ReadResult | Outcome[ReadResult]: ...
 
     async def search_entities(
         self, context: ContextIdentity, request: SearchEntitiesRequest
-    ) -> object | Outcome[object]: ...
+    ) -> SearchEntitiesResult | Outcome[SearchEntitiesResult]: ...
 
     async def mutate(
         self, context: ContextIdentity, request: MutateRequest
-    ) -> object | Outcome[object]: ...
+    ) -> MutateResult | Outcome[MutateResult]: ...
 
     async def neighborhood(
         self, context: ContextIdentity, request: NeighborhoodRequest
-    ) -> object | Outcome[object]: ...
+    ) -> NeighborhoodResult | Outcome[NeighborhoodResult]: ...
 
     async def inspect(
         self, context: ContextIdentity, request: InspectRequest
-    ) -> object | Outcome[object]: ...
+    ) -> InspectResult | Outcome[InspectResult]: ...
 
     async def export_snapshot(
         self, context: ContextIdentity, request: ExportSnapshotRequest
-    ) -> object | Outcome[object]: ...
+    ) -> ExportSnapshotResult | Outcome[ExportSnapshotResult]: ...
 
     async def import_snapshot(
         self, context: ContextIdentity, request: ImportSnapshotRequest
-    ) -> object | Outcome[object]: ...
+    ) -> ImportSnapshotResult | Outcome[ImportSnapshotResult]: ...
 
     async def repair(
         self, context: ContextIdentity, request: RepairRequest
-    ) -> object | Outcome[object]: ...
+    ) -> RepairResult | Outcome[RepairResult]: ...
 
 
 class WorkbenchOperations(Protocol):
     async def propose(
         self, context: ContextIdentity, request: ProposeRequest
-    ) -> object | Outcome[object]: ...
+    ) -> ProposeResult | Outcome[ProposeResult]: ...
 
     async def commit(
         self, context: ContextIdentity, request: CommitRequest
-    ) -> object | Outcome[object]: ...
+    ) -> CommitResult | Outcome[CommitResult]: ...
 
     async def history(
         self, context: ContextIdentity, request: HistoryRequest
-    ) -> object | Outcome[object]: ...
+    ) -> HistoryResult | Outcome[HistoryResult]: ...
 
     async def quality(
         self, context: ContextIdentity, request: QualityRequest
-    ) -> object | Outcome[object]: ...
+    ) -> QualityResult | Outcome[QualityResult]: ...
 
     async def inbox_add(
         self, context: ContextIdentity, request: InboxAddRequest
-    ) -> object | Outcome[object]: ...
+    ) -> InboxAddResult | Outcome[InboxAddResult]: ...
 
     async def inbox_list(
         self, context: ContextIdentity, request: InboxListRequest
-    ) -> object | Outcome[object]: ...
+    ) -> InboxListResult | Outcome[InboxListResult]: ...
 
     async def inbox_show(
         self, context: ContextIdentity, request: InboxShowRequest
-    ) -> object | Outcome[object]: ...
+    ) -> InboxShowResult | Outcome[InboxShowResult]: ...
 
     async def inbox_claim(
         self, context: ContextIdentity, request: InboxClaimRequest
-    ) -> object | Outcome[object]: ...
+    ) -> InboxClaimResult | Outcome[InboxClaimResult]: ...
 
     async def inbox_mark_applied(
         self, context: ContextIdentity, request: InboxMarkAppliedRequest
-    ) -> object | Outcome[object]: ...
+    ) -> InboxMarkAppliedResult | Outcome[InboxMarkAppliedResult]: ...
 
     async def inbox_mark_rejected(
         self, context: ContextIdentity, request: InboxMarkRejectedRequest
-    ) -> object | Outcome[object]: ...
+    ) -> InboxMarkRejectedResult | Outcome[InboxMarkRejectedResult]: ...
 
     async def inbox_close(
         self, context: ContextIdentity, request: InboxCloseRequest
-    ) -> object | Outcome[object]: ...
+    ) -> InboxCloseResult | Outcome[InboxCloseResult]: ...
 
 
 class IngestionOperations(Protocol):
     async def submit_event(
         self, context: ContextIdentity, request: SubmitEventRequest
-    ) -> object | Outcome[object]: ...
+    ) -> SubmitEventResult | Outcome[SubmitEventResult]: ...
 
     async def submit_artifact(
         self, context: ContextIdentity, request: SubmitArtifactRequest
-    ) -> object | Outcome[object]: ...
+    ) -> SubmitArtifactResult | Outcome[SubmitArtifactResult]: ...
 
     async def processing_status(
         self, context: ContextIdentity, request: ProcessingStatusRequest
-    ) -> object | Outcome[object]: ...
+    ) -> ProcessingStatusResult | Outcome[ProcessingStatusResult]: ...
 
 
 class NudgeOperations(Protocol):
     async def nudge(
         self, context: ContextIdentity, request: NudgeRequest
-    ) -> object | Outcome[object]: ...
+    ) -> NudgeResult | Outcome[NudgeResult]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,9 +253,8 @@ class EngineDependencies:
 
 
 RequestT = TypeVar("RequestT", bound=EngineRequest)
-Operation = Callable[[ContextIdentity, RequestT], Awaitable[object | Outcome[object]]]
-
-_FORBIDDEN_SELECTOR_FIELDS = frozenset({"pot_id", "active_pot", "context_selector"})
+ResultT = TypeVar("ResultT")
+Operation = Callable[[ContextIdentity, RequestT], Awaitable[ResultT | Outcome[ResultT]]]
 
 
 class ContextEngine:
@@ -292,9 +323,9 @@ class ContextEngine:
     async def _invoke(
         self,
         operation: str,
-        handler: Operation[RequestT],
+        handler: Operation[RequestT, ResultT],
         request: RequestT,
-    ) -> Outcome[object]:
+    ) -> Outcome[ResultT]:
         if self._closed:
             return Failure(
                 EngineLifecycleError(
@@ -302,123 +333,136 @@ class ContextEngine:
                     message="the ContextEngine is closed",
                 )
             )
-        forbidden = sorted(_FORBIDDEN_SELECTOR_FIELDS.intersection(request.payload))
-        if forbidden:
-            from potpie_context_engine.outcomes import DomainError
-
+        try:
+            result = await handler(self._context, request)
+        except Exception as exc:
             return Failure(
-                DomainError(
-                    code="context_selector_forbidden",
-                    message="operation requests cannot override the bound context",
-                    details={"operation": operation, "fields": tuple(forbidden)},
+                DependencyError(
+                    code="engine_dependency_failed",
+                    message="a Context Engine dependency failed",
+                    details={
+                        "operation": operation,
+                        "error_type": type(exc).__name__,
+                    },
+                    recommended_next_action="inspect dependency and runtime logs",
+                    retry_posture="unknown",
                 )
             )
-        result = await handler(self._context, request)
         if isinstance(result, (Success, Failure)):
             return result
         return Success(result)
 
-    async def resolve(self, request: ResolveRequest) -> Outcome[object]:
-        return await self._invoke("resolve", self._dependencies.context.resolve, request)
+    async def resolve(self, request: ResolveRequest) -> Outcome[ResolveResult]:
+        return await self._invoke(
+            "resolve", self._dependencies.context.resolve, request
+        )
 
-    async def search(self, request: SearchRequest) -> Outcome[object]:
+    async def search(self, request: SearchRequest) -> Outcome[SearchResult]:
         return await self._invoke("search", self._dependencies.context.search, request)
 
-    async def record(self, request: RecordRequest) -> Outcome[object]:
+    async def record(self, request: RecordRequest) -> Outcome[RecordResult]:
         return await self._invoke("record", self._dependencies.context.record, request)
 
     async def data_plane_status(
         self, request: DataPlaneStatusRequest
-    ) -> Outcome[object]:
+    ) -> Outcome[DataPlaneStatusResult]:
         return await self._invoke(
             "data_plane_status", self._dependencies.context.data_plane_status, request
         )
 
-    async def catalog(self, request: CatalogRequest) -> Outcome[object]:
+    async def catalog(self, request: CatalogRequest) -> Outcome[CatalogResult]:
         return await self._invoke("catalog", self._dependencies.graph.catalog, request)
 
-    async def describe(self, request: DescribeRequest) -> Outcome[object]:
-        return await self._invoke("describe", self._dependencies.graph.describe, request)
+    async def describe(self, request: DescribeRequest) -> Outcome[DescribeResult]:
+        return await self._invoke(
+            "describe", self._dependencies.graph.describe, request
+        )
 
-    async def read(self, request: ReadRequest) -> Outcome[object]:
+    async def read(self, request: ReadRequest) -> Outcome[ReadResult]:
         return await self._invoke("read", self._dependencies.graph.read, request)
 
     async def search_entities(
         self, request: SearchEntitiesRequest
-    ) -> Outcome[object]:
+    ) -> Outcome[SearchEntitiesResult]:
         return await self._invoke(
             "search_entities", self._dependencies.graph.search_entities, request
         )
 
-    async def mutate(self, request: MutateRequest) -> Outcome[object]:
+    async def mutate(self, request: MutateRequest) -> Outcome[MutateResult]:
         return await self._invoke("mutate", self._dependencies.graph.mutate, request)
 
-    async def neighborhood(self, request: NeighborhoodRequest) -> Outcome[object]:
+    async def neighborhood(
+        self, request: NeighborhoodRequest
+    ) -> Outcome[NeighborhoodResult]:
         return await self._invoke(
             "neighborhood", self._dependencies.graph.neighborhood, request
         )
 
-    async def inspect(self, request: InspectRequest) -> Outcome[object]:
+    async def inspect(self, request: InspectRequest) -> Outcome[InspectResult]:
         return await self._invoke("inspect", self._dependencies.graph.inspect, request)
 
     async def export_snapshot(
         self, request: ExportSnapshotRequest
-    ) -> Outcome[object]:
+    ) -> Outcome[ExportSnapshotResult]:
         return await self._invoke(
             "export_snapshot", self._dependencies.graph.export_snapshot, request
         )
 
     async def import_snapshot(
         self, request: ImportSnapshotRequest
-    ) -> Outcome[object]:
+    ) -> Outcome[ImportSnapshotResult]:
         return await self._invoke(
             "import_snapshot", self._dependencies.graph.import_snapshot, request
         )
 
-    async def repair(self, request: RepairRequest) -> Outcome[object]:
+    async def repair(self, request: RepairRequest) -> Outcome[RepairResult]:
         return await self._invoke("repair", self._dependencies.graph.repair, request)
 
-    async def propose(self, request: ProposeRequest) -> Outcome[object]:
+    async def propose(self, request: ProposeRequest) -> Outcome[ProposeResult]:
         return await self._invoke(
             "propose", self._dependencies.workbench.propose, request
         )
 
-    async def commit(self, request: CommitRequest) -> Outcome[object]:
-        return await self._invoke("commit", self._dependencies.workbench.commit, request)
+    async def commit(self, request: CommitRequest) -> Outcome[CommitResult]:
+        return await self._invoke(
+            "commit", self._dependencies.workbench.commit, request
+        )
 
-    async def history(self, request: HistoryRequest) -> Outcome[object]:
+    async def history(self, request: HistoryRequest) -> Outcome[HistoryResult]:
         return await self._invoke(
             "history", self._dependencies.workbench.history, request
         )
 
-    async def quality(self, request: QualityRequest) -> Outcome[object]:
+    async def quality(self, request: QualityRequest) -> Outcome[QualityResult]:
         return await self._invoke(
             "quality", self._dependencies.workbench.quality, request
         )
 
-    async def inbox_add(self, request: InboxAddRequest) -> Outcome[object]:
+    async def inbox_add(self, request: InboxAddRequest) -> Outcome[InboxAddResult]:
         return await self._invoke(
             "inbox_add", self._dependencies.workbench.inbox_add, request
         )
 
-    async def inbox_list(self, request: InboxListRequest) -> Outcome[object]:
+    async def inbox_list(self, request: InboxListRequest) -> Outcome[InboxListResult]:
         return await self._invoke(
             "inbox_list", self._dependencies.workbench.inbox_list, request
         )
 
-    async def inbox_show(self, request: InboxShowRequest) -> Outcome[object]:
+    async def inbox_show(self, request: InboxShowRequest) -> Outcome[InboxShowResult]:
         return await self._invoke(
             "inbox_show", self._dependencies.workbench.inbox_show, request
         )
 
-    async def inbox_claim(self, request: InboxClaimRequest) -> Outcome[object]:
+    async def inbox_claim(
+        self, request: InboxClaimRequest
+    ) -> Outcome[InboxClaimResult]:
         return await self._invoke(
             "inbox_claim", self._dependencies.workbench.inbox_claim, request
         )
 
     async def inbox_mark_applied(
         self, request: InboxMarkAppliedRequest
-    ) -> Outcome[object]:
+    ) -> Outcome[InboxMarkAppliedResult]:
         return await self._invoke(
             "inbox_mark_applied",
             self._dependencies.workbench.inbox_mark_applied,
@@ -427,40 +471,44 @@ class ContextEngine:
 
     async def inbox_mark_rejected(
         self, request: InboxMarkRejectedRequest
-    ) -> Outcome[object]:
+    ) -> Outcome[InboxMarkRejectedResult]:
         return await self._invoke(
             "inbox_mark_rejected",
             self._dependencies.workbench.inbox_mark_rejected,
             request,
         )
 
-    async def inbox_close(self, request: InboxCloseRequest) -> Outcome[object]:
+    async def inbox_close(
+        self, request: InboxCloseRequest
+    ) -> Outcome[InboxCloseResult]:
         return await self._invoke(
             "inbox_close", self._dependencies.workbench.inbox_close, request
         )
 
-    async def submit_event(self, request: SubmitEventRequest) -> Outcome[object]:
+    async def submit_event(
+        self, request: SubmitEventRequest
+    ) -> Outcome[SubmitEventResult]:
         return await self._invoke(
             "submit_event", self._dependencies.ingestion.submit_event, request
         )
 
     async def submit_artifact(
         self, request: SubmitArtifactRequest
-    ) -> Outcome[object]:
+    ) -> Outcome[SubmitArtifactResult]:
         return await self._invoke(
             "submit_artifact", self._dependencies.ingestion.submit_artifact, request
         )
 
     async def processing_status(
         self, request: ProcessingStatusRequest
-    ) -> Outcome[object]:
+    ) -> Outcome[ProcessingStatusResult]:
         return await self._invoke(
             "processing_status",
             self._dependencies.ingestion.processing_status,
             request,
         )
 
-    async def nudge(self, request: NudgeRequest) -> Outcome[object]:
+    async def nudge(self, request: NudgeRequest) -> Outcome[NudgeResult]:
         return await self._invoke("nudge", self._dependencies.nudge.nudge, request)
 
 
@@ -485,7 +533,9 @@ async def create_engine(
                 details={"dependencies": missing},
             )
         )
-    return Success(ContextEngine(context=context, config=config, dependencies=dependencies))
+    return Success(
+        ContextEngine(context=context, config=config, dependencies=dependencies)
+    )
 
 
 __all__ = [

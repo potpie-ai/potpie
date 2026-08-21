@@ -22,9 +22,9 @@ from potpie_context_engine.core.api import (
     DEFAULT_GRAPH_DEFINITION,
     EdgeTypeSpec,
     EntityTypeSpec,
-    GraphExtension,
     IdentityClass,
 )
+from potpie_context_engine.core.definition import GraphExtension
 from potpie_context_engine.core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,

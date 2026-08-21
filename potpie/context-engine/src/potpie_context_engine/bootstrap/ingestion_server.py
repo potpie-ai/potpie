@@ -110,7 +110,7 @@ from potpie_context_engine.domain.ports.reconciliation_agent import (
 )
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 from potpie_context_engine.core.ports.graph_service import GraphService
-from potpie_context_engine.core.api import build_graph_runtime
+from potpie_context_engine.core.runtime import build_graph_runtime
 from potpie_context_engine.domain.ports.telemetry import TelemetryPort
 from potpie_context_engine.core.source_references import SourceReferenceRecord
 

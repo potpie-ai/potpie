@@ -32,6 +32,12 @@ from potpie.runtime import (
     operation_catalog_fingerprint,
 )
 from potpie_context_engine import DomainError, Failure, Success
+from potpie_context_engine.core.agent_envelope import (
+    AgentEnvelope,
+    CoverageReport,
+    EvidenceItem,
+)
+from potpie_context_engine.requests import SearchRequest
 
 
 @pytest.mark.parametrize("operation", list(EngineOperation))
@@ -44,7 +50,7 @@ def test_every_engine_operation_round_trips_without_python_class_identity(
         request_id=f"request-{operation.value}",
         operation=operation,
         selector=ContextSelector(kind="explicit", value="context-a"),
-        payload=request_type(payload={"field": operation.value}),
+        payload=request_type(),
     )
 
     document = encode_request(request)
@@ -82,6 +88,41 @@ def test_control_requests_round_trip(protocol_request: object) -> None:
 
     assert isinstance(decoded, Success)
     assert decoded.value == protocol_request
+
+
+def test_engine_success_response_round_trips_to_the_catalog_result_type() -> None:
+    request = EngineOperationRequest(
+        protocol_version=PROTOCOL_VERSION,
+        request_id="search-1",
+        operation=EngineOperation.SEARCH,
+        selector=ContextSelector(kind="explicit", value="context-a"),
+        payload=SearchRequest(query="typed"),
+    )
+    result = AgentEnvelope(
+        pot_id="context-a",
+        intent="search",
+        items=(
+            EvidenceItem(
+                include="raw_graph",
+                candidate_key="claim-1",
+                score=0.9,
+                payload={"summary": "typed"},
+                coverage_status="complete",
+            ),
+        ),
+        coverage=(CoverageReport(include="raw_graph", status="complete"),),
+    )
+    response = SuccessResponse(
+        protocol_version=PROTOCOL_VERSION,
+        request_id=request.request_id,
+        outcome=Success(result),
+    )
+
+    decoded = decode_response(encode_response(response), request=request)
+
+    assert isinstance(decoded, Success)
+    assert decoded.value == response
+    assert isinstance(decoded.value.outcome.value, AgentEnvelope)
 
 
 def test_handshake_success_response_round_trips_to_typed_result() -> None:
