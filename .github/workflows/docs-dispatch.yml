@@ -1,13 +1,11 @@
 name: Dispatch hub rebuild
 
-# If this workflow is enabled, Hub is notified only when trusted pushes to
-# main touch docs/**. Code-only merges do not trigger it.
+# If this workflow is enabled, the job checks trusted pushes to main against
+# config/docs.json and notifies Hub only when the configured docs tree changed.
 # Docs check is fast PR feedback. Hub fetch-spokes.mjs is the publish gate.
 on:
   push:
     branches: [main]
-    paths:
-      - "docs/**"
 
 permissions:
   contents: read
@@ -18,9 +16,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Spoke
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: List changed files
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            git diff-tree --root --no-commit-id --name-only -r "$AFTER_SHA" > /tmp/changed-files.txt
+          else
+            git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" > /tmp/changed-files.txt
+          fi
+          echo "Changed files:"
+          cat /tmp/changed-files.txt
+
+      - name: Check configured docs changes
+        id: docs_change
+        env:
+          DOCS_CONFIG_PATH: ${{ github.workspace }}/config/docs.json
+          CHANGED_FILES_PATH: /tmp/changed-files.txt
+        run: |
+          set -euo pipefail
+          should_dispatch="$(node scripts/spoke-contract/docs-dispatch-check.mjs)"
+          echo "should_dispatch=$should_dispatch" >> "$GITHUB_OUTPUT"
+          echo "Dispatch Hub rebuild: $should_dispatch"
 
       - name: Send repository_dispatch to Hub
+        if: steps.docs_change.outputs.should_dispatch == 'true'
         env:
           DOCS_HUB_DISPATCH_TOKEN: ${{ secrets.DOCS_HUB_DISPATCH_TOKEN }}
           HUB_REPO: ${{ vars.DOCS_HUB_REPO }}

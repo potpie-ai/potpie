@@ -256,6 +256,62 @@ See [missing](./nope.md).
     assert.equal(result.errors.some((e) => e.includes('Broken local link')), true);
   });
 
+  test('links and empty image syntax inside code are not validated', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+\`\`\`markdown
+See [unknown route](/random/), [missing](./nope.md), and ![](./missing.svg).
+\`\`\`
+
+Inline code is also ignored: \`[missing](./also-missing.md)\`.
+`,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
+  test('link-like frontmatter text is not validated', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: "Example [missing](./nope.md)"
+---
+
+## Overview
+`,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
+  test('link destinations with balanced parentheses are accepted', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+See [spec](https://example.com/a_(b)).
+`,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
+  test('angle-bracket link destinations are accepted without their wrappers', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+See [spec](<https://example.com/a_(b)>).
+`,
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
   test('empty alt text fails', () => {
     const root = makeDocs({
       'index.md': `---

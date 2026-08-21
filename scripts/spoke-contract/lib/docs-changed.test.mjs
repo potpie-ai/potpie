@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { docsChanged, isUnderDocs, normalizeRepoPath } from './docs-changed.mjs';
+import {
+  docsChanged,
+  docsContractChanged,
+  isUnderDocs,
+  normalizeRepoPath,
+} from './docs-changed.mjs';
 
 describe('docsChanged', () => {
   test('docs-only match', () => {
@@ -30,6 +35,12 @@ describe('docsChanged', () => {
   test('custom docsPath', () => {
     assert.equal(docsChanged(['website/docs/index.md'], 'website/docs'), true);
     assert.equal(docsChanged(['docs/index.md'], 'website/docs'), false);
+  });
+
+  test('docs contract changes when config/docs.json changes', () => {
+    assert.equal(docsContractChanged(['config/docs.json'], 'website/docs'), true);
+    assert.equal(docsContractChanged(['website/docs/index.md'], 'website/docs'), true);
+    assert.equal(docsContractChanged(['src/cli.py'], 'website/docs'), false);
   });
 
   test('does not treat similarly prefixed paths as docs', () => {

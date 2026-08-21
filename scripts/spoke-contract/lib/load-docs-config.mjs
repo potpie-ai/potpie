@@ -32,6 +32,7 @@ export function loadDocsConfig(configPath) {
   }
   const normalizedDocsPath = docsPath.trim().replace(/\\/g, '/').replace(/\/+$/, '');
   if (
+    !normalizedDocsPath ||
     normalizedDocsPath.includes('..') ||
     normalizedDocsPath.startsWith('/') ||
     /^[a-zA-Z]:\//.test(normalizedDocsPath)

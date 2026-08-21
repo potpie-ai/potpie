@@ -13,23 +13,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Spoke
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: spoke-contract/package-lock.json
+          cache-dependency-path: scripts/spoke-contract/package-lock.json
 
       - name: Install docs-check dependencies
-        working-directory: spoke-contract
+        working-directory: scripts/spoke-contract
         run: npm ci
 
       - name: Run docs-check tests
-        working-directory: spoke-contract
+        working-directory: scripts/spoke-contract
         run: node --test
 
       - name: List changed files
@@ -51,4 +51,4 @@ jobs:
           DOCS_CONFIG_PATH: ${{ github.workspace }}/config/docs.json
           CHANGED_FILES_PATH: /tmp/changed-files.txt
           SPOKE_ROOT: ${{ github.workspace }}
-        run: node spoke-contract/spoke-docs-check.mjs
+        run: node scripts/spoke-contract/spoke-docs-check.mjs

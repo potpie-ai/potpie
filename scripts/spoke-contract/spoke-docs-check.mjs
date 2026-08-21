@@ -5,23 +5,11 @@
  * Hub scripts/fetch-spokes.mjs remains the authoritative publish gate.
  */
 
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { docsChanged } from './lib/docs-changed.mjs';
+import { docsContractChanged, readChangedPaths } from './lib/docs-changed.mjs';
 import { loadDocsConfig } from './lib/load-docs-config.mjs';
 import { printValidationResult, validateSpokeDocs } from './lib/validate-docs.mjs';
-
-function readChangedPaths(filePath) {
-  if (!filePath) {
-    throw new Error('CHANGED_FILES_PATH is required (one changed path per line)');
-  }
-  const text = readFileSync(filePath, 'utf8');
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
 
 /**
  * @param {{
@@ -38,14 +26,14 @@ export function runSpokeDocsCheck(options) {
   const error = options.error || console.error;
   const config = loadDocsConfig(resolve(options.configPath));
   const changedPaths = readChangedPaths(options.changedFilesPath);
-  const docsTouched = docsChanged(changedPaths, config.docsPath);
+  const docsTouched = docsContractChanged(changedPaths, config.docsPath);
 
   log(`spokeId=${config.spokeId}`);
   log(`docsPath=${config.docsPath}`);
   log(`docsChanged=${docsTouched}`);
 
   if (!docsTouched) {
-    log(`No ${config.docsPath}/** changes; skipping docs tree validation.`);
+    log(`No ${config.docsPath}/** or config/docs.json changes; skipping docs tree validation.`);
     return { ok: true, docsChanged: false };
   }
 
@@ -65,6 +53,7 @@ export function runSpokeDocsCheck(options) {
   return { ok: true, docsChanged: true };
 }
 
+/** Run the PR check from environment variables. */
 function main() {
   try {
     const result = runSpokeDocsCheck({

@@ -78,6 +78,30 @@ describe('runSpokeDocsCheck', () => {
     assert.equal(result.docsChanged, false);
   });
 
+  test('docs config change validates the configured tree', () => {
+    const { root, configPath } = makeSpoke({ 'docs/index.md': page });
+    const result = runSpokeDocsCheck({
+      configPath,
+      changedFilesPath: writeChanged(root, ['config/docs.json']),
+      spokeRoot: root,
+      ...silent,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.docsChanged, true);
+  });
+
+  test('docs config change fails when the configured tree is invalid', () => {
+    const { root, configPath } = makeSpoke({ 'docs/index.md': '# broken\n' });
+    const result = runSpokeDocsCheck({
+      configPath,
+      changedFilesPath: writeChanged(root, ['config/docs.json']),
+      spokeRoot: root,
+      ...silent,
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.docsChanged, true);
+  });
+
   test('code plus valid docs change passes', () => {
     const { root, configPath } = makeSpoke({ 'docs/index.md': page, 'src/cli.ts': 'x' });
     const result = runSpokeDocsCheck({

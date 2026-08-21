@@ -41,6 +41,35 @@ describe('sanitizeSvg', () => {
     assert.equal(svg.toLowerCase().includes('javascript'), false);
   });
 
+  test('strips style elements, including escaped unsafe CSS', () => {
+    const { ok, svg, stripped } = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><style>@im\\port url(https://evil.test/a.css);</style><rect/></svg>`,
+    );
+    assert.equal(ok, true);
+    assert.equal(stripped, true);
+    assert.equal(svg.toLowerCase().includes('<style'), false);
+    assert.equal(svg.includes('evil.test'), false);
+  });
+
+  test('strips every style attribute instead of blocklisting CSS', () => {
+    const { ok, svg, stripped } = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><rect style="background:url(\\6a avascript:alert(1))"/></svg>`,
+    );
+    assert.equal(ok, true);
+    assert.equal(stripped, true);
+    assert.equal(svg.toLowerCase().includes('style='), false);
+    assert.equal(svg.toLowerCase().includes('avascript'), false);
+  });
+
+  test('strips external use references', () => {
+    const { ok, svg, stripped } = sanitizeSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg"><use href="https://evil.test/a.svg#x"/></svg>`,
+    );
+    assert.equal(ok, true);
+    assert.equal(stripped, true);
+    assert.equal(svg.includes('evil.test'), false);
+  });
+
   test('leaves a clean icon unchanged in meaning', () => {
     const input = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>`;
     const { ok, stripped, error } = sanitizeSvg(input);

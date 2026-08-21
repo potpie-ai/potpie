@@ -34,7 +34,6 @@ const ALLOWED_ELEMENTS = new Set([
   'image',
   'switch',
   'a',
-  'style',
   'filter',
   'feblend',
   'fecolormatrix',
@@ -64,18 +63,14 @@ const ALLOWED_ELEMENTS = new Set([
 
 const HREF_ATTRS = new Set(['href', 'xlink:href', 'src']);
 
+/** @param {Node} node */
 function localName(node) {
   return String(node.localName || node.nodeName || '').toLowerCase();
 }
 
+/** @param {Attr} attr */
 function attrName(attr) {
   return String(attr.name || '').toLowerCase();
-}
-
-function isUnsafeCss(css) {
-  return /javascript:|vbscript:|expression\s*\(|@import|-moz-binding|behavior\s*:|url\s*\(\s*['"]?\s*data:/i.test(
-    css,
-  );
 }
 
 /**
@@ -102,6 +97,7 @@ export function sanitizeSvgUrl(value, elementName) {
   return trimmed;
 }
 
+/** @param {Node} node */
 function removeNode(node) {
   if (node.parentNode) node.parentNode.removeChild(node);
 }
@@ -143,6 +139,7 @@ export function sanitizeSvg(input) {
 
   const stripped = { current: false };
 
+  /** @param {Node} node */
   function sanitizeNode(node) {
     if (!node || !node.parentNode && node !== root) return;
 
@@ -180,19 +177,8 @@ export function sanitizeSvg(input) {
         continue;
       }
       if (an === 'style') {
-        if (isUnsafeCss(attr.value)) {
-          stripped.current = true;
-          node.removeAttribute(attr.name);
-        }
-      }
-    }
-
-    if (name === 'style') {
-      const css = node.textContent || '';
-      if (isUnsafeCss(css)) {
         stripped.current = true;
-        removeNode(node);
-        return;
+        node.removeAttribute(attr.name);
       }
     }
 

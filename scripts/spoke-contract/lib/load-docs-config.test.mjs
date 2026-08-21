@@ -58,6 +58,16 @@ describe('loadDocsConfig', () => {
     assert.throws(() => loadDocsConfig(path), /docsPath/);
   });
 
+  test('rejects docsPath that becomes empty after normalization', () => {
+    for (const docsPath of ['/', '///']) {
+      const path = writeConfig({
+        spokeId: 'potpie',
+        docsPath,
+      });
+      assert.throws(() => loadDocsConfig(path), /docsPath/);
+    }
+  });
+
   test('defaults missing docsPath to docs', () => {
     const path = writeConfig({ spokeId: 'potpie' });
     const cfg = loadDocsConfig(path);

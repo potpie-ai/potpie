@@ -87,14 +87,21 @@ export function containsRawHtml(text) {
   return false;
 }
 
+/** @param {string[]} errors @param {string} message */
 function fail(errors, message) {
   errors.push(message);
 }
 
+/** @param {unknown} value @returns {value is string} */
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/**
+ * @param {string} name
+ * @param {{ allowDotExt?: boolean }} [options]
+ * @returns {boolean}
+ */
 function isKebabName(name, { allowDotExt = false } = {}) {
   if (allowDotExt) {
     const base = name.replace(/\.[^.]+$/, '');
@@ -124,6 +131,7 @@ export function splitFrontmatter(content) {
   };
 }
 
+/** @param {string} target @returns {string | null} */
 function linkScheme(target) {
   const match = target.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:)/);
   return match ? match[1].toLowerCase() : null;
@@ -149,6 +157,11 @@ export function parseFrontmatter(content) {
   }
 }
 
+/**
+ * @param {string} dir
+ * @param {{ path: string, symlink: boolean, dirent: import('node:fs').Dirent }[]} [files]
+ * @returns {{ path: string, symlink: boolean, dirent: import('node:fs').Dirent }[]}
+ */
 function walk(dir, files = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
@@ -162,16 +175,19 @@ function walk(dir, files = []) {
   return files;
 }
 
+/** @param {string} content @returns {string[]} */
 function extractMarkdownLinks(content) {
   const links = [];
-  const re = /!\[[^\]]*\]\(([^)]+)\)|\[[^\]]*\]\(([^)]+)\)/g;
+  const re =
+    /!?\[[^\]]*\]\(\s*(?:<([^>\n]*)>|((?:[^\s()]|\([^\s()]*\))+))\s*(?:"[^"]*"|'[^']*')?\s*\)/g;
   let match;
   while ((match = re.exec(content)) !== null) {
-    links.push(match[1] || match[2]);
+    links.push(match[1] ?? match[2]);
   }
   return links;
 }
 
+/** @param {string} target @returns {string} */
 function normalizeHubPath(target) {
   if (target.length > 1 && target.endsWith('/')) return target.slice(0, -1);
   return target || '/';
@@ -326,7 +342,8 @@ export function validateSpokeDocs(docsRoot, options = {}) {
       fail(errors, `Raw HTML is not allowed: ${rel}`);
     }
 
-    for (const href of extractMarkdownLinks(content)) {
+    const prose = markdownWithoutCode(body);
+    for (const href of extractMarkdownLinks(prose)) {
       const target = href.trim().split('#')[0].split('?')[0];
       if (!target) continue;
       if (/^[a-zA-Z]:[\\/]/.test(target)) {
@@ -358,8 +375,7 @@ export function validateSpokeDocs(docsRoot, options = {}) {
       }
     }
 
-    const emptyAlt = /!\[\s*\]\(/g;
-    if (emptyAlt.test(content)) {
+    if (/!\[\s*\]\(/.test(prose)) {
       fail(errors, `Images must have meaningful alt text: ${rel}`);
     }
   }
@@ -371,6 +387,10 @@ export function validateSpokeDocs(docsRoot, options = {}) {
   return { ok: errors.length === 0, errors, warnings };
 }
 
+/**
+ * @param {{ ok: boolean, errors: string[] }} result
+ * @param {string} [label]
+ */
 export function printValidationResult(result, label = 'docs') {
   if (result.ok) {
     console.log(`✓ ${label} validation passed`);
