@@ -7,7 +7,7 @@ with flags, the shared plumbing every command goes through, and the canonical
 journey. It is the one doc that may restate flags in full; conceptual depth lives
 in the sibling docs linked under each group and in [See also](#see-also).
 
-This file lives at repo-root `docs/context-graph/cli-flow.md`. The code it
+This file lives at repo-root `internal-docs/context-graph/cli-flow.md`. The code it
 describes lives under repo-root `potpie/context-engine/` (paths below are
 relative to that root).
 

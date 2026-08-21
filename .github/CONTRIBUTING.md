@@ -100,17 +100,28 @@ When you’re ready to submit your changes:
 
 1. **Open a Pull Request (PR)**:
    - Go to the Potpie repository and select **New Pull Request**.
-   - Choose your branch and provide a meaningful title and description.
+   - Use a Conventional Commit style title: `<type>(<scope>): <short description>`
+   - Approved types: `docs`, `feat`, `fix`, `refactor`, `chore`. Scope is kebab-case. No trailing period.
+   - Example: `docs(potpie): clarify installation prerequisites`
+   - Fill in `.github/pull_request_template.md` and check exactly one Documentation impact option.
 
 2. **Describe Your Changes**:
    - Include a detailed description of what you have done and why.
    - Link related issues (e.g., `Closes #123`).
+   - If user-facing code under `potpie/` changes without a `docs/` update, a maintainer must add the `docs-not-required` label and you must write a reason in the PR.
 
 3. **Request a Review**:
    - After submitting your PR, request a review from a project maintainer.
 
 4. **Respond to Feedback**:
    - Be responsive to any feedback you receive. Once changes are approved, a maintainer will merge your PR.
+
+The **Validate documentation** check runs on every pull request. Locally:
+
+```bash
+node scripts/validate-docs-cli.mjs docs potpie
+node --test scripts/validate-pr.test.mjs
+```
 
 
 ## Community and Support

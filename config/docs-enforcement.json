@@ -1,0 +1,19 @@
+{
+  "spokeId": "potpie",
+  "docsPath": "docs",
+  "userFacingPaths": [
+    "potpie/**"
+  ],
+  "nonUserFacingPaths": [
+    ".github/**",
+    "scripts/**",
+    "config/**",
+    "internal-docs/**",
+    "README.md",
+    "tests/**",
+    "test/**",
+    "**/*.test.*",
+    "**/*.spec.*"
+  ],
+  "docsNotRequiredLabel": "docs-not-required"
+}

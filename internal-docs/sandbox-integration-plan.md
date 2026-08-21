@@ -7,7 +7,7 @@ tools/code_changes_manager` stack.
 
 It is a plan, not a spec. Where there are real tradeoffs the doc names them
 and points at the surfaces involved, but leaves the call to the implementer.
-Read `docs/sandbox-core-setup.md` first — this builds on the model defined
+Read `internal-docs/sandbox-core-setup.md` first — this builds on the model defined
 there (`RepoCache` / `Workspace` / `Runtime`).
 
 ---
