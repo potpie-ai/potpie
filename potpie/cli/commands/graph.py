@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 import time
 from contextlib import contextmanager
@@ -2174,7 +2175,14 @@ def graph_export(
 
 @graph_app.command("import")
 def graph_import(
-    file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
+    file: str = typer.Argument(...),
+    pot: str = typer.Option(None, "--pot"),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm the destructive snapshot import.",
+    ),
 ) -> None:
     with _graph_command("graph.import") as ctx:
         host = get_root_runtime()
@@ -2186,10 +2194,21 @@ def graph_import(
         )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
+        rerun = f"potpie graph import {shlex.quote(file)}"
+        if pot:
+            rerun += f" --pot {shlex.quote(pot)}"
+        confirmation = _confirm_destructive_operation(
+            yes=yes,
+            prompt=(
+                f"Import snapshot '{file}' into context '{pot_id}'? "
+                "This can replace graph data."
+            ),
+            rerun_command=f"{rerun} --yes",
+        )
         manifest = run_engine_operation(
             get_engine_client(pot).import_snapshot(
                 EngineImportSnapshotRequest(source=file),
-                confirmation=DestructiveConfirmation(confirmed=True),
+                confirmation=confirmation,
             )
         )
         _emit_graph_result(
@@ -2206,6 +2225,12 @@ def graph_repair(
     entity_labels: bool = typer.Option(False, "--entity-labels"),
     all_: bool = typer.Option(False, "--all"),
     pot: str = typer.Option(None, "--pot"),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm the destructive graph repair.",
+    ),
 ) -> None:
     with _graph_command("graph.repair") as ctx:
         host = get_root_runtime()
@@ -2219,10 +2244,31 @@ def graph_repair(
                 targets.append("entity_summaries")
             if entity_labels:
                 targets.append("entity_labels")
+        target_label = ", ".join(targets) if targets else "all repair targets"
+        rerun_parts = ["potpie", "graph", "repair"]
+        if semantic_index:
+            rerun_parts.append("--semantic-index")
+        if entity_summaries:
+            rerun_parts.append("--entity-summaries")
+        if entity_labels:
+            rerun_parts.append("--entity-labels")
+        if all_:
+            rerun_parts.append("--all")
+        if pot:
+            rerun_parts.extend(("--pot", shlex.quote(pot)))
+        rerun_parts.append("--yes")
+        confirmation = _confirm_destructive_operation(
+            yes=yes,
+            prompt=(
+                f"Repair {target_label} in context '{pot_id}'? "
+                "This can mutate graph data."
+            ),
+            rerun_command=" ".join(rerun_parts),
+        )
         report = run_engine_operation(
             get_engine_client(pot).repair(
                 EngineRepairRequest(targets=tuple(targets)),
-                confirmation=DestructiveConfirmation(confirmed=True),
+                confirmation=confirmation,
             )
         )
         _emit_graph_result(
@@ -2230,6 +2276,35 @@ def graph_repair(
             {"targets": list(report.targets), "repaired": dict(report.repaired)},
             human=report.detail or f"repaired {dict(report.repaired)}",
         )
+
+
+def _confirm_destructive_operation(
+    *,
+    yes: bool,
+    prompt: str,
+    rerun_command: str,
+) -> DestructiveConfirmation:
+    if yes:
+        return DestructiveConfirmation(confirmed=True)
+    if is_json():
+        fail(
+            code="destructive_confirmation_required",
+            message="Destructive operation requires explicit confirmation.",
+            next_action=f"review the target, then rerun '{rerun_command}'",
+            exit_code=EXIT_VALIDATION,
+        )
+    try:
+        confirmed = typer.confirm(prompt, default=False)
+    except (typer.Abort, EOFError):
+        confirmed = False
+    if not confirmed:
+        fail(
+            code="destructive_confirmation_declined",
+            message="Destructive operation was not confirmed.",
+            next_action=f"review the target, then rerun '{rerun_command}'",
+            exit_code=EXIT_VALIDATION,
+        )
+    return DestructiveConfirmation(confirmed=True)
 
 
 @backend_app.command("list")

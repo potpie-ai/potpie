@@ -46,6 +46,7 @@ from potpie_context_engine.core.ports.graph.inspection import (
 )
 from potpie_context_engine.core.ports.graph.analytics import RepairReport
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 
 pytestmark = pytest.mark.unit
 
@@ -423,6 +424,34 @@ class _Backend:
         return _Inspection()
 
 
+class _Snapshot:
+    def __init__(self) -> None:
+        self.import_calls: list[tuple[str, str]] = []
+
+    def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
+        self.import_calls.append((pot_id, source))
+        return SnapshotManifest(
+            pot_id=pot_id,
+            location=source,
+            format_version="test",
+            entity_count=3,
+            claim_count=7,
+        )
+
+
+class _SnapshotBackend(_Backend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.snapshot = _Snapshot()
+
+    def capabilities(self) -> BackendCapabilities:
+        return BackendCapabilities(
+            profile=self.profile,
+            inspection=True,
+            snapshot=True,
+        )
+
+
 class _Inspection:
     def neighborhood(
         self,
@@ -731,11 +760,102 @@ def test_graph_repair_accepts_entity_summaries_target() -> None:
     backend = _Backend()
     _common.set_runtime(_Host(_Graph(), backend=backend))
 
-    result = CliRunner().invoke(graph.graph_app, ["repair", "--entity-summaries"])
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["repair", "--entity-summaries", "--yes"],
+    )
 
     assert result.exit_code == 0, result.output
     assert backend.analytics.calls == [("p", ("entity_summaries",))]
     assert "repaired 2 entity summaries" in result.output
+
+
+def test_graph_repair_accepts_interactive_confirmation() -> None:
+    backend = _Backend()
+    _common.set_runtime(_Host(_Graph(), backend=backend))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["repair", "--entity-summaries"],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Repair entity_summaries in context 'p'?" in _plain_cli_output(result.output)
+    assert backend.analytics.calls == [("p", ("entity_summaries",))]
+
+
+def test_graph_repair_decline_stops_before_dispatch() -> None:
+    backend = _Backend()
+    _common.set_runtime(_Host(_Graph(), backend=backend))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["repair", "--entity-summaries"],
+        input="n\n",
+    )
+
+    assert result.exit_code == _common.EXIT_VALIDATION
+    assert "Destructive operation was not confirmed" in _plain_cli_output(result.output)
+    assert backend.analytics.calls == []
+
+
+def test_graph_repair_empty_stdin_stops_before_dispatch() -> None:
+    backend = _Backend()
+    _common.set_runtime(_Host(_Graph(), backend=backend))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["repair", "--entity-summaries"],
+    )
+
+    assert result.exit_code == _common.EXIT_VALIDATION
+    assert "Destructive operation was not confirmed" in _plain_cli_output(result.output)
+    assert backend.analytics.calls == []
+
+
+@pytest.mark.parametrize(
+    ("args", "command", "backend_factory"),
+    [
+        (["repair", "--entity-summaries"], "graph.repair", _Backend),
+        (["import", "snapshot.json"], "graph.import", _SnapshotBackend),
+    ],
+)
+def test_graph_destructive_commands_require_yes_in_json_mode(
+    args: list[str],
+    command: str,
+    backend_factory: type[_Backend],
+) -> None:
+    _common.set_json(True)
+    backend = backend_factory()
+    _common.set_runtime(_Host(_Graph(), backend=backend))
+
+    result = CliRunner().invoke(graph.graph_app, args)
+
+    assert result.exit_code == _common.EXIT_VALIDATION
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, command, ok=False)
+    assert emitted["error"]["code"] == "destructive_confirmation_required"
+    assert "--yes" in emitted["recommended_next_action"]
+    if isinstance(backend, _SnapshotBackend):
+        assert backend.snapshot.import_calls == []
+    else:
+        assert backend.analytics.calls == []
+
+
+def test_graph_import_yes_dispatches_without_prompt() -> None:
+    backend = _SnapshotBackend()
+    _common.set_runtime(_Host(_Graph(), backend=backend))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["import", "snapshot.json", "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Import snapshot" not in _plain_cli_output(result.output)
+    assert backend.snapshot.import_calls == [("p", "snapshot.json")]
+    assert "imported 7 claims" in result.output
 
 
 @pytest.mark.parametrize(
