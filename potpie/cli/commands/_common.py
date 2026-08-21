@@ -45,6 +45,35 @@ EXIT_UNAVAILABLE = 2
 EXIT_DEGRADED = 3
 EXIT_AUTH = 4
 
+
+class CliCancellation(Exception):
+    """Typed CLI-local non-success outcome for cancellation before dispatch."""
+
+    category: Final[str] = "cancellation"
+
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        recommended_next_action: str | None = None,
+        exit_code: int = EXIT_VALIDATION,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.recommended_next_action = recommended_next_action
+        self.exit_code = exit_code
+
+
+class CliCancellationExit(typer.Exit):
+    """Process-boundary signal retaining its typed cancellation outcome."""
+
+    def __init__(self, outcome: CliCancellation) -> None:
+        super().__init__(code=outcome.exit_code)
+        self.outcome = outcome
+
+
 _state: dict[str, Any] = {
     "json": False,
     "verbose": False,
@@ -407,6 +436,23 @@ def fail(
     raise typer.Exit(code=exit_code)
 
 
+def cancel(
+    *,
+    code: str,
+    message: str,
+    next_action: str | None = None,
+    exit_code: int = EXIT_VALIDATION,
+) -> NoReturn:
+    """Raise a typed CLI-local cancellation for the command boundary to render."""
+
+    raise CliCancellation(
+        code=code,
+        message=message,
+        recommended_next_action=next_action,
+        exit_code=exit_code,
+    )
+
+
 @contextmanager
 def contract() -> Iterator[None]:
     """Error boundary: map domain errors to the documented exit codes.
@@ -419,6 +465,16 @@ def contract() -> Iterator[None]:
     error_code = "none"
     try:
         yield
+    except CliCancellation as exc:
+        result = "cancelled"
+        error_code = "none"
+        from potpie.cli.ui.format import print_human_block
+
+        human = exc.message
+        if exc.recommended_next_action:
+            human = f"{human}\nNext: {exc.recommended_next_action}"
+        print_human_block(human)
+        raise CliCancellationExit(exc) from None
     except EngineClientError as exc:
         error = exc.error
         code = str(getattr(error, "code", "context_operation_failed"))

@@ -785,9 +785,16 @@ def test_graph_repair_accepts_interactive_confirmation() -> None:
     assert backend.analytics.calls == [("p", ("entity_summaries",))]
 
 
-def test_graph_repair_decline_stops_before_dispatch() -> None:
+def test_graph_repair_decline_stops_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     backend = _Backend()
     _common.set_runtime(_Host(_Graph(), backend=backend))
+    monkeypatch.setattr(
+        graph,
+        "fail",
+        lambda **_: pytest.fail("human cancellation must not use the error path"),
+    )
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -796,7 +803,9 @@ def test_graph_repair_decline_stops_before_dispatch() -> None:
     )
 
     assert result.exit_code == _common.EXIT_VALIDATION
-    assert "Destructive operation was not confirmed" in _plain_cli_output(result.output)
+    output = _plain_cli_output(result.output)
+    assert "Destructive operation was not confirmed" in output
+    assert "error:" not in output.lower()
     assert backend.analytics.calls == []
 
 
@@ -812,6 +821,18 @@ def test_graph_repair_empty_stdin_stops_before_dispatch() -> None:
     assert result.exit_code == _common.EXIT_VALIDATION
     assert "Destructive operation was not confirmed" in _plain_cli_output(result.output)
     assert backend.analytics.calls == []
+
+
+def test_destructive_cancellation_is_a_typed_non_error_outcome() -> None:
+    with pytest.raises(_common.CliCancellation) as raised:
+        _common.cancel(
+            code="destructive_confirmation_declined",
+            message="Destructive operation was not confirmed.",
+        )
+
+    assert raised.value.category == "cancellation"
+    assert raised.value.code == "destructive_confirmation_declined"
+    assert raised.value.exit_code == _common.EXIT_VALIDATION
 
 
 @pytest.mark.parametrize(

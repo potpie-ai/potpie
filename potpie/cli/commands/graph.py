@@ -30,8 +30,10 @@ from potpie_context_engine.core.workbench_service import (
     normalize_workbench_result,
 )
 from potpie.cli.commands._common import (
+    CliCancellationExit,
     EXIT_UNAVAILABLE,
     EXIT_VALIDATION,
+    cancel,
     contract,
     empty_pot_warnings,
     emit,
@@ -183,7 +185,9 @@ def _graph_command(command: str):
                     yield ctx
         except BaseException as exc:
             if ctx.telemetry_error_code == "none":
-                if isinstance(exc, typer.Exit):
+                if isinstance(exc, CliCancellationExit):
+                    ctx.mark_result(result="cancelled")
+                elif isinstance(exc, typer.Exit):
                     result = "ok" if (exc.exit_code in (None, 0)) else "exit"
                     ctx.mark_result(result=result, error_code="exit")
                 else:
@@ -2298,7 +2302,7 @@ def _confirm_destructive_operation(
     except (typer.Abort, EOFError):
         confirmed = False
     if not confirmed:
-        fail(
+        cancel(
             code="destructive_confirmation_declined",
             message="Destructive operation was not confirmed.",
             next_action=f"review the target, then rerun '{rerun_command}'",
