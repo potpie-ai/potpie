@@ -141,13 +141,13 @@ export function splitFrontmatter(content) {
   if (!content.startsWith('---')) {
     return { error: 'Missing YAML frontmatter' };
   }
-  const end = content.indexOf('\n---', 3);
-  if (end === -1) {
+  const match = /\n---[ \t]*(?:\r?\n|$)/.exec(content);
+  if (!match) {
     return { error: 'Missing YAML frontmatter closing delimiter' };
   }
   return {
-    block: content.slice(4, end),
-    body: content.slice(end + 4),
+    block: content.slice(content.indexOf('\n') + 1, match.index),
+    body: content.slice(match.index + match[0].length),
   };
 }
 

@@ -93,6 +93,22 @@ description: "mentions <div> in copy"
       assert.match(split.block, /mentions <div>/);
     }
   });
+
+  test('splitFrontmatter closing delimiter must be a complete line', () => {
+    const split = splitFrontmatter(`---
+title: Hello
+description: Home
+---
+----
+## Body
+`);
+    assert.equal('body' in split, true);
+    if ('body' in split) {
+      assert.match(split.body.trimStart(), /^----/);
+      assert.match(split.body, /## Body/);
+      assert.equal(split.block.includes('----'), false);
+    }
+  });
 });
 
 describe('isAllowedAbsoluteHubRoute', () => {
@@ -232,6 +248,35 @@ description: |
     const result = validateSpokeDocs(root, { spokeId: 'demo' });
     assert.equal(result.ok, false);
     assert.equal(result.errors.some((e) => e.includes('Symlinks are not allowed')), true);
+  });
+
+  test('mdx files are rejected', () => {
+    const root = makeDocs({ 'index.md': validPage, 'guides/tabs.mdx': validPage });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('Arbitrary MDX')), true);
+  });
+
+  test('non-markdown files outside assets are rejected', () => {
+    const root = makeDocs({ 'index.md': validPage, 'notes.txt': 'x' });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('Unsupported file outside')), true);
+  });
+
+  test('link escaping the docs root fails', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+See [up](../outside.md).
+`,
+    });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('Link escapes docs root')), true);
   });
 
   test('unknown absolute route fails', () => {
