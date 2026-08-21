@@ -2,7 +2,7 @@
 id: SPEC-POTPIE-RESOURCE-MANAGER
 title: Potpie Resource Manager Contract
 kind: module-spec
-revision: 1
+revision: 2
 maturity: accepted
 owners:
   - team:potpie
@@ -10,7 +10,7 @@ depends_on:
   - SPEC-GLOSSARY
   - SPEC-SYSTEM
   - SPEC-CONTEXT-ENGINE
-change_ref: SPEC-CHANGE-0006
+change_ref: SPEC-CHANGE-0009
 ---
 
 # Potpie Resource Manager Contract
@@ -18,10 +18,10 @@ change_ref: SPEC-CHANGE-0006
 ## Purpose
 
 The Potpie Resource Manager is the product-owned provider of authorized,
-context-bound engine leases. It resolves selection, applies authorization,
-acquires host-managed resources, composes or reuses a compatible engine, and
-returns an authorized context lease. It does not execute product or domain
-operations.
+context-bound engine leases. It resolves selection, authenticates the caller,
+applies authorization, acquires host-managed resources, composes or reuses a
+compatible engine, and returns an authorized context lease. It does not
+execute product or domain operations.
 
 The Resource Manager is a logical subsystem. This contract does not require one
 class, process, or package with this name.
@@ -31,6 +31,7 @@ class, process, or package with this name.
 The Resource Manager owns:
 
 - Resolution of product selection to one context identity.
+- Authentication of caller material supplied at the Potpie operation boundary.
 - Authorization policy for actor, operation, and resolved context.
 - Provisioning, opening, validating, and releasing Potpie-managed resources.
 - Construction of explicit Context Engine dependencies with ownership modes.
@@ -53,8 +54,8 @@ or the exact lease representation.
 
 | Actor | Interaction |
 |---|---|
-| Potpie operation handler | Supplies authenticated actor, typed operation, selection request, and intent where needed |
-| Resource Manager | Resolves, authorizes, acquires, leases, and releases |
+| Potpie operation handler | Supplies caller authentication material, typed operation, selection request, and intent where needed |
+| Resource Manager | Resolves, authenticates, authorizes, acquires, leases, and releases |
 | Context Engine | Is held by the lease and invoked directly by the operation handler |
 | Resource adapter | Opens or provisions one explicitly selected dependency |
 
@@ -135,12 +136,12 @@ RM-014 [active]: The Resource Manager MUST NOT serialize unrelated contexts thro
   > decision [active]: decision:ADR-0005
   @ RM-013
 
-RM-015 [active]: Resource Manager acquisition MUST return either an authorized context lease or a typed SelectionError, AuthorizationError, or ResourceLifecycleError.
+RM-015 [retired]: Resource Manager acquisition MUST return either an authorized context lease or a typed SelectionError, AuthorizationError, or ResourceLifecycleError.
   > authority [active]: user:dsantra
   > decision [active]: decision:ADR-0004
   @ SYS-007
 
-RM-016 [active]: SelectionError, AuthorizationError, and ResourceLifecycleError MUST remain distinct at the Resource Manager boundary.
+RM-016 [retired]: SelectionError, AuthorizationError, and ResourceLifecycleError MUST remain distinct at the Resource Manager boundary.
   > authority [active]: user:dsantra
   > decision [active]: decision:ADR-0004
   @ RM-004
@@ -196,7 +197,7 @@ RM-025 [active]: A failed lease-acquisition attempt MUST attempt release of ever
   > decision [active]: decision:ADR-0004
   @ RM-006
   @ RM-011
-  @ RM-015
+  @ RM-036
 
 RM-026 [active]: When a lease owns terminal engine cleanup, lease release MUST request cleanup of engine-owned resources before releasing the host-managed resources supplied to that engine.
   > authority [active]: user:dsantra
@@ -255,6 +256,32 @@ RM-035 [active]: Failed destructive-intent validation MUST NOT issue an authoriz
   @ RM-005
   @ RM-033
 
+RM-036 [active]: Resource Manager acquisition MUST return either an authorized context lease or a typed SelectionError, AuthenticationError, AuthorizationError, or ResourceLifecycleError.
+  > authority [active]: user:dsantra
+  > decision [active]: decision:ADR-0004
+  > decision [active]: decision:ADR-0010
+  @ RM-003
+  @ SYS-007
+
+RM-037 [active]: SelectionError, AuthenticationError, AuthorizationError, and ResourceLifecycleError MUST remain structurally distinct at the Resource Manager boundary.
+  > authority [active]: user:dsantra
+  > decision [active]: decision:ADR-0004
+  > decision [active]: decision:ADR-0010
+  @ RM-036
+  @ SYS-007
+
+RM-038 [active]: Failed caller authentication during Resource Manager acquisition MUST return AuthenticationError.
+  > authority [active]: user:dsantra
+  > decision [active]: decision:ADR-0010
+  @ RM-003
+  @ RM-036
+
+RM-039 [active]: Failed caller authentication MUST stop Resource Manager acquisition before authorization, resource composition, engine construction, or lease issuance.
+  > authority [active]: user:dsantra
+  > decision [active]: decision:ADR-0010
+  @ RM-003
+  @ RM-038
+
 ## Lease Model
 
 The conceptual lease contains:
@@ -273,6 +300,7 @@ summarize `RM-008` and `RM-020` through `RM-023`.
 ```text
 selection
   -> resolved identity
+  -> authenticated actor
   -> authorized operation scope
   -> resources acquired
   -> compatible engine obtained
@@ -289,6 +317,7 @@ lifetime remain deferred.
 | Condition | Outcome |
 |---|---|
 | No, several, or unavailable matching contexts | SelectionError variant |
+| Caller authentication material is rejected | AuthenticationError |
 | Authenticated actor lacks operation or context scope | AuthorizationError |
 | Invalid destructive intent at the authorized boundary | AuthorizationError |
 | Host resource cannot be acquired or released | ResourceLifecycleError |
@@ -303,7 +332,7 @@ preserves the already-produced operation outcome.
 - The subsystem can return only an authorized lease or its own typed failure.
 - No lease or Resource Manager surface can dispatch engine operations.
 - Dependency ownership and terminal cleanup order are explicit.
-- Selection and authorization precede protected engine access.
+- Selection, authentication, and authorization precede protected engine access.
 - Reuse cannot retarget an engine.
 - Resource and lease coordination cannot serialize unrelated contexts.
 - The subsystem owns neither domain semantics, transport, nor presentation.

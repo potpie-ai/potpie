@@ -18,9 +18,11 @@ nodes. Decisions explain why, change records describe revision transitions,
 questions preserve deferred choices, and conformance records separately
 describe implementation and evidence.
 
-All eight revision-1 contracts are accepted binding targets. Existing
-architecture documents and code remain implementation snapshots and can
-disagree with the target while migration is incomplete.
+Seven revision-1 contracts and corrective Resource Manager revision 2 are
+accepted binding targets. Resource Manager revision 1 remains historically
+addressable at `047cbe067c9c726e7e14f066675453372d8a8406`. Existing architecture
+documents and code remain implementation snapshots and can disagree with the
+target while migration is incomplete.
 
 ## Read Order
 
@@ -74,11 +76,11 @@ remain canonical.
 | SPEC-PRODUCT | [product.md](product.md) | 1 | accepted | 7 | Product outcomes and non-goals |
 | SPEC-SYSTEM | [system.md](system.md) | 1 | accepted | 23 | Cross-module ownership, trust, error, and call-path contract |
 | SPEC-CONTEXT-ENGINE | [modules/context-engine.md](modules/context-engine.md) | 1 | accepted | 34 | Thin importable context-domain library boundary |
-| SPEC-POTPIE-RESOURCE-MANAGER | [modules/potpie-resource-manager.md](modules/potpie-resource-manager.md) | 1 | accepted | 35 | Authorized context lease and resource-lifecycle boundary |
+| SPEC-POTPIE-RESOURCE-MANAGER | [modules/potpie-resource-manager.md](modules/potpie-resource-manager.md) | 2 | accepted | 37 | Authorized context lease and resource-lifecycle boundary, including distinct authentication failure |
 | SPEC-DAEMON | [modules/daemon.md](modules/daemon.md) | 1 | accepted | 51 | Controller, typed runtime, discovery, readiness, lifecycle, and handlers |
 | SPEC-CLI | [modules/cli.md](modules/cli.md) | 1 | accepted | 33 | Human and machine presentation plus controller/client selection |
 
-The catalog contains 216 accepted active behavior nodes.
+The catalog contains 218 accepted active behavior nodes.
 
 ## Exact Contract Dependencies
 
@@ -120,6 +122,7 @@ read order.
 | ADR-0007 | [Context runtime migration path](decisions/ADR-0007-context-runtime-migration-path.md) | accepted |
 | ADR-0008 | [Async Context Engine public contract](decisions/ADR-0008-async-context-engine-public-contract.md) | accepted |
 | ADR-0009 | [Typed local runtime execution contract](decisions/ADR-0009-typed-local-runtime-execution-contract.md) | accepted |
+| ADR-0010 | [Correct Resource Manager authentication outcomes](decisions/ADR-0010-resource-manager-authentication-outcomes.md) | accepted |
 
 ## Open Questions
 
@@ -139,6 +142,7 @@ active behavior depends on a deferred question.
 | [SPEC-CHANGE-0006](changes/SPEC-CHANGE-0006-initialize-resource-manager-contract.md) | SPEC-POTPIE-RESOURCE-MANAGER | 0 → 1 | accepted |
 | [SPEC-CHANGE-0007](changes/SPEC-CHANGE-0007-initialize-daemon-contract.md) | SPEC-DAEMON | 0 → 1 | accepted |
 | [SPEC-CHANGE-0008](changes/SPEC-CHANGE-0008-initialize-cli-contract.md) | SPEC-CLI | 0 → 1 | accepted |
+| [SPEC-CHANGE-0009](changes/SPEC-CHANGE-0009-correct-resource-manager-authentication-outcomes.md) | SPEC-POTPIE-RESOURCE-MANAGER | 1 → 2 | accepted |
 
 ## Conformance Summary
 
