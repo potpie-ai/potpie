@@ -304,6 +304,28 @@ See [missing](./nope.md) and ![](./missing.svg).
     assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
   });
 
+  test('CRLF fenced code is ignored and subsequent prose is validated', () => {
+    const root = makeDocs({
+      'index.md': [
+        '---',
+        'title: Home',
+        'description: Home',
+        '---',
+        '',
+        '~~~markdown',
+        'See [ignored](./missing.md).',
+        '~~~',
+        '',
+        '[Run](javascript:alert(1))',
+        '',
+      ].join('\r\n'),
+    });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('Broken local link')), false);
+    assert.equal(result.errors.some((e) => e.includes('Disallowed link scheme')), true);
+  });
+
   test('link-like frontmatter text is not validated', () => {
     const root = makeDocs({
       'index.md': `---
@@ -351,6 +373,21 @@ description: Home
 ---
 
 [Run](javascript:alert(((1))))
+`,
+    });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(result.errors.some((e) => e.includes('Disallowed link scheme')), true);
+  });
+
+  test('unsafe schemes with parenthesized link titles are rejected', () => {
+    const root = makeDocs({
+      'index.md': `---
+title: Home
+description: Home
+---
+
+[Run](javascript:alert(1) (title with \\(escaped\\) and (nested)))
 `,
     });
     const result = validateSpokeDocs(root, { spokeId: 'demo' });

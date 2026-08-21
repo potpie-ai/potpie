@@ -64,7 +64,8 @@ export function markdownWithoutCode(text) {
   const proseLines = [];
   let fence = null;
 
-  for (const line of String(text || '').split('\n')) {
+  for (const rawLine of String(text || '').split('\n')) {
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
     if (fence) {
       const closing = line.match(/^ {0,3}(`+|~+)[ \t]*$/);
       if (closing && closing[1][0] === fence.marker && closing[1].length >= fence.length) {
@@ -204,6 +205,29 @@ function findLinkClose(content, start) {
   let cursor = start;
   while (cursor < content.length && /[ \t]/.test(content[cursor])) cursor += 1;
   if (content[cursor] === ')') return cursor;
+
+  if (content[cursor] === '(') {
+    let depth = 0;
+    while (cursor < content.length) {
+      if (content[cursor] === '\\') {
+        cursor += 2;
+        continue;
+      }
+      if (content[cursor] === '(') {
+        depth += 1;
+      } else if (content[cursor] === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          cursor += 1;
+          while (cursor < content.length && /[ \t]/.test(content[cursor])) cursor += 1;
+          return content[cursor] === ')' ? cursor : -1;
+        }
+      }
+      if (content[cursor] === '\n') return -1;
+      cursor += 1;
+    }
+    return -1;
+  }
 
   const quote = content[cursor];
   if (quote !== '"' && quote !== "'") return -1;
