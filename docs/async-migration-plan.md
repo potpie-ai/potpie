@@ -1,4 +1,7 @@
-# Async Migration Plan — Native Libraries, Step by Step
+---
+title: Async migration plan
+description: Step-by-step plan to replace blocking libraries with native async equivalents.
+---
 
 ## Context
 

@@ -1,4 +1,9 @@
-# Context Graph Benchmarks
+---
+title: Context graph benchmarks
+description: How graph quality is validated across GraphBackend implementations.
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 
@@ -262,7 +267,7 @@ The benchmark currently has:
 
 ## See also
 
-- [README.md](./README.md) — docs index and the two-profile overview.
+- [Context Graph](./index.md) — docs index and the two-profile overview.
 - [querying.md](./querying.md) — the read trunk, `AgentEnvelope`, named views, ranking.
 - [writing.md](./writing.md) — the propose → commit write door the bench drives.
 - [ingestion-nudge.md](./ingestion-nudge.md) — the internal event store vs the external Event Ledger seam.

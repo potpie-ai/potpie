@@ -1,4 +1,9 @@
-# Context Graph Architecture
+---
+title: Context graph architecture
+description: "Hexagonal layers, composition roots, daemon model, and the GraphBackend port."
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 

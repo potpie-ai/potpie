@@ -1,4 +1,9 @@
-# Context Graph Docs
+---
+title: Context Graph
+description: "Durable project memory for AI agents: claims, pots, and the graph workbench."
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 
@@ -108,5 +113,5 @@ key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
 | **Retrieval card** | The single text a claim is embedded and searched as (agent-authored `description` leads). One builder is shared by the embed-on-write and read paths, so retrieval quality tracks the description the agent writes. |
 
 The active package lives under
-[`../../potpie/context-engine/`](../../potpie/context-engine/). Where any older
+[`potpie/context-engine/`](https://github.com/potpie-ai/potpie/tree/main/potpie/context-engine). Where any older
 note disagrees with these docs, these docs (code-verified on `main`) win.

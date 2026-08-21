@@ -1,4 +1,9 @@
-# VS Code Extension Debug/DAP Handoff
+---
+title: VS Code extension debug handoff
+description: Debug and DAP issues in the VS Code extension tunnel and adapter detection.
+---
+
+## Overview
 
 Date: 2026-05-25
 

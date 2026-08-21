@@ -1,4 +1,7 @@
-# Sandbox Core Setup
+---
+title: Sandbox core setup
+description: "Repo cache, workspace, and runtime model for isolated agent work."
+---
 
 ## Context
 
