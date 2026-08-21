@@ -42,7 +42,7 @@ celerybeat.pid
 
 # dependencies
 /node_modules
-scripts/docs-check/node_modules
+tests/docs/node_modules
 /.pnp
 .pnp.js
 .yarn/install-state.gz
@@ -81,7 +81,7 @@ next-env.d.ts
 
 certificates
 package-lock.json
-!scripts/docs-check/package-lock.json
+!tests/docs/package-lock.json
 
 .next
 .vscode/

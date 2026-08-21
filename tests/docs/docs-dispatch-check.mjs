@@ -22,7 +22,7 @@ export function shouldDispatchDocs(options) {
 /** Print a GitHub-output-friendly boolean for the current push. */
 function main() {
   const shouldDispatch = shouldDispatchDocs({
-    configPath: resolve(process.env.DOCS_CONFIG_PATH || 'scripts/docs-check/config.json'),
+    configPath: resolve(process.env.DOCS_CONFIG_PATH || 'docs/config.json'),
     changedFilesPath: process.env.CHANGED_FILES_PATH,
   });
   process.stdout.write(shouldDispatch ? 'true' : 'false');

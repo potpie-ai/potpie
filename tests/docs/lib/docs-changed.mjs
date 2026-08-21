@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-export const DOCS_CONFIG_REPO_PATH = 'scripts/docs-check/config.json';
+export const DOCS_CONFIG_REPO_PATH = 'docs/config.json';
 
 /**
  * Normalize a changed repository path for comparison.

@@ -8,9 +8,9 @@ import { DOCS_CONFIG_REPO_PATH } from './lib/docs-changed.mjs';
 
 function makeInputs(changedPaths, docsPath = 'docs') {
   const root = mkdtempSync(join(tmpdir(), 'docs-dispatch-'));
-  const configPath = join(root, 'config/docs.json');
+  const configPath = join(root, 'docs/config.json');
   const changedFilesPath = join(root, 'changed.txt');
-  mkdirSync(join(root, 'config'), { recursive: true });
+  mkdirSync(join(root, 'docs'), { recursive: true });
   writeFileSync(configPath, JSON.stringify({ spokeId: 'demo', docsPath }));
   writeFileSync(changedFilesPath, `${changedPaths.join('\n')}\n`);
   return { configPath, changedFilesPath };
@@ -24,7 +24,7 @@ describe('shouldDispatchDocs', () => {
     );
   });
 
-  test('dispatches when scripts/docs-check/config.json changes', () => {
+  test('dispatches when docs/config.json changes', () => {
     assert.equal(shouldDispatchDocs(makeInputs([DOCS_CONFIG_REPO_PATH], 'website/docs')), true);
   });
 

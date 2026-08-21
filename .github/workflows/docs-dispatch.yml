@@ -1,7 +1,7 @@
 name: Dispatch hub rebuild
 
 # If this workflow is enabled, the job checks trusted pushes to main against
-# scripts/docs-check/config.json and notifies Hub only when the configured docs tree changed.
+# docs/config.json and notifies Hub only when the configured docs tree changed.
 # Docs check is fast PR feedback. Hub fetch-spokes.mjs is the publish gate.
 on:
   push:
@@ -42,11 +42,11 @@ jobs:
       - name: Check configured docs changes
         id: docs_change
         env:
-          DOCS_CONFIG_PATH: ${{ github.workspace }}/scripts/docs-check/config.json
+          DOCS_CONFIG_PATH: ${{ github.workspace }}/docs/config.json
           CHANGED_FILES_PATH: /tmp/changed-files.txt
         run: |
           set -euo pipefail
-          should_dispatch="$(node scripts/docs-check/docs-dispatch-check.mjs)"
+          should_dispatch="$(node tests/docs/docs-dispatch-check.mjs)"
           echo "should_dispatch=$should_dispatch" >> "$GITHUB_OUTPUT"
           echo "Dispatch Hub rebuild: $should_dispatch"
 
@@ -68,7 +68,7 @@ jobs:
           if [ -z "${HUB_REPO:-}" ]; then
             HUB_REPO="$DEFAULT_HUB_REPO"
           fi
-          SPOKE_ID="$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync("scripts/docs-check/config.json","utf8")); if (!c.spokeId) process.exit(1); process.stdout.write(String(c.spokeId))')"
+          SPOKE_ID="$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync("docs/config.json","utf8")); if (!c.spokeId) process.exit(1); process.stdout.write(String(c.spokeId))')"
           payload=$(printf '{"event_type":"spoke-docs-updated","client_payload":{"repository":"%s","branch":"%s","sha":"%s","spoke_id":"%s"}}' \
             "$SPOKE_REPO" "$BRANCH" "$SHA" "$SPOKE_ID")
           code=$(curl -sS -o /tmp/dispatch-response.json -w "%{http_code}" \

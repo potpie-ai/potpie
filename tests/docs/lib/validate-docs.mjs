@@ -430,6 +430,11 @@ export function validateSpokeDocs(docsRoot, options = {}) {
       continue;
     }
 
+    // Spoke metadata for CI. Not a published page.
+    if (parts.length === 1 && name === 'config.json') {
+      continue;
+    }
+
     if (ext === '.mdx') {
       fail(errors, `Arbitrary MDX is not allowed during MVP: ${rel}`);
       continue;

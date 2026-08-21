@@ -38,7 +38,7 @@ describe('docsChanged', () => {
     assert.equal(docsChanged(['docs/index.md'], 'website/docs'), false);
   });
 
-  test('docs contract changes when scripts/docs-check/config.json changes', () => {
+  test('docs contract changes when docs/config.json changes', () => {
     assert.equal(docsContractChanged([DOCS_CONFIG_REPO_PATH], 'website/docs'), true);
     assert.equal(docsContractChanged(['website/docs/index.md'], 'website/docs'), true);
     assert.equal(docsContractChanged(['src/cli.py'], 'website/docs'), false);

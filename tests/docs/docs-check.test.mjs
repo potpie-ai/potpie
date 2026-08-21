@@ -21,8 +21,8 @@ function makeSpoke(files, config) {
     mkdirSync(join(full, '..'), { recursive: true });
     writeFileSync(full, content);
   }
-  const configPath = join(root, 'config/docs.json');
-  mkdirSync(join(root, 'config'), { recursive: true });
+  const configPath = join(root, 'docs/config.json');
+  mkdirSync(join(root, 'docs'), { recursive: true });
   writeFileSync(
     configPath,
     JSON.stringify({

@@ -131,6 +131,27 @@ describe('validateSpokeDocs', () => {
     assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
   });
 
+  test('docs/config.json is ignored', () => {
+    const root = makeDocs({
+      'index.md': validPage,
+      'config.json': JSON.stringify({ spokeId: 'demo', docsPath: 'docs' }),
+    });
+    assert.equal(validateSpokeDocs(root, { spokeId: 'demo' }).ok, true);
+  });
+
+  test('other json outside assets still fails', () => {
+    const root = makeDocs({
+      'index.md': validPage,
+      'notes.json': '{}',
+    });
+    const result = validateSpokeDocs(root, { spokeId: 'demo' });
+    assert.equal(result.ok, false);
+    assert.equal(
+      result.errors.some((e) => e.includes('Unsupported file outside docs/assets/')),
+      true,
+    );
+  });
+
   test('missing frontmatter fails', () => {
     const root = makeDocs({
       'index.md': '# No frontmatter\n',
