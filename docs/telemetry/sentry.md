@@ -1,4 +1,9 @@
-# Potpie CLI Sentry Telemetry
+---
+title: CLI Sentry telemetry
+description: How the Potpie CLI reports unexpected failures to Sentry.
+---
+
+## Overview
 
 Sentry is used only for unexpected Potpie CLI failures. The CLI-owned
 integration lives under `potpie/cli`; engine-side metrics wiring remains under

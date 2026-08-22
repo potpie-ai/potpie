@@ -1,4 +1,9 @@
-# Potpie CLI Flow & Command Reference
+---
+title: CLI flow and command reference
+description: "Full potpie CLI command catalog, flags, and the canonical journey."
+---
+
+## Overview
 
 > Status: reflects the canonical Context Runtime boundary, last reviewed 2026-08-21.
 
@@ -589,7 +594,7 @@ potpie graph commit <plan_id> --verify
 
 ## See also
 
-- [README.md](./README.md) — front door and the Start Here index.
+- [Context Graph](./index.md) — front door and the Start Here index.
 - [vision.md](./vision.md) — what the Context Graph is and the product boundaries.
 - [architecture.md](./architecture.md) — composition roots, daemon model, GraphBackend ports & coverage.
 - [ontology.md](./ontology.md) — the catalogs the `catalog`/`describe` commands return.

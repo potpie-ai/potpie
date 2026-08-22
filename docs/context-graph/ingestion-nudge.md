@@ -1,4 +1,9 @@
-# Ingestion, the Event Ledger(s) & the Nudge Trigger Model
+---
+title: Ingestion and nudge
+description: How source events enter the graph and how session nudges fire.
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 

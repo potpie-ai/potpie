@@ -1,4 +1,9 @@
-# Observability
+---
+title: Observability
+description: "Logs, traces, metrics, and the backend-neutral observability port."
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 
