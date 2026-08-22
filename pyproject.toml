@@ -63,6 +63,7 @@ include = [
 exclude = [
     "/potpie/context-core",
     "/potpie/context-engine",
+    "/potpie/daemon/http/ui/frontend/node_modules",
     "/potpie/integrations",
     "/potpie/parsing",
     "/potpie/sandbox",
@@ -87,6 +88,7 @@ exclude = [
     "/.gitignore",
     "/potpie/context-core",
     "/potpie/context-engine",
+    "/potpie/daemon/http/ui/frontend/node_modules",
     "/potpie/integrations",
     "/potpie/parsing",
     "/potpie/sandbox",
@@ -162,3 +164,4 @@ extend-select = ["S"]
 "tests/_auth_fakes.py" = ["S108"]
 "tests/unit/test_cli_linear.py" = ["S310"]
 "tests/unit/test_nudge_adapter.py" = ["S102"]
+"tests/unit/test_validate_python_release.py" = ["S101"]
