@@ -254,7 +254,7 @@ def test_project_child_environment_emits_canonical_values_and_drops_aliases() ->
             "GITHUB_TOKEN": "legacy",
         },
         overrides={
-            "CONTEXT_ENGINE_HOME": "/tmp/potpie",
+            "CONTEXT_ENGINE_HOME": "/var/lib/potpie",
             "POTPIE_API_URL": "override",
             "SENTRY_DSN": "override-legacy",
         },
@@ -270,7 +270,7 @@ def test_project_child_environment_emits_canonical_values_and_drops_aliases() ->
     assert child["POTPIE_GITHUB_CLIENT_ID"] == "github-client"
     assert child["CONTEXT_ENGINE_GITHUB_TOKEN"] == "github-token"
     assert child["GITHUB_WEBHOOK_SECRET"] == "webhook-secret"
-    assert child["CONTEXT_ENGINE_HOME"] == "/tmp/potpie"
+    assert child["CONTEXT_ENGINE_HOME"] == "/var/lib/potpie"
     assert "SENTRY_DSN" not in child
     assert "POTPIE_BASE_URL" not in child
     assert "GITHUB_TOKEN" not in child

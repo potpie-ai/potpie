@@ -6,7 +6,9 @@ from potpie_context_engine.core.definition import GraphDefinition
 from potpie_context_engine.core.mutation_policy import GraphMutationPolicy
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
 
 

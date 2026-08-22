@@ -82,17 +82,14 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
         stray = [
             name
             for name in archive.namelist()
-            if not name.startswith("potpie/")
-            and ".dist-info/" not in name
+            if not name.startswith("potpie/") and ".dist-info/" not in name
         ]
         assert not stray, f"wheel ships members outside the namespace: {stray}"
     for artifact in (wheel, sdist):
         distribution_defaults = _archive_text(
             artifact, "potpie/runtime/_distribution_defaults.py"
         )
-        build_info = _archive_text(
-            artifact, "potpie/runtime/_build_info.py"
-        )
+        build_info = _archive_text(artifact, "potpie/runtime/_build_info.py")
         assert "DISTRIBUTION_DEFAULTS = {" in distribution_defaults
         assert "'environment': 'prod_oss'" in distribution_defaults
         assert "'sentry_dsn': 'https://sentry.example.invalid/1'" in (

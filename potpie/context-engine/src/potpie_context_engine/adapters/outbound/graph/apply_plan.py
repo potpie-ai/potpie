@@ -17,7 +17,10 @@ from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWrite
 from potpie_context_engine.core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.errors import ReconciliationApplyError
 from potpie_context_engine.core.graph_mutations import (
     ProvenanceContext,

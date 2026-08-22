@@ -31,7 +31,10 @@ from potpie_context_engine.core.definition import GraphDefinition
 from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.core.ports.graph.analytics import GraphAnalyticsPort
 from potpie_context_engine.core.ports.graph.inspection import GraphInspectionPort
-from potpie_context_engine.core.ports.graph.mutation import BackendReadiness, GraphMutationPort
+from potpie_context_engine.core.ports.graph.mutation import (
+    BackendReadiness,
+    GraphMutationPort,
+)
 from potpie_context_engine.core.ports.graph.semantic import SemanticSearchPort
 from potpie_context_engine.core.ports.graph.snapshot import GraphSnapshotPort
 

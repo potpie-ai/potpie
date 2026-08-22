@@ -291,11 +291,7 @@ def test_distribution_defaults_hook_uses_field_aware_preservation(
     )
     assert (
         build_data["force_include"][
-            str(
-                _force_include_source(
-                    build_data, "potpie/runtime/_build_info.py"
-                )
-            )
+            str(_force_include_source(build_data, "potpie/runtime/_build_info.py"))
         ]
         == "potpie/runtime/_build_info.py"
     )

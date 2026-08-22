@@ -12,9 +12,14 @@ import hashlib
 import logging
 from typing import Any, Callable
 
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.semantic_mutation_lowering import lower_semantic_request
-from potpie_context_engine.core.semantic_mutation_validator import validate_semantic_request
+from potpie_context_engine.core.semantic_mutation_validator import (
+    validate_semantic_request,
+)
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.graph_contract import (
     GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
@@ -43,7 +48,9 @@ from potpie_context_engine.core.reconciliation_config import (
     ReconciliationConfig,
     reconciliation_config_scope,
 )
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 from potpie_context_engine.core.graph_plans import (
     GraphIngestionVerificationResult,
     GraphMutationApproval,

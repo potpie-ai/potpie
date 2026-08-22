@@ -10,8 +10,12 @@ from potpie_context_engine.core.context_events import EventRef
 from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert
 from potpie_context_engine.core.reconciliation import ReconciliationPlan
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
-from potpie_context_engine.core.reconciliation_validation import validate_reconciliation_plan
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
+from potpie_context_engine.core.reconciliation_validation import (
+    validate_reconciliation_plan,
+)
 
 pytestmark = pytest.mark.unit
 

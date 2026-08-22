@@ -13,9 +13,15 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.entity_canonicalization import coherent_entity_labels
-from potpie_context_engine.core.ontology_classifier import build_signals, classify_entity
+from potpie_context_engine.core.ontology_classifier import (
+    build_signals,
+    classify_entity,
+)
 from potpie_context_engine.core.reconciliation import ReconciliationPlan
 
 

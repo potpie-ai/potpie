@@ -38,7 +38,10 @@ from potpie_context_engine.adapters.outbound.graph.cypher import (
     upsert_entities_async,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,

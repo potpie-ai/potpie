@@ -30,10 +30,15 @@ from typing import Any, Callable, Mapping, Sequence
 from potpie_context_engine.application.services.read_orchestrator import (
     ReadOrchestrator,
 )
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.record_to_semantic import record_to_semantic_request
 from potpie_context_engine.core.semantic_mutation_lowering import lower_semantic_request
-from potpie_context_engine.core.semantic_mutation_validator import validate_semantic_request
+from potpie_context_engine.core.semantic_mutation_validator import (
+    validate_semantic_request,
+)
 from potpie_context_engine.core.agent_context_port import (
     build_context_record_source_id,
 )
@@ -66,7 +71,9 @@ from potpie_context_engine.core.reconciliation_config import (
     ReconciliationConfig,
     reconciliation_config_scope,
 )
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 from potpie_context_engine.core.ontology import canonical_entity_labels
 from potpie_context_engine.core.ports.agent_context import (
     RecordReceipt,

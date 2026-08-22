@@ -81,15 +81,13 @@ def test_create_pot_preserves_legacy_optional_repo_call_shape() -> None:
     service.create_pot(name="linked", repo="owner/repo", use=False)
 
     assert backend.create_pot.call_args_list == [
-        (( ), {"name": "plain", "use": True}),
-        (( ), {"name": "linked", "repo": "owner/repo", "use": False}),
+        ((), {"name": "plain", "use": True}),
+        ((), {"name": "linked", "repo": "owner/repo", "use": False}),
     ]
 
 
 def test_repo_default_capability_is_explicit() -> None:
-    unsupported = build_pot_resource_service(
-        SimpleNamespace(pots=SimpleNamespace())
-    )
+    unsupported = build_pot_resource_service(SimpleNamespace(pots=SimpleNamespace()))
     supported = build_pot_resource_service(
         SimpleNamespace(pots=SimpleNamespace(set_repo_default=lambda **_kwargs: None))
     )

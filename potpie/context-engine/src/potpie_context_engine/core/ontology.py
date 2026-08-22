@@ -53,8 +53,16 @@ from enum import StrEnum
 from typing import Iterable
 
 from potpie_context_engine.core.graph_contract import ONTOLOGY_VERSION
-from potpie_context_engine.core.graph_mutations import EdgeDelete, EdgeUpsert, EntityUpsert
-from potpie_context_engine.core.identity import IdentityClass, IdentitySpec, register_identity
+from potpie_context_engine.core.graph_mutations import (
+    EdgeDelete,
+    EdgeUpsert,
+    EntityUpsert,
+)
+from potpie_context_engine.core.identity import (
+    IdentityClass,
+    IdentitySpec,
+    register_identity,
+)
 
 # ``ONTOLOGY_VERSION`` is owned by :mod:`potpie_context_engine.core.graph_contract` (the single
 # contract home) and mirrored here so existing importers of

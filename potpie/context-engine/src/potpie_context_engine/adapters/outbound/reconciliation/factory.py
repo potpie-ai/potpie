@@ -11,7 +11,9 @@ from potpie_context_engine.domain.ports.reconciliation_tools import (
     ReconciliationToolsPort,
 )
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 
 logger = logging.getLogger(__name__)
 

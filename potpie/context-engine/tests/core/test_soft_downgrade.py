@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_engine.core.reconciliation_validation import validate_reconciliation_plan
+from potpie_context_engine.core.reconciliation_validation import (
+    validate_reconciliation_plan,
+)
 from potpie_context_engine.core.context_events import EventRef
 from potpie_context_engine.core.errors import ReconciliationPlanValidationError
 from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert

@@ -13,7 +13,10 @@ from enum import StrEnum
 from typing import Any, Mapping
 
 from potpie_context_engine.core.context_events import EventRef
-from potpie_context_engine.core.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
+from potpie_context_engine.core.graph_contract import (
+    GRAPH_CONTRACT_VERSION,
+    ONTOLOGY_VERSION,
+)
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,

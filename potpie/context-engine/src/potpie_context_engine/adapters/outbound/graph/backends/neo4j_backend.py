@@ -39,7 +39,10 @@ from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytic
     ClaimQueryAnalytics,
 )
 from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_REPAIR_LIMIT,
     ENTITY_SUMMARY_SCAN_CYPHER,

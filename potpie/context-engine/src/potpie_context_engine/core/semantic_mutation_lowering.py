@@ -18,7 +18,10 @@ from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.graph_contract import (
     DEFAULT_TRUTH_CLASS,
     GRAPH_CONTRACT_VERSION,

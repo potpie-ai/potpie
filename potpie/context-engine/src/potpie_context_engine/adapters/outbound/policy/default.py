@@ -34,7 +34,9 @@ from potpie_context_engine.domain.ports.policy import (
 )
 from potpie_context_engine.core.ports.pot_resolution import PotResolutionPort
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
 

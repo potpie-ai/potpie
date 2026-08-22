@@ -79,9 +79,7 @@ class HttpDaemonTransport:
                 headers={"Authorization": f"Bearer {self._bearer_token}"},
             )
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
-            raise TransportFailure(
-                code="daemon_unavailable", dispatched=False
-            ) from exc
+            raise TransportFailure(code="daemon_unavailable", dispatched=False) from exc
         except (
             httpx.ReadError,
             httpx.ReadTimeout,
@@ -93,7 +91,9 @@ class HttpDaemonTransport:
                 code="daemon_connection_lost", dispatched=True
             ) from exc
         except httpx.RequestError as exc:
-            raise TransportFailure(code="daemon_transport_failed", dispatched=True) from exc
+            raise TransportFailure(
+                code="daemon_transport_failed", dispatched=True
+            ) from exc
 
         try:
             document = response.json()

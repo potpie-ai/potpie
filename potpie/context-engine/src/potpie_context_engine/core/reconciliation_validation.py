@@ -10,14 +10,23 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.canonical_label_inference import (
     _ensure_required_properties_for_label,
     enrich_reconciliation_plan_entity_labels,
 )
-from potpie_context_engine.core.entity_canonicalization import canonicalize_reconciliation_plan
+from potpie_context_engine.core.entity_canonicalization import (
+    canonicalize_reconciliation_plan,
+)
 from potpie_context_engine.core.errors import MutationBatchValidationError
-from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert, InvalidationOp
+from potpie_context_engine.core.graph_mutations import (
+    EdgeUpsert,
+    EntityUpsert,
+    InvalidationOp,
+)
 from potpie_context_engine.core.ontology import (
     BASE_GRAPH_LABELS,
     CODE_GRAPH_LABELS,
@@ -31,7 +40,9 @@ from potpie_context_engine.core.reconciliation_config import (
     ReconciliationConfig,
     current_reconciliation_config,
 )
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 from potpie_context_engine.core.reconciliation_issues import validation_lines_to_issues
 
 _EDGE_TEMPORAL_BACKFILLS: tuple[str, ...] = ("valid_from", "valid_at", "observed_at")

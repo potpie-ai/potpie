@@ -25,8 +25,13 @@ from typing import Any, Mapping
 from potpie_context_engine.core.context_records import (
     validate_record_payload,
 )
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_engine.core.identity import _slugify  # deterministic slug; reused for keys
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
+from potpie_context_engine.core.identity import (
+    _slugify,
+)  # deterministic slug; reused for keys
 from potpie_context_engine.core.ports.agent_context import RecordRequest
 from potpie_context_engine.core.semantic_mutations import (
     MutationActor,

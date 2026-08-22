@@ -10,7 +10,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, runtime_checkable
 
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
@@ -21,7 +24,9 @@ from potpie_context_engine.core.ports.graph.plan_store import GraphPlanStorePort
 from potpie_context_engine.core.reconciliation_config import (
     ReconciliationConfig,
 )
-from potpie_context_engine.core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 from potpie_context_engine.core.workbench_service import GraphWorkbenchService
 
 

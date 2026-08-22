@@ -26,7 +26,10 @@ import re
 from datetime import date, datetime, time, timezone
 from typing import Any
 
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,

@@ -10,7 +10,10 @@ from __future__ import annotations
 import pytest
 
 from potpie_context_engine.core.context_events import EventRef
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphExtension,
+)
 from potpie_context_engine.core.entity_canonicalization import (
     canonicalize_reconciliation_plan,
     coherent_entity_labels,

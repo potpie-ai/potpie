@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphExtension,
+)
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.identity import IdentityClass
 from potpie_context_engine.core.ontology import EntityTypeSpec

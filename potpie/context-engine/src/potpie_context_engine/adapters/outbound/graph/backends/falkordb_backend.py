@@ -55,7 +55,10 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     repaired_entity_labels,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.ports.claim_query import ClaimQueryPort

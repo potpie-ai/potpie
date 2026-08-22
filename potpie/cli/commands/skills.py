@@ -27,9 +27,7 @@ def skills_list(
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
-        items = get_skill_service().list(
-            agent=agent, scope=effective_scope, path=path
-        )
+        items = get_skill_service().list(agent=agent, scope=effective_scope, path=path)
         emit(
             {
                 "agent": agent,
@@ -167,9 +165,7 @@ def skills_status(
 ) -> None:
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
-        st = get_skill_service().status(
-            agent=agent, path=path, scope=effective_scope
-        )
+        st = get_skill_service().status(agent=agent, path=path, scope=effective_scope)
         emit(
             {
                 "agent": st.agent,

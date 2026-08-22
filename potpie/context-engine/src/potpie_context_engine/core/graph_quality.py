@@ -16,7 +16,10 @@ from potpie_context_engine.core.ontology import (
 )
 from potpie_context_engine.core.graph_workbench import GRAPH_WORKBENCH_CONTRACT_VERSION
 from potpie_context_engine.core.graph_workbench import GRAPH_WORKBENCH_ONTOLOGY_VERSION
-from potpie_context_engine.core.source_references import SourceFallback, SourceReferenceRecord
+from potpie_context_engine.core.source_references import (
+    SourceFallback,
+    SourceReferenceRecord,
+)
 
 
 @dataclass

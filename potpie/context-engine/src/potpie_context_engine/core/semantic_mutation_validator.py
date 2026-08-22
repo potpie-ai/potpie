@@ -23,7 +23,10 @@ from contextvars import ContextVar
 from datetime import datetime
 from typing import Mapping
 
-from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.core.graph_contract import (
     DEFERRED_OPS,
     EVIDENCE_REQUIRED_TRUTH_CLASSES,

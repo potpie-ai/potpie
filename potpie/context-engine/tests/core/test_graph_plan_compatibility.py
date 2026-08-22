@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from potpie_context_engine.core.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
-from potpie_context_engine.core.graph_plans import GraphMutationDiff, GraphMutationPlanRecord
+from potpie_context_engine.core.graph_contract import (
+    GRAPH_CONTRACT_VERSION,
+    ONTOLOGY_VERSION,
+)
+from potpie_context_engine.core.graph_plans import (
+    GraphMutationDiff,
+    GraphMutationPlanRecord,
+)
 
 
 def test_commit_attempt_fields_preserve_existing_positional_constructor_order() -> None:

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from potpie_context_engine.core.reconciliation_validation import validate_reconciliation_plan
+from potpie_context_engine.core.reconciliation_validation import (
+    validate_reconciliation_plan,
+)
 from potpie_context_engine.core.canonical_label_inference import (
     enrich_reconciliation_plan_entity_labels,
 )
@@ -129,13 +131,17 @@ def test_safe_label_guard() -> None:
 
 def test_infer_labels_explicit_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
-    from potpie_context_engine.core.reconciliation_flags import infer_canonical_labels_enabled
+    from potpie_context_engine.core.reconciliation_flags import (
+        infer_canonical_labels_enabled,
+    )
 
     assert infer_canonical_labels_enabled() is False
 
 
 def test_infer_labels_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CONTEXT_ENGINE_INFER_LABELS", raising=False)
-    from potpie_context_engine.core.reconciliation_flags import infer_canonical_labels_enabled
+    from potpie_context_engine.core.reconciliation_flags import (
+        infer_canonical_labels_enabled,
+    )
 
     assert infer_canonical_labels_enabled() is True

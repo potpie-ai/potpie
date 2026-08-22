@@ -9,7 +9,10 @@ from potpie_context_engine.core.semantic_mutation_validator import (
     subgraph_for_predicate,
     validate_semantic_request,
 )
-from potpie_context_engine.core.graph_contract import GRAPH_CONTRACT_VERSION, ONTOLOGY_VERSION
+from potpie_context_engine.core.graph_contract import (
+    GRAPH_CONTRACT_VERSION,
+    ONTOLOGY_VERSION,
+)
 from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
