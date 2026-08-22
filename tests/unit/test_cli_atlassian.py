@@ -5,11 +5,11 @@ from __future__ import annotations
 from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
-from potpie_context_engine.adapters.outbound.cli_auth.http import AuthHttpError
+from potpie.auth.adapters.http import AuthHttpError
 import pytest
 import typer
 from potpie.cli.auth import atlassian_auth
-from potpie_context_engine.adapters.outbound.cli_auth.atlassian_client import (
+from potpie.auth.adapters.atlassian_client import (
     AtlassianAuthErrorKind,
     AtlassianVerifyResult,
     _classify_gateway_status,
@@ -24,14 +24,14 @@ from potpie.cli.auth.atlassian_auth import (
     _auth_failure_message,
     run_atlassian_api_token_auth,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.atlassian_client import (
+from potpie.auth.adapters.atlassian_client import (
     _fetch_accessible_resources,
     _parse_accessible_resources,
     discover_sites_with_api_token,
     fetch_accessible_resources,
 )
 from potpie.cli.auth.atlassian_read import _auth_header_variants
-from potpie_context_engine.adapters.outbound.cli_auth import credentials_store as cs
+from potpie.auth.adapters import credentials_store as cs
 from potpie.cli.auth.atlassian_read import (
     AtlassianReadError,
     _cloud_id_from_credentials,
@@ -99,7 +99,7 @@ def test_verify_gateway_product_confluence_success() -> None:
     response.content = b'{"displayName":"Wiki"}'
     response.json.return_value = {"displayName": "Wiki"}
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
+        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
     ) as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
@@ -137,7 +137,7 @@ def test_verify_gateway_product_insufficient_scopes_on_403() -> None:
     response.status_code = 403
     response.content = b""
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
+        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
     ) as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
@@ -160,7 +160,7 @@ def test_verify_gateway_product_success() -> None:
     response.content = b'{"displayName":"Ada"}'
     response.json.return_value = {"displayName": "Ada"}
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
+        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
     ) as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
@@ -186,7 +186,7 @@ def test_verify_gateway_product_bearer_after_basic_401() -> None:
     bearer.content = b'{"displayName":"Bearer User"}'
     bearer.json.return_value = {"displayName": "Bearer User"}
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
+        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
     ) as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
@@ -209,7 +209,7 @@ def test_fetch_cloud_id_for_site_success() -> None:
     response.status_code = 200
     response.json.return_value = {"cloudId": "cloud-xyz"}
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
+        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
     ) as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
@@ -240,7 +240,7 @@ def test_finalize_selected_site_success() -> None:
         "cloud_id": "cloud-1",
     }
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
+        "potpie.auth.adapters.atlassian_client.verify_gateway_product",
         return_value=AtlassianVerifyResult(
             ok=True,
             display_name="Ada",
@@ -262,7 +262,7 @@ def test_finalize_selected_site_success() -> None:
 def test_finalize_selected_site_gateway_failure() -> None:
     site = {"site_url": "https://team.atlassian.net", "cloud_id": "c1"}
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
+        "potpie.auth.adapters.atlassian_client.verify_gateway_product",
         return_value=AtlassianVerifyResult(
             ok=False,
             error_kind=AtlassianAuthErrorKind.INVALID_CREDENTIALS,
@@ -303,7 +303,7 @@ def test_auth_failure_message_insufficient_scopes_per_product() -> None:
 
 def test_fetch_cloud_id_for_site_returns_empty_on_http_error() -> None:
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
+        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
     ) as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
@@ -314,7 +314,7 @@ def test_fetch_cloud_id_for_site_returns_empty_on_http_error() -> None:
 
 def test_verify_gateway_product_returns_unknown_on_http_error() -> None:
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
+        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
     ) as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
@@ -443,11 +443,11 @@ def test_finalize_selected_site_fetches_cloud_id() -> None:
     site = {"site_url": "https://team.atlassian.net", "site_name": "Team"}
     with (
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.fetch_cloud_id_for_site",
+            "potpie.auth.adapters.atlassian_client.fetch_cloud_id_for_site",
             return_value="cloud-fetched",
         ),
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
+            "potpie.auth.adapters.atlassian_client.verify_gateway_product",
             return_value=AtlassianVerifyResult(ok=True, display_name="Ada"),
         ),
     ):
@@ -467,11 +467,11 @@ def test_verify_site_with_api_token_success() -> None:
 
     with (
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.fetch_cloud_id_for_site",
+            "potpie.auth.adapters.atlassian_client.fetch_cloud_id_for_site",
             return_value="cloud-1",
         ),
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
+            "potpie.auth.adapters.atlassian_client.verify_gateway_product",
             return_value=AtlassianVerifyResult(ok=True, display_name="Team Site"),
         ),
     ):
@@ -488,11 +488,11 @@ def test_verify_site_with_api_token_success() -> None:
 def test_discover_sites_skips_candidates_without_cloud_id() -> None:
     with (
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.collect_site_candidates",
+            "potpie.auth.adapters.atlassian_client.collect_site_candidates",
             return_value=[{"site_url": "https://team.atlassian.net", "cloud_id": ""}],
         ),
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
+            "potpie.auth.adapters.atlassian_client.verify_gateway_product",
         ) as verify,
     ):
         found = atlassian_auth.discover_sites_with_api_token(
@@ -514,7 +514,7 @@ def test_resolve_site_from_subdomain_failures() -> None:
     assert err2 == AtlassianAuthErrorKind.SITE_DISCOVERY_FAILED
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.fetch_cloud_id_for_site",
+        "potpie.auth.adapters.atlassian_client.fetch_cloud_id_for_site",
         return_value="",
     ):
         site3, err3 = atlassian_auth._resolve_site_from_subdomain("myteam")
@@ -530,11 +530,11 @@ def test_finalize_atlassian_site_unscoped() -> None:
     }
     with (
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client._finalize_selected_site",
+            "potpie.auth.adapters.atlassian_client._finalize_selected_site",
             return_value=(site, None),
         ),
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
+            "potpie.auth.adapters.atlassian_client.verify_gateway_product",
             return_value=AtlassianVerifyResult(ok=True, display_name="Wiki"),
         ),
     ):
@@ -627,7 +627,7 @@ def test_run_atlassian_auth_emits_site_discovery_error_on_tenant_http_error(
     monkeypatch.setattr(atlassian_auth, "emit_error", _capture_error)
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
+        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
     ) as mock_client_cls:
         client = MagicMock()
         mock_client_cls.return_value = client
@@ -852,9 +852,7 @@ def test_fetch_accessible_resources_bearer_fallback() -> None:
     bearer.json.return_value = [
         {"id": "c2", "url": "https://other.atlassian.net", "name": "Other"},
     ]
-    with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
-    ) as mock_cls:
+    with patch("potpie.auth.adapters.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
         mock_cls.return_value = client
         client.get.side_effect = [basic, bearer]
@@ -869,9 +867,7 @@ def test_fetch_accessible_resources_basic_success() -> None:
     response.json.return_value = [
         {"id": "c1", "url": "https://team.atlassian.net", "name": "Team"},
     ]
-    with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
-    ) as mock_cls:
+    with patch("potpie.auth.adapters.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
         mock_cls.return_value = client
         client.get.return_value = response
@@ -885,9 +881,7 @@ def test_fetch_accessible_resources_http_error_tries_next_scheme() -> None:
     bearer.json.return_value = [
         {"id": "c2", "url": "https://other.atlassian.net", "name": "Other"},
     ]
-    with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
-    ) as mock_cls:
+    with patch("potpie.auth.adapters.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
         mock_cls.return_value = client
         client.get.side_effect = [AuthHttpError("down"), bearer]
@@ -905,9 +899,7 @@ def test_fetch_accessible_resources_invalid_json_tries_next_scheme() -> None:
     good.json.return_value = [
         {"id": "c1", "url": "https://team.atlassian.net", "name": "Team"},
     ]
-    with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.AuthHttpClient"
-    ) as mock_cls:
+    with patch("potpie.auth.adapters.atlassian_client.AuthHttpClient") as mock_cls:
         client = MagicMock()
         mock_cls.return_value = client
         client.get.side_effect = [bad_json, good]
@@ -927,11 +919,11 @@ def test_discover_sites_with_api_token_filters_by_gateway() -> None:
     ]
     with (
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.collect_site_candidates",
+            "potpie.auth.adapters.atlassian_client.collect_site_candidates",
             return_value=candidates,
         ),
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.verify_gateway_product",
+            "potpie.auth.adapters.atlassian_client.verify_gateway_product",
             return_value=AtlassianVerifyResult(ok=True, display_name="Ada"),
         ),
     ):
@@ -945,7 +937,7 @@ def test_collect_login_site_candidates_merges_resources_and_email_hints() -> Non
 
     with (
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client._fetch_accessible_resources",
+            "potpie.auth.adapters.atlassian_client._fetch_accessible_resources",
             return_value=[
                 {
                     "cloud_id": "c1",
@@ -955,7 +947,7 @@ def test_collect_login_site_candidates_merges_resources_and_email_hints() -> Non
             ],
         ),
         patch(
-            "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.fetch_cloud_id_for_site",
+            "potpie.auth.adapters.atlassian_client.fetch_cloud_id_for_site",
             return_value="c1",
         ),
     ):
@@ -970,7 +962,7 @@ def test_collect_login_site_candidates_merges_resources_and_email_hints() -> Non
 
 def test_fetch_accessible_resources_alias() -> None:
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_client.discover_sites_with_api_token",
+        "potpie.auth.adapters.atlassian_client.discover_sites_with_api_token",
         return_value=[],
     ) as discover:
         fetch_accessible_resources("u@example.com", "tok")
@@ -1025,7 +1017,7 @@ def test_get_json_raises_atlassian_read_error_on_http_error() -> None:
     client.get.side_effect = AuthHttpError("connection refused")
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         with pytest.raises(AtlassianReadError, match="jira GET failed") as exc_info:
@@ -1053,7 +1045,7 @@ def test_get_json_retries_after_transport_error_on_first_variant() -> None:
     client.get.side_effect = [AuthHttpError("down"), ok]
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         data = _get_json(
@@ -1076,7 +1068,7 @@ def test_post_json_raises_atlassian_read_error_on_http_error() -> None:
     client.post.side_effect = AuthHttpError("connection refused")
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         with pytest.raises(AtlassianReadError, match="jira POST failed") as exc_info:
@@ -1131,7 +1123,7 @@ def test_fetch_jira_issues_sample(monkeypatch: pytest.MonkeyPatch, tmp_path) -> 
     client.post.return_value = response
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         issues = fetch_jira_issues_sample(limit=5)
@@ -1175,7 +1167,7 @@ def test_fetch_confluence_spaces_sample(
     client.get.return_value = response
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         spaces = fetch_confluence_spaces_sample(limit=5)
@@ -1234,7 +1226,7 @@ def test_post_json_success() -> None:
     client.post.return_value = response
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         data = _post_json(
@@ -1260,7 +1252,7 @@ def test_get_json_confluence_wiki_path() -> None:
     client.get.return_value = response
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         data = _get_json(
@@ -1286,7 +1278,7 @@ def test_get_json_http_error_status() -> None:
     client.get.return_value = response
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         with pytest.raises(AtlassianReadError, match="HTTP 500"):
@@ -1310,7 +1302,7 @@ def test_get_json_returns_list_payload_wrapped(monkeypatch: pytest.MonkeyPatch) 
     client.get.return_value = response
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         data = _get_json(
@@ -1364,7 +1356,7 @@ def test_fetch_jira_issues_sample_uses_saved_project(
     )
     cs.save_jira_workspace_prefs(project_key="ENG")
     monkeypatch.setattr(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.fetch_jira_issues_in_project",
+        "potpie.auth.adapters.atlassian_read_client.fetch_jira_issues_in_project",
         lambda key, limit: [{"key": f"{key}-1"}],
     )
 
@@ -1440,7 +1432,7 @@ def test_fetch_jira_issues_in_project(
     client.post.return_value = response
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         issues = fetch_jira_issues_in_project("ENG", limit=5)
@@ -1513,7 +1505,7 @@ def test_fetch_confluence_pages_in_space(
     client.get.return_value = response
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         pages = fetch_confluence_pages_in_space("DOCS", limit=5)
@@ -1539,7 +1531,7 @@ def test_fetch_jira_projects(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     client.get.return_value = response
 
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.atlassian_read_client.AuthHttpClient",
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
         return_value=client,
     ):
         projects = fetch_jira_projects(limit=5)

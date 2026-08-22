@@ -12,8 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from potpie.daemon.runtime.context import ServiceEndpoints, ShellContext
-
 # tests/docs is Node (docs-check.mjs). Do not collect it as pytest.
 collect_ignore = ["docs"]
 
@@ -54,16 +52,6 @@ async def wait_for_condition(
     raise TimeoutError(error_message)
 
 
-@pytest.fixture()
-def daemon_ctx(tmp_path: Path) -> ShellContext:
-    return ShellContext(
-        config={},
-        data_dir=tmp_path,
-        logger=logging.getLogger("test"),
-        endpoints=ServiceEndpoints(),
-    )
-
-
 @pytest.fixture(autouse=True)
 def _default_in_process_cli_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep CLI unit tests on the direct host unless they opt into daemon mode."""
@@ -77,10 +65,27 @@ def _reset_cli_state():
     try:
         from potpie.cli.commands import _common
 
+        runner = _common._state.get("engine_runner")
+        manager = _common._state.get("engine_manager")
+        if runner is not None and manager is not None:
+            runner.run(manager.shutdown())
+        if runner is not None:
+            runner.close()
         _common._state["store"] = None
-        _common._state["host"] = None
+        _common._state["runtime"] = None
         _common._state["json"] = False
         _common._state["verbose"] = False
+        _common._state["engine_runner"] = None
+        _common._state["engine_manager"] = None
+        _common._state["engine_runtime"] = None
+        _common._state["engine_remote_host"] = None
+        _common._state["engine_remote_home"] = None
+        _common._state["pot_service"] = None
+        _common._state["pot_service_runtime"] = None
+        _common._state["root_product_services"] = {}
+        _common._state["root_product_services_runtime"] = None
+        _common._state["root_runtime"] = None
+        _common._state["root_runtime_source"] = None
     except Exception:
         logging.getLogger(__name__).debug(
             "failed to reset CLI test state", exc_info=True

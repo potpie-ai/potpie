@@ -11,8 +11,8 @@ from typer.testing import CliRunner
 
 from potpie.cli import main as cli_main
 from potpie.cli.auth import gitbucket_commands as gb_cmds
-from potpie_context_engine.adapters.outbound.cli_auth import credentials_store as cs
-from potpie_context_engine.adapters.outbound.cli_auth.gitbucket_client import (
+from potpie.auth.adapters import credentials_store as cs
+from potpie.auth.adapters.gitbucket_client import (
     GitBucketAccount,
     GitBucketClientError,
     gitbucket_api_base,
@@ -20,19 +20,19 @@ from potpie_context_engine.adapters.outbound.cli_auth.gitbucket_client import (
     normalize_gitbucket_host_url,
     verify_gitbucket_token,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.gitbucket_read_client import (
+from potpie.auth.adapters.gitbucket_read_client import (
     GitBucketReadError,
     list_gitbucket_repos,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.http import AuthHttpError
-from potpie_context_engine.adapters.outbound.cli_auth.integration_profile import (
+from potpie.auth.adapters.http import AuthHttpError
+from potpie.auth.adapters.integration_profile import (
     build_gitbucket_integration_record,
     gitbucket_account_from_entry,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.integration_verify import (
+from potpie.auth.adapters.integration_verify import (
     verify_integration_access,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
+from potpie.auth.adapters.provider_config import (
     GITBUCKET_API_VERSION,
     GITBUCKET_TOKEN_PAGE_SUFFIX,
 )
@@ -62,7 +62,7 @@ def _isolated_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(gb_cmds, "ensure_runtime_environment_loaded", lambda: None)
     monkeypatch.setattr(
-        "potpie_context_engine.bootstrap.runtime_settings.ensure_runtime_environment_loaded",
+        "potpie.runtime.settings.ensure_runtime_environment_loaded",
         lambda *_args, **_kwargs: None,
     )
 
@@ -494,7 +494,7 @@ def test_verify_integration_access_gitbucket_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "potpie_context_engine.adapters.outbound.cli_auth.gitbucket_client.verify_gitbucket_token",
+        "potpie.auth.adapters.gitbucket_client.verify_gitbucket_token",
         lambda host, token, **_: GitBucketAccount(
             login="alice",
             email="alice@example.com",
@@ -524,7 +524,7 @@ def test_verify_integration_access_gitbucket_invalid_token(
         raise GitBucketClientError("Authentication failed.", status_code=401)
 
     monkeypatch.setattr(
-        "potpie_context_engine.adapters.outbound.cli_auth.gitbucket_client.verify_gitbucket_token",
+        "potpie.auth.adapters.gitbucket_client.verify_gitbucket_token",
         _fail,
     )
 

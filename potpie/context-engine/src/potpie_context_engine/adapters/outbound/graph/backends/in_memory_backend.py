@@ -19,7 +19,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Sequence
 
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
     card_for_row,
@@ -40,33 +43,33 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
 )
-from potpie_context_core.reconciliation_validation import (
+from potpie_context_engine.core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from potpie_context_core.graph_contract import evidence_strength_for_truth
-from potpie_context_core.graph_entity_summary import (
+from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
+from potpie_context_engine.core.graph_entity_summary import (
     merge_entity_display_properties,
     normalize_entity_properties,
 )
-from potpie_context_core.graph_mutations import ProvenanceContext
-from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
-from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
-from potpie_context_core.ports.graph.analytics import RepairReport
-from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.inspection import (
+from potpie_context_engine.core.ports.graph.analytics import RepairReport
+from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.ports.graph.inspection import (
     GraphEdge,
     GraphNode,
     GraphSlice,
 )
-from potpie_context_core.ports.graph.mutation import BackendReadiness
-from potpie_context_core.ports.graph.snapshot import SnapshotManifest
-from potpie_context_core.reconciliation import (
+from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
+from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
+from potpie_context_engine.core.reconciliation import (
     MutationBatch,
     MutationResult,
     MutationSummary,
 )
-from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
 
 _PROFILE = "in_memory"
 
@@ -759,11 +762,10 @@ class InMemoryGraphBackend:
             snapshot=True,
         )
 
-    def provision(self, plan: SetupPlan) -> StepResult:
+    def provision(self) -> BackendProvisionResult:
         # Ephemeral store: nothing durable to stand up.
-        return StepResult(
-            step="backend.provision",
-            state=DONE,
+        return BackendProvisionResult(
+            ok=True,
             detail=f"'{self.profile_name}' backend ready (ephemeral, no store to provision)",
             metadata={"profile": self.profile_name},
         )

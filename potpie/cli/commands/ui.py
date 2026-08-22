@@ -17,7 +17,8 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
-    get_host,
+    get_daemon_service,
+    get_root_runtime,
     resolve_pot_id,
 )
 
@@ -34,21 +35,22 @@ def ui_command(
 ) -> None:
     """Launch the local graph-explorer UI (served by the daemon)."""
     with contract():
-        host = get_host()
+        host = get_root_runtime()
+        daemon = get_daemon_service(host)
         # Bring the detached daemon up if needed (in-process host is a no-op).
         try:
-            host.daemon.ensure()
+            daemon.ensure()
         except Exception:  # noqa: BLE001 — fall through to the discovery check
             pass
-        disc = host.daemon.discovery()
-        if not disc or not disc.get("base_url"):
+        daemon_status = daemon.status()
+        if not daemon_status.get("ready") or not daemon_status.get("url"):
             fail(
                 code="daemon_unavailable",
                 message="Potpie daemon is not running, so the UI can't be served.",
                 next_action="run 'potpie setup' (or 'potpie daemon restart'), then 'potpie ui'",
             )
             return
-        base = str(disc["base_url"]).rstrip("/")
+        base = str(daemon_status["url"]).rstrip("/")
         pot_id = resolve_pot_id(host, pot) if pot else None
         query = f"?{urlencode({'pot': pot_id})}" if pot_id else ""
         url = f"{base}/ui{query}"

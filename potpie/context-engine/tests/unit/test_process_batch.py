@@ -13,7 +13,7 @@ from potpie_context_engine.adapters.outbound.reconciliation.noop_agent import (
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.application.use_cases.process_batch import process_batch
 from potpie_context_engine.domain.ports.reconciliation_ledger import ContextEventRow
-from potpie_context_core.ports.pot_resolution import (
+from potpie_context_engine.core.ports.pot_resolution import (
     ResolvedPot,
     ResolvedPotRepo,
 )

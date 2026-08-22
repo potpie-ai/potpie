@@ -1,8 +1,9 @@
-"""Host-routed CLI command surface.
+"""Typed-client and Potpie-service CLI command surface.
 
 One Typer sub-app (or top-level command set) per ``cli-flow.md`` command group,
-each routing ``CLI -> HostShell -> service(s) -> ports``. Assembled into the root
-app by ``build_app`` (see ``potpie/cli/main.py``).
+routing context operations through ``EngineClient`` and root-owned operations
+through finite Potpie services. Assembled into the root app by ``build_app``
+(see ``potpie/cli/main.py``).
 """
 
 from __future__ import annotations

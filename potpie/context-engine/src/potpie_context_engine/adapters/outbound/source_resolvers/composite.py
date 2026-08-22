@@ -16,7 +16,7 @@ import logging
 from typing import Iterable, Sequence
 
 from potpie_context_engine.domain.ports.source_resolver import SourceResolverPort
-from potpie_context_core.source_references import (
+from potpie_context_engine.core.source_references import (
     SourceReferenceRecord,
     normalize_source_policy,
 )

@@ -9,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_core.graph_inbox import GraphInboxItem
+from potpie_context_engine.adapters.outbound.local_paths import default_home
+from potpie_context_engine.core.graph_inbox import GraphInboxItem
 
 logger = logging.getLogger(__name__)
 

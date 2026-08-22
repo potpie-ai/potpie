@@ -1,6 +1,6 @@
 """Query + memory commands: ``resolve`` / ``search`` / ``record``.
 
-Routes ``CLI -> HostShell.agent_context -> GraphService -> readers/mutation``.
+All three operations route through the context-bound ``EngineClient``.
 These three (plus ``status``) are the four-tool agent contract; new use cases
 become new ``--intent`` / ``--include`` / ``--type`` values, never new commands.
 """
@@ -12,8 +12,8 @@ import typer
 from potpie.cli.commands._common import (
     contract,
     emit,
-    get_host,
-    resolve_pot_id,
+    get_engine_client,
+    run_engine_operation,
 )
 from potpie.cli.telemetry.onboarding_events import (
     capture_activation_succeeded,
@@ -21,11 +21,11 @@ from potpie.cli.telemetry.onboarding_events import (
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from potpie_context_core.ports.agent_context import (
-    RecordRequest,
-    ResolveRequest,
-    SearchRequest,
+from potpie_context_engine.requests import (
+    RecordRequest as EngineRecordRequest,
+    ResolveRequest as EngineResolveRequest,
 )
+from potpie_context_engine.requests import SearchRequest as EngineSearchRequest
 
 
 def _split(value: str | None) -> tuple[str, ...]:
@@ -49,15 +49,15 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_resolve — a bounded context wrap for a task."""
         with contract():
-            host = get_host()
-            pot_id = resolve_pot_id(host, pot)
-            env = host.agent_context.resolve(
-                ResolveRequest(
-                    pot_id=pot_id,
-                    task=task,
-                    intent=intent,
-                    include=_split(include),
-                    mode=mode,
+            client = get_engine_client(pot)
+            env = run_engine_operation(
+                client.resolve(
+                    EngineResolveRequest(
+                        task=task,
+                        intent=intent,
+                        include=_split(include),
+                        mode=mode,
+                    )
                 )
             )
             _capture_context_activation(command="resolve", item_count=len(env.items))
@@ -71,10 +71,9 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_search — narrow follow-up lookup."""
         with contract():
-            host = get_host()
-            pot_id = resolve_pot_id(host, pot)
-            env = host.agent_context.search(
-                SearchRequest(pot_id=pot_id, query=query, include=_split(include))
+            client = get_engine_client(pot)
+            env = run_engine_operation(
+                client.search(EngineSearchRequest(query=query, include=_split(include)))
             )
             _capture_context_activation(command="search", item_count=len(env.items))
             emit(_envelope_payload(env), human=_envelope_human(env))
@@ -92,14 +91,13 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_record — write a durable project learning."""
         with contract():
-            host = get_host()
-            pot_id = resolve_pot_id(host, pot)
-            receipt = host.agent_context.record(
-                RecordRequest(
-                    pot_id=pot_id,
-                    record_type=type,
-                    summary=summary,
-                    scope=_parse_scope(scope),
+            receipt = run_engine_operation(
+                get_engine_client(pot).record(
+                    EngineRecordRequest(
+                        record_type=type,
+                        summary=summary,
+                        scope=_parse_scope(scope),
+                    )
                 )
             )
             capture_usage_command_succeeded(

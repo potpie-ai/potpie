@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.hooks.custom]
-path = "distribution_defaults_hook.py"
+path = "sentry_defaults_hook.py"
 
 [project]
 name = "potpie-context-engine"
@@ -16,17 +16,10 @@ classifiers = ["Typing :: Typed"]
 # storage backends live behind extras; importing the base package must not
 # require any of them.
 dependencies = [
-    "potpie-context-core==0.1.0",
     "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
-# Outbound credential-store + provider auth clients (adapters/outbound/cli_auth).
-# The inbound CLI itself lives in the root `potpie` distribution.
-cli-auth = [
-    "httpx>=0.28.0",
-    "keyring>=25.0.0",
-]
 http = [
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
@@ -81,7 +74,7 @@ observability = [
 # OSS distribution convenience set: everything the local potpie experience
 # uses. Excludes benchmarks (development harness) and dev tooling.
 all = [
-    "potpie-context-engine[cli-auth,http,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
+    "potpie-context-engine[http,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
 ]
 dev = [
     "pytest>=9.0.3",
@@ -93,6 +86,7 @@ dev = [
 packages = ["src/potpie_context_engine"]
 include = [
     "src/potpie_context_engine/py.typed",
+    "src/potpie_context_engine/core/playbooks/**/*.md",
     "src/potpie_context_engine/benchmarks/use_cases/**/*.yaml",
     "src/potpie_context_engine/benchmarks/fixtures/raw_events/**/*.json",
     "src/potpie_context_engine/benchmarks/_legacy/data/**/*.json",
@@ -100,8 +94,7 @@ include = [
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "build_config_values.py",
-    "distribution_defaults_hook.py",
+    "sentry_defaults_hook.py",
     "src/potpie_context_engine",
     "scripts/**/*.py",
     "scripts/**/*.json",
@@ -114,8 +107,7 @@ src = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Root-level build helpers (build_config_values.py) are imported by tests but
-# are not part of the src/ package.
+# The local Sentry build hook is imported by tests but is not part of src/.
 pythonpath = ["."]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
@@ -123,7 +115,6 @@ asyncio_mode = "auto"
 markers = [
     "unit: unit tests",
     "integration: integration tests (no external services required, but exercise real third-party libs)",
-    "cli_auth_e2e: opt-in live CLI auth tests (Linear/Jira/Confluence); requires RUN_CLI_AUTH_E2E=1",
     "premerge_journey: dedicated pre-merge CLI journey test (Rust required; run in premerge-cli-journey job only)",
 ]
 

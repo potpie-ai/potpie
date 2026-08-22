@@ -5,16 +5,16 @@ description: "Full potpie CLI command catalog, flags, and the canonical journey.
 
 ## Overview
 
-> Status: reflects code on `main` @ `49e12528`, last reviewed 2026-07-02.
+> Status: reflects the canonical Context Runtime boundary, last reviewed 2026-08-21.
 
 This is the **command reference** for the `potpie` CLI — the full, grouped surface
 with flags, the shared plumbing every command goes through, and the canonical
 journey. It is the one doc that may restate flags in full; conceptual depth lives
 in the sibling docs linked under each group and in [See also](#see-also).
 
-This file lives at `docs/context-graph/cli-flow.md`. The code it
-describes lives under repo-root `potpie/context-engine/` (paths below are
-relative to that root).
+This file lives at repo-root `docs/context-graph/cli-flow.md`. Product CLI,
+runtime, daemon, and control-plane code lives under repo-root `potpie/`; engine
+domain code lives under `potpie/context-engine/`.
 
 ## One CLI for humans and agents
 
@@ -23,15 +23,16 @@ the same `potpie` CLI.
 `potpie/cli/main.py build_app()` is the single console entrypoint
 (`[project.scripts]`): one Typer root whose `@app.callback` exposes three global
 options, with the rest of the surface assembled from top-level registrars and
-`add_typer` sub-apps. Every command routes `CLI → HostShell → service(s) → ports`.
+`add_typer` sub-apps. Engine operations route through an `EngineClient`; product
+control-plane commands use finite root-owned services.
 
 ```mermaid
 flowchart LR
   cf_user["user / agent"]
   cf_cli["potpie CLI<br/>main.py build_app()"]
-  cf_common["commands/_common.py<br/>get_host • contract() • resolve_pot_id"]
-  cf_shell["HostShell facade<br/>(daemon-backed RemoteHostShell by default)"]
-  cf_svc["services: pots • graph • graph_workbench<br/>skills • daemon • ledger • nudge • backend"]
+  cf_common["commands/_common.py<br/>get_engine_client • get_root_runtime • contract"]
+  cf_shell["LocalEngineClient / DaemonEngineClient<br/>typed finite operations"]
+  cf_svc["ContextEngine + root services<br/>pots • setup • skills • daemon • ledger"]
   cf_ports["GraphBackend + capability ports"]
 
   cf_user --> cf_cli --> cf_common --> cf_shell --> cf_svc --> cf_ports
@@ -50,11 +51,13 @@ flowchart LR
 Every command is wrapped by the same three helpers, so the contract below holds
 uniformly across the surface.
 
-- **`get_host()`** — returns a daemon-backed `RemoteHostShell` by **default**
-  (the shipped CLI default host mode is a detached `daemon`). Only
-  `CONTEXT_ENGINE_HOST_MODE=in_process` builds an in-process shell via
-  `bootstrap/host_wiring.py build_host_shell()`. A handful of commands bypass the
-  HostShell entirely (see notes on `login` and `cloud`).
+- **`get_engine_client()`** — returns `DaemonEngineClient` by default after
+  canonical discovery and an authenticated handshake. With
+  `CONTEXT_ENGINE_HOST_MODE=in_process`, it returns `LocalEngineClient` over the
+  same typed operation handlers and Resource Manager.
+- **`get_root_runtime()` and finite service accessors** — provide Potpie-owned
+  setup, auth, configuration, pot/source, skills, ledger, and lifecycle services
+  without adding them to `ContextEngine`.
 - **`contract()`** — the error boundary that maps outcomes to exit codes and emits
   structured JSON errors (`code`, `message`, `detail`, `recommended_next_action`):
 
@@ -83,17 +86,17 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 
 | Group / commands | Code slot | Routes to |
 |---|---|---|
-| `resolve` `search` `record` `status` | `commands/query.py` | `HostShell.agent_context` (V1 4-tool wrappers; `status` = host/pot readiness) |
-| `setup` `doctor` `whoami` `use` `config` | `commands/bootstrap.py` | `HostShell` (setup bootstraps daemon → `SetupOrchestrator`) |
-| `login` `logout` + provider groups (`github`/`git`/`linear`/`jira`/`confluence`/`auth`) | `commands/auth.py` | local Firebase/API-key auth + integration read clients (**not** via HostShell) |
+| `resolve` `search` `record` `status` | `commands/query.py` | `EngineClient` typed operations |
+| `setup` `doctor` `whoami` `use` `config` | `commands/bootstrap.py` | finite root services plus `EngineClient` readiness where needed |
+| `login` `logout` + provider groups (`github`/`git`/`linear`/`jira`/`confluence`/`auth`) | `commands/auth.py` | root-owned Firebase/API-key auth + integration read clients |
 | `ui` | `commands/ui.py` | ensures daemon, opens read-only graph explorer |
-| `pot` `source` | `commands/pots.py` | `HostShell.pots` (`PotManagementService`) |
-| `daemon` | `commands/daemon.py` | `HostShell.daemon` (`Daemon`) |
-| `ledger` | `commands/ledger.py` | `HostShell.ledger` (clients are stubs — roadmap) |
-| `graph` (+ nested `inbox`, `quality`, `bulk`) | `commands/graph.py` | `HostShell.graph` / `graph_workbench` / `backend` / `nudge` |
-| `timeline` | `commands/graph.py` | `HostShell.graph` (alias of a recent-changes read) |
-| `backend` | `commands/graph.py` | `HostShell.backend` (`GraphBackend`) |
-| `skills` | `commands/skills.py` | `HostShell.skills` (`SkillManager`) |
+| `pot` `source` | `commands/pots.py` | root `PotResourceService` |
+| `daemon` | `commands/daemon.py` | root lifecycle service and `DaemonController` |
+| `ledger` | `commands/ledger.py` | root `LedgerService` (clients are stubs — roadmap) |
+| `graph` (+ nested `inbox`, `quality`, `bulk`) | `commands/graph.py` | finite `EngineClient` operations; root backend administration where required |
+| `timeline` | `commands/graph.py` | typed graph read operation |
+| `backend` | `commands/graph.py` | root backend administration service |
+| `skills` | `commands/skills.py` | root `SkillManager` |
 | `cloud` | `commands/cloud.py` | managed sync — **all raise `CapabilityNotImplemented`** (roadmap) |
 
 The async ingestion pipeline behind the HTTP API keeps a **separate**
@@ -125,12 +128,13 @@ potpie logout
 potpie ui      [--open/--no-open] [--pot <ref>]
 ```
 
-- **`resolve` / `search` / `record`** → `host.agent_context.{resolve,search,record}`.
+- **`resolve` / `search` / `record`** → the corresponding typed `EngineClient`
+  operations.
   `record --type` accepts the structured record types (preference/policy/bug_pattern/
   fix/verification/decision) plus free-form; it goes through semantic validation and
   the record→semantic bridge ([writing.md](./writing.md)). `--mode`/`--include` ride
   in metadata only — they do not change the read path in V1.5 ([querying.md](./querying.md)).
-- **`status`** — host/pot **readiness** (`agent_context.status`): daemon, backend,
+- **`status`** — context data-plane readiness combined with root runtime state: daemon, backend,
   pot, and skill state. `--host` is a deprecated no-op (readiness is the default).
   `--verify` is rejected here — it moved to `potpie auth status --verify`, the
   explicit integration-auth report.
@@ -138,7 +142,7 @@ potpie ui      [--open/--no-open] [--pot <ref>]
   (config/storage/daemon/active `default` pot/source registration/skills). `--backend`
   picks the GraphBackend profile (default `falkordb_lite`); `--scan` is an **opt-in**
   working-tree scan (**default off**); `--daemon`/`--in-process` selects host mode
-  (daemon mode calls `host.daemon.ensure()` first); `--dry-run` returns a preview
+  (daemon mode calls the root lifecycle service first); `--dry-run` returns a preview
   without executing. `--pot` only overrides the initial pot name.
 - **`doctor`** — local diagnostics composed from `backend.capabilities()` +
   `backend.mutation.readiness()` + `daemon.status()` + `ledger.status()`; also
@@ -147,8 +151,8 @@ potpie ui      [--open/--no-open] [--pot <ref>]
 - **`whoami`** — local OSS reports a `none` identity.
 - **`use <ref>`** — alias for `pot use`. `--managed` raises `CapabilityNotImplemented`
   (see Roadmap below).
-- **`login` / `logout`** — Firebase browser session or API-key store; **not** routed
-  through HostShell. Flags are `--api-key/-k` and `--url/-u`.
+- **`login` / `logout`** — root-owned Firebase browser session or API-key store.
+  Flags are `--api-key/-k` and `--url/-u`.
 - **`ui`** — ensures the daemon, discovers its `base_url`, opens `<base>/ui`, the
   read-only graph explorer.
 

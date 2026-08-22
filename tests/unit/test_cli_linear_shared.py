@@ -14,20 +14,20 @@ from unittest.mock import MagicMock, patch
 import json
 import stat
 from pathlib import Path
-from potpie_context_engine.adapters.outbound.cli_auth import credentials_store as cs
-from potpie_context_engine.adapters.outbound.cli_auth.integration_profile import (
+from potpie.auth.adapters import credentials_store as cs
+from potpie.auth.adapters.integration_profile import (
     build_linear_integration_record,
     fetch_linear_viewer,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.http import AuthHttpError
+from potpie.auth.adapters.http import AuthHttpError
 from potpie.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
-from potpie_context_engine.adapters.outbound.cli_auth import provider_config
-from potpie_context_engine.adapters.outbound.cli_auth.integration_verify import (
+from potpie.auth.adapters import provider_config
+from potpie.auth.adapters.integration_verify import (
     _verify_linear,
     verify_integration_access,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.provider_config import (
+from potpie.auth.adapters.provider_config import (
     DEFAULT_CALLBACK_PORT,
     DEFAULT_FALLBACK_CALLBACK_PORTS,
     LINEAR_TOKEN_URL,
@@ -235,7 +235,7 @@ def test_auth_revoke_delegates_to_logout(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_auth_logout_clear_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+    from potpie.auth.adapters.credentials_store import (
         ProviderCredentialError,
     )
 
@@ -297,7 +297,7 @@ def test_auth_status_verify_token_error(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_wait_for_callback_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
-    from potpie_context_engine.adapters.outbound.cli_auth.callback_server import (
+    from potpie.auth.adapters.callback_server import (
         OAuthCallbackResult,
     )
 
@@ -886,7 +886,7 @@ def test_linear_integration_tokens_roundtrip(
 ) -> None:
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
     monkeypatch.setattr(
-        "potpie_context_engine.adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        "potpie.auth.adapters.integration_profile.fetch_linear_viewer",
         lambda _token: _linear_viewer_stub(),
     )
     cs.save_integration_tokens(
@@ -911,7 +911,7 @@ def test_list_integration_providers(
 ) -> None:
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
     monkeypatch.setattr(
-        "potpie_context_engine.adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        "potpie.auth.adapters.integration_profile.fetch_linear_viewer",
         lambda _token: _linear_viewer_stub(),
     )
     cs.save_integration_tokens(
@@ -927,7 +927,7 @@ def test_clear_integration_tokens_linear(
 ) -> None:
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
     monkeypatch.setattr(
-        "potpie_context_engine.adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        "potpie.auth.adapters.integration_profile.fetch_linear_viewer",
         lambda _token: _linear_viewer_stub(),
     )
     cs.save_integration_tokens(
@@ -1017,7 +1017,7 @@ def test_linear_status_includes_org_and_scope_string(
     monkeypatch: pytest.MonkeyPatch, tmp_path, keychain: dict
 ) -> None:
     monkeypatch.setattr(
-        "potpie_context_engine.adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        "potpie.auth.adapters.integration_profile.fetch_linear_viewer",
         lambda _token: _linear_viewer_stub(name="Potpie", url_key="potpie"),
     )
     monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
@@ -1069,7 +1069,7 @@ def test_build_linear_integration_record_includes_account_and_scopes() -> None:
         "organization": {"id": "o1", "name": "Acme"},
     }
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        "potpie.auth.adapters.integration_profile.fetch_linear_viewer",
         return_value=viewer,
     ):
         record = build_linear_integration_record(tokens)
@@ -1090,7 +1090,7 @@ def test_build_linear_integration_record_preserves_account_on_refresh(
     }
     tokens = {"access_token": "new-token", "expires_at": 123.0}
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        "potpie.auth.adapters.integration_profile.fetch_linear_viewer",
         return_value={},
     ):
         record = build_linear_integration_record(tokens, existing=prior)
@@ -1110,7 +1110,7 @@ def test_save_integration_tokens_writes_account_metadata(
         "organization": {"id": "org-acme", "name": "Acme", "url_key": "acme"},
     }
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.integration_profile.fetch_linear_viewer",
+        "potpie.auth.adapters.integration_profile.fetch_linear_viewer",
         return_value=viewer,
     ):
         cs.save_integration_tokens(
@@ -1298,7 +1298,7 @@ def test_verify_linear_success() -> None:
 
 def test_verify_integration_access_linear_ignores_invalid_expires_at() -> None:
     with patch(
-        "potpie_context_engine.adapters.outbound.cli_auth.integration_verify._verify_linear",
+        "potpie.auth.adapters.integration_verify._verify_linear",
         return_value=(True, "ok (Ada)"),
     ) as verify:
         ok, message = verify_integration_access(

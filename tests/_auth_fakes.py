@@ -3,7 +3,7 @@
 Let auth flow/impl tests inject fakes instead of monkeypatching ``httpx`` or the
 ``credentials_store`` module. ``FakeAuthHttpClient`` records calls and returns
 scripted responses; ``InMemoryCredentialStore`` keeps credentials in dicts and
-satisfies the :class:`~potpie_context_engine.domain.ports.cli_auth.credentials.CredentialStore`
+satisfies the :class:`~potpie.auth.ports.credentials.CredentialStore`
 Protocol.
 """
 
@@ -14,13 +14,13 @@ from typing import Any, Callable, Optional
 
 import httpx
 
-from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+from potpie.auth.adapters.credentials_store import (
     ProviderCredentialError,
 )
 
 
 class FakeAuthHttpClient:
-    """Scriptable :class:`~potpie_context_engine.adapters.outbound.cli_auth.http.HttpClient` for tests.
+    """Scriptable :class:`~potpie.auth.adapters.http.HttpClient` for tests.
 
     Provide either ``responses`` (returned in order) or a ``handler``
     ``(method, url, **kwargs) -> httpx.Response``. Every call is recorded on

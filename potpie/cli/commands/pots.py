@@ -1,4 +1,4 @@
-"""Pot + source commands → ``HostShell.pots`` (PotManagementService)."""
+"""Pot + source commands through Potpie-owned control-plane services."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ from potpie.cli.commands._common import (
     enrich_with_pot_guidance,
     empty_pot_warnings,
     fail,
-    get_host,
+    get_root_runtime,
+    get_pot_service,
     pot_graph_counts,
     pot_scope_info,
     pot_scope_resolution_human,
@@ -32,7 +33,7 @@ from potpie.cli.telemetry.onboarding_events import (
     sanitized_failure_kind,
 )
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
-from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.errors import CapabilityNotImplemented
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
 default_app = typer.Typer(help="Repo-local default pot routing.")
@@ -60,7 +61,7 @@ def pot_list(
                 detail="managed pot listing is not implemented",
                 recommended_next_action="run 'potpie login'; managed routing lands in HU3",
             )
-        pots = get_host().pots.list_pots()
+        pots = get_pot_service().list_pots()
         payload: dict[str, object] = {
             "pots": [
                 {"id": p.pot_id, "name": p.name, "active": p.active, "origin": "local"}
@@ -78,8 +79,8 @@ def pot_list(
 @pot_app.command("info")
 def pot_info() -> None:
     with contract():
-        host = get_host()
-        active = host.pots.active_pot()
+        host = get_root_runtime()
+        active = get_pot_service(host).active_pot()
         routing = repo_effective_pot_info(host)
         active_payload = (
             {"id": active.pot_id, "name": active.name} if active is not None else None
@@ -116,7 +117,7 @@ def _matching_repo_source(
     resolved_location: str,
     repo_key: str | None,
 ) -> Any | None:
-    list_sources = getattr(host.pots, "list_sources", None)
+    list_sources = getattr(get_pot_service(host), "list_sources", None)
     if not callable(list_sources):
         return None
     try:
@@ -158,13 +159,14 @@ def register_repo_source(
     repo_default_set = False
     repo_default_setter = None
     if make_default:
-        repo_default_setter = getattr(host.pots, "set_repo_default", None)
-        if not callable(repo_default_setter):
+        pot_service = get_pot_service(host)
+        if not pot_service.supports_repo_defaults:
             fail(
                 code="repo_default_unavailable",
                 message="This host does not support repo default bindings.",
                 next_action="upgrade the local context-engine host",
             )
+        repo_default_setter = pot_service.set_repo_default
     existing = _matching_repo_source(
         host,
         pot_id=pot_id,
@@ -174,7 +176,7 @@ def register_repo_source(
     if existing is not None:
         src = existing
     else:
-        src = host.pots.add_source(
+        src = get_pot_service(host).add_source(
             pot_id=pot_id,
             kind="repo",
             location=resolved_location,
@@ -217,8 +219,8 @@ def pot_create(
     ),
 ) -> None:
     with contract():
-        host = get_host()
-        pot = host.pots.create_pot(name=name, use=use)
+        host = get_root_runtime()
+        pot = get_pot_service(host).create_pot(name=name, use=use)
         payload: dict[str, object] = {
             "id": pot.pot_id,
             "name": pot.name,
@@ -268,7 +270,7 @@ def pot_use(
     ),
 ) -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         payload, human = use_pot_selection(
             host,
             ref,
@@ -288,7 +290,7 @@ def pot_linked(
 ) -> None:
     """Show pots linked to a repo source and the local default, if any."""
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         linked = repo_pot_candidates(host, repo, include_counts=not summary)
         linked["counts_included"] = not summary
         candidates = list(linked.get("candidates", ()))
@@ -346,7 +348,7 @@ def pot_default_show(
 ) -> None:
     """Show the repo-local default pot. Use --with-candidates for the full list."""
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         linked = repo_pot_candidates(host, repo)
         default_id = linked.get("default_pot_id")
         repo_key = linked.get("repo")
@@ -377,10 +379,10 @@ def pot_default_show(
 @default_app.command("set")
 def pot_default_set(ref: str, repo: str = typer.Option("current", "--repo")) -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
         repo_key = _repo_key_from_option(repo)
-        host.pots.set_repo_default(repo=repo_key, pot_id=pot_id)
+        get_pot_service(host).set_repo_default(repo=repo_key, pot_id=pot_id)
         info = pot_scope_info(host, pot_id)
         emit(
             {"repo": repo_key, "default_pot": info},
@@ -391,9 +393,9 @@ def pot_default_set(ref: str, repo: str = typer.Option("current", "--repo")) -> 
 @default_app.command("clear")
 def pot_default_clear(repo: str = typer.Option("current", "--repo")) -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         repo_key = _repo_key_from_option(repo)
-        cleared = host.pots.clear_repo_default(repo=repo_key)
+        cleared = get_pot_service(host).clear_repo_default(repo=repo_key)
         emit(
             {"repo": repo_key, "cleared": cleared},
             human=(
@@ -407,7 +409,7 @@ def pot_default_clear(repo: str = typer.Option("current", "--repo")) -> None:
 @pot_app.command("rename")
 def pot_rename(ref: str, new_name: str) -> None:
     with contract():
-        pot = get_host().pots.rename_pot(ref=ref, new_name=new_name)
+        pot = get_pot_service().rename_pot(ref=ref, new_name=new_name)
         emit({"id": pot.pot_id, "name": pot.name}, human=f"renamed → {pot.name}")
 
 
@@ -417,9 +419,9 @@ def pot_reset(
     confirm: bool = typer.Option(False, "--confirm"),
 ) -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         target = ref or resolve_pot_id(host)
-        pot = host.pots.reset_pot(ref=target, confirm=confirm)
+        pot = get_pot_service(host).reset_pot(ref=target, confirm=confirm)
         emit(
             {"id": pot.pot_id, "reset": True},
             human=f"reset graph state for '{pot.name}'",
@@ -429,7 +431,7 @@ def pot_reset(
 @pot_app.command("archive")
 def pot_archive(ref: str) -> None:
     with contract():
-        pot = get_host().pots.archive_pot(ref=ref)
+        pot = get_pot_service().archive_pot(ref=ref)
         emit({"id": pot.pot_id, "archived": True}, human=f"archived '{pot.name}'")
 
 
@@ -452,7 +454,7 @@ def source_add(
 ) -> None:
     """Register source metadata only; no ingestion or repository scan is started."""
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         source_kind = kind.strip()
         is_repo = source_kind.lower() == "repo"
         # Registration establishes the repo→pot mapping, so the target is the
@@ -474,7 +476,7 @@ def source_add(
                     make_default=make_default,
                 )
             else:
-                src = host.pots.add_source(
+                src = get_pot_service(host).add_source(
                     pot_id=pot_id,
                     kind=source_kind,
                     location=location,
@@ -529,9 +531,9 @@ def source_add(
 @source_app.command("list")
 def source_list(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         pot_id, resolved_via = resolve_pot_scope(host, pot)
-        sources = host.pots.list_sources(pot_id=pot_id)
+        sources = get_pot_service(host).list_sources(pot_id=pot_id)
         pot_info = pot_scope_info(host, pot_id)
         repo = (
             current_repo_identity_for_cli()
@@ -616,12 +618,12 @@ def source_status(
 ) -> None:
     """Show source status for the pot (all sources) or a single source by ID."""
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
 
         if source_id is None:
             # Per-pot summary: all sources with enriched fields
-            sources = host.pots.list_sources(pot_id=pot_id)
+            sources = get_pot_service(host).list_sources(pot_id=pot_id)
             pot_info = pot_scope_info(host, pot_id)
             counts = pot_graph_counts(host, pot_id)
             claim_count = counts.get("claims", 0)
@@ -685,7 +687,9 @@ def source_status(
             )
         else:
             # Single-source mode: same enriched shape
-            src = host.pots.source_status(pot_id=pot_id, source_id=source_id)
+            src = get_pot_service(host).source_status(
+                pot_id=pot_id, source_id=source_id
+            )
             row = _enrich_source(host, src, pot_id)
             emit(
                 row,
@@ -700,9 +704,9 @@ def source_status(
 @source_app.command("remove")
 def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
-        host = get_host()
+        host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
-        host.pots.remove_source(pot_id=pot_id, source_id=source_id)
+        get_pot_service(host).remove_source(pot_id=pot_id, source_id=source_id)
         emit({"removed": source_id}, human=f"removed source {source_id}")
 
 

@@ -15,8 +15,8 @@ from typer.testing import CliRunner
 from potpie.cli import main as cli_main
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.commands._common import EXIT_DEGRADED
-from potpie_context_engine.bootstrap.host_wiring import default_host_mode
-from potpie_context_core.lifecycle import (
+from potpie.runtime.composition import default_host_mode
+from potpie_context_engine.core.lifecycle import (
     DONE,
     FAILED,
     PlannedSetupStep,
@@ -25,11 +25,20 @@ from potpie_context_core.lifecycle import (
     SetupReport,
     StepResult,
 )
-from potpie_context_core.ports.agent_context import StatusReport, StatusRequest
-from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.mutation import BackendReadiness
+from potpie_context_engine.core.ports.agent_context import StatusReport
+from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
+from potpie_context_engine.core.ports.graph_service import DataPlaneStatus
+from potpie.product.ports.pot_management import (
+    PotAggregateStatus,
+    PotInfo,
+)
 
 runner = CliRunner()
+
+
+def test_setup_plan_defaults_to_local_lite_backend() -> None:
+    assert SetupPlan().backend == "falkordb_lite"
 
 
 @dataclass(frozen=True)
@@ -70,6 +79,32 @@ def _patch_local_setup_host(
     monkeypatch.setattr(bootstrap, "configured_embedding_model", lambda: "test-model")
 
 
+def _configure_status_host(mock_host: MagicMock, report: StatusReport) -> None:
+    active = (
+        PotInfo(pot_id=report.pot_id, name=report.active_pot, active=True)
+        if report.active_pot
+        else None
+    )
+    counts = dict(report.data_plane.get("counts", {}))
+    mock_host.profile = report.profile
+    mock_host.backend.profile = str(
+        report.data_plane.get("backend_profile", "embedded")
+    )
+    mock_host.pots.list_pots.return_value = [active] if active else []
+    mock_host.pots.active_pot.return_value = active
+    mock_host.pots.aggregate_status.return_value = PotAggregateStatus(
+        active_pot=active,
+        pot_count=int(report.pot_summary.get("pot_count", bool(active))),
+    )
+    mock_host.graph.data_plane_status.return_value = DataPlaneStatus(
+        pot_id=report.pot_id,
+        backend_profile=mock_host.backend.profile,
+        backend_ready=report.backend_ready,
+        counts=counts,
+    )
+    mock_host.skills.nudge.return_value = report.skills
+
+
 def test_root_version_option_exits_with_cli_and_python_details() -> None:
     result = runner.invoke(cli_main.app, ["--version"])
 
@@ -90,9 +125,9 @@ def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> No
         recommended_next_action="potpie ingest",
     )
     mock_host = MagicMock()
-    mock_host.agent_context.status.return_value = report
+    _configure_status_host(mock_host, report)
 
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _common.set_runtime(mock_host)
     monkeypatch.setattr(
         bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
     )
@@ -102,12 +137,9 @@ def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> No
     assert result.exit_code == 0, result.stdout
     assert "profile=local" in result.stdout
     assert "daemon=up" in result.stdout
-    assert "potpie ingest" in result.stdout
-    mock_host.agent_context.status.assert_called_once()
-    req = mock_host.agent_context.status.call_args[0][0]
-    assert isinstance(req, StatusRequest)
-    assert req.intent == "feature"
-    assert req.harness == "claude"
+    assert 'potpie resolve "<task>"' in result.stdout
+    mock_host.graph.data_plane_status.assert_called_once_with("foo-pot")
+    mock_host.skills.nudge.assert_called_once_with(agent="claude")
 
 
 def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,9 +151,9 @@ def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) ->
         backend_ready=True,
     )
     mock_host = MagicMock()
-    mock_host.agent_context.status.return_value = report
+    _configure_status_host(mock_host, report)
 
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _common.set_runtime(mock_host)
     monkeypatch.setattr(
         bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
     )
@@ -130,7 +162,7 @@ def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) ->
 
     assert result.exit_code == 0, result.stdout
     assert "profile=local" in result.stdout
-    mock_host.agent_context.status.assert_called_once()
+    mock_host.graph.data_plane_status.assert_called_once_with("foo-pot")
 
 
 def test_status_non_default_pot_triggers_host_path(
@@ -153,8 +185,8 @@ def test_status_non_default_pot_triggers_host_path(
         backend_ready=False,
     )
     mock_host = MagicMock()
-    mock_host.agent_context.status.return_value = report
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _configure_status_host(mock_host, report)
+    _common.set_runtime(mock_host)
     monkeypatch.setattr(
         bootstrap,
         "resolve_pot_id",
@@ -165,7 +197,8 @@ def test_status_non_default_pot_triggers_host_path(
 
     assert result.exit_code == 0, result.stdout
     assert called == []
-    assert "daemon=down" in result.stdout
+    assert "daemon=up" in result.stdout
+    mock_host.graph.data_plane_status.assert_called_once_with("custom-pot")
 
 
 def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,8 +210,8 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
         backend_ready=True,
     )
     mock_host = MagicMock()
-    mock_host.agent_context.status.return_value = report
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _configure_status_host(mock_host, report)
+    _common.set_runtime(mock_host)
     monkeypatch.setattr(bootstrap, "resolve_pot_id", lambda _host, pot: "foo-pot")
 
     result = runner.invoke(cli_main.app, ["--json", "status"])
@@ -223,7 +256,7 @@ def test_doctor_json_includes_backend_readiness(
     )
     mock_host.pots.active_pot.return_value = _Pot()
     mock_host.ledger.status.return_value = _LedgerStatus()
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _common.set_runtime(mock_host)
 
     result = runner.invoke(cli_main.app, ["--json", "doctor"])
 
@@ -420,7 +453,7 @@ def test_doctor_emits_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_host.daemon.status.return_value = {"mode": "in_process", "up": True}
     mock_host.ledger.status.return_value = MagicMock(available=True, binding="local")
 
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _common.set_runtime(mock_host)
 
     result = runner.invoke(cli_main.app, ["doctor"])
 
@@ -473,7 +506,7 @@ def test_doctor_json_includes_effective_and_default_repo_pot(
     mock_host = _make_doctor_host(
         active_pot_id="pot-active", repo_default="pot-default"
     )
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _common.set_runtime(mock_host)
     monkeypatch.setattr(
         bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
     )
@@ -493,7 +526,7 @@ def test_doctor_json_effective_falls_back_to_active_when_no_default(
 ) -> None:
     """When no repo default is set, effective_current_repo_pot equals active_pot."""
     mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default=None)
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _common.set_runtime(mock_host)
     monkeypatch.setattr(
         bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
     )
@@ -535,7 +568,7 @@ def test_doctor_json_effective_prefers_single_linked_repo_pot_over_active(
     mock_host.pots.list_sources.side_effect = lambda *, pot_id: (
         [_RepoSource()] if pot_id == "pot-linked" else []
     )
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _common.set_runtime(mock_host)
     monkeypatch.setattr(
         bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
     )
@@ -557,7 +590,7 @@ def test_doctor_json_no_repo_identity_leaves_effective_none(
 ) -> None:
     """Outside a git repo, effective_current_repo_pot and repo_default_pot are None."""
     mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default=None)
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _common.set_runtime(mock_host)
     monkeypatch.setattr(bootstrap, "current_repo_identity_for_cli", lambda: None)
 
     result = runner.invoke(cli_main.app, ["--json", "doctor"])
@@ -575,7 +608,7 @@ def test_doctor_human_output_includes_repo_line_when_in_repo(
     mock_host = _make_doctor_host(
         active_pot_id="pot-active", repo_default="pot-default"
     )
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    _common.set_runtime(mock_host)
     monkeypatch.setattr(
         bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
     )

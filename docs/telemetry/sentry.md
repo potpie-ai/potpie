@@ -11,8 +11,8 @@ integration lives under `potpie/cli`; engine-side metrics wiring remains under
 
 ## Configuration
 
-The CLI root callback resolves runtime settings through
-`bootstrap.runtime_settings`. A project `.env` file is read only when the
+The CLI root callback resolves product runtime settings through
+`potpie.runtime.settings`. A project `.env` file is read only when the
 bootstrap environment is `dev`; non-dev environments read the process
 environment and packaged distribution defaults only. `.env` values fill missing
 process env keys and cannot set or change `POTPIE_ENVIRONMENT`.
@@ -115,8 +115,10 @@ Allowed event context:
 
 ## Privacy Scrubbing
 
-Telemetry code avoids attaching sensitive data in the first place. Sentry SDK
-privacy settings and hooks are the final guard before transport.
+Telemetry code avoids attaching sensitive data in the first place. The generic
+scrubber is owned alongside the Context Engine metrics adapter and re-exported
+by the CLI telemetry package; Sentry SDK privacy settings and hooks are the
+final guard before transport.
 
 `before_send` removes:
 

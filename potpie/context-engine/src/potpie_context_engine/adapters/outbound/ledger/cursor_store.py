@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie_context_engine.adapters.outbound.local_paths import default_home
 from potpie_context_engine.domain.ports.ledger.client import LedgerCursor
 
 

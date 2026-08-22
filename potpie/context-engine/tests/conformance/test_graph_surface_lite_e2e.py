@@ -1,7 +1,7 @@
 """Graph Surface Lite end-to-end acceptance tests (Graph V1.5 Step 13).
 
-Exercises the surface through ``HostShell`` / ``DefaultGraphService`` the way an
-agent would: discover → read → search → mutate → record, plus cross-process
+Exercises the public graph service the way an agent would: discover → read →
+search → mutate → record, plus cross-process
 embedded persistence and paraphrase retrieval through the bundled local embedder.
 """
 
@@ -19,17 +19,17 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
     HashingEmbedder,
 )
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
-from potpie_context_core.ports.agent_context import (
+from potpie_context_engine.core.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
-from potpie_context_core.ports.graph_service import (
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
-from potpie_context_core.semantic_mutations import SemanticMutationRequest
+from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 
@@ -310,6 +310,24 @@ def test_record_and_graph_mutate_produce_same_metadata() -> None:
     assert row.graph_contract_version == "v1.5"
     assert row.claim_key
     assert row.ontology_version == "2026-06-graph"
+
+
+def test_free_form_record_falls_back_to_related_to() -> None:
+    svc = _service()
+
+    receipt = svc.record(
+        RecordRequest(
+            pot_id=POT,
+            record_type="workflow",
+            summary="Run make deploy to ship",
+        )
+    )
+    envelope = svc.resolve(ResolveRequest(pot_id=POT, include=("raw_graph",)))
+
+    assert receipt.accepted and receipt.mutations_applied >= 1
+    assert any(
+        "make deploy" in dict(item.payload).get("fact", "") for item in envelope.items
+    )
 
 
 # 9. embedded backend persists V1.5 metadata across CLI processes

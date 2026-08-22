@@ -67,9 +67,9 @@ entity; an entity exists only if an edge needs it as an endpoint.
 ## One CLI surface for humans and agents
 
 There is **no separate human-vs-agent API**. Both users and agents talk to the same
-`potpie` CLI, described in its own spine (`potpie/cli/main.py`) as
-"the architecture's single spine": every command routes `CLI → HostShell →
-service(s) → ports`.
+`potpie` CLI. Engine operations route through the same finite typed operation
+catalog whether they run through `LocalEngineClient` or `DaemonEngineClient`;
+product control-plane commands use explicit root-owned services.
 
 Agents reach the system directly through the CLI, including the full **Graph
 Surface Lite** (`potpie graph catalog/read/search-entities/propose/commit/…`).
@@ -86,8 +86,8 @@ LLM/reconciliation agent as the canonical source of graph intelligence."*
 
 The code honors this:
 
-- The **nudge brain is deterministic** (`NudgeService`, wired in `host_wiring.py`;
-  no model on this path).
+- The **nudge brain is deterministic** (`NudgeService`, wired by the root runtime
+  composition; no model on this path).
 - Retrieval ships a **bundled local embedder by default**, so semantic search needs
   no API key (disable with `CONTEXT_ENGINE_EMBEDDER=none`).
 - A service-side reconciliation agent exists only as an optional extra on the HTTP
@@ -105,7 +105,7 @@ skills teach.
 ```mermaid
 flowchart TB
   cg_agent["agent harness<br/>(skills + CLI)"]
-  cg_cli["potpie CLI → HostShell → services → ports"]
+  cg_cli["potpie CLI → typed clients / root services → ports"]
   cg_graph[("Context Graph<br/>compact claims + source refs")]
   cg_managed["Managed Potpie graph<br/>(roadmap: not yet wired)"]
   cg_ledger["External Event Ledger<br/>(roadmap: client stubs)"]
@@ -122,7 +122,7 @@ There are three intended product boundaries. Only the first is shipped today.
 | Boundary | Status | Description |
 |---|---|---|
 | **Local OSS self-serve** | **Shipped (V1.5)** | Installed with the CLI. `potpie setup` provisions config, local stores, the active `default` pot, source registration, the daemon, and skills. State stays local by default. Default backend `falkordb_lite` (no Docker/Neo4j/cloud needed). |
-| **Managed Potpie graph** | **Roadmap** | A managed backend API hosting the *same* service modules on hosted stores with hosted auth/collaboration. The graph model is identical — `HostShell` "swaps the wiring without changing the facade." |
+| **Managed Potpie graph** | **Roadmap** | A managed backend API hosting the same engine-owned domain on hosted stores with hosted auth/collaboration. The graph model is identical; deployment-specific composition and clients provide the boundary. |
 | **Event Ledger** | **Roadmap** | A separate managed-or-self-hostable source-event service (webhooks, polling, replay cursors) that local or managed graphs *pull* from; it is never the graph source of truth. |
 
 > **Roadmap (not yet wired):** Managed routing is designed and wired-for but not

@@ -11,11 +11,10 @@ from __future__ import annotations
 
 from importlib import import_module
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import Any
 import tomllib
 
-from fastapi import APIRouter
 from typer.main import get_command
 
 
@@ -54,11 +53,6 @@ EXPECTED_CLI_COMMANDS = {
     "use",
     "whoami",
 }
-EXPECTED_DAEMON_ROUTES = {
-    ("/attr", frozenset({"POST"})),
-    ("/health", frozenset({"GET"})),
-    ("/rpc", frozenset({"POST"})),
-}
 
 
 def _scripts() -> dict[str, str]:
@@ -88,22 +82,7 @@ def test_cli_top_level_command_surface_is_unchanged() -> None:
     assert set(command.commands) == EXPECTED_CLI_COMMANDS
 
 
-def test_daemon_process_routes_are_unchanged(monkeypatch: Any) -> None:
+def test_shipped_daemon_entrypoint_is_canonical_and_nonreflective() -> None:
     module, _main = _load_script("potpie-daemon")
-    host = SimpleNamespace(backend=SimpleNamespace(profile="characterization"))
-    monkeypatch.setattr(module, "build_host_shell", lambda: host)
-    monkeypatch.setattr(module, "build_ui_api_router", lambda _host: APIRouter())
-    monkeypatch.setattr(module, "mount_ui_static", lambda _app: None)
-
-    app = module.create_app(
-        token="characterization-token",  # noqa: S106 - non-secret test fixture
-        base_url="http://127.0.0.1:1",
-        pid=1,
-        log_file="characterization.log",
-    )
-    routes = {
-        (route.path, frozenset(route.methods or ()))
-        for route in app.routes
-        if route.path in {"/health", "/rpc", "/attr"}
-    }
-    assert routes == EXPECTED_DAEMON_ROUTES
+    assert module.__name__ == "potpie.daemon.__main__"
+    assert not hasattr(module, "create_app")

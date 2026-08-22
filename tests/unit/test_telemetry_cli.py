@@ -14,7 +14,7 @@ from potpie.cli.telemetry.preferences import (
 )
 from potpie.cli.telemetry.product_analytics import ProductAnalyticsSettings
 from potpie.cli.telemetry.settings import SentrySettings
-from potpie_context_engine.bootstrap import runtime_settings
+from potpie.runtime import settings as runtime_settings
 
 _TELEMETRY_ENV_NAMES = (
     "POTPIE_ENVIRONMENT",

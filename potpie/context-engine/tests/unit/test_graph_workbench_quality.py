@@ -5,12 +5,15 @@ from datetime import datetime, timezone
 
 import pytest
 
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphExtension
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.identity import IdentityClass
-from potpie_context_core.ontology import EntityTypeSpec
-from potpie_context_core.ports.claim_query import ClaimRow
-from potpie_context_core.workbench_service import (
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphExtension,
+)
+from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.identity import IdentityClass
+from potpie_context_engine.core.ontology import EntityTypeSpec
+from potpie_context_engine.core.ports.claim_query import ClaimRow
+from potpie_context_engine.core.workbench_service import (
     GraphWorkbenchService,
 )
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (

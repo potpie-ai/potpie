@@ -7,15 +7,14 @@ from datetime import datetime
 import threading
 from typing import Callable
 
-from potpie_context_core.api import (
+from potpie_context_engine.core.api import (
     ClaimQueryFilter,
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
     GraphInboxItem,
     GraphMutationPlanRecord,
-    GraphRuntime,
-    build_graph_runtime,
 )
+from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )

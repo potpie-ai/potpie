@@ -55,19 +55,22 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     repaired_entity_labels,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.graph_mutations import ProvenanceContext
-from potpie_context_core.lifecycle import DONE, FAILED, SetupPlan, StepResult
-from potpie_context_core.ports.claim_query import ClaimQueryPort
-from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.mutation import BackendReadiness
-from potpie_context_core.ports.graph.mutation import (
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
+from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
+from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
+from potpie_context_engine.core.ports.graph.mutation import (
     MutationExecutionLookup,
     MutationExecutionState,
 )
-from potpie_context_core.reconciliation import MutationBatch, MutationResult
-from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
 
 _PROFILE = "falkordb"
 _LITE_PROFILE = "falkordb_lite"
@@ -326,26 +329,23 @@ class FalkorDBGraphBackend:
     def bind_definition(self, definition: GraphDefinition) -> FalkorDBGraphBackend:
         return replace(self, definition=definition)
 
-    def provision(self, plan: SetupPlan) -> StepResult:
+    def provision(self) -> BackendProvisionResult:
         if not self.enabled:
-            return StepResult(
-                step="backend.provision",
-                state=FAILED,
+            return BackendProvisionResult(
+                ok=False,
                 detail=f"{self.profile_name} backend is not configured or context graph is disabled",
                 metadata={"profile": self.profile_name},
             )
         try:
             ok = bool(_run_sync(self.graph_writer.ensure_indexes()))
         except Exception as exc:  # noqa: BLE001
-            return StepResult(
-                step="backend.provision",
-                state=FAILED,
+            return BackendProvisionResult(
+                ok=False,
                 detail=str(exc),
                 metadata={"profile": self.profile_name},
             )
-        return StepResult(
-            step="backend.provision",
-            state=DONE if ok else FAILED,
+        return BackendProvisionResult(
+            ok=ok,
             detail=(
                 f"{self.profile_name} backend ready"
                 if ok
