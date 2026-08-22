@@ -49,6 +49,17 @@ class DaemonStartError(Exception):
 
 def _pid_alive(pid: int) -> bool:
     try:
+        waited_pid, _status = os.waitpid(pid, os.WNOHANG)
+    except OSError:
+        # A daemon launched by another CLI process is not our child. Retain the
+        # signal probe for that normal cross-process observation path.
+        pass
+    else:
+        # ``kill(pid, 0)`` still succeeds for an exited child that is a zombie
+        # on POSIX. Reap that child before deciding whether its PID is live.
+        if waited_pid == pid:
+            return False
+    try:
         os.kill(pid, 0)
     except (ProcessLookupError, PermissionError, OSError):
         return False
