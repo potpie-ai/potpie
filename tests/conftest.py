@@ -15,6 +15,7 @@ import pytest
 # tests/docs is Node (docs-check.mjs). Do not collect it as pytest.
 collect_ignore = ["docs"]
 
+
 @pytest.fixture()
 def anyio_backend() -> str:
     return "asyncio"
