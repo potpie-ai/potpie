@@ -12,15 +12,17 @@ change_ref: null
 
 # Context Runtime Module Index
 
-The module contracts divide domain behavior, Potpie lease and resource
-management, process hosting, and presentation into separate boundaries.
+The module contracts divide root Potpie capability ownership, domain behavior,
+Potpie lease and resource management, process hosting, and presentation into
+separate boundaries.
 
 ## Read Order
 
-1. [Context Engine](context-engine.md)
-2. [Potpie Resource Manager](potpie-resource-manager.md)
-3. [Daemon](daemon.md)
-4. [CLI](cli.md)
+1. [Potpie Capabilities](potpie-capabilities.md)
+2. [Context Engine](context-engine.md)
+3. [Potpie Resource Manager](potpie-resource-manager.md)
+4. [Daemon](daemon.md)
+5. [CLI](cli.md)
 
 Read [the system contract](../system.md) first for the controller path, hosted
 domain path, trust boundary, error taxonomy, and destructive-intent flow.
@@ -29,6 +31,7 @@ domain path, trust boundary, error taxonomy, and destructive-intent flow.
 
 | Module | Owns | Excludes |
 |---|---|---|
+| Potpie capabilities | Root configuration, pots, skills, setup, identity lifecycle, cross-capability composition | Context Engine domain semantics, daemon protocol, CLI presentation, generic source-layer buckets |
 | Context Engine | Thin domain façade, one bound identity, focused domain modules, typed engine outcomes | Product selection, authorization policy, provisioning, daemon, presentation |
 | Resource Manager | Selection, authorization, host resources, explicit dependency composition, authorized context leases | Engine-operation dispatch, generic results, service lookup, daemon transport, presentation |
 | Daemon subsystem | External controller, one foreground runtime, discovery, authenticated readiness, typed handlers | Domain semantics, terminal behavior |
@@ -46,6 +49,9 @@ The Resource Manager is in the acquisition path but not the domain-operation
 dispatch path. Daemon context-domain handlers depend directly on the Context
 Engine façade for invocation and on the Resource Manager for lease acquisition.
 Context Engine does not import or depend on any Potpie product boundary.
+
+The Potpie capability contract makes the root ownership structure explicit
+without changing this execution direction.
 
 ## Lifecycle Direction
 

@@ -18,11 +18,11 @@ nodes. Decisions explain why, change records describe revision transitions,
 questions preserve deferred choices, and conformance records separately
 describe implementation and evidence.
 
-Seven revision-1 contracts and corrective Resource Manager revision 2 are
+Eight revision-1 contracts and corrective Resource Manager revision 2 are
 accepted binding targets. Resource Manager revision 1 remains historically
-addressable at `047cbe067c9c726e7e14f066675453372d8a8406`. Existing architecture
-documents and code remain implementation snapshots and can disagree with the
-target while migration is incomplete.
+addressable at `047cbe067c9c726e7e14f066675453372d8a8406`.
+Existing architecture documents and code remain implementation snapshots and
+can disagree with the target while migration is incomplete.
 
 ## Read Order
 
@@ -30,11 +30,12 @@ target while migration is incomplete.
 2. [Glossary](glossary.md)
 3. [Product contract](product.md)
 4. [System contract](system.md)
-5. [Context Engine contract](modules/context-engine.md)
-6. [Potpie Resource Manager contract](modules/potpie-resource-manager.md)
-7. [Daemon contract](modules/daemon.md)
-8. [CLI contract](modules/cli.md)
-9. Relevant [decisions](#decision-registry), [questions](questions/open.md), and
+5. [Potpie Capabilities contract](modules/potpie-capabilities.md)
+6. [Context Engine contract](modules/context-engine.md)
+7. [Potpie Resource Manager contract](modules/potpie-resource-manager.md)
+8. [Daemon contract](modules/daemon.md)
+9. [CLI contract](modules/cli.md)
+10. Relevant [decisions](#decision-registry), [questions](questions/open.md), and
    [change records](#change-record-registry)
 
 ## Target Paths
@@ -75,12 +76,13 @@ remain canonical.
 | SPEC-GLOSSARY | [glossary.md](glossary.md) | 1 | accepted | 12 | Canonical runtime, lease, ownership, and error terminology |
 | SPEC-PRODUCT | [product.md](product.md) | 1 | accepted | 7 | Product outcomes and non-goals |
 | SPEC-SYSTEM | [system.md](system.md) | 1 | accepted | 23 | Cross-module ownership, trust, error, and call-path contract |
+| SPEC-POTPIE-CAPABILITIES | [modules/potpie-capabilities.md](modules/potpie-capabilities.md) | 1 | accepted | 12 | Capability-oriented root source ownership and behavior-preserving migration |
 | SPEC-CONTEXT-ENGINE | [modules/context-engine.md](modules/context-engine.md) | 1 | accepted | 34 | Thin importable context-domain library boundary |
 | SPEC-POTPIE-RESOURCE-MANAGER | [modules/potpie-resource-manager.md](modules/potpie-resource-manager.md) | 2 | accepted | 37 | Authorized context lease and resource-lifecycle boundary, including distinct authentication failure |
 | SPEC-DAEMON | [modules/daemon.md](modules/daemon.md) | 1 | accepted | 51 | Controller, typed runtime, discovery, readiness, lifecycle, and handlers |
 | SPEC-CLI | [modules/cli.md](modules/cli.md) | 1 | accepted | 33 | Human and machine presentation plus controller/client selection |
 
-The catalog contains 218 accepted active behavior nodes.
+The catalog contains 230 accepted active behavior nodes.
 
 ## Exact Contract Dependencies
 
@@ -90,6 +92,7 @@ The catalog contains 218 accepted active behavior nodes.
 | SPEC-GLOSSARY | none |
 | SPEC-PRODUCT | SPEC-GLOSSARY |
 | SPEC-SYSTEM | SPEC-GLOSSARY, SPEC-PRODUCT |
+| SPEC-POTPIE-CAPABILITIES | SPEC-PRODUCT, SPEC-SYSTEM |
 | SPEC-CONTEXT-ENGINE | SPEC-GLOSSARY, SPEC-SYSTEM |
 | SPEC-POTPIE-RESOURCE-MANAGER | SPEC-GLOSSARY, SPEC-SYSTEM, SPEC-CONTEXT-ENGINE |
 | SPEC-DAEMON | SPEC-GLOSSARY, SPEC-SYSTEM, SPEC-POTPIE-RESOURCE-MANAGER, SPEC-CONTEXT-ENGINE |
@@ -143,6 +146,7 @@ active behavior depends on a deferred question.
 | [SPEC-CHANGE-0007](changes/SPEC-CHANGE-0007-initialize-daemon-contract.md) | SPEC-DAEMON | 0 → 1 | accepted |
 | [SPEC-CHANGE-0008](changes/SPEC-CHANGE-0008-initialize-cli-contract.md) | SPEC-CLI | 0 → 1 | accepted |
 | [SPEC-CHANGE-0009](changes/SPEC-CHANGE-0009-correct-resource-manager-authentication-outcomes.md) | SPEC-POTPIE-RESOURCE-MANAGER | 1 → 2 | accepted |
+| [SPEC-CHANGE-0010](changes/SPEC-CHANGE-0010-initialize-potpie-capability-contract.md) | SPEC-POTPIE-CAPABILITIES | 0 → 1 | accepted |
 
 ## Conformance Summary
 
