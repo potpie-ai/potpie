@@ -41,19 +41,19 @@ from potpie_context_engine.core.lifecycle import (
     SetupReport,
     StepResult,
 )
-from potpie.product.ports.install import Installer
+from potpie.setup.installation import Installer
 from potpie_context_engine.domain.ports.provisioning import ProvisionableGraphBackend
-from potpie.product.ports.auth import AuthService
+from potpie.auth.ports.identity import AuthService
 from potpie.config.contracts import ConfigService
 from potpie.pots.contracts import (
     PotManagementService,
 )
 from potpie.skills.contracts import SkillManager
-from potpie.product.ports.state_store import (
+from potpie.setup.state import (
     MigrationPort,
     StateStorePort,
 )
-from potpie.product.ports.setup import (
+from potpie.setup.contracts import (
     NoOpSetupObserver,
     SetupObserver,
 )

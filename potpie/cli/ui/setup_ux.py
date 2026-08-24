@@ -29,7 +29,7 @@ from potpie.cli.ui.setup_wizard_ui import (
     live_ui_enabled,
 )
 from potpie_context_engine.core.lifecycle import SetupPlan, SetupReport
-from potpie.product.ports.setup import (
+from potpie.setup.contracts import (
     SetupObserver,
     SetupOrchestrator,
 )

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.lifecycle import StepResult
-from potpie.product.ports.auth import AuthIdentity
+from potpie.auth.ports.identity import AuthIdentity
 
 
 @dataclass(slots=True)

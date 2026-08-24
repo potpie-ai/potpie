@@ -7,7 +7,7 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
-from potpie.product.services import setup as setup_orchestrator
+from potpie.setup import orchestrator as setup_orchestrator
 from potpie.runtime.composition import build_local_runtime
 from potpie_context_engine.core.lifecycle import SKIPPED, SetupPlan
 

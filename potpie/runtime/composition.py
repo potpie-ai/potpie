@@ -20,7 +20,7 @@ from potpie_context_engine.adapters.outbound.graph.inbox_stores import (
 from potpie_context_engine.adapters.outbound.graph.plan_stores import (
     LocalJsonGraphPlanStore,
 )
-from potpie.product.adapters.install.local_installer import (
+from potpie.setup.local_installer import (
     LocalInstaller,
 )
 from potpie_context_engine.adapters.outbound.ledger.cursor_store import (
@@ -29,7 +29,7 @@ from potpie_context_engine.adapters.outbound.ledger.cursor_store import (
 from potpie_context_engine.adapters.outbound.ledger.managed_client import (
     ManagedEventLedgerClient,
 )
-from potpie.product.adapters.pots.flat_file_state_store import (
+from potpie.setup.flat_file_state import (
     FlatFileMigrator,
     FlatFileStateStore,
 )
@@ -44,13 +44,13 @@ from potpie.skills.targets import (
     OpenCodeAgentTarget,
 )
 from potpie.product.services.agent_context import AgentContextService
-from potpie.product.services.auth import LocalAuthService
+from potpie.auth.adapters.local_identity import LocalAuthService
 from potpie.config.local import LocalConfigService
 from potpie_context_engine.application.services.nudge_service import NudgeService
 from potpie.pots.local_service import (
     LocalPotManagementService,
 )
-from potpie.product.services.setup import (
+from potpie.setup.orchestrator import (
     DefaultSetupOrchestrator,
 )
 from potpie.skills.manager import DefaultSkillManager
