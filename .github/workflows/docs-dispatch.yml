@@ -50,10 +50,26 @@ jobs:
           echo "should_dispatch=$should_dispatch" >> "$GITHUB_OUTPUT"
           echo "Dispatch Hub rebuild: $should_dispatch"
 
+      - name: Mint Hub dispatch token
+        id: hub_token
+        if: steps.docs_change.outputs.should_dispatch == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.DOCS_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DOCS_GITHUB_APP_PRIVATE_KEY }}
+          owner: potpie-ai
+          repositories: docs
+          permission-contents: write
+
+      - name: Explain Hub token mint failure
+        if: ${{ failure() && steps.docs_change.outputs.should_dispatch == 'true' && steps.hub_token.conclusion == 'failure' }}
+        run: |
+          echo "::error::GitHub App token was not minted. Confirm the App is installed on potpie-ai/potpie and the Actions Client ID/private key are configured."
+
       - name: Send repository_dispatch to Hub
         if: steps.docs_change.outputs.should_dispatch == 'true'
         env:
-          DOCS_HUB_DISPATCH_TOKEN: ${{ secrets.DOCS_HUB_DISPATCH_TOKEN }}
+          HUB_DISPATCH_TOKEN: ${{ steps.hub_token.outputs.token }}
           HUB_REPO: ${{ vars.DOCS_HUB_REPO }}
           DEFAULT_HUB_REPO: potpie-ai/docs
           SPOKE_REPO: ${{ github.repository }}
@@ -61,12 +77,16 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ -z "${DOCS_HUB_DISPATCH_TOKEN:-}" ]; then
-            echo "::error::DOCS_HUB_DISPATCH_TOKEN secret is not set on this Spoke"
+          if [ -z "${HUB_DISPATCH_TOKEN:-}" ]; then
+            echo "::error::GitHub App token was not minted. Confirm the App is installed on potpie-ai/potpie and the Actions Client ID/private key are configured."
             exit 1
           fi
           if [ -z "${HUB_REPO:-}" ]; then
             HUB_REPO="$DEFAULT_HUB_REPO"
+          fi
+          if [ "$HUB_REPO" != "$DEFAULT_HUB_REPO" ]; then
+            echo "::error::DOCS_HUB_REPO must be $DEFAULT_HUB_REPO when using the documentation GitHub App"
+            exit 1
           fi
           SPOKE_ID="$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync("docs/config.json","utf8")); if (!c.spokeId) process.exit(1); process.stdout.write(String(c.spokeId))')"
           payload=$(printf '{"event_type":"spoke-docs-updated","client_payload":{"repository":"%s","branch":"%s","sha":"%s","spoke_id":"%s"}}' \
@@ -74,7 +94,7 @@ jobs:
           code=$(curl -sS -o /tmp/dispatch-response.json -w "%{http_code}" \
             -X POST \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${DOCS_HUB_DISPATCH_TOKEN}" \
+            -H "Authorization: Bearer ${HUB_DISPATCH_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${HUB_REPO}/dispatches" \
             -d "$payload")
