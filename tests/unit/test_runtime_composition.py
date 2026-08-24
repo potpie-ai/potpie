@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -27,7 +28,14 @@ from potpie_context_engine.core.lifecycle import (
     SetupPlan,
     SetupPreview,
 )
-from potpie_context_engine.core.ports.agent_context import ResolveRequest
+from potpie_context_engine.core.ports.agent_context import (
+    RecordRequest,
+    ResolveRequest,
+    SearchRequest,
+    SkillNudge,
+    StatusRequest,
+)
+from potpie_context_engine.core.ports.graph_service import DataPlaneStatus
 from potpie_context_engine.domain.ports.ledger.client import LedgerEvent
 from potpie_context_engine.domain.ports.observability import NoOpObservability
 
@@ -107,11 +115,19 @@ def test_setup_is_idempotent(runtime) -> None:
 def test_setup_plan_executes_nothing(runtime) -> None:
     steps = runtime.root.setup.plan(SetupPlan())
 
-    assert [step.step for step in steps][:4] == [
+    assert [step.step for step in steps] == [
         "config",
         "installer",
         "embeddings.model",
         "backend.provision",
+        "pot.init",
+        "state_store.provision",
+        "migrator.migrate",
+        "pot.default",
+        "daemon",
+        "auth",
+        "source",
+        "skills",
     ]
     assert all(step.state == PLANNED for step in steps)
     assert runtime.root.pots.active_pot() is None
@@ -123,12 +139,21 @@ def test_setup_preview_classifies_owners_and_host_gated_hardness(runtime) -> Non
 
     assert isinstance(daemon, SetupPreview) and daemon.ok_to_run
     by_step = {step.step: step for step in daemon.steps}
-    assert by_step["config"].owner and by_step["config"].hard is True
-    assert by_step["embeddings.model"].hard is False
-    assert by_step["auth"].hard is False
-    assert by_step["state_store.provision"].hard is True
-    assert "migrator.migrate" in by_step
-    assert by_step["daemon"].hard is True
+    assert all(step.owner for step in daemon.steps)
+    assert {step: planned.hard for step, planned in by_step.items()} == {
+        "config": True,
+        "installer": True,
+        "embeddings.model": False,
+        "backend.provision": True,
+        "pot.init": True,
+        "state_store.provision": True,
+        "migrator.migrate": True,
+        "pot.default": True,
+        "daemon": True,
+        "auth": False,
+        "source": False,
+        "skills": False,
+    }
 
     local_steps = {step.step: step for step in in_process.steps}
     assert local_steps["daemon"].hard is False
@@ -145,6 +170,137 @@ def test_setup_state_store_and_migrator_skip_cleanly(runtime) -> None:
     assert states["state_store.provision"] == SKIPPED
     assert states["migrator.migrate"] == SKIPPED
     assert report.ok
+
+
+def test_config_location_persistence_and_redaction_survive_reconstruction(
+    runtime, tmp_path
+) -> None:
+    runtime.root.config.set("profile", "managed")
+    runtime.root.config.set("service.apiKey", "sk-local-secret")
+
+    config_path = tmp_path / "config.json"
+    assert config_path.is_file()
+    assert not config_path.with_suffix(".tmp").exists()
+    assert runtime.root.config.list_public() == {
+        "profile": "managed",
+        "service.apiKey": "<redacted>",
+    }
+
+    reconstructed = build_local_runtime(backend=InMemoryGraphBackend())
+
+    assert reconstructed.root.config.get("profile") == "managed"
+    assert reconstructed.root.config.get("service.apiKey") == "sk-local-secret"
+    assert reconstructed.root.config.list_public()["service.apiKey"] == "<redacted>"
+
+
+def test_pot_source_and_repo_defaults_survive_runtime_reconstruction(
+    runtime, tmp_path
+) -> None:
+    pot = runtime.root.pots.create_pot(name="shop", use=True)
+    source = runtime.root.pots.add_source(
+        pot_id=pot.pot_id,
+        kind="repo",
+        location="github.com/acme/shop",
+        name="shop-source",
+    )
+    runtime.root.pots.set_repo_default(
+        repo="https://github.com/Acme/Shop.git", pot_id=pot.pot_id
+    )
+
+    assert (tmp_path / "pots.json").is_file()
+    reconstructed = build_local_runtime(backend=InMemoryGraphBackend())
+
+    active = reconstructed.root.pots.active_pot()
+    assert active is not None and active.pot_id == pot.pot_id
+    assert reconstructed.root.pots.list_pots() == [active]
+    assert reconstructed.root.pots.list_sources(pot_id=pot.pot_id) == [source]
+    assert (
+        reconstructed.root.pots.repo_default(repo="github.com/acme/shop") == pot.pot_id
+    )
+
+
+def test_local_identity_remains_no_auth(runtime) -> None:
+    identity = runtime.root.auth.whoami()
+
+    assert identity.subject == "local"
+    assert identity.mode == "none"
+    assert identity.detail == "local OSS; no auth required"
+    assert runtime.root.auth.logout() is None
+
+
+def test_agent_context_delegates_and_composes_status(runtime) -> None:
+    graph = MagicMock()
+    pots = MagicMock()
+    skills = MagicMock()
+    service = type(runtime.engine.agent_context)(
+        graph=graph,
+        pots=pots,
+        skills=skills,
+        profile="local",
+    )
+
+    resolve_request = ResolveRequest(pot_id="pot-1", task="resolve")
+    search_request = SearchRequest(pot_id="pot-1", query="needle")
+    record_request = RecordRequest(
+        pot_id="pot-1", record_type="learning", summary="record"
+    )
+    resolve_result = object()
+    search_result = object()
+    record_result = object()
+    graph.resolve.return_value = resolve_result
+    graph.search.return_value = search_result
+    graph.record.return_value = record_result
+
+    assert service.resolve(resolve_request) is resolve_result
+    assert service.search(search_request) is search_result
+    assert service.record(record_request) is record_result
+    graph.resolve.assert_called_once_with(resolve_request)
+    graph.search.assert_called_once_with(search_request)
+    graph.record.assert_called_once_with(record_request)
+
+    pots.aggregate_status.return_value = SimpleNamespace(
+        active_pot=SimpleNamespace(pot_id="pot-1", name="shop"),
+        pot_count=1,
+        sources=(SimpleNamespace(name="shop-source"),),
+    )
+    graph.data_plane_status.return_value = DataPlaneStatus(
+        pot_id="pot-1",
+        backend_profile="embedded",
+        backend_ready=True,
+        reader_backed_includes=("raw_graph",),
+        counts={"claims": 2},
+        freshness={"state": "fresh"},
+        quality={"score": 1},
+    )
+    nudge = SkillNudge(
+        agent="codex",
+        missing=("potpie-cli",),
+        install_command="potpie skills install --agent codex",
+    )
+    skills.nudge.return_value = nudge
+
+    status = service.status(StatusRequest(pot_id="", intent="feature", harness="codex"))
+
+    pots.aggregate_status.assert_called_once_with(pot_id="")
+    graph.data_plane_status.assert_called_once_with("pot-1")
+    skills.nudge.assert_called_once_with(agent="codex")
+    assert status.pot_id == "pot-1"
+    assert status.active_pot == "shop"
+    assert status.backend_ready is True
+    assert status.data_plane == {
+        "backend_profile": "embedded",
+        "backend_ready": True,
+        "reader_backed_includes": ["raw_graph"],
+        "counts": {"claims": 2},
+        "freshness": {"state": "fresh"},
+        "quality": {"score": 1},
+    }
+    assert status.pot_summary == {"pot_count": 1, "sources": ["shop-source"]}
+    assert status.skills is nudge
+    assert status.recommended_next_action == (
+        "Run 'potpie resolve \"<task>\"' to pull context for your work."
+    )
+    assert status.metadata == {"intent": "feature"}
 
 
 def test_local_runtime_rejects_runtime_only_backend() -> None:

@@ -1,5 +1,7 @@
 """Skill manager global and project target behavior."""
 
+# ruff: noqa: S101 - pytest unit tests use assertions intentionally.
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,14 +11,52 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
-from potpie.product.adapters.skills.bundle_catalog import (
-    RECOMMENDED_SKILL_IDS,
-)
 from potpie.runtime.composition import build_local_runtime
+
+
+EXPECTED_CATALOG = {
+    "potpie-change-timeline": "1",
+    "potpie-cli": "2",
+    "potpie-debug-memory": "1",
+    "potpie-graph": "5",
+    "potpie-infra-architecture": "1",
+    "potpie-project-preferences": "1",
+    "potpie-repo-baseline": "1",
+    "potpie-source-ingestion": "1",
+}
 
 
 def _root_runtime():
     return build_local_runtime(backend=InMemoryGraphBackend()).root
+
+
+class _OutdatedTarget:
+    agent = "codex"
+
+    def __init__(self) -> None:
+        self.versions = {"potpie-cli": "1"}
+
+    def installed(self) -> dict[str, str]:
+        return dict(self.versions)
+
+    def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
+        del path
+        self.versions[skill_id] = version
+
+    def remove(self, *, skill_id: str) -> None:
+        self.versions.pop(skill_id, None)
+
+
+def test_runtime_skill_catalog_identifiers_and_versions(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
+    host = _root_runtime()
+
+    assert {
+        skill.id: skill.version for skill in host.skills.list(agent="codex")
+    } == EXPECTED_CATALOG
 
 
 def test_skill_manager_installs_global_harness_targets(
@@ -141,25 +181,43 @@ def test_skill_manager_removes_all_global_harness_skills(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = _root_runtime()
+    recommended_skill_ids = tuple(EXPECTED_CATALOG)
 
     install_result = host.skills.install(agent="codex")
-    assert set(install_result.changed) == set(RECOMMENDED_SKILL_IDS)
+    assert set(install_result.changed) == set(recommended_skill_ids)
 
     skills_root = home / ".agents" / "skills"
     assert all(
         (skills_root / skill_id / "SKILL.md").exists()
-        for skill_id in RECOMMENDED_SKILL_IDS
+        for skill_id in recommended_skill_ids
     )
 
     remove_result = host.skills.remove(agent="codex", all_=True)
 
     assert remove_result.metadata["scope"] == "global"
-    assert set(remove_result.changed) == set(RECOMMENDED_SKILL_IDS)
+    assert set(remove_result.changed) == set(recommended_skill_ids)
     assert all(
         not (skills_root / skill_id / "SKILL.md").exists()
-        for skill_id in RECOMMENDED_SKILL_IDS
+        for skill_id in recommended_skill_ids
     )
     assert host.skills.status(agent="codex").installed == ()
+
+
+def test_skill_manager_update_reports_and_repairs_outdated_target(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
+    host = _root_runtime()
+    target = _OutdatedTarget()
+    manager = type(host.skills)(targets={"codex": target})
+
+    result = manager.update(agent="codex", skill_id="potpie-cli")
+
+    assert result.operation == "update"
+    assert result.changed == ("potpie-cli",)
+    assert result.metadata == {"scope": "global"}
+    assert target.versions == {"potpie-cli": EXPECTED_CATALOG["potpie-cli"]}
 
 
 def test_remove_uninstalled_skill_reports_no_change(

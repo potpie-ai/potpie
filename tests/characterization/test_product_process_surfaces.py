@@ -10,15 +10,12 @@ pure relocation can change ownership without changing the public surfaces.
 from __future__ import annotations
 
 from importlib import import_module
-from pathlib import Path
+from importlib.metadata import EntryPoint, distribution
 from types import ModuleType
 from typing import Any
-import tomllib
 
 from typer.main import get_command
 
-
-ROOT = Path(__file__).resolve().parents[2]
 
 EXPECTED_SCRIPTS = {"potpie", "potpie-daemon"}
 EXPECTED_CLI_COMMANDS = {
@@ -55,17 +52,20 @@ EXPECTED_CLI_COMMANDS = {
 }
 
 
-def _scripts() -> dict[str, str]:
-    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    return data["project"]["scripts"]
+def _scripts() -> dict[str, EntryPoint]:
+    return {
+        entry_point.name: entry_point
+        for entry_point in distribution("potpie").entry_points
+        if entry_point.group == "console_scripts"
+        and entry_point.name.startswith("potpie")
+    }
 
 
 def _load_script(name: str) -> tuple[ModuleType, Any]:
-    module_name, separator, attribute_name = _scripts()[name].partition(":")
-    assert separator == ":", f"{name} must use a module:callable target"
-    module = import_module(module_name)
-    target = getattr(module, attribute_name)
+    entry_point = _scripts()[name]
+    target = entry_point.load()
     assert callable(target), f"{name} target must be callable"
+    module = import_module(entry_point.module)
     return module, target
 
 
