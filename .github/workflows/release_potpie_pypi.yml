@@ -7,7 +7,6 @@ on:
       - "scripts/validate_python_release.py"
       - "tests/unit/test_validate_python_release.py"
       - "pyproject.toml"
-      - "potpie/context-core/**"
       - "potpie/context-engine/**"
       - "potpie/daemon/http/ui/frontend/**"
   workflow_dispatch:
@@ -19,7 +18,6 @@ on:
         type: choice
         options:
           - all
-          - context-core
           - context-engine
           - potpie
       publish_target:
@@ -54,7 +52,6 @@ jobs:
       release_scope: ${{ steps.validate.outputs.release_scope }}
       publish_target: ${{ steps.validate.outputs.publish_target }}
       repository_url: ${{ steps.validate.outputs.repository_url }}
-      context_core_version: ${{ steps.validate.outputs.context_core_version }}
       context_engine_version: ${{ steps.validate.outputs.context_engine_version }}
       potpie_version: ${{ steps.validate.outputs.potpie_version }}
       metadata_path: ${{ steps.validate.outputs.metadata_path }}
@@ -128,12 +125,8 @@ jobs:
 
       - name: Build package dependency closure
         run: |
-          mkdir -p dist/context-core dist/context-engine dist/potpie
-          python -m build --sdist --wheel --outdir dist/context-core potpie/context-core
-
-          if [[ "$RELEASE_SCOPE" != "context-core" ]]; then
-            python -m build --sdist --wheel --outdir dist/context-engine potpie/context-engine
-          fi
+          mkdir -p dist/context-engine dist/potpie
+          python -m build --sdist --wheel --outdir dist/context-engine potpie/context-engine
 
           if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "potpie" ]]; then
             make ui-build
@@ -192,7 +185,6 @@ jobs:
         python-version: ["3.12", "3.13", "3.14"]
     env:
       RELEASE_SCOPE: ${{ needs.preflight.outputs.release_scope }}
-      CONTEXT_CORE_VERSION: ${{ needs.preflight.outputs.context_core_version }}
       CONTEXT_ENGINE_VERSION: ${{ needs.preflight.outputs.context_engine_version }}
       POTPIE_VERSION: ${{ needs.preflight.outputs.potpie_version }}
     steps:
@@ -220,20 +212,14 @@ jobs:
           "$release_python" -m pip install --upgrade pip
 
           find_links=(
-            --find-links dist/context-core
             --find-links dist/context-engine
             --find-links dist/potpie
           )
-          core_wheel="$(find dist/context-core -maxdepth 1 -name '*.whl' -print -quit)"
           engine_wheel="$(find dist/context-engine -maxdepth 1 -name '*.whl' -print -quit)"
           potpie_wheel="$(find dist/potpie -maxdepth 1 -name '*.whl' -print -quit)"
-          local_specs=("potpie-context-core==${CONTEXT_CORE_VERSION}")
-          install_targets=("$core_wheel")
+          local_specs=("potpie-context-engine==${CONTEXT_ENGINE_VERSION}")
+          install_targets=("${engine_wheel}[all]")
 
-          if [[ "$RELEASE_SCOPE" != "context-core" ]]; then
-            local_specs+=("potpie-context-engine==${CONTEXT_ENGINE_VERSION}")
-            install_targets+=("${engine_wheel}[all]")
-          fi
           if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "potpie" ]]; then
             local_specs+=("potpie==${POTPIE_VERSION}")
             install_targets+=("$potpie_wheel")
@@ -254,10 +240,8 @@ jobs:
 
           scope = os.environ["RELEASE_SCOPE"]
           expected = {
-              "potpie-context-core": os.environ["CONTEXT_CORE_VERSION"],
+              "potpie-context-engine": os.environ["CONTEXT_ENGINE_VERSION"],
           }
-          if scope != "context-core":
-              expected["potpie-context-engine"] = os.environ["CONTEXT_ENGINE_VERSION"]
           if scope in {"all", "potpie"}:
               expected["potpie"] = os.environ["POTPIE_VERSION"]
           for package, version in expected.items():
@@ -267,10 +251,7 @@ jobs:
               print(f"verified {package}=={actual}")
           PY
 
-          "$release_python" -c "import potpie_context_core"
-          if [[ "$RELEASE_SCOPE" != "context-core" ]]; then
-            "$release_python" -c "import potpie_context_engine"
-          fi
+          "$release_python" -c "import potpie_context_engine"
 
       - name: Run root CLI smoke journey
         if: ${{ needs.preflight.outputs.release_scope == 'all' || needs.preflight.outputs.release_scope == 'potpie' }}
@@ -348,13 +329,6 @@ jobs:
         with:
           name: release-distributions
           path: dist
-
-      - name: Publish potpie-context-core
-        if: ${{ needs.preflight.outputs.release_scope == 'all' || needs.preflight.outputs.release_scope == 'context-core' }}
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
-        with:
-          packages-dir: dist/context-core/
-          repository-url: ${{ needs.preflight.outputs.repository_url }}
 
       - name: Publish potpie-context-engine
         if: ${{ needs.preflight.outputs.release_scope == 'all' || needs.preflight.outputs.release_scope == 'context-engine' }}

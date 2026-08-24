@@ -35,7 +35,6 @@ PYPI_REPOSITORY_URL = {
     "testpypi": "https://test.pypi.org/legacy/",
 }
 PACKAGE_SOURCES = {
-    "context-core": ("potpie/context-core/pyproject.toml", "potpie-context-core"),
     "context-engine": (
         "potpie/context-engine/pyproject.toml",
         "potpie-context-engine",
@@ -43,26 +42,21 @@ PACKAGE_SOURCES = {
     "potpie": ("pyproject.toml", "potpie"),
 }
 PACKAGE_ALIASES = {
-    "context-core": "context-core",
-    "potpie-context-core": "context-core",
     "context-engine": "context-engine",
     "potpie-context-engine": "context-engine",
     "potpie": "potpie",
 }
 PACKAGE_KEYS_BY_SCOPE = {
-    "all": ("context-core", "context-engine", "potpie"),
-    "context-core": ("context-core",),
+    "all": ("context-engine", "potpie"),
     "context-engine": ("context-engine",),
     "potpie": ("potpie",),
 }
 TAG_PREFIXES = {
-    "context-core": "potpie-context-core",
     "context-engine": "potpie-context-engine",
     "potpie": "potpie",
 }
 DEPENDENCY_KEYS = {
-    "context-engine": ("context-core",),
-    "potpie": ("context-core", "context-engine"),
+    "potpie": ("context-engine",),
 }
 
 
@@ -175,8 +169,6 @@ def validate_exact_requirement(package: PackageInfo, dependency: PackageInfo) ->
 
 
 def validate_dependency_chain(packages: dict[str, PackageInfo]) -> None:
-    validate_exact_requirement(packages["context-engine"], packages["context-core"])
-    validate_exact_requirement(packages["potpie"], packages["context-core"])
     validate_exact_requirement(packages["potpie"], packages["context-engine"])
 
 
@@ -332,7 +324,6 @@ def emit_github_outputs(
         f"publish_target={publish_target}",
         f"channel={channel}",
         f"metadata_path={metadata_output}",
-        f"context_core_version={packages['context-core'].version}",
         f"context_engine_version={packages['context-engine'].version}",
         f"potpie_version={packages['potpie'].version}",
     ]
