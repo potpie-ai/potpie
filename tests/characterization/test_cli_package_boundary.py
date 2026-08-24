@@ -5,17 +5,16 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 import re
 import tomllib
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE_ROOT = ROOT / "potpie" / "context-engine"
 
 EXPECTED_ENGINE_CLI_IMPORTERS: set[str] = set()
 
-EXPECTED_ENGINE_PRODUCT_IMPORTERS: set[str] = set()
+EXPECTED_ENGINE_ROOT_IMPORTERS: set[str] = set()
 
 
 def _imports_namespace(path: Path, namespace: str) -> bool:
@@ -66,14 +65,14 @@ def test_engine_does_not_import_cli() -> None:
     assert importers == EXPECTED_ENGINE_CLI_IMPORTERS
 
 
-def test_engine_does_not_import_product_services() -> None:
+def test_engine_does_not_import_root_potpie() -> None:
     importers = {
         path.relative_to(ENGINE_ROOT).as_posix()
         for path in ENGINE_ROOT.rglob("*.py")
         if "tests" not in path.relative_to(ENGINE_ROOT).parts
-        and _references_namespace(path, "potpie.product")
+        and _imports_namespace(path, "potpie")
     }
-    assert importers == EXPECTED_ENGINE_PRODUCT_IMPORTERS
+    assert importers == EXPECTED_ENGINE_ROOT_IMPORTERS
 
 
 def test_engine_metadata_does_not_depend_on_root_potpie() -> None:

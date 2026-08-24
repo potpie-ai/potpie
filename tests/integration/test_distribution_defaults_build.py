@@ -9,6 +9,16 @@ from pathlib import Path
 
 import pytest
 
+EXPECTED_CAPABILITY_MEMBERS = {
+    "potpie/agent_context.py",
+    "potpie/auth/adapters/local_identity.py",
+    "potpie/auth/ports/identity.py",
+    "potpie/config/__init__.py",
+    "potpie/pots/__init__.py",
+    "potpie/setup/__init__.py",
+    "potpie/skills/__init__.py",
+}
+
 
 def _archive_text(path: Path, member_suffix: str) -> str:
     if path.suffix == ".whl":
@@ -24,6 +34,16 @@ def _archive_text(path: Path, member_suffix: str) -> str:
             extracted = archive.extractfile(member)
             assert extracted is not None
             return extracted.read().decode("utf-8")
+    raise AssertionError(f"Unsupported build artifact: {path}")
+
+
+def _archive_names(path: Path) -> set[str]:
+    if path.suffix == ".whl":
+        with zipfile.ZipFile(path) as archive:
+            return set(archive.namelist())
+    if path.name.endswith(".tar.gz"):
+        with tarfile.open(path, "r:gz") as archive:
+            return {name.split("/", 1)[1] for name in archive.getnames() if "/" in name}
     raise AssertionError(f"Unsupported build artifact: {path}")
 
 
@@ -86,6 +106,12 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
         ]
         assert not stray, f"wheel ships members outside the namespace: {stray}"
     for artifact in (wheel, sdist):
+        names = _archive_names(artifact)
+        assert EXPECTED_CAPABILITY_MEMBERS <= names
+        assert not any(
+            name == "potpie/product" or name.startswith("potpie/product/")
+            for name in names
+        )
         distribution_defaults = _archive_text(
             artifact, "potpie/runtime/_distribution_defaults.py"
         )
