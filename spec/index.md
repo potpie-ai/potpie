@@ -126,6 +126,7 @@ read order.
 | ADR-0008 | [Async Context Engine public contract](decisions/ADR-0008-async-context-engine-public-contract.md) | accepted |
 | ADR-0009 | [Typed local runtime execution contract](decisions/ADR-0009-typed-local-runtime-execution-contract.md) | accepted |
 | ADR-0010 | [Correct Resource Manager authentication outcomes](decisions/ADR-0010-resource-manager-authentication-outcomes.md) | accepted |
+| ADR-0011 | [Capability-oriented Potpie layout](decisions/ADR-0011-capability-oriented-potpie-layout.md) | accepted |
 
 ## Open Questions
 
