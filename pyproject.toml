@@ -85,11 +85,15 @@ include = [
     "/scripts/generate-potpie-ascii.mjs",
     "/scripts/context_engine_lab.py",
     "/potpie/__init__.py",
+    "/potpie/agent_context.py",
     "/potpie/auth",
     "/potpie/cli",
+    "/potpie/config",
     "/potpie/daemon",
-    "/potpie/product",
+    "/potpie/pots",
     "/potpie/runtime",
+    "/potpie/setup",
+    "/potpie/skills",
 ]
 exclude = [
     "/.gitignore",

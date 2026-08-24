@@ -5,7 +5,7 @@ description: "Hexagonal layers, composition roots, daemon model, and the GraphBa
 
 ## Overview
 
-> Status: reflects the canonical Context Runtime boundary, last reviewed 2026-08-21.
+> Status: reflects the canonical Context Runtime boundary, last reviewed 2026-08-24.
 
 This is the implementation map for the Context Graph: the layered code, the
 composition roots that wire it, the daemon that hosts it, the swappable
@@ -34,7 +34,7 @@ flowchart TB
   cg_inbound["inbound adapters<br/>typed clients · http ingestion · daemon protocol · webhooks"]
   cg_app["application<br/>services · readers · use_cases"]
   cg_domain["domain<br/>ontology · contract · ports · DTOs · ranking · coherence · identity"]
-  cg_outbound["outbound adapters<br/>graph backends + engine room · connectors · ledger clients · postgres event store · skills targets · local embedder"]
+  cg_outbound["outbound adapters<br/>graph backends + engine room · connectors · ledger clients · postgres event store · local embedder"]
   cg_boot["composition roots<br/>potpie/runtime/composition.py · ingestion_server.py"]
   cg_host["runtime boundary<br/>ContextEngine · Resource Manager · EngineClient · daemon"]
 
@@ -50,12 +50,12 @@ flowchart TB
 |---|---|---|
 | **domain/** | `domain/` | Pure model and contracts: the three ontology catalogs, contract constants, ports (Protocols), DTOs, ranking, coherence invariants, identity. No I/O. Import-time coherence guards fail startup fast if vocabularies drift. |
 | **application/** | `application/` | Services and use cases that orchestrate domain over ports: `services/` (graph_service, graph_workbench, agent_context, read_orchestrator, envelope_builder, nudge_service, skill_manager, semantic_mutation_validator/lowering, reconciliation_validation, ingestion_submission_service), `readers/` (the 9 readers), `use_cases/` (the ingestion pipeline). |
-| **adapters/** | `adapters/inbound`, `adapters/outbound` | Concrete I/O. Inbound: HTTP ingestion server and webhooks. Outbound: graph backends + the shared engine room, skills targets, connectors, ledger clients, the Postgres event store, `intelligence/local_embedder`, the session injection ledger. Product CLI and daemon adapters live under `potpie/`. |
+| **adapters/** | `adapters/inbound`, `adapters/outbound` | Concrete I/O. Inbound: HTTP ingestion server and webhooks. Outbound: graph backends + the shared engine room, connectors, ledger clients, the Postgres event store, `intelligence/local_embedder`, the session injection ledger. Root CLI, daemon, and capability adapters live under `potpie/`. |
 | **bootstrap/** | `bootstrap/` | Context Engine standalone HTTP composition. The local product composition lives under `potpie/runtime/`. |
-| **runtime + daemon** | `potpie/runtime/`; `potpie/daemon/` | Context-bound clients, authorization/resource management, typed daemon protocol, and product-owned lifecycle. |
+| **runtime + daemon** | `potpie/runtime/`; `potpie/daemon/` | Context-bound clients, authorization/resource management, typed daemon protocol, and root capability lifecycle. |
 
 The local spine is `CLI → EngineClient → ContextResourceManager → ContextEngine`
-for engine-owned operations. Product control-plane commands use finite root-owned
+for engine-owned operations. Root capability commands use finite root-owned
 services. Agents reach both through the CLI.
 
 ## Two composition roots / two HTTP roots
@@ -69,7 +69,7 @@ flowchart TB
     direction TB
     cg_cli["potpie CLI · LocalEngineClient / DaemonEngineClient"]
     cg_shell["ContextResourceManager<br/>authorized context lease"]
-    cg_services["ContextEngine + root services"]
+    cg_services["ContextEngine + root capability services"]
     cg_lite[("default backend: falkordb_lite<br/>default host mode: daemon")]
     cg_cli --> cg_shell --> cg_services --> cg_lite
   end
@@ -84,11 +84,11 @@ flowchart TB
 ```
 
 1. **The local agent spine** — `potpie/runtime/composition.py
-   build_local_runtime()` composes separate root product and engine service
+   build_local_runtime()` composes separate root capability and engine service
    groups. Engine-owned CLI operations use `LocalEngineClient` in-process or
    `DaemonEngineClient` over the versioned authenticated daemon protocol. The
-   daemon listens privately over UDS with loopback TCP fallback. Product
-   control-plane commands use finite root-owned services. **Default backend:
+   daemon listens privately over UDS with loopback TCP fallback. Root capability
+   commands use finite root-owned services. **Default backend:
    `falkordb_lite`. Default host mode: `daemon`.**
 2. **The ingestion HTTP server** — `bootstrap/ingestion_server.py
    IngestionServerContainer` composes the FastAPI app under
@@ -411,7 +411,7 @@ removed — those are **methods on `DefaultGraphService`** plus the declarative
 | Composition roots | `potpie/runtime/composition.py` (`build_local_runtime`); `bootstrap/ingestion_server.py` + `standalone_container.py` (ingestion HTTP root) |
 | Public/local runtime boundary | `context_engine.py`; `potpie/runtime/{clients,resource_manager,local_engine}.py` |
 | Daemon | lifecycle under `potpie/daemon/`; controller, protocol, server, transport, and coordination under `potpie/runtime/` |
-| Service interfaces (ports) | `domain/ports/services/{graph_service,pot_management,skill_manager}.py` |
+| Service interfaces (ports) | `core/ports/graph_service.py`; `potpie/pots/contracts.py`; `potpie/skills/contracts.py` |
 | Graph capability ports | `domain/ports/graph/{backend,mutation,semantic,inspection,analytics,snapshot}.py` + `domain/ports/claim_query.py` |
 | Read trunk | `application/services/read_orchestrator.py`, `envelope_builder.py`, `application/readers/`, `domain/agent_envelope.py`, `domain/ranking.py`, `domain/agent_context_port.py` |
 | Graph Service (catalog/read/search-entities/mutate/status) | `application/services/graph_service.py` (methods, not separate modules) |
@@ -423,15 +423,15 @@ removed — those are **methods on `DefaultGraphService`** plus the declarative
 | External Event Ledger seam (stubs) | `domain/ports/ledger/{client,cursor}.py`; `adapters/outbound/ledger/{managed_client,self_hosted_client,cursor_store}.py` |
 | CLI (typed-client and root-service routed) | `potpie/cli/main.py` + `potpie/cli/commands/` |
 | Ingestion HTTP server | `adapters/inbound/http/` |
-| Skills | `potpie/product/services/skills.py` + `potpie/product/adapters/skills/` |
+| Root capabilities | `potpie/{config,pots,setup,skills}/`; local identity under `potpie/auth/{ports,adapters}/`; cross-capability agent facade at `potpie/agent_context.py` |
 
 ### Stable interfaces
 
 | Interface | File | Role |
 |---|---|---|
-| `GraphService` | `domain/ports/services/graph_service.py` | Data plane: reads, identity resolution, semantic mutation validate/apply, status, projections. |
-| `PotManagementService` | `domain/ports/services/pot_management.py` | Control plane: pots, active pot, sources, readiness rollup. |
-| `SkillManager` + `AgentTargetPort` | `domain/ports/services/skill_manager.py` | Catalog + per-harness install drift; advisory `SkillNudge`. |
+| `GraphService` | `core/ports/graph_service.py` | Graph reads, identity resolution, semantic mutation validate/apply, status, and projections. |
+| `PotManagementService` | `potpie/pots/contracts.py` | Pots, active-pot selection, sources, and readiness rollup. |
+| `SkillManager` + `AgentTargetPort` | `potpie/skills/contracts.py` | Catalog + per-harness install drift; advisory `SkillNudge`. |
 | `GraphBackend` | `domain/ports/graph/backend.py` | Six-capability storage bundle + `profile` + `capabilities()` + `provision()`. |
 | `GraphMutationPort` / `ClaimQueryPort` | `domain/ports/graph/mutation.py`, `domain/ports/claim_query.py` | Canonical source of truth (write / read). |
 | `SemanticSearchPort` / `GraphInspectionPort` / `GraphAnalyticsPort` / `GraphSnapshotPort` | `domain/ports/graph/{semantic,inspection,analytics,snapshot}.py` | Rebuildable projections. |
@@ -445,8 +445,8 @@ the structured not-implemented contract — never a bare `NotImplementedError`.
 ## Extension points
 
 Add behavior at the narrowest service boundary that owns it. CLI adapts user
-intent, the daemon hosts services, Pot Management owns the control plane, Graph
-Service owns the data plane, and `GraphBackend` owns physical storage.
+intent, the daemon hosts services, Pot Management owns pot/source lifecycle,
+Graph Service owns graph operations, and `GraphBackend` owns physical storage.
 
 | Change | Put it here | Rule |
 |---|---|---|
@@ -454,9 +454,9 @@ Service owns the data plane, and `GraphBackend` owns physical storage.
 | Semantic mutation op | semantic DSL + validator + lowering | Add deterministic validation and lowering before exposing it to agents. |
 | Entity / predicate | `domain/ontology.py` | One row in `ENTITY_TYPES` / `EDGE_TYPES`; add identity, endpoint rules, freshness, source-of-truth. Coherence guards fail import if it drifts. See [ontology.md](./ontology.md). |
 | Graph backend | `domain/ports/graph/` + a backend adapter | Implement the canonical ports, preserve `group_id` pot isolation, pass conformance; declare real caps in `capabilities()`. |
-| Skill | skill catalog + `AgentTargetPort` adapter | Keep skill content harness-neutral; it is not graph data. See [skills.md](./skills.md). |
-| Pot behavior | Pot Management Service | Preserve the first-setup active `default` pot. |
-| Setup / lifecycle step | the component's `provision`/bespoke method + `SetupOrchestrator` sequence | Return a `StepResult`; raise `CapabilityNotImplemented` until built. |
+| Skill | `potpie/skills/` catalog + `AgentTargetPort` adapter | Keep skill content harness-neutral; it is not graph data. See [skills.md](./skills.md). |
+| Pot behavior | `potpie/pots/` | Preserve the first-setup active `default` pot. |
+| Setup / lifecycle step | the component's `provision`/bespoke method + `potpie/setup/orchestrator.py` sequence | Return a `StepResult`; raise `CapabilityNotImplemented` until built. |
 
 Do not bypass the read trunk, query physical stores from CLI/readers, make a
 projection a second source of truth, put service logic in the daemon shell, or
@@ -472,8 +472,8 @@ duplicate ontology enums in docs/CLI.
 - Every fact is scoped by `pot_id` = `group_id`; no cross-pot federation.
 - The canonical write door is `propose` → `commit --verify`; `graph mutate` is a
   legacy wrapper; reads never synthesize answers.
-- Pot Management owns the control plane; Graph Service owns the data plane; the
-  daemon hosts services but holds no business logic.
+- Pot Management owns pot/source lifecycle; Graph Service owns graph operations;
+  the daemon hosts services but holds no business logic.
 - Unbuilt capabilities fail-closed with a dotted `CapabilityNotImplemented`
   slot, surfaced as the structured not-implemented contract.
 

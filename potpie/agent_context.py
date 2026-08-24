@@ -1,13 +1,12 @@
-"""Potpie product-status composition over context and control-plane services.
+"""Potpie agent-context composition over graph, pot, and skill services.
 
 This is the public four-tool surface. ``resolve``/``search``/``record`` delegate
-straight to the ``GraphService`` data plane; ``status`` is the only composite —
-it joins ``GraphService`` data-plane status, ``PotManagementService`` control-
-plane status, and a ``SkillManager`` nudge into one ``StatusReport``.
+straight to ``GraphService``; ``status`` is the only composite — it joins graph
+status, pot/source status, and a ``SkillManager`` nudge into one ``StatusReport``.
 
 The root local-runtime composition binds here. The standalone Context Engine
-HTTP surface owns its own delivery composition and must not import this product
-status wrapper or define new agent tools through it.
+HTTP surface owns its own delivery composition and must not import this root
+composition or define new agent tools through it.
 """
 
 from __future__ import annotations

@@ -69,7 +69,7 @@ entity; an entity exists only if an edge needs it as an endpoint.
 There is **no separate human-vs-agent API**. Both users and agents talk to the same
 `potpie` CLI. Engine operations route through the same finite typed operation
 catalog whether they run through `LocalEngineClient` or `DaemonEngineClient`;
-product control-plane commands use explicit root-owned services.
+root capability commands use explicit root-owned services.
 
 Agents reach the system directly through the CLI, including the full **Graph
 Surface Lite** (`potpie graph catalog/read/search-entities/propose/commit/…`).

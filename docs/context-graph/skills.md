@@ -5,7 +5,7 @@ description: How coding harnesses use Potpie skills to read and write the graph.
 
 ## Overview
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
+> Status: reflects the capability-first layout, last reviewed 2026-08-24.
 
 Potpie does not own the reasoning that turns a repo, PR, ticket, or bug into
 durable memory. That intelligence lives in the **user's coding harness** (Claude
@@ -40,7 +40,7 @@ The single source of truth for skill content **and** metadata is the bundled set
 of `SKILL.md` files under
 `potpie/cli/templates/agent_bundle/.agents/skills/*/SKILL.md`.
 
-`adapters/outbound/skills/bundle_catalog.py` scans those templates at runtime
+`potpie/skills/catalog.py` scans those templates at runtime
 (`lru_cache`d), parses each file's YAML front-matter (`name` / `version` /
 `description`, optional `recommended: false`) into a `SkillInfo`, and exposes
 `catalog_by_id()` and `RECOMMENDED_SKILL_IDS` (every recommended bundled skill).
@@ -51,12 +51,13 @@ them (everything except `potpie-cli`).
 
 ## 2. Installation, targets & drift (`DefaultSkillManager`)
 
-`potpie/product/services/skills.py DefaultSkillManager` owns the catalog +
+`potpie/skills/manager.py DefaultSkillManager` owns the catalog +
 per-harness install/drift logic and delegates *where/how* to a registered
 `AgentTargetPort` per harness. Operations: `list / install / update / remove /
 status / nudge / add` (`add` is a TODO stub).
 
-Targets are wired in `potpie/runtime/composition.py`; each
+Targets are implemented in `potpie/skills/targets.py` and wired in
+`potpie/runtime/composition.py`; each
 `FileBackedAgentTarget` installs into a harness-specific **global** skills root,
 and a `--scope project` install routes through `ProjectAgentTarget` instead:
 
@@ -67,7 +68,7 @@ and a `--scope project` install routes through `ProjectAgentTarget` instead:
 | `cursor` | `CursorAgentTarget` | `~/.cursor/skills` |
 | `opencode` | `OpenCodeAgentTarget` | `~/.config/opencode/skills` |
 
-Install mechanics (`adapters/outbound/skills/agent_installer.py`):
+Install mechanics (`potpie/skills/installer.py`):
 
 - Templates are copied/remapped per harness layout: `claude → .claude/skills`,
   `cursor → .cursor/skills`, `opencode → .opencode/skills`, and the Claude Code

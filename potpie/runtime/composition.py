@@ -43,7 +43,7 @@ from potpie.skills.targets import (
     CursorAgentTarget,
     OpenCodeAgentTarget,
 )
-from potpie.product.services.agent_context import AgentContextService
+from potpie.agent_context import AgentContextService
 from potpie.auth.adapters.local_identity import LocalAuthService
 from potpie.config.local import LocalConfigService
 from potpie_context_engine.application.services.nudge_service import NudgeService

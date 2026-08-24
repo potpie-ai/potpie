@@ -13,7 +13,7 @@ journey. It is the one doc that may restate flags in full; conceptual depth live
 in the sibling docs linked under each group and in [See also](#see-also).
 
 This file lives at repo-root `docs/context-graph/cli-flow.md`. Product CLI,
-runtime, daemon, and control-plane code lives under repo-root `potpie/`; engine
+runtime, daemon, and root capability code lives under repo-root `potpie/`; engine
 domain code lives under `potpie/context-engine/`.
 
 ## One CLI for humans and agents
@@ -23,8 +23,8 @@ the same `potpie` CLI.
 `potpie/cli/main.py build_app()` is the single console entrypoint
 (`[project.scripts]`): one Typer root whose `@app.callback` exposes three global
 options, with the rest of the surface assembled from top-level registrars and
-`add_typer` sub-apps. Engine operations route through an `EngineClient`; product
-control-plane commands use finite root-owned services.
+`add_typer` sub-apps. Engine operations route through an `EngineClient`; root
+capability commands use finite root-owned services.
 
 ```mermaid
 flowchart LR
@@ -32,7 +32,7 @@ flowchart LR
   cf_cli["potpie CLI<br/>main.py build_app()"]
   cf_common["commands/_common.py<br/>get_engine_client • get_root_runtime • contract"]
   cf_shell["LocalEngineClient / DaemonEngineClient<br/>typed finite operations"]
-  cf_svc["ContextEngine + root services<br/>pots • setup • skills • daemon • ledger"]
+  cf_svc["ContextEngine + root capability services<br/>pots • setup • skills • daemon • ledger"]
   cf_ports["GraphBackend + capability ports"]
 
   cf_user --> cf_cli --> cf_common --> cf_shell --> cf_svc --> cf_ports
