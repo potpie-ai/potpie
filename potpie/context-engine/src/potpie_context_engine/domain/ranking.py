@@ -117,7 +117,9 @@ class RankingService:
         ``breakdown`` so readers can surface "why this ranked high" if
         the agent asks.
         """
-        now = context.now or datetime.now(tz=timezone.utc)
+        now = _as_utc(context.now)
+        if now is None:
+            now = datetime.now(tz=timezone.utc)
         ranked: list[RankedItem] = []
         for cand in candidates:
             breakdown = self._score_one(cand, now=now, context=context)
@@ -188,6 +190,18 @@ def _strength_score(strength: str | None, mapping: Mapping[str, float]) -> float
     return mapping.get(strength, 0.5)
 
 
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Interpret a naive datetime as UTC (matches how ``valid_at`` is treated).
+
+    A caller-supplied clock (``TaskContext.now``) without an explicit tzinfo is
+    ambiguous; defaulting to UTC keeps ``now - valid_at`` from mixing naive and
+    aware datetimes (potpie issue #1008).
+    """
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=timezone.utc)
+
+
 def _recency_score(
     valid_at: datetime | None,
     *,
@@ -200,6 +214,8 @@ def _recency_score(
         return 0.5
     if valid_at.tzinfo is None:
         valid_at = valid_at.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
     age = max(now - valid_at, timedelta(0))
 
     effective_half_life = half_life
