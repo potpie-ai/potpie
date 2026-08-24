@@ -64,7 +64,7 @@ jobs:
       - name: Explain Hub token mint failure
         if: ${{ failure() && steps.docs_change.outputs.should_dispatch == 'true' && steps.hub_token.conclusion == 'failure' }}
         run: |
-          echo "::error::GitHub App token was not minted. Confirm the App is installed on potpie-ai/potpie and the Actions Client ID/private key are configured."
+          echo "::error::GitHub App token was not minted. Confirm the App is installed on potpie-ai/docs and the Actions Client ID/private key are configured for this workflow."
 
       - name: Send repository_dispatch to Hub
         if: steps.docs_change.outputs.should_dispatch == 'true'
@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${HUB_DISPATCH_TOKEN:-}" ]; then
-            echo "::error::GitHub App token was not minted. Confirm the App is installed on potpie-ai/potpie and the Actions Client ID/private key are configured."
+            echo "::error::GitHub App token was not minted. Confirm the App is installed on potpie-ai/docs and the Actions Client ID/private key are configured for this workflow."
             exit 1
           fi
           if [ -z "${HUB_REPO:-}" ]; then
@@ -88,9 +88,23 @@ jobs:
             echo "::error::DOCS_HUB_REPO must be $DEFAULT_HUB_REPO when using the documentation GitHub App"
             exit 1
           fi
-          SPOKE_ID="$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync("docs/config.json","utf8")); if (!c.spokeId) process.exit(1); process.stdout.write(String(c.spokeId))')"
-          payload=$(printf '{"event_type":"spoke-docs-updated","client_payload":{"repository":"%s","branch":"%s","sha":"%s","spoke_id":"%s"}}' \
-            "$SPOKE_REPO" "$BRANCH" "$SHA" "$SPOKE_ID")
+          payload="$(node -e '
+            const fs = require("fs");
+            const config = JSON.parse(fs.readFileSync("docs/config.json", "utf8"));
+            if (typeof config.spokeId !== "string" || !config.spokeId.trim()) {
+              console.error("::error::docs/config.json spokeId must be a non-empty string");
+              process.exit(1);
+            }
+            process.stdout.write(JSON.stringify({
+              event_type: "spoke-docs-updated",
+              client_payload: {
+                repository: process.env.SPOKE_REPO,
+                branch: process.env.BRANCH,
+                sha: process.env.SHA,
+                spoke_id: config.spokeId,
+              },
+            }));
+          ')"
           code=$(curl -sS -o /tmp/dispatch-response.json -w "%{http_code}" \
             -X POST \
             -H "Accept: application/vnd.github+json" \
@@ -105,4 +119,4 @@ jobs:
             echo
             exit 1
           fi
-          echo "Dispatched spoke-docs-updated to $HUB_REPO for $SPOKE_REPO@$SHA (spoke_id=$SPOKE_ID)"
+          echo "Dispatched spoke-docs-updated to $HUB_REPO for $SPOKE_REPO@$SHA"
