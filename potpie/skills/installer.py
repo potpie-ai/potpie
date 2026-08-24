@@ -241,7 +241,7 @@ def _validate_potpie_command_tokens(tokens: list[str]) -> str | None:
 
     path, end, command_options = match
     for token in tokens[end:]:
-        if not token.startswith("-") or token == "-":
+        if not token.startswith("-") or token == "-":  # noqa: S105 - CLI token
             continue
         opt = _option_name(token)
         if opt not in command_options:

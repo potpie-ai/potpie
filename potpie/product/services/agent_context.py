@@ -28,7 +28,7 @@ from potpie_context_engine.core.ports.graph_service import GraphService
 from potpie.pots.contracts import (
     PotManagementService,
 )
-from potpie.product.ports.skills import SkillManager
+from potpie.skills.contracts import SkillManager
 
 
 @dataclass(slots=True)

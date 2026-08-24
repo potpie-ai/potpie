@@ -10,22 +10,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from potpie.product.adapters.skills.agent_targets import (
-    ProjectAgentTarget,
-)
-from potpie.product.adapters.skills.agent_installer import (
-    validate_packaged_skill_command_snippets,
-)
-from potpie.product.adapters.skills.bundle_catalog import (
+from potpie_context_engine.core.ports.agent_context import SkillNudge
+
+from potpie.skills.catalog import (
     RECOMMENDED_SKILL_IDS,
     catalog_by_id,
 )
-from potpie_context_engine.core.ports.agent_context import SkillNudge
-from potpie.product.ports.skills import (
+from potpie.skills.contracts import (
     AgentTargetPort,
     SkillInfo,
     SkillOperationResult,
     SkillStatus,
+)
+from potpie.skills.installer import (
+    validate_packaged_skill_command_snippets,
+)
+from potpie.skills.targets import (
+    ProjectAgentTarget,
 )
 
 

@@ -37,7 +37,7 @@ from potpie.pots.local_store import LocalPotStore
 from potpie_context_engine.adapters.outbound.session.injection_ledger import (
     LocalInjectionLedger,
 )
-from potpie.product.adapters.skills.agent_targets import (
+from potpie.skills.targets import (
     ClaudeAgentTarget,
     CodexAgentTarget,
     CursorAgentTarget,
@@ -53,7 +53,7 @@ from potpie.pots.local_service import (
 from potpie.product.services.setup import (
     DefaultSetupOrchestrator,
 )
-from potpie.product.services.skills import DefaultSkillManager
+from potpie.skills.manager import DefaultSkillManager
 from potpie_context_engine.bootstrap.logging_setup import configure_logging
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import set_observability

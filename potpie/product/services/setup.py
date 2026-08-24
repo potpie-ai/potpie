@@ -48,7 +48,7 @@ from potpie.config.contracts import ConfigService
 from potpie.pots.contracts import (
     PotManagementService,
 )
-from potpie.product.ports.skills import SkillManager
+from potpie.skills.contracts import SkillManager
 from potpie.product.ports.state_store import (
     MigrationPort,
     StateStorePort,

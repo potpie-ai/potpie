@@ -6,20 +6,20 @@ from pathlib import Path
 
 import pytest
 
-import potpie.product.adapters.skills.agent_installer as agent_installer
-from potpie.product.adapters.skills.agent_installer import (
-    install_global_agent_instructions,
+import potpie.skills.installer as agent_installer
+from potpie.skills.catalog import catalog_by_id
+from potpie.skills.installer import (
     install_agent_bundle,
+    install_global_agent_instructions,
     install_skill_bundle,
     iter_template_files,
     resolve_install_root,
     validate_packaged_skill_command_snippets,
 )
-from potpie.product.adapters.skills.agent_targets import (
+from potpie.skills.manager import DefaultSkillManager
+from potpie.skills.targets import (
     FileBackedAgentTarget,
 )
-from potpie.product.services.skills import DefaultSkillManager
-from potpie.product.adapters.skills.bundle_catalog import catalog_by_id
 
 
 def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:

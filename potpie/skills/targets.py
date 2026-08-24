@@ -9,14 +9,14 @@ from pathlib import Path
 from typing import Mapping
 
 from potpie.config.local_paths import default_home
-from potpie.product.adapters.skills.agent_installer import (
-    install_global_agent_instructions,
+from potpie.skills.catalog import (
+    RECOMMENDED_SKILL_IDS,
+)
+from potpie.skills.installer import (
     install_agent_bundle,
+    install_global_agent_instructions,
     install_skill_bundle,
     project_skill_path,
-)
-from potpie.product.adapters.skills.bundle_catalog import (
-    RECOMMENDED_SKILL_IDS,
 )
 
 

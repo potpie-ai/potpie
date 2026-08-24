@@ -19,25 +19,11 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphService,
 )
 from potpie.product.ports.setup import SetupOrchestrator
-from potpie.product.ports.skills import (
-    AgentTargetPort,
-    SkillInfo,
-    SkillManager,
-    SkillNudge,
-    SkillOperationResult,
-    SkillStatus,
-)
 
 __all__ = [
-    "AgentTargetPort",
     "AuthIdentity",
     "AuthService",
     "DataPlaneStatus",
     "GraphService",
     "SetupOrchestrator",
-    "SkillInfo",
-    "SkillManager",
-    "SkillNudge",
-    "SkillOperationResult",
-    "SkillStatus",
 ]

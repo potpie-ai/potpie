@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from potpie.product.adapters.skills.agent_installer import (
-    iter_template_files,
-)
-from potpie.product.adapters.skills.bundle_catalog import (
+from potpie.skills.catalog import (
     catalog_by_id,
     load_bundle_skills,
     recommended_skill_ids,
+)
+from potpie.skills.installer import (
+    iter_template_files,
 )
 
 
