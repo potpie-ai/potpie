@@ -25,7 +25,7 @@ from potpie_context_engine.core.ports.agent_context import (
     StatusRequest,
 )
 from potpie_context_engine.core.ports.graph_service import GraphService
-from potpie.product.ports.pot_management import (
+from potpie.pots.contracts import (
     PotManagementService,
 )
 from potpie.product.ports.skills import SkillManager

@@ -1,10 +1,1 @@
-"""Local control-plane persistence adapters."""
-
-from __future__ import annotations
-
-from potpie.product.adapters.pots.local_pot_store import (
-    LocalPotStore,
-    default_home,
-)
-
-__all__ = ["LocalPotStore", "default_home"]
+"""Setup state adapters awaiting capability relocation."""

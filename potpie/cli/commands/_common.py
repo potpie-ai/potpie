@@ -262,7 +262,7 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
             DaemonDiscoveryError,
             load_daemon_connection,
         )
-        from potpie.product.adapters.pots.local_pot_store import (
+        from potpie.config.local_paths import (
             default_home,
         )
 

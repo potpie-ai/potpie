@@ -17,7 +17,7 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
     HashingEmbedder,
     SentenceTransformerEmbedder,
 )
-from potpie.product.services.config import LocalConfigService
+from potpie.config.local import LocalConfigService
 from potpie.product.services.setup import (
     DefaultSetupOrchestrator,
 )

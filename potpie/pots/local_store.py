@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from potpie_context_engine.adapters.outbound.local_paths import default_home
+from potpie.config.local_paths import default_home
 
 
 @dataclass(slots=True)
@@ -203,4 +203,4 @@ def _repo_identity_key(value: str) -> str | None:
     return raw.strip("/").lower()
 
 
-__all__ = ["LocalPotStore", "default_home"]
+__all__ = ["LocalPotStore"]

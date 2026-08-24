@@ -14,16 +14,9 @@ public four-tool surface.
 from __future__ import annotations
 
 from potpie.product.ports.auth import AuthIdentity, AuthService
-from potpie.product.ports.config import ConfigService
 from potpie_context_engine.core.ports.graph_service import (
     DataPlaneStatus,
     GraphService,
-)
-from potpie.product.ports.pot_management import (
-    PotAggregateStatus,
-    PotInfo,
-    PotManagementService,
-    SourceInfo,
 )
 from potpie.product.ports.setup import SetupOrchestrator
 from potpie.product.ports.skills import (
@@ -39,17 +32,12 @@ __all__ = [
     "AgentTargetPort",
     "AuthIdentity",
     "AuthService",
-    "ConfigService",
     "DataPlaneStatus",
     "GraphService",
-    "PotAggregateStatus",
-    "PotInfo",
-    "PotManagementService",
     "SetupOrchestrator",
     "SkillInfo",
     "SkillManager",
     "SkillNudge",
     "SkillOperationResult",
     "SkillStatus",
-    "SourceInfo",
 ]

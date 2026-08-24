@@ -44,8 +44,8 @@ from potpie_context_engine.core.lifecycle import (
 from potpie.product.ports.install import Installer
 from potpie_context_engine.domain.ports.provisioning import ProvisionableGraphBackend
 from potpie.product.ports.auth import AuthService
-from potpie.product.ports.config import ConfigService
-from potpie.product.ports.pot_management import (
+from potpie.config.contracts import ConfigService
+from potpie.pots.contracts import (
     PotManagementService,
 )
 from potpie.product.ports.skills import SkillManager

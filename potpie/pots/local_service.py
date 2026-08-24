@@ -9,15 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from potpie.product.adapters.pots.local_pot_store import LocalPotStore
+from potpie.pots.contracts import PotAggregateStatus, PotInfo, SourceInfo
+from potpie.pots.local_store import LocalPotStore
 from potpie_context_engine.core.errors import PotNotFound
 from potpie_context_engine.core.lifecycle import DONE, StepResult
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
-from potpie.product.ports.pot_management import (
-    PotAggregateStatus,
-    PotInfo,
-    SourceInfo,
-)
 
 
 @dataclass(slots=True)

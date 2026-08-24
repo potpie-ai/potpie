@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
-from potpie.product.adapters.pots.local_pot_store import default_home
+from potpie.config.local_paths import default_home
 from potpie.product.adapters.skills.agent_installer import (
     install_global_agent_instructions,
     install_agent_bundle,

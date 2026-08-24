@@ -29,7 +29,7 @@ from potpie_context_engine.core.ports.agent_context import StatusReport
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
 from potpie_context_engine.core.ports.graph_service import DataPlaneStatus
-from potpie.product.ports.pot_management import (
+from potpie.pots.contracts import (
     PotAggregateStatus,
     PotInfo,
 )

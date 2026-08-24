@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from potpie.cli import repo_location
 from potpie.cli.commands import _common, pots
-from potpie.product.ports.pot_management import (
+from potpie.pots.contracts import (
     PotInfo,
     SourceInfo,
 )

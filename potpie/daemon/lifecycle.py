@@ -35,7 +35,7 @@ from potpie.runtime.protocol import ProtocolTransportError
 from potpie.runtime.server import generate_bearer_token
 from potpie.runtime.transport import RuntimeEndpoint
 from potpie_context_engine import Failure, Success
-from potpie.product.adapters.pots.local_pot_store import default_home
+from potpie.config.local_paths import default_home
 from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
 
 

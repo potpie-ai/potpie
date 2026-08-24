@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from potpie.product.ports.pot_management import PotInfo, SourceInfo
+from potpie.pots.contracts import PotInfo, SourceInfo
 from potpie.runtime import ContextSelector, LocalEngineClient
 from potpie.runtime.local_engine import (
     LocalContextSelectorResolver,

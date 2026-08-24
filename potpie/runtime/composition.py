@@ -33,7 +33,7 @@ from potpie.product.adapters.pots.flat_file_state_store import (
     FlatFileMigrator,
     FlatFileStateStore,
 )
-from potpie.product.adapters.pots.local_pot_store import LocalPotStore
+from potpie.pots.local_store import LocalPotStore
 from potpie_context_engine.adapters.outbound.session.injection_ledger import (
     LocalInjectionLedger,
 )
@@ -45,9 +45,9 @@ from potpie.product.adapters.skills.agent_targets import (
 )
 from potpie.product.services.agent_context import AgentContextService
 from potpie.product.services.auth import LocalAuthService
-from potpie.product.services.config import LocalConfigService
+from potpie.config.local import LocalConfigService
 from potpie_context_engine.application.services.nudge_service import NudgeService
-from potpie.product.services.pot_management import (
+from potpie.pots.local_service import (
     LocalPotManagementService,
 )
 from potpie.product.services.setup import (
