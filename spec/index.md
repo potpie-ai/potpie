@@ -151,25 +151,28 @@ active behavior depends on a deferred question.
 
 ## Conformance Summary
 
-Five final records verify the Context Runtime implementation at
-`5101871348ceae9f59830dd82af06d890a6d0f48`:
+Six final records verify one accepted contract set at the capability-refactor
+implementation ref `a0b52654f6fed50ec790cc2a72ccd581611ed3be`:
 
 | Record | Contract | Revision | Result |
 |---|---|---:|---|
-| [CONF-CONTEXT-ENGINE-2026-08-21-01](conformance/context-engine-2026-08-21.md) | SPEC-CONTEXT-ENGINE | 1 | passed |
-| [CONF-POTPIE-RESOURCE-MANAGER-2026-08-21-01](conformance/potpie-resource-manager-2026-08-21.md) | SPEC-POTPIE-RESOURCE-MANAGER | 2 | passed |
-| [CONF-DAEMON-2026-08-21-01](conformance/daemon-2026-08-21.md) | SPEC-DAEMON | 1 | passed |
-| [CONF-CLI-2026-08-21-01](conformance/cli-2026-08-21.md) | SPEC-CLI | 1 | passed |
-| [CONF-SYSTEM-2026-08-21-01](conformance/cross-system-2026-08-21.md) | SPEC-SYSTEM | 1 | passed |
+| [CONF-CONTEXT-ENGINE-2026-08-24-01](conformance/context-engine-2026-08-24.md) | SPEC-CONTEXT-ENGINE | 1 | passed |
+| [CONF-POTPIE-RESOURCE-MANAGER-2026-08-24-01](conformance/potpie-resource-manager-2026-08-24.md) | SPEC-POTPIE-RESOURCE-MANAGER | 2 | passed |
+| [CONF-DAEMON-2026-08-24-01](conformance/daemon-2026-08-24.md) | SPEC-DAEMON | 1 | passed |
+| [CONF-CLI-2026-08-24-01](conformance/cli-2026-08-24.md) | SPEC-CLI | 1 | passed |
+| [CONF-SYSTEM-2026-08-24-01](conformance/cross-system-2026-08-24.md) | SPEC-SYSTEM | 1 | passed |
+| [CONF-POTPIE-CAPABILITIES-2026-08-24-01](conformance/potpie-capabilities-2026-08-24.md) | SPEC-POTPIE-CAPABILITIES | 1 | passed |
 
-Together they record passed verification for all 178 active behaviors in the
-four implementation modules and their cross-system contract. Freshness is
-derived from the pinned specification, implementation, dependency, and
-evidence identities; it is not stored in these records.
+Together they record passed verification for all 190 active behaviors in the
+five implementation/module contracts and their cross-system contract. The five
+2026-08-21 records remain immutable and are linked by `previous_record` from
+their successors. Freshness is derived from the pinned specification,
+implementation, dependency, and evidence identities; it is not stored in these
+records.
 
 ## Current Snapshot
 
 Initial implementation observations remain pinned to base
 `a341978880b9d4c1b403831931279ccedf6184ae` and explain the migration need. The
-final conformance records above separately establish implementation and
-verification claims at `5101871348ceae9f59830dd82af06d890a6d0f48`.
+six current conformance records above separately establish implementation and
+verification claims at `a0b52654f6fed50ec790cc2a72ccd581611ed3be`.
