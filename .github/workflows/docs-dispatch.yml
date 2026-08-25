@@ -70,8 +70,7 @@ jobs:
         if: steps.docs_change.outputs.should_dispatch == 'true'
         env:
           HUB_DISPATCH_TOKEN: ${{ steps.hub_token.outputs.token }}
-          HUB_REPO: ${{ vars.DOCS_HUB_REPO }}
-          DEFAULT_HUB_REPO: potpie-ai/docs
+          HUB_REPO: potpie-ai/docs
           SPOKE_REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
@@ -79,13 +78,6 @@ jobs:
           set -euo pipefail
           if [ -z "${HUB_DISPATCH_TOKEN:-}" ]; then
             echo "::error::GitHub App token was not minted. Confirm the App is installed on potpie-ai/docs and the Actions Client ID/private key are configured for this workflow."
-            exit 1
-          fi
-          if [ -z "${HUB_REPO:-}" ]; then
-            HUB_REPO="$DEFAULT_HUB_REPO"
-          fi
-          if [ "$HUB_REPO" != "$DEFAULT_HUB_REPO" ]; then
-            echo "::error::DOCS_HUB_REPO must be $DEFAULT_HUB_REPO when using the documentation GitHub App"
             exit 1
           fi
           payload="$(node -e '
