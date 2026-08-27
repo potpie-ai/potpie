@@ -8,7 +8,7 @@ owners:
 
 # Context Runtime Open Questions
 
-Three questions remain intentionally deferred and are not referenced by active
+Four questions remain intentionally deferred and are not referenced by active
 behavior nodes. Nine implementation-readiness questions are resolved by
 ADR-0007 through ADR-0009. Each deferred question becomes a separate decision
 before an implementation commit depends on its answer.
@@ -129,3 +129,14 @@ OQ-COMPAT-001 [resolved]: What sequence and temporary shims should perform the r
   option: coordinated breaking release with import and command migration guidance
   decision-trigger: before the first compatibility or deletion commit; the deletion end state is not deferred
   resolution: ADR-0007
+
+OQ-AUTH-MODEL-001 [deferred]: What cross-surface identity and capability model should replace the transitional daemon bearer across local IPC, Potpie login, hosted access, integrations, and browser clients?
+  owner: team:potpie
+  option: distinct credentials and authorization policies for every trust boundary, joined by one explicit identity model
+  option: one user identity with separately scoped local, hosted, integration, and browser capabilities
+  option: platform-native local identity plus product identity for remote and browser surfaces
+  constraint: browser access receives a separately scoped read-only capability and never the daemon operations bearer
+  constraint: browser requests cannot mutate daemon-wide active-pot state and must pass host and origin validation
+  constraint: operation capabilities and UI capabilities remain explicitly separate
+  decision-trigger: before browser authentication, hosted client authentication, or a final local IPC identity contract is implemented
+  resolution: null

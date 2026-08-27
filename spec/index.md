@@ -135,7 +135,7 @@ read order.
 
 ## Open Questions
 
-Three intentionally deferred questions and nine resolved implementation-readiness
+Four intentionally deferred questions and nine resolved implementation-readiness
 questions are recorded in [questions/open.md](questions/open.md). No accepted
 active behavior depends on a deferred question.
 

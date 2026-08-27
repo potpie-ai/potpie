@@ -119,6 +119,22 @@ layer. Two modes:
   authenticated protocol over UDS or loopback TCP. The CLI uses
   `DaemonEngineClient` after a successful handshake.
 
+The handshake compares the recursive operation and wire-schema catalog and
+returns a unique, opaque, boot-scoped compatibility ticket. The daemon derives
+the ticket from its per-boot secret and requires it on every later non-handshake
+request. The ticket proves that one client negotiated this protocol catalog; it
+is not caller identity or authorization. Bearer authentication is checked
+separately and remains the current transitional daemon-auth mechanism, not the
+final identity model for local IPC, Potpie login, hosted clients, integrations,
+or browser access.
+
+Context-free typed metadata such as `graph describe` still crosses the
+authenticated daemon boundary but bypasses context selection and engine
+leasing. Destructive graph reset takes the opposite path: the CLI binds
+confirmation to one resolved context and the selected runtime's Context Engine
+executes the reset against its own backend. Pot metadata services never reset a
+graph or compose a second backend.
+
 Mode is chosen by `CONTEXT_ENGINE_HOST_MODE` (`daemon` | `in_process`);
 `default_host_mode()` returns **`daemon`**, so the shipped CLI default is a
 background daemon. `get_engine_client()` (`commands/_common.py`) selects the

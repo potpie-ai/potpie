@@ -202,7 +202,10 @@ potpie source remove <id> [--pot <ref>]
 ```
 
 - **`pot reset`** is the destructive per-pot wipe — note there is **no
-  `graph reset`** command.
+  `graph reset`** command. The CLI resolves the exact pot once, binds
+  confirmation to that context, and dispatches `ResetContextRequest` through
+  the selected daemon or in-process Context Engine. Pot metadata services do
+  not open or reset graph backends.
 - **`pot linked` / `pot default`** manage the repo→pot binding consumed by
   `resolve_pot_id`. `pot linked --summary` skips per-pot graph counts for a faster
   repo-routing summary. `pot create`/`pot use --also-default-for-current-repo` set
@@ -355,7 +358,9 @@ potpie graph search-entities [<query> | --query <text>] \
   catalog itself.
 - **`graph describe`** routes through `GraphService.describe` like every other
   workbench command, so the ontology it reports is the serving host's build (the
-  daemon's, in the default host mode), not the CLI binary's.
+  daemon's, in the default host mode), not the CLI binary's. It is a
+  context-free typed metadata operation: no selected pot, engine construction,
+  or Resource Manager lease is required.
 - **`graph read`** is the **Retrieve** axis — resolves a named `<subgraph>.<view>`
   (one of the 9 views), validates required scope/filters, then routes through the one
   read trunk to an `AgentEnvelope` of ranked evidence. There is **no server-side
@@ -486,8 +491,9 @@ potpie graph repair [--semantic-index] [--entity-summaries] [--all] [--pot <ref>
 - **`graph neighborhood`** is the **Traverse** axis (first-class), backed by
   `backend.inspection.neighborhood`. `graph inspect` is a legacy alias that warns
   toward `neighborhood`.
-- Unbuilt capabilities surface as the structured not-implemented contract via
-  `_require_backend_capability`. Per-profile coverage is in
+- Unbuilt capabilities surface as the structured not-implemented contract from
+  the backend that executes the operation. The CLI does not preflight snapshot
+  support against its own local backend profile. Per-profile coverage is in
   [architecture.md](./architecture.md).
 
 > **Roadmap (not yet wired):** `snapshot` (`graph export/import`) is real only on the
@@ -588,8 +594,10 @@ potpie graph commit <plan_id> --verify
   `code`, `message`, `detail`, `recommended_next_action`.
 - `setup --dry-run`: returns a preview document; no mutation, dependency setup,
   source registration, or skill install occurs.
-- Destructive commands (`pot reset`, `pot archive`) require `--confirm` or interactive
-  confirmation.
+- Destructive commands require explicit confirmation. `pot reset` uses
+  `--confirm`; graph import and repair use `--yes`. Without the flag, an
+  interactive TTY may prompt, while JSON or non-TTY execution fails before
+  reading stdin or dispatching the operation.
 - Exit codes follow the `contract()` table above (`0/1/2/3/4`).
 
 ## See also
