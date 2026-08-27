@@ -402,6 +402,7 @@ async def test_shutdown_cleanup_failure_releases_runtime_ownership(
     endpoint = _endpoint("tcp", tmp_path)
     token = generate_bearer_token()
     lock_path = tmp_path / "runtime.lock"
+    ownership_during_cleanup: list[object] = []
 
     async def failed_cleanup():
         return Failure(
@@ -411,6 +412,11 @@ async def test_shutdown_cleanup_failure_releases_runtime_ownership(
             )
         )
 
+    def cleanup_runtime_records(_ownership: RuntimeOwnershipLock) -> None:
+        contender = RuntimeOwnershipLock(lock_path)
+        ownership_during_cleanup.append(contender.acquire())
+        contender.release()
+
     runtime = CanonicalDaemonRuntime(
         endpoint=endpoint,
         bearer_token=token,
@@ -418,6 +424,7 @@ async def test_shutdown_cleanup_failure_releases_runtime_ownership(
         ownership_lock_path=lock_path,
         instance_id="instance-1",
         shutdown_resources=failed_cleanup,
+        before_ownership_release=cleanup_runtime_records,
     )
     await runtime.start()
     serve_task = asyncio.create_task(runtime.serve_until_shutdown())
@@ -433,6 +440,8 @@ async def test_shutdown_cleanup_failure_releases_runtime_ownership(
         await serve_task
 
     assert runtime.lifecycle_state == "stopped"
+    assert len(ownership_during_cleanup) == 1
+    assert isinstance(ownership_during_cleanup[0], Failure)
     ownership = RuntimeOwnershipLock(lock_path)
     assert isinstance(ownership.acquire(), Success)
     ownership.release()

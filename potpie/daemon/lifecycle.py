@@ -20,7 +20,6 @@ from potpie.daemon.discovery import (
     read_daemon_discovery,
     remove_daemon_runtime_records,
     select_runtime_endpoint,
-    write_daemon_credential,
     write_daemon_discovery,
     write_daemon_pid,
 )
@@ -29,9 +28,9 @@ from potpie.runtime.controller import (
     DaemonController,
     DaemonLaunchSpec,
     DaemonObserver,
-    DaemonProcessHandle,
 )
-from potpie.runtime.protocol import ProtocolTransportError
+from potpie.runtime.resource_manager import ResourceLifecycleError
+from potpie.runtime.ownership import RuntimeOwnershipLock
 from potpie.runtime.server import generate_bearer_token
 from potpie.runtime.transport import RuntimeEndpoint
 from potpie_context_engine import Failure, Success
@@ -45,6 +44,14 @@ class DaemonStartError(Exception):
     def __init__(self, message: str, *, log_path: Path | None = None) -> None:
         super().__init__(message)
         self.log_path = log_path
+
+
+class DaemonStopError(Exception):
+    """Raised when a detached daemon cannot be stopped safely."""
+
+    def __init__(self, error: ResourceLifecycleError) -> None:
+        super().__init__(error.message)
+        self.error = error
 
 
 def _pid_alive(pid: int) -> bool:
@@ -95,36 +102,6 @@ class _RecordedDaemonProcess:
 
     def kill(self) -> None:
         os.kill(self._pid, signal.SIGKILL)
-
-
-class _SignalFallbackObserver:
-    """Select bounded signals when canonical discovery cannot be authenticated."""
-
-    @property
-    def instance_id(self) -> None:
-        return None
-
-    async def wait_ready(self, process: DaemonProcessHandle, *, timeout_s: float):
-        del process, timeout_s
-        return Failure(
-            ProtocolTransportError(
-                code="daemon_discovery_unavailable",
-                message="canonical daemon discovery is unavailable",
-                retry_posture="safe",
-            )
-        )
-
-    async def request_stop(self):
-        return Failure(
-            ProtocolTransportError(
-                code="daemon_typed_shutdown_unavailable",
-                message="typed daemon shutdown is unavailable",
-                retry_posture="unknown",
-            )
-        )
-
-    async def close(self) -> None:
-        return None
 
 
 @dataclass
@@ -180,6 +157,7 @@ class Daemon:
             result["detail"] = "detached daemon running without canonical discovery"
             return result
         discovery, observer = connection
+        existing_controller = self._controller
         controller = self._controller_for_existing(pid, observer=observer)
         controller_status = self._run(controller.status())
         result["ready"] = controller_status.ready
@@ -192,6 +170,8 @@ class Daemon:
                 result["url"] = daemon_status.value.ui_url
         finally:
             self._run(observer.close())
+            if existing_controller is None:
+                self._controller = None
         return result
 
     def health(self) -> dict[str, Any]:
@@ -244,7 +224,8 @@ class Daemon:
         pid = self._recorded_pid()
         if pid is not None and _pid_alive(pid):
             raise DaemonStartError(f"daemon already running (pid={pid})")
-        self._cleanup_runtime_records()
+        if not self._cleanup_runtime_records():
+            raise DaemonStartError("another daemon boot owns the runtime scope")
         controller = self._new_controller(backend=backend)
         outcome = self._run(controller.start())
         if isinstance(outcome, Failure):
@@ -285,22 +266,48 @@ class Daemon:
         controller = self._controller
         pid = controller.pid if controller is not None else self._recorded_pid()
         if pid is None:
-            self._cleanup_runtime_records()
+            if not self._cleanup_runtime_records():
+                self._raise_cleanup_ownership_conflict(expected_pid=None)
             return {"detail": "daemon not running"}
         if not _pid_alive(pid):
-            self._cleanup_runtime_records()
+            if not self._cleanup_runtime_records(expected_pid=pid):
+                self._raise_cleanup_ownership_conflict(expected_pid=pid)
             return {"detail": "stale pid file removed"}
+        expected_instance_id = (
+            controller.instance_id if controller is not None else None
+        )
         if controller is None:
             connection = self._connection_for_pid(pid)
-            observer = (
-                connection[1] if connection is not None else _SignalFallbackObserver()
-            )
+            if connection is None:
+                raise DaemonStopError(
+                    ResourceLifecycleError(
+                        code="daemon_attached_identity_unavailable",
+                        message=(
+                            "refusing to signal the recorded process because its "
+                            "daemon identity could not be authenticated"
+                        ),
+                        details={"pid": pid},
+                        recommended_next_action=(
+                            "inspect daemon status and runtime records before "
+                            "manual recovery"
+                        ),
+                        retry_posture="safe",
+                    )
+                )
+            discovery, observer = connection
+            expected_instance_id = discovery.instance_id
             controller = self._controller_for_existing(pid, observer=observer)
+        owns_process = controller.owns_process
         outcome = self._run(controller.stop())
-        self._cleanup_runtime_records()
-        self._controller = None
         if isinstance(outcome, Failure):
-            return {"detail": outcome.error.message}
+            self._controller = None
+            raise DaemonStopError(outcome.error)
+        if owns_process:
+            self._cleanup_runtime_records_under_lock(
+                expected_instance_id=expected_instance_id,
+                expected_pid=pid,
+            )
+        self._controller = None
         detail = {
             "already_stopped": "daemon not running",
             "typed_shutdown": "daemon stopped",
@@ -341,7 +348,7 @@ class Daemon:
         self,
         pid: int,
         *,
-        observer: DaemonObserver | _SignalFallbackObserver,
+        observer: DaemonObserver,
     ) -> DaemonController:
         if self._controller is not None and self._controller.pid == pid:
             return self._controller
@@ -381,7 +388,6 @@ class Daemon:
         instance_id = str(uuid4())
         endpoint = select_runtime_endpoint(self.home, instance_id=instance_id)
         bearer_token = generate_bearer_token()
-        write_daemon_credential(self.home, bearer_token)
         self._pending_endpoint = endpoint
         self._pending_instance_id = instance_id
         return DaemonBootSpec(
@@ -390,6 +396,7 @@ class Daemon:
                 endpoint=endpoint,
                 instance_id=instance_id,
                 ui_port=_available_loopback_port(),
+                bearer_token=bearer_token,
             ),
             observer=DaemonObserver(
                 endpoint=endpoint,
@@ -405,6 +412,7 @@ class Daemon:
         endpoint: RuntimeEndpoint,
         instance_id: str,
         ui_port: int,
+        bearer_token: str,
     ) -> DaemonLaunchSpec:
         from potpie.cli.telemetry.settings import load_cli_runtime_settings
         from potpie.runtime.settings import (
@@ -417,6 +425,7 @@ class Daemon:
             "POTPIE_DAEMON_ENDPOINT_ADDRESS": endpoint.address,
             "POTPIE_DAEMON_INSTANCE_ID": instance_id,
             "POTPIE_DAEMON_UI_PORT": str(ui_port),
+            "POTPIE_DAEMON_BEARER_TOKEN": bearer_token,
             **(
                 {"POTPIE_DAEMON_ENDPOINT_PORT": str(endpoint.port)}
                 if endpoint.port
@@ -436,8 +445,60 @@ class Daemon:
     def _recorded_pid(self) -> int | None:
         return read_daemon_pid(self.home)
 
-    def _cleanup_runtime_records(self) -> None:
-        remove_daemon_runtime_records(self.home)
+    def _cleanup_runtime_records(
+        self,
+        *,
+        expected_instance_id: str | None = None,
+        expected_pid: int | None = None,
+    ) -> bool:
+        ownership = RuntimeOwnershipLock((self.home / "daemon.runtime.lock").resolve())
+        acquired = ownership.acquire()
+        if isinstance(acquired, Failure):
+            return False
+        try:
+            remove_daemon_runtime_records(
+                self.home,
+                expected_instance_id=expected_instance_id,
+                expected_pid=expected_pid,
+            )
+        finally:
+            ownership.release()
+        return True
+
+    def _cleanup_runtime_records_under_lock(
+        self,
+        *,
+        expected_instance_id: str | None,
+        expected_pid: int,
+    ) -> None:
+        ownership = RuntimeOwnershipLock((self.home / "daemon.runtime.lock").resolve())
+        acquired = ownership.acquire()
+        if isinstance(acquired, Failure):
+            self._raise_cleanup_ownership_conflict(expected_pid=expected_pid)
+        try:
+            remove_daemon_runtime_records(
+                self.home,
+                expected_instance_id=expected_instance_id,
+                expected_pid=expected_pid,
+            )
+        finally:
+            ownership.release()
+
+    def _raise_cleanup_ownership_conflict(self, *, expected_pid: int | None) -> None:
+        raise DaemonStopError(
+            ResourceLifecycleError(
+                code="daemon_cleanup_ownership_conflict",
+                message=(
+                    "runtime records could not be cleaned without risking an "
+                    "active or replacement daemon"
+                ),
+                details={**({"pid": expected_pid} if expected_pid else {})},
+                recommended_next_action=(
+                    "retry daemon status after the active boot settles"
+                ),
+                retry_posture="safe",
+            )
+        )
 
 
 def _available_loopback_port() -> int:
@@ -446,4 +507,4 @@ def _available_loopback_port() -> int:
         return int(sock.getsockname()[1])
 
 
-__all__ = ["Daemon", "DaemonStartError"]
+__all__ = ["Daemon", "DaemonStartError", "DaemonStopError"]

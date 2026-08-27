@@ -75,7 +75,7 @@ def test_install_is_idempotent_noop(tmp_path: pathlib.Path):
     )  # never raises; does not gate the installer setup step
 
 
-def test_boot_spec_launches_public_module_and_defers_discovery(
+def test_boot_spec_launches_public_module_and_defers_runtime_record_publication(
     tmp_path: pathlib.Path,
 ) -> None:
     daemon = Daemon(home=tmp_path, in_process=False)
@@ -84,6 +84,7 @@ def test_boot_spec_launches_public_module_and_defers_discovery(
 
     assert boot.launch.command == (sys.executable, "-m", "potpie.daemon")
     assert "foreground" not in " ".join(boot.launch.command)
-    assert (tmp_path / "daemon.credential").exists()
+    assert not (tmp_path / "daemon.credential").exists()
     assert not (tmp_path / "discovery.json").exists()
+    assert len(boot.launch.environment["POTPIE_DAEMON_BEARER_TOKEN"].encode()) >= 32
     daemon._run(boot.observer.close())

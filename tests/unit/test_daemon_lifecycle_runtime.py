@@ -9,7 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from potpie.daemon.lifecycle import Daemon, _pid_alive
+from potpie.daemon.discovery import credential_path, write_daemon_credential
+from potpie.daemon.lifecycle import Daemon, DaemonStopError, _pid_alive
+from potpie.runtime import RuntimeOwnershipLock
+from potpie_context_engine import Success
 
 
 def test_pid_alive_reaps_an_exited_child_before_signal_probe(monkeypatch) -> None:
@@ -62,3 +65,21 @@ def test_daemon_restart_refuses_when_running_backend_unknown(
         daemon.restart()
 
     assert calls == []
+
+
+def test_stop_preserves_credential_while_replacement_boot_owns_runtime(
+    tmp_path: Path,
+) -> None:
+    ownership = RuntimeOwnershipLock((tmp_path / "daemon.runtime.lock").resolve())
+    assert isinstance(ownership.acquire(), Success)
+    write_daemon_credential(tmp_path, "x" * 43)
+    daemon = Daemon(home=tmp_path, in_process=False)
+
+    try:
+        with pytest.raises(DaemonStopError) as raised:
+            daemon.stop()
+    finally:
+        ownership.release()
+
+    assert raised.value.error.code == "daemon_cleanup_ownership_conflict"
+    assert credential_path(tmp_path).exists()

@@ -78,6 +78,25 @@ class _FallbackObserver:
         self.closed += 1
 
 
+class _AttachedProcess:
+    def __init__(self) -> None:
+        self.pid = 4242
+        self.returncode = None
+        self.terminate_calls = 0
+        self.kill_calls = 0
+        self.wait_calls = 0
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        return 0
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+
+    def kill(self) -> None:
+        self.kill_calls += 1
+
+
 @pytest.mark.anyio
 async def test_controller_starts_observes_and_typed_stops_real_foreground_child(
     tmp_path: Path,
@@ -156,6 +175,31 @@ async def test_controller_falls_back_to_bounded_signal_termination() -> None:
     )
     assert observer.closed == 1
     assert controller.pid is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("ready", (False, True))
+async def test_attached_controller_refuses_signal_fallback(ready: bool) -> None:
+    process = _AttachedProcess()
+    observer = _FallbackObserver(ready=ready)
+    controller = DaemonController(
+        boot_factory=lambda: pytest.fail("attached stop must not compose a boot"),
+        readiness_timeout_s=1,
+        stop_timeout_s=0.1,
+    )
+
+    attached = await controller.attach(process=process, observer=observer)
+    stopped = await controller.stop()
+
+    assert isinstance(attached, Success)
+    assert attached.value.ready is ready
+    assert isinstance(stopped, Failure)
+    assert stopped.error.code == "daemon_attached_shutdown_unavailable"
+    assert stopped.error.retry_posture == "safe"
+    assert process.terminate_calls == 0
+    assert process.kill_calls == 0
+    assert process.wait_calls == 0
+    assert observer.closed == 1
 
 
 @pytest.mark.anyio

@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,7 @@ from typer.testing import CliRunner
 
 from potpie.cli import main as cli_main
 from potpie.cli.commands import _common
+from potpie.daemon.discovery import write_daemon_pid
 from potpie.daemon.lifecycle import Daemon
 from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan
 
@@ -162,6 +165,28 @@ def test_daemon_restart_preserves_running_backend(
         _stop_daemon(runtime_home, pid=restarted_pid)
 
 
+def test_fresh_controller_can_status_then_typed_stop_existing_daemon(
+    isolated_daemon_runtime: Path,
+) -> None:
+    runtime_home = isolated_daemon_runtime
+    starter = Daemon(home=runtime_home, in_process=False, startup_timeout_s=15)
+    pid: int | None = None
+    try:
+        started = starter.ensure(SetupPlan(backend="embedded", embeddings="none"))
+        pid = int(started.metadata["pid"])
+        attached = Daemon(home=runtime_home, in_process=False, startup_timeout_s=15)
+
+        status = attached.status()
+        stopped = attached.stop()
+
+        assert status["ready"] is True
+        assert stopped["detail"] == "daemon stopped"
+        _assert_daemon_stopped(runtime_home, pid)
+        pid = None
+    finally:
+        _stop_daemon(runtime_home, pid=pid)
+
+
 def test_daemon_crash_status_recovers_stale_runtime_records(
     isolated_daemon_runtime: Path,
 ) -> None:
@@ -184,6 +209,38 @@ def test_daemon_crash_status_recovers_stale_runtime_records(
         assert all(not (runtime_home / name).exists() for name in _DISCOVERY_FILES)
     finally:
         _stop_daemon(runtime_home, pid=pid)
+
+
+def test_stale_reused_pid_never_signals_unrelated_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_home = tmp_path / "stale-runtime"
+    _configure_runtime(monkeypatch, runtime_home, host_mode="daemon")
+    child = subprocess.Popen(  # noqa: S603 - controlled disposable test process
+        [sys.executable, "-c", "import time; time.sleep(30)"]
+    )
+    try:
+        write_daemon_pid(runtime_home, child.pid)
+
+        result = CliRunner().invoke(cli_main.app, ["--json", "daemon", "stop"])
+        payload = _assert_json_result(
+            result,
+            "daemon stop with stale reused pid",
+            exit_code=_common.EXIT_UNAVAILABLE,
+        )
+
+        assert payload["code"] == "daemon_attached_identity_unavailable"
+        assert "refusing to signal" in payload["message"]
+        assert child.poll() is None
+        assert (runtime_home / "daemon.pid").read_text(encoding="utf-8").strip() == str(
+            child.pid
+        )
+    finally:
+        _common.set_runtime(None)
+        if child.poll() is None:
+            child.terminate()
+        child.wait(timeout=5)
 
 
 def test_canonical_daemon_uses_private_discovery_and_separate_credential(

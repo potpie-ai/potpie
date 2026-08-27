@@ -65,6 +65,8 @@ class EngineOperationHandler(Protocol):
 
 
 ShutdownResources = Callable[[], Awaitable[object]]
+AfterOwnershipAcquired = Callable[[RuntimeOwnershipLock], None]
+BeforeOwnershipRelease = Callable[[RuntimeOwnershipLock], None]
 
 
 def generate_bearer_token() -> str:
@@ -85,6 +87,8 @@ class CanonicalDaemonRuntime:
         ownership_lock_path: Path,
         instance_id: str | None = None,
         shutdown_resources: ShutdownResources | None = None,
+        after_ownership_acquired: AfterOwnershipAcquired | None = None,
+        before_ownership_release: BeforeOwnershipRelease | None = None,
         coordinator: OperationCoordinator | None = None,
         backend_profile: str = "unknown",
         ui_url: str = "http://127.0.0.1",
@@ -97,6 +101,8 @@ class CanonicalDaemonRuntime:
         self._operation_handler = operation_handler
         self._ownership = RuntimeOwnershipLock(ownership_lock_path)
         self._shutdown_resources = shutdown_resources
+        self._after_ownership_acquired = after_ownership_acquired
+        self._before_ownership_release = before_ownership_release
         self._coordinator = coordinator or OperationCoordinator()
         self._backend_profile = backend_profile
         self._ui_url = ui_url
@@ -124,6 +130,13 @@ class CanonicalDaemonRuntime:
         if isinstance(ownership, Failure):
             self._state = "failed"
             raise RuntimeError(ownership.error.code)
+        try:
+            if self._after_ownership_acquired is not None:
+                self._after_ownership_acquired(self._ownership)
+        except Exception:
+            self._state = "failed"
+            self._ownership.release()
+            raise
         app = web.Application()
         app.router.add_post("/v1/operations", self._handle_http)
         runner = web.AppRunner(app, access_log=None)
@@ -203,6 +216,12 @@ class CanonicalDaemonRuntime:
                 socket_path = Path(self.endpoint.address)
                 with contextlib.suppress(FileNotFoundError):
                     socket_path.unlink()
+            if self._before_ownership_release is not None and self._ownership.is_held:
+                try:
+                    self._before_ownership_release(self._ownership)
+                except Exception:
+                    self._state = "failed"
+                    cleanup_failed = True
             self._ownership.release()
             self._state = "stopped"
             if cleanup_failed:

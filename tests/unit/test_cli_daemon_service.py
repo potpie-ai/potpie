@@ -11,6 +11,8 @@ from typer.testing import CliRunner
 from potpie.cli import main as host_cli
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
+from potpie.daemon.lifecycle import DaemonStopError
+from potpie.runtime.resource_manager import ResourceLifecycleError
 from potpie.runtime.root_services import build_root_runtime_services
 from potpie_context_engine.core.lifecycle import (
     SKIPPED,
@@ -83,6 +85,33 @@ def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
     assert restart.exit_code == 0, restart.stdout
     assert stop.exit_code == 0, stop.stdout
     assert daemon.calls == ["start", "status", "stop", "start", "stop"]
+
+
+def test_daemon_stop_refusal_is_a_typed_nonzero_cli_failure(tmp_path: Path) -> None:
+    daemon = _FakeDaemon(home=tmp_path)
+
+    def refuse_stop() -> dict[str, str]:
+        raise DaemonStopError(
+            ResourceLifecycleError(
+                code="daemon_attached_identity_unavailable",
+                message="refusing to signal an unauthenticated recorded process",
+                recommended_next_action="inspect daemon runtime records",
+                retry_posture="safe",
+            )
+        )
+
+    daemon.stop = refuse_stop  # type: ignore[method-assign]
+    _common.set_runtime(_FakeHost(daemon=daemon))
+
+    result = runner.invoke(host_cli.app, ["--json", "daemon", "stop"])
+
+    assert result.exit_code == _common.EXIT_UNAVAILABLE
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "daemon_attached_identity_unavailable"
+    assert payload["message"] == (
+        "refusing to signal an unauthenticated recorded process"
+    )
+    assert payload["recommended_next_action"] == "inspect daemon runtime records"
 
 
 def test_service_command_group_is_removed(tmp_path: Path) -> None:

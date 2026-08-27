@@ -185,6 +185,7 @@ class DaemonController:
         self._readiness_timeout_s = readiness_timeout_s
         self._stop_timeout_s = stop_timeout_s
         self._process: DaemonProcessHandle | None = None
+        self._owns_process = False
         self._log_handle: object | None = None
         self._log_paths = log_paths
         self._lock = asyncio.Lock()
@@ -195,6 +196,17 @@ class DaemonController:
         return (
             process.pid if process is not None and process.returncode is None else None
         )
+
+    @property
+    def instance_id(self) -> str | None:
+        observer = self._observer
+        return observer.instance_id if observer is not None else None
+
+    @property
+    def owns_process(self) -> bool:
+        """Whether this controller created the currently observed process."""
+
+        return self._owns_process
 
     async def start(self) -> ControllerStartOutcome:
         async with self._lock:
@@ -251,6 +263,7 @@ class DaemonController:
                     )
                 )
             self._process = process
+            self._owns_process = True
             try:
                 ready = await boot.observer.wait_ready(
                     process,
@@ -310,6 +323,7 @@ class DaemonController:
                     )
                 )
             self._process = process
+            self._owns_process = False
             self._observer = observer
             self._launch = launch
             ready = await observer.wait_ready(process, timeout_s=0.25)
@@ -376,13 +390,65 @@ class DaemonController:
                             )
                         )
                 except TimeoutError:
+                    if not self._owns_process:
+                        await self._close_observer(observer)
+                        await self._close_log_target()
+                        return self._attached_stop_failure(
+                            process,
+                            code="daemon_attached_shutdown_timeout",
+                            message=(
+                                "authenticated shutdown did not stop the attached "
+                                "daemon before the timeout"
+                            ),
+                        )
                     result = await self._bounded_terminate(process)
             else:
+                if not self._owns_process:
+                    if observer is not None:
+                        await self._close_observer(observer)
+                    await self._close_log_target()
+                    return self._attached_stop_failure(
+                        process,
+                        code="daemon_attached_shutdown_unavailable",
+                        message=(
+                            "refusing to signal an attached process because "
+                            "authenticated daemon shutdown was unavailable"
+                        ),
+                        cause=requested.error,
+                    )
                 result = await self._bounded_terminate(process)
             if observer is not None:
                 await self._close_observer(observer)
             await self._close_log_target()
             return Success(result)
+
+    @staticmethod
+    def _attached_stop_failure(
+        process: DaemonProcessHandle,
+        *,
+        code: str,
+        message: str,
+        cause: RuntimeBoundaryError | None = None,
+    ) -> Failure[ResourceLifecycleError]:
+        details: dict[str, object] = {"pid": process.pid}
+        if cause is not None:
+            details.update(
+                {
+                    "cause_category": cause.category,
+                    "cause_code": cause.code,
+                }
+            )
+        return Failure(
+            ResourceLifecycleError(
+                code=code,
+                message=message,
+                details=details,
+                recommended_next_action=(
+                    "inspect daemon status and runtime records before manual recovery"
+                ),
+                retry_posture="safe",
+            )
+        )
 
     async def restart(self) -> ControllerStartOutcome:
         stopped = await self.stop()

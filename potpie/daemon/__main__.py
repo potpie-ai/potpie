@@ -11,8 +11,8 @@ import uvicorn
 from fastapi import FastAPI
 
 from potpie.daemon.discovery import (
-    read_daemon_credential,
     remove_daemon_runtime_records,
+    write_daemon_credential,
 )
 from potpie.daemon.http.ui import build_ui_api_router, mount_ui_static
 from potpie.runtime import CanonicalDaemonRuntime, RuntimeEndpoint
@@ -27,6 +27,7 @@ _ENV_ENDPOINT_ADDRESS = "POTPIE_DAEMON_ENDPOINT_ADDRESS"
 _ENV_ENDPOINT_PORT = "POTPIE_DAEMON_ENDPOINT_PORT"
 _ENV_INSTANCE_ID = "POTPIE_DAEMON_INSTANCE_ID"
 _ENV_UI_PORT = "POTPIE_DAEMON_UI_PORT"
+_ENV_BEARER_TOKEN = "POTPIE_DAEMON_BEARER_TOKEN"  # noqa: S105 - env key name
 
 
 def main() -> None:
@@ -48,7 +49,7 @@ async def _run() -> None:
     endpoint = _endpoint_from_environment()
     ui_port = int(_required_env(_ENV_UI_PORT))
     ui_url = f"http://127.0.0.1:{ui_port}"
-    bearer_token = read_daemon_credential(home)
+    bearer_token = _consume_required_env(_ENV_BEARER_TOKEN)
 
     composition = build_local_runtime()
     resource_manager = build_local_resource_manager(composition.engine)
@@ -61,6 +62,14 @@ async def _run() -> None:
         ownership_lock_path=home / "daemon.runtime.lock",
         instance_id=instance_id,
         shutdown_resources=resource_manager.shutdown,
+        after_ownership_acquired=lambda _ownership: write_daemon_credential(
+            home, bearer_token
+        ),
+        before_ownership_release=lambda _ownership: remove_daemon_runtime_records(
+            home,
+            expected_instance_id=instance_id,
+            expected_pid=os.getpid(),
+        ),
         backend_profile=str(composition.root.backend.profile),
         ui_url=ui_url,
     )
@@ -73,11 +82,6 @@ async def _run() -> None:
             await ui_task
         with contextlib.suppress(Exception):
             await runtime.stop()
-        remove_daemon_runtime_records(
-            home,
-            expected_instance_id=instance_id,
-            expected_pid=os.getpid(),
-        )
 
 
 def _build_ui_server(
@@ -132,6 +136,13 @@ def _endpoint_from_environment() -> RuntimeEndpoint:
 
 def _required_env(name: str) -> str:
     value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"required daemon environment is missing: {name}")
+    return value
+
+
+def _consume_required_env(name: str) -> str:
+    value = os.environ.pop(name, "").strip()
     if not value:
         raise RuntimeError(f"required daemon environment is missing: {name}")
     return value
