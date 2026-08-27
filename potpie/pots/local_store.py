@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import Any
 
 from potpie.config.local_paths import default_home
+from potpie.config.local_state import local_json_transaction
+
+
+def _empty_state() -> dict[str, Any]:
+    return {"pots": {}, "active": None, "sources": {}, "repo_defaults": {}}
 
 
 @dataclass(slots=True)
@@ -38,14 +43,7 @@ class LocalPotStore:
             with open(self._path, encoding="utf-8") as fh:
                 return json.load(fh)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {"pots": {}, "active": None, "sources": {}, "repo_defaults": {}}
-
-    def _save(self, state: dict[str, Any]) -> None:
-        self.home.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, indent=2)
-        tmp.replace(self._path)
+            return _empty_state()
 
     # --- pots ---------------------------------------------------------------
     def list_pots(self) -> list[dict[str, Any]]:
@@ -69,21 +67,19 @@ class LocalPotStore:
     ) -> dict[str, Any]:
         """Create a pot. Repo registration belongs on ``add_source`` via the CLI."""
         _ = repo
-        state = self._load()
-        # Reuse an existing pot by name (idempotent setup).
-        for pid, row in state.get("pots", {}).items():
-            if row.get("name") == name:
-                if use:
-                    state["active"] = pid
-                    self._save(state)
-                return {**row, "active": state.get("active") == pid}
-        pot_id = f"pot_{uuid.uuid4().hex[:12]}"
-        row = {"pot_id": pot_id, "name": name, "archived": False}
-        state.setdefault("pots", {})[pot_id] = row
-        if use or state.get("active") is None:
-            state["active"] = pot_id
-        self._save(state)
-        return {**row, "active": state.get("active") == pot_id}
+        with local_json_transaction(self._path, default_factory=_empty_state) as state:
+            # Reuse an existing pot by name (idempotent setup).
+            for pid, row in state.get("pots", {}).items():
+                if row.get("name") == name:
+                    if use:
+                        state["active"] = pid
+                    return {**row, "active": state.get("active") == pid}
+            pot_id = f"pot_{uuid.uuid4().hex[:12]}"
+            row = {"pot_id": pot_id, "name": name, "archived": False}
+            state.setdefault("pots", {})[pot_id] = row
+            if use or state.get("active") is None:
+                state["active"] = pot_id
+            return {**row, "active": state.get("active") == pot_id}
 
     def _resolve_ref(self, state: dict[str, Any], ref: str) -> str | None:
         if ref in state.get("pots", {}):
@@ -94,59 +90,54 @@ class LocalPotStore:
         return None
 
     def use(self, *, ref: str) -> dict[str, Any] | None:
-        state = self._load()
-        pid = self._resolve_ref(state, ref)
-        if pid is None:
-            return None
-        state["active"] = pid
-        self._save(state)
-        return {**state["pots"][pid], "active": True}
+        with local_json_transaction(self._path, default_factory=_empty_state) as state:
+            pid = self._resolve_ref(state, ref)
+            if pid is None:
+                return None
+            state["active"] = pid
+            return {**state["pots"][pid], "active": True}
 
     def rename(self, *, ref: str, new_name: str) -> dict[str, Any] | None:
-        state = self._load()
-        pid = self._resolve_ref(state, ref)
-        if pid is None:
-            return None
-        state["pots"][pid]["name"] = new_name
-        self._save(state)
-        return {**state["pots"][pid], "active": state.get("active") == pid}
+        with local_json_transaction(self._path, default_factory=_empty_state) as state:
+            pid = self._resolve_ref(state, ref)
+            if pid is None:
+                return None
+            state["pots"][pid]["name"] = new_name
+            return {**state["pots"][pid], "active": state.get("active") == pid}
 
     def archive(self, *, ref: str) -> dict[str, Any] | None:
-        state = self._load()
-        pid = self._resolve_ref(state, ref)
-        if pid is None:
-            return None
-        state["pots"][pid]["archived"] = True
-        if state.get("active") == pid:
-            state["active"] = None
-        self._save(state)
-        return {**state["pots"][pid], "active": False}
+        with local_json_transaction(self._path, default_factory=_empty_state) as state:
+            pid = self._resolve_ref(state, ref)
+            if pid is None:
+                return None
+            state["pots"][pid]["archived"] = True
+            if state.get("active") == pid:
+                state["active"] = None
+            return {**state["pots"][pid], "active": False}
 
     # --- sources ------------------------------------------------------------
     def add_source(
         self, *, pot_id: str, kind: str, location: str, name: str | None = None
     ) -> dict[str, Any]:
-        state = self._load()
-        row = {
-            "source_id": f"src_{uuid.uuid4().hex[:8]}",
-            "kind": kind,
-            "name": name or location,
-            "location": location,
-        }
-        state.setdefault("sources", {}).setdefault(pot_id, []).append(row)
-        self._save(state)
-        return row
+        with local_json_transaction(self._path, default_factory=_empty_state) as state:
+            row = {
+                "source_id": f"src_{uuid.uuid4().hex[:8]}",
+                "kind": kind,
+                "name": name or location,
+                "location": location,
+            }
+            state.setdefault("sources", {}).setdefault(pot_id, []).append(row)
+            return row
 
     def list_sources(self, *, pot_id: str) -> list[dict[str, Any]]:
         return self._load().get("sources", {}).get(pot_id, [])
 
     def remove_source(self, *, pot_id: str, source_id: str) -> None:
-        state = self._load()
-        rows = state.get("sources", {}).get(pot_id, [])
-        state.setdefault("sources", {})[pot_id] = [
-            r for r in rows if r.get("source_id") != source_id
-        ]
-        self._save(state)
+        with local_json_transaction(self._path, default_factory=_empty_state) as state:
+            rows = state.get("sources", {}).get(pot_id, [])
+            state.setdefault("sources", {})[pot_id] = [
+                r for r in rows if r.get("source_id") != source_id
+            ]
 
     # --- repo defaults ------------------------------------------------------
     def repo_default(self, *, repo: str) -> str | None:
@@ -160,21 +151,18 @@ class LocalPotStore:
         key = _repo_identity_key(repo)
         if not key:
             return
-        state = self._load()
-        state.setdefault("repo_defaults", {})[key] = pot_id
-        self._save(state)
+        with local_json_transaction(self._path, default_factory=_empty_state) as state:
+            state.setdefault("repo_defaults", {})[key] = pot_id
 
     def clear_repo_default(self, *, repo: str) -> bool:
         key = _repo_identity_key(repo)
         if not key:
             return False
-        state = self._load()
-        defaults = state.setdefault("repo_defaults", {})
-        existed = key in defaults
-        defaults.pop(key, None)
-        if existed:
-            self._save(state)
-        return existed
+        with local_json_transaction(self._path, default_factory=_empty_state) as state:
+            defaults = state.setdefault("repo_defaults", {})
+            existed = key in defaults
+            defaults.pop(key, None)
+            return existed
 
     def list_repo_defaults(self) -> dict[str, str]:
         return {

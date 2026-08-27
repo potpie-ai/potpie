@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from potpie.config.local_paths import default_home
+from potpie.config.local_state import local_json_transaction
 from potpie_context_engine.core.lifecycle import SetupPlan
 
 KNOWN_CONFIG_KEYS: tuple[str, ...] = (
@@ -110,18 +111,17 @@ class LocalConfigService:
 
     def write_defaults(self, plan: SetupPlan) -> Path:
         self.ensure_home()
-        data = self._load()
-        # Only fill values the user has not already set (idempotent re-runs).
-        data.setdefault("profile", plan.mode)
-        data.setdefault("backend", plan.backend)
-        data.setdefault("home", str(self.home))
-        data.setdefault("embedder", plan.embeddings)
-        data.setdefault("embedding_model", plan.embedding_model)
-        data.setdefault(
-            "embedding_cache",
-            str(self.home / "models" / "sentence-transformers"),
-        )
-        self._save(data)
+        with local_json_transaction(self._path, default_factory=dict) as data:
+            # Only fill values the user has not already set (idempotent re-runs).
+            data.setdefault("profile", plan.mode)
+            data.setdefault("backend", plan.backend)
+            data.setdefault("home", str(self.home))
+            data.setdefault("embedder", plan.embeddings)
+            data.setdefault("embedding_model", plan.embedding_model)
+            data.setdefault(
+                "embedding_cache",
+                str(self.home / "models" / "sentence-transformers"),
+            )
         return self._path
 
     def get(self, key: str) -> str | None:
@@ -136,10 +136,8 @@ class LocalConfigService:
         }
 
     def set(self, key: str, value: str) -> None:
-        data = self._load()
-        data[key] = value
-        self.ensure_home()
-        self._save(data)
+        with local_json_transaction(self._path, default_factory=dict) as data:
+            data[key] = value
 
     def probe(self) -> dict[str, Any]:
         return {"home": str(self.home), "config_exists": self._path.exists()}
@@ -151,12 +149,6 @@ class LocalConfigService:
                 return json.load(fh)
         except (FileNotFoundError, json.JSONDecodeError):
             return {}
-
-    def _save(self, data: dict[str, Any]) -> None:
-        tmp = self._path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
-        tmp.replace(self._path)
 
 
 __all__ = [
