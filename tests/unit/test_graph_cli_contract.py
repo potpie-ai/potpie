@@ -81,6 +81,14 @@ class _Pots:
         return []
 
 
+class _NoSelectedPots:
+    def active_pot(self):
+        return None
+
+    def list_pots(self):
+        return []
+
+
 class _Graph:
     def __init__(
         self,
@@ -518,7 +526,7 @@ class _UnsupportedBackend:
     @property
     def snapshot(self):
         self.accessed_ports.append("snapshot")
-        raise AssertionError("snapshot port should not be reached")
+        raise AssertionError("unsupported snapshot port should not be reached")
 
 
 def _valid_mutation_payload() -> dict:
@@ -793,7 +801,7 @@ def test_graph_repair_accepts_entity_summaries_target(
     assert "repaired 2 entity summaries" in result.output
 
 
-def test_graph_repair_accepts_interactive_confirmation() -> None:
+def test_graph_repair_rejects_non_tty_even_when_stdin_contains_confirmation() -> None:
     backend = _Backend()
     _common.set_runtime(_Host(_Graph(), backend=backend))
 
@@ -803,22 +811,14 @@ def test_graph_repair_accepts_interactive_confirmation() -> None:
         input="y\n",
     )
 
-    assert result.exit_code == 0, result.output
-    assert "Repair entity_summaries in context 'p'?" in _plain_cli_output(result.output)
-    assert backend.analytics.calls == [("p", ("entity_summaries",))]
+    assert result.exit_code == _common.EXIT_VALIDATION
+    assert "requires explicit confirmation" in _plain_cli_output(result.output)
+    assert backend.analytics.calls == []
 
 
-def test_graph_repair_decline_stops_before_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_graph_repair_non_tty_stops_before_dispatch() -> None:
     backend = _Backend()
     _common.set_runtime(_Host(_Graph(), backend=backend))
-    monkeypatch.setattr(
-        graph,
-        "fail",
-        lambda **_: pytest.fail("human cancellation must not use the error path"),
-    )
-
     result = CliRunner().invoke(
         graph.graph_app,
         ["repair", "--entity-summaries"],
@@ -827,8 +827,7 @@ def test_graph_repair_decline_stops_before_dispatch(
 
     assert result.exit_code == _common.EXIT_VALIDATION
     output = _plain_cli_output(result.output)
-    assert "Destructive operation was not confirmed" in output
-    assert "error:" not in output.lower()
+    assert "requires explicit confirmation" in output
     assert backend.analytics.calls == []
 
 
@@ -842,7 +841,7 @@ def test_graph_repair_empty_stdin_stops_before_dispatch() -> None:
     )
 
     assert result.exit_code == _common.EXIT_VALIDATION
-    assert "Destructive operation was not confirmed" in _plain_cli_output(result.output)
+    assert "requires explicit confirmation" in _plain_cli_output(result.output)
     assert backend.analytics.calls == []
 
 
@@ -995,10 +994,10 @@ def test_graph_required_inputs_are_declared_in_help(
         (["inspect", "service:web"], "inspection", "neighborhood"),
         (["neighborhood", "--entity", "service:web"], "inspection", "neighborhood"),
         (["export", "out.json"], "snapshot", "export"),
-        (["import", "in.json"], "snapshot", "import_"),
+        (["import", "in.json", "--yes"], "snapshot", "import_"),
     ],
 )
-def test_graph_capability_commands_precheck_backend_capabilities(
+def test_graph_capability_failures_come_from_the_executing_backend(
     args: list[str],
     capability: str,
     method: str,
@@ -2442,7 +2441,9 @@ def test_graph_neighborhood_defaults_to_relation_summary() -> None:
 def test_graph_describe_returns_executable_view_contract() -> None:
     _common.set_json(True)
     graph_service = _Graph()
-    _common.set_runtime(_Host(graph_service))
+    host = _Host(graph_service)
+    host.pots = _NoSelectedPots()
+    _common.set_runtime(host)
 
     result = CliRunner().invoke(
         graph.graph_app,

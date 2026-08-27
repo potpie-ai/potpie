@@ -308,6 +308,13 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
     engine_services = (
         runtime.engine if isinstance(runtime, LocalRuntimeComposition) else runtime
     )
+    from potpie.runtime.local_engine import LocalGraphMetadataOperationHandler
+
+    context_free_handler = (
+        runtime.graph_metadata
+        if isinstance(runtime, LocalRuntimeComposition)
+        else LocalGraphMetadataOperationHandler(engine_services)
+    )
     manager = _state.get("engine_manager")
     if manager is None or _state.get("engine_runtime") is not runtime:
         manager = build_local_resource_manager(engine_services)
@@ -327,6 +334,7 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
         authentication={"kind": "local_cli"},
         resource_manager=manager,
         coordinator=coordinator,
+        context_free_handler=context_free_handler,
     )
 
 

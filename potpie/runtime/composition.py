@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from potpie.daemon.lifecycle import Daemon
-from potpie.runtime.local_engine import LocalEngineServices
+from potpie.runtime.local_engine import (
+    LocalEngineServices,
+    LocalGraphMetadataOperationHandler,
+)
 from potpie.runtime.coordinator import OperationCoordinator
 from potpie.runtime.root_services import (
     LedgerService,
@@ -77,6 +80,7 @@ class LocalRuntimeComposition:
     root: RootRuntimeServices
     engine: LocalEngineServices
     coordinator: OperationCoordinator
+    graph_metadata: LocalGraphMetadataOperationHandler
 
 
 def default_backend_profile() -> str:
@@ -168,6 +172,14 @@ def build_local_runtime(
             cursors=LocalLedgerCursorStore(),
         )
 
+        engine_services = LocalEngineServices(
+            pots=pots,
+            agent_context=agent_context,
+            graph=graph,
+            graph_workbench=graph_workbench,
+            backend=selected_backend,
+            nudge=nudge,
+        )
         return LocalRuntimeComposition(
             root=RootRuntimeServices(
                 pots=PotResourceService(pots),
@@ -181,15 +193,9 @@ def build_local_runtime(
                 skills=skills,
                 profile=profile,
             ),
-            engine=LocalEngineServices(
-                pots=pots,
-                agent_context=agent_context,
-                graph=graph,
-                graph_workbench=graph_workbench,
-                backend=selected_backend,
-                nudge=nudge,
-            ),
+            engine=engine_services,
             coordinator=OperationCoordinator(),
+            graph_metadata=LocalGraphMetadataOperationHandler(engine_services),
         )
 
 

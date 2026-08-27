@@ -39,6 +39,7 @@ from potpie_context_engine import (
     Success,
 )
 from potpie_context_engine.requests import (
+    DescribeRequest,
     RecordRequest,
     RepairRequest,
     ResetContextRequest,
@@ -115,6 +116,15 @@ class _Transport:
         if isinstance(result, Exception):
             raise result
         return result
+
+
+class _ContextFreeHandler:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def handle(self, operation, request):
+        self.calls.append((operation, request))
+        return Success({"subgraph": {"name": "project"}})
 
 
 def _request_ids(*values: str):
@@ -199,6 +209,29 @@ async def test_local_client_acquires_lease_invokes_named_handler_and_releases() 
         )
     ]
     assert manager.leases[0].release_count == 1
+
+
+@pytest.mark.anyio
+async def test_context_free_describe_skips_selection_engine_and_lease() -> None:
+    engine = _RecordingEngine()
+    manager = _ResourceManager(engine)
+    metadata = _ContextFreeHandler()
+    client = LocalEngineClient(
+        selector=ContextSelector(kind="active"),
+        authentication="credential",
+        resource_manager=cast(ContextResourceManager, manager),
+        coordinator=OperationCoordinator(),
+        context_free_handler=metadata,
+        request_id_factory=_request_ids("describe-request"),
+    )
+
+    outcome = await client.describe(DescribeRequest(subgraph="project"))
+
+    assert isinstance(outcome, Success)
+    assert manager.requests == []
+    assert metadata.calls[0][0] is EngineOperation.DESCRIBE
+    assert metadata.calls[0][1] == DescribeRequest(subgraph="project")
+    assert ENGINE_OPERATION_CATALOG[EngineOperation.DESCRIBE].context_required is False
 
 
 @pytest.mark.anyio

@@ -87,6 +87,14 @@ ClientOutcome: TypeAlias = Success[object] | Failure[RuntimeBoundaryError]
 RequestIdFactory: TypeAlias = Callable[[], str]
 
 
+class ContextFreeOperationHandler(Protocol):
+    """Execute typed operations that do not require context selection or a lease."""
+
+    async def handle(
+        self, operation: EngineOperation, request: EngineRequest
+    ) -> ClientOutcome: ...
+
+
 @dataclass(frozen=True, slots=True)
 class DestructiveConfirmation:
     """One-call confirmation from which a bound client builds exact intent."""
@@ -421,9 +429,11 @@ class TypedEngineOperationHandler:
         resource_manager: ContextResourceManager,
         *,
         coordinator: OperationCoordinator,
+        context_free_handler: ContextFreeOperationHandler | None = None,
     ) -> None:
         self._resource_manager = resource_manager
         self._coordinator = coordinator
+        self._context_free_handler = context_free_handler
 
     async def handle(
         self,
@@ -432,6 +442,29 @@ class TypedEngineOperationHandler:
         authentication: object,
     ) -> ClientOutcome:
         spec = ENGINE_OPERATION_CATALOG[request.operation]
+        if not spec.context_required:
+            if self._context_free_handler is None:
+                return Failure(
+                    DaemonInternalError(
+                        code="context_free_handler_unavailable",
+                        message="the context-free operation handler is unavailable",
+                        details={"request_id": request.request_id},
+                        recommended_next_action="restart the selected runtime",
+                    )
+                )
+            try:
+                return await self._context_free_handler.handle(
+                    request.operation, request.payload
+                )
+            except Exception:
+                return Failure(
+                    DaemonInternalError(
+                        code="operation_handler_failed",
+                        message="the typed operation handler failed",
+                        details={"request_id": request.request_id},
+                        recommended_next_action="retry or inspect runtime logs",
+                    )
+                )
         try:
             acquisition = await self._resource_manager.acquire(
                 AcquisitionRequest(
@@ -488,6 +521,7 @@ class LocalEngineClient(EngineClient):
         authentication: object,
         resource_manager: ContextResourceManager,
         coordinator: OperationCoordinator,
+        context_free_handler: ContextFreeOperationHandler | None = None,
         request_id_factory: RequestIdFactory | None = None,
     ) -> None:
         self._selector = selector
@@ -495,6 +529,7 @@ class LocalEngineClient(EngineClient):
         self._handler = TypedEngineOperationHandler(
             resource_manager,
             coordinator=coordinator,
+            context_free_handler=context_free_handler,
         )
         self._request_id_factory = request_id_factory or (lambda: str(uuid4()))
 

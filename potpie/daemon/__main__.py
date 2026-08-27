@@ -61,6 +61,7 @@ async def _run() -> None:
         operation_handler=TypedEngineOperationHandler(
             resource_manager,
             coordinator=composition.coordinator,
+            context_free_handler=composition.graph_metadata,
         ),
         ownership_lock_path=home / "daemon.runtime.lock",
         instance_id=instance_id,

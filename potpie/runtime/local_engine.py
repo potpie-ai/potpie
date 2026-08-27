@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from potpie.cli.repo_location import repo_identity_key
 from potpie.runtime.clients import ClientOutcome
@@ -405,7 +405,7 @@ class LocalEngineOperations:
         self, context: ContextIdentity, request: ExportSnapshotRequest
     ) -> Outcome[object]:
         return await self._call(
-            lambda: self._services.backend.snapshot.export(
+            lambda: self._snapshot_port("export").export(
                 pot_id=context.value,
                 destination=_required_value(request.destination, "destination"),
             )
@@ -415,7 +415,7 @@ class LocalEngineOperations:
         self, context: ContextIdentity, request: ImportSnapshotRequest
     ) -> Outcome[object]:
         return await self._call(
-            lambda: self._services.backend.snapshot.import_(
+            lambda: self._snapshot_port("import_").import_(
                 pot_id=context.value,
                 source=_required_value(request.source, "source"),
             )
@@ -721,6 +721,7 @@ class LocalEngineOperations:
             EngineOperation.EXPORT_SNAPSHOT: self.export_snapshot,
             EngineOperation.IMPORT_SNAPSHOT: self.import_snapshot,
             EngineOperation.REPAIR: self.repair,
+            EngineOperation.RESET_CONTEXT: self.reset_context,
             EngineOperation.PROPOSE: self.propose,
             EngineOperation.COMMIT: self.commit,
             EngineOperation.HISTORY: self.history,
@@ -779,6 +780,27 @@ class LocalEngineOperations:
             predicates=request.predicates,
             limit=request.limit,
         )
+
+    def _snapshot_port(self, method: str) -> object:
+        capabilities = self._services.backend.capabilities()
+        if not bool(getattr(capabilities, "snapshot", False)):
+            profile = getattr(
+                capabilities,
+                "profile",
+                getattr(self._services.backend, "profile", "unknown"),
+            )
+            raise CapabilityNotImplemented(
+                f"graph.{profile}.snapshot.{method}",
+                detail=(
+                    "snapshot operations are not supported by the executing "
+                    f"'{profile}' backend"
+                ),
+                recommended_next_action=(
+                    "inspect the selected runtime backend or switch to one that "
+                    "implements snapshot operations"
+                ),
+            )
+        return self._services.backend.snapshot
 
     def _ingestion_submission(self) -> Any:
         service = self._services.ingestion
@@ -851,6 +873,27 @@ class LocalEngineOperations:
                     recommended_next_action="inspect runtime logs",
                 )
             )
+
+
+class LocalGraphMetadataOperationHandler:
+    """Shared context-free graph metadata execution for every local transport."""
+
+    def __init__(self, services: LocalEngineServices) -> None:
+        self._operations = LocalEngineOperations(services)
+
+    async def handle(
+        self, operation: EngineOperation, request: EngineRequest
+    ) -> ClientOutcome:
+        if operation is not EngineOperation.DESCRIBE:
+            return Failure(
+                DomainError(
+                    code="unsupported_context_free_operation",
+                    message=f"{operation.value} is not a context-free operation",
+                )
+            )
+        return await self._operations.describe(
+            ContextIdentity("context-free"), cast(DescribeRequest, request)
+        )
 
 
 class LocalContextResourceComposer:

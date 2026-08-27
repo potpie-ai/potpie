@@ -132,6 +132,7 @@ class OperationSpec:
     result_type: type[object]
     safety: SafetyClass
     destructive: bool = False
+    context_required: bool = True
     resource_type: str | None = None
     resource_identity_fields: tuple[str, ...] = ()
 
@@ -164,7 +165,13 @@ _SPECS = (
         _READ,
     ),
     OperationSpec(EngineOperation.CATALOG, CatalogRequest, CatalogResult, _READ),
-    OperationSpec(EngineOperation.DESCRIBE, DescribeRequest, DescribeResult, _READ),
+    OperationSpec(
+        EngineOperation.DESCRIBE,
+        DescribeRequest,
+        DescribeResult,
+        _READ,
+        context_required=False,
+    ),
     OperationSpec(EngineOperation.READ, ReadRequest, ReadResult, _READ),
     OperationSpec(
         EngineOperation.SEARCH_ENTITIES,
@@ -286,6 +293,7 @@ def operation_catalog_fingerprint() -> str:
             "result_schema": _type_schema(spec.result_type),
             "safety": spec.safety.value,
             "destructive": spec.destructive,
+            "context_required": spec.context_required,
             "resource_type": spec.resource_type,
             "resource_identity_fields": spec.resource_identity_fields,
         }

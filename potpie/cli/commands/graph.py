@@ -1399,9 +1399,9 @@ def graph_describe(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.describe") as ctx:
-        _set_optional_pot(ctx, pot)
+        del pot
         payload = run_engine_operation(
-            get_engine_client(pot).describe(
+            get_engine_client().describe(
                 EngineDescribeRequest(
                     subgraph=subgraph,
                     view=view,
@@ -2157,12 +2157,6 @@ def graph_export(
 ) -> None:
     with _graph_command("graph.export") as ctx:
         host = get_root_runtime()
-        _require_backend_capability(
-            host,
-            capability="snapshot",
-            method="export",
-            command="graph export",
-        )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         destination = _absolute_snapshot_path(file)
@@ -2191,12 +2185,6 @@ def graph_import(
 ) -> None:
     with _graph_command("graph.import") as ctx:
         host = get_root_runtime()
-        _require_backend_capability(
-            host,
-            capability="snapshot",
-            method="import_",
-            command="graph import",
-        )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         source = _absolute_snapshot_path(file)
@@ -2515,27 +2503,6 @@ def _safe(fn, default):
         return fn()
     except Exception:  # noqa: BLE001
         return default
-
-
-def _require_backend_capability(
-    host: Any,
-    *,
-    capability: str,
-    method: str,
-    command: str,
-) -> None:
-    caps = host.backend.capabilities()
-    if bool(getattr(caps, capability, False)):
-        return
-    profile = getattr(caps, "profile", getattr(host.backend, "profile", "unknown"))
-    raise CapabilityNotImplemented(
-        f"graph.{profile}.{capability}.{method}",
-        detail=f"{command} is not supported by the active '{profile}' backend",
-        recommended_next_action=(
-            "run 'potpie backend status' to inspect capabilities, or switch to "
-            f"a backend that implements {capability}"
-        ),
-    )
 
 
 def _parse_scope(scope: str | None) -> dict[str, str]:
