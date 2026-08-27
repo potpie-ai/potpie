@@ -6,13 +6,13 @@ record_status: final
 spec_id: SPEC-POTPIE-RESOURCE-MANAGER
 spec_revision: 2
 spec_ref: a8c03337f3568232b35851dc2c86d128f7d23c0e
-implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
+implementation_ref: ecf37757561166f94a66a7375483cb48b6b5ef58
 performed_by: agent:codex
-performed_at: "2026-08-27T12:35:42+05:30"
+performed_at: "2026-08-27T12:47:45+05:30"
 result: passed
 previous_record: null
 previous_record_id: CONF-POTPIE-RESOURCE-MANAGER
-previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_ref: e05a4f1adb9d440552e576616c39d1df14990c2d
 previous_record_path: spec/conformance/potpie-resource-manager.md
 ---
 
@@ -75,7 +75,7 @@ retryable shutdown cleanup, and cancellation-safe lease accounting.
   typed clients, coordinator, and runtime composition at the implementation ref.
 - **RM2-E2 — complete root lane:**
   `uv run pytest tests -m "not premerge_journey" -q`; result:
-  `1446 passed, 4 skipped, 1 deselected`.
+  `1447 passed, 4 skipped, 1 deselected`.
 - **RM2-E3 — permanent architecture gates:** the full characterization lane
   reported `31 passed`, including service-group separation and sole concrete
   runtime assembly.

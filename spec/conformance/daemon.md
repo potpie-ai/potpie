@@ -6,13 +6,13 @@ record_status: final
 spec_id: SPEC-DAEMON
 spec_revision: 2
 spec_ref: e73ebdbd6f0960e063344468051f84e37174697c
-implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
+implementation_ref: ecf37757561166f94a66a7375483cb48b6b5ef58
 performed_by: agent:codex
-performed_at: "2026-08-27T12:35:42+05:30"
+performed_at: "2026-08-27T12:47:45+05:30"
 result: passed
 previous_record: null
 previous_record_id: CONF-DAEMON
-previous_record_ref: f8ed92a5d8e64150fb548b9e589ffcf5ed3807d2
+previous_record_ref: e05a4f1adb9d440552e576616c39d1df14990c2d
 previous_record_path: spec/conformance/daemon.md
 ---
 
@@ -94,7 +94,7 @@ verified-not-applicable compatibility-adapter conditions.
   typed runtime controller/server/transport/protocol/client/operation modules
   at the implementation ref.
 - **D2-E2 — complete root lane:** `uv run pytest tests -m "not
-  premerge_journey" -q`; result: `1446 passed, 4 skipped, 1 deselected`. The
+  premerge_journey" -q`; result: `1447 passed, 4 skipped, 1 deselected`. The
   canonical `/ui` test verifies `307` to `/ui/` followed by `200`.
 - **D2-E3 — permanent architecture inventory:** the characterization lane
   reported `31 passed`, including the canonical-runtime and no-product-alias

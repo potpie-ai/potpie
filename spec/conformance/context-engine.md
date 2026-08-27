@@ -6,13 +6,13 @@ record_status: final
 spec_id: SPEC-CONTEXT-ENGINE
 spec_revision: 1
 spec_ref: 047cbe067c9c726e7e14f066675453372d8a8406
-implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
+implementation_ref: ecf37757561166f94a66a7375483cb48b6b5ef58
 performed_by: agent:codex
-performed_at: "2026-08-27T12:35:42+05:30"
+performed_at: "2026-08-27T12:47:45+05:30"
 result: passed
 previous_record: null
 previous_record_id: CONF-CONTEXT-ENGINE
-previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_ref: e05a4f1adb9d440552e576616c39d1df14990c2d
 previous_record_path: spec/conformance/context-engine.md
 ---
 
@@ -72,7 +72,7 @@ inside the domain boundary.
   `potpie/context-engine/src/potpie_context_engine` at the implementation ref.
 - **CE2-E2 — complete independent engine lane:** from `potpie/context-engine`,
   `uv run --project . pytest tests -m "not premerge_journey"`; result:
-  `1152 passed, 32 skipped, 6 warnings in 83.29s`.
+  `1153 passed, 32 skipped, 6 warnings in 79.62s`.
 - **CE2-E3 — isolated distribution:** root and Context Engine wheels and sdists
   built; the engine wheel installed into a fresh environment; its public
   package and `ContextEngine` imported while `find_spec("potpie")` returned

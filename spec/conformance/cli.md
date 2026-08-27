@@ -6,13 +6,13 @@ record_status: final
 spec_id: SPEC-CLI
 spec_revision: 1
 spec_ref: 047cbe067c9c726e7e14f066675453372d8a8406
-implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
+implementation_ref: ecf37757561166f94a66a7375483cb48b6b5ef58
 performed_by: agent:codex
-performed_at: "2026-08-27T12:35:42+05:30"
+performed_at: "2026-08-27T12:47:45+05:30"
 result: passed
 previous_record: null
 previous_record_id: CONF-CLI
-previous_record_ref: f8ed92a5d8e64150fb548b9e589ffcf5ed3807d2
+previous_record_ref: e05a4f1adb9d440552e576616c39d1df14990c2d
 previous_record_path: spec/conformance/cli.md
 ---
 
@@ -25,6 +25,9 @@ through `CLI-033`, after the PR-review remediation. Snapshot capability is
 decided by the executing runtime, destructive non-TTY calls fail before stdin
 or dispatch, `graph describe` is context-free, and `pot reset` is a typed
 Context Engine operation.
+Daemon lifecycle recovery commands compose a detached lifecycle controller
+directly, so invalid graph-backend configuration cannot block status, logs,
+stop, or restart.
 
 ## Behavior Trace
 
@@ -69,7 +72,7 @@ Context Engine operation.
 - **CLI2-E1 — pinned source review:** root CLI command, formatting, bootstrap,
   setup, and typed client paths at the implementation ref.
 - **CLI2-E2 — complete root lane:** `uv run pytest tests -m "not
-  premerge_journey" -q`; result: `1446 passed, 4 skipped, 1 deselected`.
+  premerge_journey" -q`; result: `1447 passed, 4 skipped, 1 deselected`.
 - **CLI2-E3 — permanent architecture and process gates:** the characterization
   lane reported `31 passed`, including unchanged command inventory, installed
   metadata entrypoints, and legacy-boundary absence.
@@ -78,6 +81,8 @@ Context Engine operation.
 - **CLI2-E5 — focused CLI boundary lane:** reset/import/repair confirmation,
   backend-owned snapshot capability, context-free describe, typed reset, daemon
   stop, and unknown-outcome tests passed.
+  Daemon recovery tests also verify lifecycle commands never compose the root
+  graph runtime.
 
 ## Related Contracts Checked
 

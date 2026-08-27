@@ -6,21 +6,21 @@ record_status: final
 spec_id: SPEC-SYSTEM
 spec_revision: 1
 spec_ref: 047cbe067c9c726e7e14f066675453372d8a8406
-implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
+implementation_ref: ecf37757561166f94a66a7375483cb48b6b5ef58
 target_repository: potpie-ai/potpie
 target_pull_request: 1057
 target_base_ref: main
 target_base_commit: 20a8389cabec6e5924b1e3d4ef12d1dcfe900a3c
 target_pr_head_ref: refactor/context-runtime-boundary
-target_pr_head_commit: a530fcc05de8080fd982ea2c3bf796c25cfd400f
-target_merge_candidate: 6f1ba68e957b082635b3c2c1a381396cedb03a0d
-target_merge_tree: e74aaa84b885dc1751b60be855db11915981abf5
+target_pr_head_commit: ecf37757561166f94a66a7375483cb48b6b5ef58
+target_merge_candidate: e815363eae37fcf60ecf2ff0d8c7dddd8064d7e1
+target_merge_tree: 203e2b7b17363ac562c74ae138b860517073ce5b
 performed_by: agent:codex
-performed_at: "2026-08-27T12:35:42+05:30"
+performed_at: "2026-08-27T12:47:45+05:30"
 result: passed
 previous_record: null
 previous_record_id: CONF-SYSTEM
-previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_ref: e05a4f1adb9d440552e576616c39d1df14990c2d
 previous_record_path: spec/conformance/cross-system.md
 ---
 
@@ -33,7 +33,7 @@ records against one implementation ref, and records the exact pre-merge
 integration target for pull request `#1057`.
 
 The implementation under verification and pinned PR head are
-`a530fcc05de8080fd982ea2c3bf796c25cfd400f`. This identity contains the complete
+`ecf37757561166f94a66a7375483cb48b6b5ef58`. This identity contains the complete
 review remediation and its regression tests before publication of this stable
 conformance successor.
 
@@ -46,11 +46,11 @@ conformance successor.
 | Base ref | `main` |
 | Base commit | `20a8389cabec6e5924b1e3d4ef12d1dcfe900a3c` |
 | PR head ref | `refactor/context-runtime-boundary` |
-| PR head commit | `a530fcc05de8080fd982ea2c3bf796c25cfd400f` |
-| Implementation commit | `a530fcc05de8080fd982ea2c3bf796c25cfd400f` |
-| Synthetic merge candidate | `6f1ba68e957b082635b3c2c1a381396cedb03a0d` |
-| Merge-candidate parents | `20a8389cabec6e5924b1e3d4ef12d1dcfe900a3c`, `a530fcc05de8080fd982ea2c3bf796c25cfd400f` |
-| Merge-candidate tree | `e74aaa84b885dc1751b60be855db11915981abf5` |
+| PR head commit | `ecf37757561166f94a66a7375483cb48b6b5ef58` |
+| Implementation commit | `ecf37757561166f94a66a7375483cb48b6b5ef58` |
+| Synthetic merge candidate | `e815363eae37fcf60ecf2ff0d8c7dddd8064d7e1` |
+| Merge-candidate parents | `20a8389cabec6e5924b1e3d4ef12d1dcfe900a3c`, `ecf37757561166f94a66a7375483cb48b6b5ef58` |
+| Merge-candidate tree | `203e2b7b17363ac562c74ae138b860517073ce5b` |
 
 The locally reconstructed synthetic merge tree combines the pinned PR head
 with the exact current `main` base. This record does not predict the eventual
@@ -96,25 +96,25 @@ verification result.
 
 - **SYS-E1 — pinned full behavior conformance:** this cross-system record and
   its five linked module records passed all `195` current behaviors at
-  implementation `a530fcc05de8080fd982ea2c3bf796c25cfd400f`.
-  Evidence includes root result `1446 passed, 4 skipped, 1 deselected`, the
-  independent Context Engine result `1152 passed, 32 skipped`, the
-  Rust-dependent premerge journey result `1 passed, 1450 deselected`, all-file
+  implementation `ecf37757561166f94a66a7375483cb48b6b5ef58`.
+  Evidence includes root result `1447 passed, 4 skipped, 1 deselected`, the
+  independent Context Engine result `1153 passed, 32 skipped`, the
+  Rust-dependent premerge journey result `1 passed, 1451 deselected`, all-file
   pre-commit, package builds, fresh-environment installs, isolated imports, and
   structural spec validation with zero warnings.
 - **SYS-E2 — pinned PR-head checks:** live GitHub state rechecked on
   `2026-08-27` reported PR `#1057` open and mergeable at the pinned head, with
   all `19` reported checks successful. Regression workflow run
-  `33047993868` includes pre-commit; Python 3.12, 3.13, and 3.14 root, Context
+  `33048982959` includes pre-commit; Python 3.12, 3.13, and 3.14 root, Context
   Engine, Context package, parsing, and sandbox lanes; and the Rust-dependent
-  `premerge-cli-journey`. Docs-check run `33047993939` and CodeRabbit also
+  `premerge-cli-journey`. Docs-check run `33048982777` and CodeRabbit also
   passed. GitHub still requires human review, which is a merge-governance gate
   rather than a conformance failure.
 - **SYS-E3 — exact current PR/base reconstruction:** after fetching current
   `origin/main`, locally reconstructed merge candidate
-  `6f1ba68e957b082635b3c2c1a381396cedb03a0d` resolves to the pinned base and PR
+  `e815363eae37fcf60ecf2ff0d8c7dddd8064d7e1` resolves to the pinned base and PR
   head as its two parents and tree
-  `e74aaa84b885dc1751b60be855db11915981abf5`. `git diff --check` passed for the
+  `203e2b7b17363ac562c74ae138b860517073ce5b`. `git diff --check` passed for the
   exact reconstructed merge.
 - **SYS-E4 — advanced-base impact and exact merge-tree check:** `main` advanced
   from `b45323127f81be40f07c44cab7f7581fda4a0ae7` to the pinned base through four
@@ -140,11 +140,11 @@ verification result.
 
 | Scope | Stable record | Implementation ref | Result |
 |---|---|---|---|
-| Context Engine | [CONF-CONTEXT-ENGINE](context-engine.md) | `a530fcc05de8080fd982ea2c3bf796c25cfd400f` | passed |
-| Potpie Resource Manager | [CONF-POTPIE-RESOURCE-MANAGER](potpie-resource-manager.md) | `a530fcc05de8080fd982ea2c3bf796c25cfd400f` | passed |
-| Daemon | [CONF-DAEMON](daemon.md) | `a530fcc05de8080fd982ea2c3bf796c25cfd400f` | passed |
-| CLI | [CONF-CLI](cli.md) | `a530fcc05de8080fd982ea2c3bf796c25cfd400f` | passed |
-| Potpie Capabilities | [CONF-POTPIE-CAPABILITIES](potpie-capabilities.md) | `a530fcc05de8080fd982ea2c3bf796c25cfd400f` | passed |
+| Context Engine | [CONF-CONTEXT-ENGINE](context-engine.md) | `ecf37757561166f94a66a7375483cb48b6b5ef58` | passed |
+| Potpie Resource Manager | [CONF-POTPIE-RESOURCE-MANAGER](potpie-resource-manager.md) | `ecf37757561166f94a66a7375483cb48b6b5ef58` | passed |
+| Daemon | [CONF-DAEMON](daemon.md) | `ecf37757561166f94a66a7375483cb48b6b5ef58` | passed |
+| CLI | [CONF-CLI](cli.md) | `ecf37757561166f94a66a7375483cb48b6b5ef58` | passed |
+| Potpie Capabilities | [CONF-POTPIE-CAPABILITIES](potpie-capabilities.md) | `ecf37757561166f94a66a7375483cb48b6b5ef58` | passed |
 
 All five linked records are resolved from the same repository tree as this
 cross-system record. Their immediately previous versions remain pinned through

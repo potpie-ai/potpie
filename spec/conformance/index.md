@@ -24,7 +24,7 @@ filenames.
 ## Current Records
 
 The five module records cover all current module behavior scopes. All five pin
-implementation `a530fcc05de8080fd982ea2c3bf796c25cfd400f`; the Daemon record
+implementation `ecf37757561166f94a66a7375483cb48b6b5ef58`; the Daemon record
 verifies accepted revision 2, including `DAEMON-052` through `DAEMON-056`. The
 cross-system record pins the same implementation and the exact current PR/base
 integration identity.
@@ -51,7 +51,7 @@ a documentation-only successor to the verified implementation head under
 
 | Pull request | Base ref and commit | Verified PR head | Implementation | Result |
 |---|---|---|---|---|
-| `potpie-ai/potpie#1057` | `main` at `20a8389cabec6e5924b1e3d4ef12d1dcfe900a3c` | `a530fcc05de8080fd982ea2c3bf796c25cfd400f` | `a530fcc05de8080fd982ea2c3bf796c25cfd400f` | passed |
+| `potpie-ai/potpie#1057` | `main` at `20a8389cabec6e5924b1e3d4ef12d1dcfe900a3c` | `ecf37757561166f94a66a7375483cb48b6b5ef58` | `ecf37757561166f94a66a7375483cb48b6b5ef58` | passed |
 
 [CONF-SYSTEM](cross-system.md) additionally records the synthetic merge
 candidate, merge tree, exact CI runs, current review gate, accepted contract

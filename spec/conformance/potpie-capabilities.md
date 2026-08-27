@@ -6,13 +6,13 @@ record_status: final
 spec_id: SPEC-POTPIE-CAPABILITIES
 spec_revision: 1
 spec_ref: b23b6cb9158e6b929f7d5f01c4dc0ca62a69f1df
-implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
+implementation_ref: ecf37757561166f94a66a7375483cb48b6b5ef58
 performed_by: agent:codex
-performed_at: "2026-08-27T12:35:42+05:30"
+performed_at: "2026-08-27T12:47:45+05:30"
 result: passed
 previous_record: null
 previous_record_id: CONF-POTPIE-CAPABILITIES
-previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_ref: e05a4f1adb9d440552e576616c39d1df14990c2d
 previous_record_path: spec/conformance/potpie-capabilities.md
 ---
 
@@ -24,6 +24,8 @@ This final record version verifies every active capability behavior,
 `PCAP-001` through `PCAP-012`, against the completed capability-first source
 layout and behavior-preservation evidence, including process-safe configuration
 and pot persistence and metadata-only pot services.
+Ledger cursor persistence is also serialized across CLI processes through the
+Context Engine local JSON-store lock and atomic replacement.
 
 ## Behavior Trace
 
@@ -39,7 +41,7 @@ and pot persistence and metadata-only pot services.
 | PCAP-008 | complete | passed | PCAP-E1, PCAP-E2 | Runtime composition is the sole concrete assembly point. |
 | PCAP-009 | complete | passed | PCAP-E2, PCAP-E4 | Engine production imports no root Potpie namespace. |
 | PCAP-010 | complete | passed | PCAP-E2, PCAP-E4 | `potpie.product` and aliases are absent. |
-| PCAP-011 | complete | passed | PCAP-E3, PCAP-E4 | Supported runtime and persistence behavior is preserved. |
+| PCAP-011 | complete | passed | PCAP-E3, PCAP-E4 | Supported runtime and process-safe persistence behavior is preserved. |
 | PCAP-012 | complete | passed | PCAP-E2, PCAP-E4 | No compatibility API recreates old internal imports. |
 
 ## Reproducible Evidence
@@ -54,8 +56,8 @@ and pot persistence and metadata-only pot services.
   service groups, package metadata, and independent package lanes; combined
   boundary result: `18 passed`.
 - **PCAP-E3 — behavior preservation:** the complete root suite reported
-  `1446 passed, 4 skipped, 1 deselected`; the independent Context Engine suite
-  reported `1152 passed, 32 skipped, 6 warnings`.
+  `1447 passed, 4 skipped, 1 deselected`; the independent Context Engine suite
+  reported `1153 passed, 32 skipped, 6 warnings`.
 - **PCAP-E4 — packaging and isolated imports:** both wheels and sdists built;
   root artifacts contain capability packages and no `potpie/product`; fresh
   engine-only and root environments passed isolation verification; installed
