@@ -112,7 +112,7 @@ class CanonicalDaemonRuntime:
         self._state_condition = asyncio.Condition()
         self._active_operations = 0
         self._accepting_operations = False
-        self._handshake_completed = False
+        self._compatibility_secret = secrets.token_bytes(32)
         self._stop_lock = asyncio.Lock()
 
     @property
@@ -310,13 +310,16 @@ class CanonicalDaemonRuntime:
     async def _execute(self, request: ProtocolRequest) -> tuple[ProtocolResponse, int]:
         if isinstance(request, HandshakeRequest):
             return self._handshake(request)
-        if not self._handshake_completed:
+        if not self._valid_compatibility_ticket(request.compatibility_ticket):
             return (
                 _failure_response(
                     request,
                     ProtocolError(
-                        code="handshake_required",
-                        message="a compatible handshake is required before this operation",
+                        code="compatibility_ticket_invalid",
+                        message=(
+                            "a ticket from a compatible handshake is required before "
+                            "this operation"
+                        ),
                         recommended_next_action="perform an authenticated handshake",
                         retry_posture="safe",
                     ),
@@ -418,7 +421,21 @@ class CanonicalDaemonRuntime:
                 ),
                 409,
             )
-        self._handshake_completed = True
+        catalog_fingerprint = operation_catalog_fingerprint()
+        if payload.client_operation_catalog_fingerprint != catalog_fingerprint:
+            return (
+                _failure_response(
+                    request,
+                    ProtocolError(
+                        code="operation_catalog_mismatch",
+                        message="client and daemon operation catalogs do not match",
+                        recommended_next_action=(
+                            "restart with a compatible Potpie version"
+                        ),
+                    ),
+                ),
+                409,
+            )
         return (
             SuccessResponse(
                 protocol_version=request.protocol_version,
@@ -430,12 +447,42 @@ class CanonicalDaemonRuntime:
                         instance_id=self.instance_id,
                         lifecycle_state=self._state,  # type: ignore[arg-type]
                         capabilities=operation_capabilities(),
-                        operation_catalog_fingerprint=operation_catalog_fingerprint(),
+                        operation_catalog_fingerprint=catalog_fingerprint,
+                        compatibility_ticket=self._issue_compatibility_ticket(),
                     )
                 ),
             ),
             200,
         )
+
+    def _issue_compatibility_ticket(self) -> str:
+        nonce = secrets.token_urlsafe(24)
+        signature = hmac.new(
+            self._compatibility_secret,
+            self._compatibility_ticket_message(nonce),
+            "sha256",
+        ).hexdigest()
+        return f"{nonce}.{signature}"
+
+    def _valid_compatibility_ticket(self, ticket: str | None) -> bool:
+        if not ticket:
+            return False
+        try:
+            nonce, supplied_signature = ticket.rsplit(".", 1)
+        except ValueError:
+            return False
+        expected_signature = hmac.new(
+            self._compatibility_secret,
+            self._compatibility_ticket_message(nonce),
+            "sha256",
+        ).hexdigest()
+        return hmac.compare_digest(supplied_signature, expected_signature)
+
+    def _compatibility_ticket_message(self, nonce: str) -> bytes:
+        return (
+            f"{self.instance_id}:{PROTOCOL_VERSION}:"
+            f"{operation_catalog_fingerprint()}:{nonce}"
+        ).encode()
 
     def _authenticated(self, headers: Mapping[str, str]) -> bool:
         supplied = headers.get("Authorization", "")

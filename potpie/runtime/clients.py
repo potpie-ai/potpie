@@ -492,6 +492,7 @@ class LocalEngineClient(EngineClient):
             payload=request,
             confirmation=confirmation,
             request_id=self._request_id_factory(),
+            compatibility_ticket=None,
         )
         if isinstance(envelope_or_error, Failure):
             return envelope_or_error
@@ -532,6 +533,7 @@ class DaemonEngineClient(EngineClient):
                 client_protocol_min=PROTOCOL_MIN_VERSION,
                 client_protocol_max=PROTOCOL_MAX_VERSION,
                 expected_instance_id=self._expected_instance_id,
+                client_operation_catalog_fingerprint=(operation_catalog_fingerprint()),
             ),
         )
         response_or_error = await self._send(request, safety=None)
@@ -575,6 +577,7 @@ class DaemonEngineClient(EngineClient):
             payload=request,
             confirmation=confirmation,
             request_id=self._request_id_factory(),
+            compatibility_ticket=self._handshake_result.compatibility_ticket,
         )
         if isinstance(envelope_or_error, Failure):
             return envelope_or_error
@@ -636,6 +639,7 @@ class DaemonControlClient:
                 client_protocol_min=PROTOCOL_MIN_VERSION,
                 client_protocol_max=PROTOCOL_MAX_VERSION,
                 expected_instance_id=self._expected_instance_id,
+                client_operation_catalog_fingerprint=(operation_catalog_fingerprint()),
             ),
         )
         response_or_error = await _send_protocol_request(
@@ -681,6 +685,7 @@ class DaemonControlClient:
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
             payload=ShutdownPayload(reason=reason),
+            compatibility_ticket=self._handshake_result.compatibility_ticket,
         )
         response_or_error = await _send_protocol_request(
             transport=self._transport,
@@ -718,6 +723,7 @@ class DaemonControlClient:
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
             payload=DaemonStatusPayload(),
+            compatibility_ticket=self._handshake_result.compatibility_ticket,
         )
         response_or_error = await _send_protocol_request(
             transport=self._transport,
@@ -747,6 +753,7 @@ def _build_operation_request(
     payload: EngineRequest,
     confirmation: DestructiveConfirmation | None,
     request_id: str,
+    compatibility_ticket: str | None,
 ) -> Success[EngineOperationRequest] | Failure[ProtocolError]:
     spec = ENGINE_OPERATION_CATALOG[operation]
     if type(payload) is not spec.request_type:
@@ -785,6 +792,7 @@ def _build_operation_request(
             selector=selector,
             payload=payload,
             destructive_intent=intent,
+            compatibility_ticket=compatibility_ticket,
         )
     )
 
@@ -888,6 +896,12 @@ def _validate_handshake_result(
         return ProtocolError(
             code="operation_catalog_mismatch",
             message="daemon and client operation catalogs do not match",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    if not result.compatibility_ticket:
+        return ProtocolError(
+            code="compatibility_ticket_missing",
+            message="daemon handshake did not return a compatibility ticket",
             recommended_next_action="restart with a compatible Potpie version",
         )
     missing = sorted(set(operation_capabilities()) - set(result.capabilities))

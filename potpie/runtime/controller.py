@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal, Protocol, TypeAlias
 
 from potpie.runtime.clients import DaemonControlClient
-from potpie.runtime.protocol import RuntimeBoundaryError
+from potpie.runtime.protocol import ProtocolTransportError, RuntimeBoundaryError
 from potpie.runtime.resource_manager import ResourceLifecycleError
 from potpie.runtime.transport import HttpDaemonTransport, RuntimeEndpoint
 from potpie_context_engine import Failure, Success
@@ -129,7 +129,20 @@ class DaemonObserver:
         while loop.time() < deadline:
             if process.returncode is not None:
                 break
-            handshake = await self._client.handshake()
+            remaining = deadline - loop.time()
+            try:
+                handshake = await asyncio.wait_for(
+                    self._client.handshake(), timeout=remaining
+                )
+            except TimeoutError:
+                last_failure = Failure(
+                    ProtocolTransportError(
+                        code="daemon_readiness_timeout",
+                        message="daemon readiness handshake exceeded its deadline",
+                        retry_posture="safe",
+                    )
+                )
+                break
             if isinstance(handshake, Success):
                 return Success(None)
             last_failure = handshake

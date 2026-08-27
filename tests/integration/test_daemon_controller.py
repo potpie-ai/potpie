@@ -98,6 +98,12 @@ class _AttachedProcess:
         self.kill_calls += 1
 
 
+class _HungHandshakeClient:
+    async def handshake(self) -> object:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
 @pytest.mark.anyio
 async def test_controller_starts_observes_and_typed_stops_real_foreground_child(
     tmp_path: Path,
@@ -200,6 +206,24 @@ async def test_process_creation_failure_closes_observer(
     assert isinstance(outcome, Failure)
     assert outcome.error.code == "daemon_process_creation_failed"
     assert observer.closed == 1
+
+
+@pytest.mark.anyio
+async def test_readiness_handshake_is_bounded_by_probe_deadline(
+    tmp_path: Path,
+) -> None:
+    observer = DaemonObserver(
+        endpoint=RuntimeEndpoint(kind="uds", address=str(tmp_path / "missing.sock")),
+        bearer_token="x" * 32,
+        expected_instance_id="instance-1",
+    )
+    observer._client = _HungHandshakeClient()  # type: ignore[assignment]
+
+    outcome = await observer.wait_ready(_AttachedProcess(), timeout_s=0.01)
+
+    assert isinstance(outcome, Failure)
+    assert outcome.error.code == "daemon_readiness_timeout"
+    await observer.close()
 
 
 @pytest.mark.anyio

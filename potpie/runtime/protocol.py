@@ -9,6 +9,7 @@ from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
     DaemonControlOperation,
     EngineOperation,
+    operation_catalog_fingerprint,
 )
 from potpie.runtime.resource_manager import (
     AuthenticationError,
@@ -23,7 +24,7 @@ from potpie_context_engine.outcomes import RetryPosture
 from potpie_context_engine.requests import EngineRequest
 
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 PROTOCOL_MIN_VERSION = PROTOCOL_VERSION
 PROTOCOL_MAX_VERSION = PROTOCOL_VERSION
 
@@ -75,6 +76,9 @@ class HandshakePayload:
     client_protocol_min: int = PROTOCOL_MIN_VERSION
     client_protocol_max: int = PROTOCOL_MAX_VERSION
     expected_instance_id: str | None = None
+    client_operation_catalog_fingerprint: str = field(
+        default_factory=operation_catalog_fingerprint
+    )
 
     def __post_init__(self) -> None:
         if self.client_protocol_min <= 0:
@@ -94,6 +98,7 @@ class HandshakeResult:
     lifecycle_state: LifecycleState
     capabilities: tuple[str, ...]
     operation_catalog_fingerprint: str
+    compatibility_ticket: str
 
     @property
     def ready(self) -> bool:
@@ -132,6 +137,7 @@ class EngineOperationRequest:
     selector: ContextSelector
     payload: EngineRequest
     destructive_intent: DestructiveIntent | None = None
+    compatibility_ticket: str | None = None
 
     def __post_init__(self) -> None:
         _validate_request_identity(self.protocol_version, self.request_id)
@@ -160,6 +166,7 @@ class ShutdownRequest:
     protocol_version: int
     request_id: str
     payload: ShutdownPayload
+    compatibility_ticket: str | None = None
     operation: Literal[DaemonControlOperation.SHUTDOWN] = (
         DaemonControlOperation.SHUTDOWN
     )
@@ -173,6 +180,7 @@ class DaemonStatusRequest:
     protocol_version: int
     request_id: str
     payload: DaemonStatusPayload
+    compatibility_ticket: str | None = None
     operation: Literal[DaemonControlOperation.STATUS] = DaemonControlOperation.STATUS
 
     def __post_init__(self) -> None:

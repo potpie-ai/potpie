@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
-from enum import StrEnum
+from dataclasses import MISSING, dataclass, fields, is_dataclass
+from enum import Enum, StrEnum
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, Mapping, get_args, get_origin, get_type_hints
 
 from potpie_context_engine.requests import (
     CatalogRequest,
@@ -264,6 +264,8 @@ def operation_catalog_fingerprint() -> str:
             "operation": spec.operation.value,
             "request_type": spec.request_type.__name__,
             "result_type": spec.result_type.__name__,
+            "request_schema": _type_schema(spec.request_type),
+            "result_schema": _type_schema(spec.result_type),
             "safety": spec.safety.value,
             "destructive": spec.destructive,
             "resource_type": spec.resource_type,
@@ -288,6 +290,78 @@ def operation_catalog_fingerprint() -> str:
     )
     encoded = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _type_schema(annotation: object, *, seen: frozenset[str] = frozenset()) -> object:
+    """Describe protocol-visible Python types without importing transport codecs."""
+
+    origin = get_origin(annotation)
+    if origin is not None:
+        return {
+            "origin": _qualified_name(origin),
+            "arguments": tuple(
+                _type_schema(argument, seen=seen) for argument in get_args(annotation)
+            ),
+        }
+    if annotation is Any:
+        return {"type": "typing.Any"}
+    if isinstance(annotation, str):
+        return {"forward_reference": annotation}
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return {
+            "type": _qualified_name(annotation),
+            "enum_members": tuple(
+                (member.name, _stable_value(member.value)) for member in annotation
+            ),
+        }
+    if isinstance(annotation, type) and is_dataclass(annotation):
+        type_name = _qualified_name(annotation)
+        if type_name in seen:
+            return {"type": type_name, "recursive": True}
+        try:
+            hints = get_type_hints(annotation, include_extras=True)
+        except (NameError, TypeError):
+            hints = {field.name: field.type for field in fields(annotation)}
+        field_schemas = []
+        for field in fields(annotation):
+            record: dict[str, object] = {
+                "name": field.name,
+                "type": _type_schema(
+                    hints.get(field.name, field.type), seen=seen | {type_name}
+                ),
+            }
+            if field.default is not MISSING:
+                record["default"] = _stable_value(field.default)
+            elif field.default_factory is not MISSING:
+                record["default_factory"] = _qualified_name(field.default_factory)
+            else:
+                record["required"] = True
+            field_schemas.append(record)
+        return {"type": type_name, "fields": tuple(field_schemas)}
+    return {"type": _qualified_name(annotation)}
+
+
+def _qualified_name(value: object) -> str:
+    module = getattr(value, "__module__", None)
+    qualname = getattr(value, "__qualname__", None)
+    if module and qualname:
+        return f"{module}.{qualname}"
+    return str(value)
+
+
+def _stable_value(value: object) -> object:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Enum):
+        return {"enum": _qualified_name(type(value)), "member": value.name}
+    if isinstance(value, Mapping):
+        return {
+            str(key): _stable_value(item)
+            for key, item in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, (tuple, list)):
+        return tuple(_stable_value(item) for item in value)
+    return {"type": _qualified_name(type(value)), "value": str(value)}
 
 
 def operation_capabilities() -> tuple[str, ...]:

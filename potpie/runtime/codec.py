@@ -82,6 +82,7 @@ def encode_request(request: ProtocolRequest) -> dict[str, object]:
                     if request.destructive_intent is not None
                     else None
                 ),
+                "compatibility_ticket": request.compatibility_ticket,
             }
         )
         return common
@@ -90,9 +91,11 @@ def encode_request(request: ProtocolRequest) -> dict[str, object]:
         return common
     if isinstance(request, DaemonStatusRequest):
         common["payload"] = {}
+        common["compatibility_ticket"] = request.compatibility_ticket
         return common
     if isinstance(request, ShutdownRequest):
         common["payload"] = _to_wire(request.payload)
+        common["compatibility_ticket"] = request.compatibility_ticket
         return common
     raise TypeError("unsupported protocol request")
 
@@ -120,6 +123,7 @@ def decode_request(document: object) -> DecodeRequestOutcome:
                 "operation",
                 "selector",
                 "payload",
+                "compatibility_ticket",
             },
             optional={"destructive_intent"},
         )
@@ -146,6 +150,9 @@ def decode_request(document: object) -> DecodeRequestOutcome:
                     selector=selector.value,
                     payload=request_from_payload(request_type, dict(payload)),
                     destructive_intent=intent.value,
+                    compatibility_ticket=_optional_string(
+                        document, "compatibility_ticket"
+                    ),
                 )
             )
         except (TypeError, ValueError):
@@ -162,10 +169,10 @@ def decode_request(document: object) -> DecodeRequestOutcome:
             "the requested operation is not registered",
             details={"operation": operation_text},
         )
-    unexpected = _unexpected_keys(
-        document,
-        required={"protocol_version", "request_id", "operation", "payload"},
-    )
+    required = {"protocol_version", "request_id", "operation", "payload"}
+    if control_operation is not DaemonControlOperation.HANDSHAKE:
+        required.add("compatibility_ticket")
+    unexpected = _unexpected_keys(document, required=required)
     if unexpected is not None:
         return unexpected
     payload = document["payload"]
@@ -178,6 +185,7 @@ def decode_request(document: object) -> DecodeRequestOutcome:
             "client_protocol_min",
             "client_protocol_max",
             "expected_instance_id",
+            "client_operation_catalog_fingerprint",
         }:
             return _protocol_failure(
                 "operation_payload_malformed", "handshake payload fields are invalid"
@@ -197,6 +205,9 @@ def decode_request(document: object) -> DecodeRequestOutcome:
                         expected_instance_id=_optional_string(
                             payload, "expected_instance_id"
                         ),
+                        client_operation_catalog_fingerprint=_required_string(
+                            payload, "client_operation_catalog_fingerprint"
+                        ),
                     ),
                 )
             )
@@ -214,6 +225,7 @@ def decode_request(document: object) -> DecodeRequestOutcome:
                 protocol_version=protocol_version,
                 request_id=request_id,
                 payload=DaemonStatusPayload(),
+                compatibility_ticket=_optional_string(document, "compatibility_ticket"),
             )
         )
     if set(payload) != {"reason"} or not isinstance(payload.get("reason"), str):
@@ -225,6 +237,7 @@ def decode_request(document: object) -> DecodeRequestOutcome:
             protocol_version=protocol_version,
             request_id=request_id,
             payload=ShutdownPayload(reason=cast(str, payload["reason"])),
+            compatibility_ticket=_optional_string(document, "compatibility_ticket"),
         )
     )
 
@@ -312,6 +325,7 @@ def _decode_result(
             "lifecycle_state",
             "capabilities",
             "operation_catalog_fingerprint",
+            "compatibility_ticket",
         }:
             return _protocol_failure(
                 "response_result_malformed", "handshake result is invalid"
@@ -334,6 +348,9 @@ def _decode_result(
                     capabilities=tuple(capabilities),
                     operation_catalog_fingerprint=_required_string(
                         value, "operation_catalog_fingerprint"
+                    ),
+                    compatibility_ticket=_required_string(
+                        value, "compatibility_ticket"
                     ),
                 )
             )

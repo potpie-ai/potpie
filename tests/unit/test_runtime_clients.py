@@ -124,6 +124,7 @@ def _handshake_result(**changes: object) -> HandshakeResult:
         "lifecycle_state": "ready",
         "capabilities": operation_capabilities(),
         "operation_catalog_fingerprint": operation_catalog_fingerprint(),
+        "compatibility_ticket": "test-ticket",
     }
     values.update(changes)
     return HandshakeResult(**values)  # type: ignore[arg-type]
@@ -280,6 +281,7 @@ async def test_daemon_client_handshake_then_typed_operation() -> None:
     sent = transport.requests[1]
     assert isinstance(sent, EngineOperationRequest)
     assert sent.protocol_version == PROTOCOL_VERSION
+    assert sent.compatibility_ticket == "test-ticket"
     assert sent.request_id == "search-1"
     assert sent.operation is EngineOperation.SEARCH
     assert sent.selector == ContextSelector(kind="explicit", value="context-a")
@@ -293,7 +295,10 @@ async def test_daemon_client_handshake_then_typed_operation() -> None:
         (_handshake_result(instance_id="other"), "daemon_instance_mismatch"),
         (_handshake_result(lifecycle_state="starting"), "daemon_not_ready"),
         (
-            _handshake_result(protocol_min=2, protocol_max=2),
+            _handshake_result(
+                protocol_min=PROTOCOL_VERSION + 1,
+                protocol_max=PROTOCOL_VERSION + 1,
+            ),
             "protocol_version_incompatible",
         ),
         (

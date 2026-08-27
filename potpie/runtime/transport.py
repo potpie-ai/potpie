@@ -12,7 +12,6 @@ import httpx
 
 from potpie.runtime.codec import decode_response, encode_request
 from potpie.runtime.protocol import (
-    FailureResponse,
     ProtocolRequest,
     ProtocolResponse,
     TransportFailure,
@@ -103,10 +102,9 @@ class HttpDaemonTransport:
             ) from exc
         decoded = decode_response(document, request=request)
         if isinstance(decoded, Failure):
-            return FailureResponse(
-                protocol_version=request.protocol_version,
-                request_id=request.request_id,
-                outcome=decoded,
+            raise TransportFailure(
+                code=decoded.error.code,
+                dispatched=True,
             )
         return decoded.value
 

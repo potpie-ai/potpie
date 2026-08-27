@@ -2,6 +2,8 @@ from __future__ import annotations
 
 # ruff: noqa: S101 - pytest unit tests use assertions intentionally.
 
+from dataclasses import dataclass
+
 import pytest
 
 from potpie.runtime import (
@@ -31,6 +33,7 @@ from potpie.runtime import (
     operation_capabilities,
     operation_catalog_fingerprint,
 )
+from potpie.runtime.operations import _type_schema
 from potpie_context_engine import DomainError, Failure, Success
 from potpie_context_engine.core.agent_envelope import (
     AgentEnvelope,
@@ -138,6 +141,7 @@ def test_handshake_success_response_round_trips_to_typed_result() -> None:
         lifecycle_state="ready",
         capabilities=operation_capabilities(),
         operation_catalog_fingerprint=operation_catalog_fingerprint(),
+        compatibility_ticket="test-ticket",
     )
     response = SuccessResponse(
         protocol_version=PROTOCOL_VERSION,
@@ -275,3 +279,23 @@ def test_response_requires_exactly_one_outcome_shape() -> None:
 
     assert isinstance(outcome, Failure)
     assert outcome.error.code == "response_envelope_malformed"
+
+
+def test_wire_schema_descriptor_changes_for_field_and_type_drift() -> None:
+    @dataclass(frozen=True)
+    class Original:
+        value: str
+
+    @dataclass(frozen=True)
+    class FieldAdded:
+        value: str
+        count: int = 0
+
+    @dataclass(frozen=True)
+    class TypeChanged:
+        value: int
+
+    original = _type_schema(Original)
+
+    assert _type_schema(FieldAdded) != original
+    assert _type_schema(TypeChanged) != original

@@ -124,6 +124,12 @@ async def test_authenticated_runtime_handshake_operation_and_typed_stop(
 
         assert isinstance(handshake, Success)
         assert isinstance(control_handshake, Success)
+        assert handshake.value.compatibility_ticket
+        assert control_handshake.value.compatibility_ticket
+        assert (
+            handshake.value.compatibility_ticket
+            != control_handshake.value.compatibility_ticket
+        )
         assert isinstance(status, Success)
         assert status.value.backend_profile == "embedded"
         assert status.value.ui_url == "http://127.0.0.1:8765"
@@ -193,6 +199,40 @@ async def test_bad_bearer_token_returns_typed_authentication_failure(
 
 
 @pytest.mark.anyio
+async def test_catalog_mismatch_is_rejected_during_handshake(tmp_path: Path) -> None:
+    handler = _Handler()
+    async with _running_runtime("tcp", tmp_path, handler) as (
+        _runtime,
+        _serve_task,
+        endpoint,
+        token,
+    ):
+        base_url = f"http://{endpoint.address}:{endpoint.port}"
+        async with httpx.AsyncClient(base_url=base_url) as client:
+            response = await client.post(
+                "/v1/operations",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "protocol_version": PROTOCOL_VERSION,
+                    "request_id": "catalog-mismatch-1",
+                    "operation": "daemon.handshake",
+                    "payload": {
+                        "client_protocol_min": PROTOCOL_VERSION,
+                        "client_protocol_max": PROTOCOL_VERSION,
+                        "expected_instance_id": "instance-1",
+                        "client_operation_catalog_fingerprint": "different",
+                    },
+                },
+            )
+
+        assert response.status_code == 409
+        assert response.json()["outcome"]["error"]["code"] == (
+            "operation_catalog_mismatch"
+        )
+        assert handler.calls == []
+
+
+@pytest.mark.anyio
 async def test_incompatible_protocol_version_returns_correlated_typed_failure(
     tmp_path: Path,
 ) -> None:
@@ -215,6 +255,7 @@ async def test_incompatible_protocol_version_returns_correlated_typed_failure(
                     "operation": "search",
                     "selector": {"kind": "explicit", "value": "context-a"},
                     "payload": {"query": "typed"},
+                    "compatibility_ticket": None,
                 },
                 headers=headers,
             )
@@ -251,7 +292,34 @@ async def test_domain_operation_is_rejected_before_handshake(tmp_path: Path) -> 
 
         assert isinstance(response, FailureResponse)
         assert isinstance(response.outcome.error, ProtocolError)
-        assert response.outcome.error.code == "handshake_required"
+        assert response.outcome.error.code == "compatibility_ticket_invalid"
+        assert handler.calls == []
+        await transport.close()
+
+
+@pytest.mark.anyio
+async def test_invalid_compatibility_ticket_is_rejected(tmp_path: Path) -> None:
+    handler = _Handler()
+    async with _running_runtime("tcp", tmp_path, handler) as (
+        _runtime,
+        _serve_task,
+        endpoint,
+        token,
+    ):
+        transport = HttpDaemonTransport(endpoint=endpoint, bearer_token=token)
+        request = EngineOperationRequest(
+            protocol_version=PROTOCOL_VERSION,
+            request_id="search-invalid-ticket",
+            operation=EngineOperation.SEARCH,
+            selector=ContextSelector(kind="explicit", value="context-a"),
+            payload=SearchRequest(),
+            compatibility_ticket="not-a-valid-ticket",
+        )
+
+        response = await transport.send(request)
+
+        assert isinstance(response, FailureResponse)
+        assert response.outcome.error.code == "compatibility_ticket_invalid"
         assert handler.calls == []
         await transport.close()
 
