@@ -15,6 +15,7 @@ import time
 from contextlib import contextmanager
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -2165,9 +2166,10 @@ def graph_export(
         )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
+        destination = _absolute_snapshot_path(file)
         manifest = run_engine_operation(
-            get_engine_client(pot).export_snapshot(
-                EngineExportSnapshotRequest(destination=file)
+            get_engine_client(pot_id).export_snapshot(
+                EngineExportSnapshotRequest(destination=destination)
             )
         )
         _emit_graph_result(
@@ -2198,20 +2200,19 @@ def graph_import(
         )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        rerun = f"potpie graph import {shlex.quote(file)}"
-        if pot:
-            rerun += f" --pot {shlex.quote(pot)}"
+        source = _absolute_snapshot_path(file)
+        rerun = f"potpie graph import {shlex.quote(source)} --pot {shlex.quote(pot_id)}"
         confirmation = _confirm_destructive_operation(
             yes=yes,
             prompt=(
-                f"Import snapshot '{file}' into context '{pot_id}'? "
+                f"Import snapshot '{source}' into context '{pot_id}'? "
                 "This can replace graph data."
             ),
             rerun_command=f"{rerun} --yes",
         )
         manifest = run_engine_operation(
-            get_engine_client(pot).import_snapshot(
-                EngineImportSnapshotRequest(source=file),
+            get_engine_client(pot_id).import_snapshot(
+                EngineImportSnapshotRequest(source=source),
                 confirmation=confirmation,
             )
         )
@@ -2258,8 +2259,7 @@ def graph_repair(
             rerun_parts.append("--entity-labels")
         if all_:
             rerun_parts.append("--all")
-        if pot:
-            rerun_parts.extend(("--pot", shlex.quote(pot)))
+        rerun_parts.extend(("--pot", shlex.quote(pot_id)))
         rerun_parts.append("--yes")
         confirmation = _confirm_destructive_operation(
             yes=yes,
@@ -2270,7 +2270,7 @@ def graph_repair(
             rerun_command=" ".join(rerun_parts),
         )
         report = run_engine_operation(
-            get_engine_client(pot).repair(
+            get_engine_client(pot_id).repair(
                 EngineRepairRequest(targets=tuple(targets)),
                 confirmation=confirmation,
             )
@@ -2280,6 +2280,12 @@ def graph_repair(
             {"targets": list(report.targets), "repaired": dict(report.repaired)},
             human=report.detail or f"repaired {dict(report.repaired)}",
         )
+
+
+def _absolute_snapshot_path(file: str) -> str:
+    """Resolve one CLI snapshot path before it crosses into the daemon."""
+
+    return str(Path(file).expanduser().resolve(strict=False))
 
 
 def _confirm_destructive_operation(

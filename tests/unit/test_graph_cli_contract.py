@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import re
 
 import pytest
@@ -426,7 +427,18 @@ class _Backend:
 
 class _Snapshot:
     def __init__(self) -> None:
+        self.export_calls: list[tuple[str, str]] = []
         self.import_calls: list[tuple[str, str]] = []
+
+    def export(self, *, pot_id: str, destination: str) -> SnapshotManifest:
+        self.export_calls.append((pot_id, destination))
+        return SnapshotManifest(
+            pot_id=pot_id,
+            location=destination,
+            format_version="test",
+            entity_count=3,
+            claim_count=7,
+        )
 
     def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
         self.import_calls.append((pot_id, source))
@@ -756,9 +768,19 @@ def test_graph_entity_search_result_includes_summary() -> None:
     assert payload["entities"][0]["summary"] == "Web frontend service."
 
 
-def test_graph_repair_accepts_entity_summaries_target() -> None:
+def test_graph_repair_accepts_entity_summaries_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     backend = _Backend()
     _common.set_runtime(_Host(_Graph(), backend=backend))
+    selected_pots: list[str | None] = []
+    original_get_engine_client = graph.get_engine_client
+
+    def get_engine_client(explicit_pot=None):
+        selected_pots.append(explicit_pot)
+        return original_get_engine_client(explicit_pot)
+
+    monkeypatch.setattr(graph, "get_engine_client", get_engine_client)
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -766,6 +788,7 @@ def test_graph_repair_accepts_entity_summaries_target() -> None:
     )
 
     assert result.exit_code == 0, result.output
+    assert selected_pots == ["p"]
     assert backend.analytics.calls == [("p", ("entity_summaries",))]
     assert "repaired 2 entity summaries" in result.output
 
@@ -858,15 +881,27 @@ def test_graph_destructive_commands_require_yes_in_json_mode(
     _assert_graph_envelope(emitted, command, ok=False)
     assert emitted["error"]["code"] == "destructive_confirmation_required"
     assert "--yes" in emitted["recommended_next_action"]
+    assert "--pot p" in emitted["recommended_next_action"]
     if isinstance(backend, _SnapshotBackend):
         assert backend.snapshot.import_calls == []
     else:
         assert backend.analytics.calls == []
 
 
-def test_graph_import_yes_dispatches_without_prompt() -> None:
+def test_graph_import_yes_dispatches_without_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     backend = _SnapshotBackend()
     _common.set_runtime(_Host(_Graph(), backend=backend))
+    selected_pots: list[str | None] = []
+    original_get_engine_client = graph.get_engine_client
+
+    def get_engine_client(explicit_pot=None):
+        selected_pots.append(explicit_pot)
+        return original_get_engine_client(explicit_pot)
+
+    monkeypatch.setattr(graph, "get_engine_client", get_engine_client)
+    expected_source = str(Path("snapshot.json").resolve())
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -875,8 +910,32 @@ def test_graph_import_yes_dispatches_without_prompt() -> None:
 
     assert result.exit_code == 0, result.output
     assert "Import snapshot" not in _plain_cli_output(result.output)
-    assert backend.snapshot.import_calls == [("p", "snapshot.json")]
+    assert selected_pots == ["p"]
+    assert backend.snapshot.import_calls == [("p", expected_source)]
     assert "imported 7 claims" in result.output
+
+
+def test_graph_export_dispatches_absolute_path_to_resolved_pot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _SnapshotBackend()
+    _common.set_runtime(_Host(_Graph(), backend=backend))
+    selected_pots: list[str | None] = []
+    original_get_engine_client = graph.get_engine_client
+
+    def get_engine_client(explicit_pot=None):
+        selected_pots.append(explicit_pot)
+        return original_get_engine_client(explicit_pot)
+
+    monkeypatch.setattr(graph, "get_engine_client", get_engine_client)
+    expected_destination = str(Path("backup.json").resolve())
+
+    result = CliRunner().invoke(graph.graph_app, ["export", "backup.json"])
+
+    assert result.exit_code == 0, result.output
+    assert selected_pots == ["p"]
+    assert backend.snapshot.export_calls == [("p", expected_destination)]
+    assert "exported 7 claims" in result.output
 
 
 @pytest.mark.parametrize(
