@@ -272,9 +272,14 @@ def test_canonical_daemon_uses_private_discovery_and_separate_credential(
         status = daemon.status()
         assert status["ready"] is True
         ui_redirect = httpx.get(f"{status['url']}/ui", timeout=3.0)
-        assert ui_redirect.status_code == 307
-        assert ui_redirect.headers["location"] == f"{status['url']}/ui/"
-        assert httpx.get(f"{status['url']}/ui/", timeout=3.0).status_code == 200
+        if ui_redirect.status_code == 307:
+            assert ui_redirect.headers["location"] == f"{status['url']}/ui/"
+            assert httpx.get(f"{status['url']}/ui/", timeout=3.0).status_code == 200
+        else:
+            # A clean source checkout has no ignored frontend/dist bundle and
+            # intentionally serves the build-instructions placeholder at /ui.
+            assert ui_redirect.status_code == 200
+            assert "UI bundle has not been built" in ui_redirect.text
         assert httpx.post(f"{status['url']}/rpc", timeout=3.0).status_code == 404
         assert httpx.post(f"{status['url']}/attr", timeout=3.0).status_code == 404
     finally:
