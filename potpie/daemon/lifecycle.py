@@ -297,16 +297,14 @@ class Daemon:
             discovery, observer = connection
             expected_instance_id = discovery.instance_id
             controller = self._controller_for_existing(pid, observer=observer)
-        owns_process = controller.owns_process
         outcome = self._run(controller.stop())
         if isinstance(outcome, Failure):
             self._controller = None
             raise DaemonStopError(outcome.error)
-        if owns_process:
-            self._cleanup_runtime_records_under_lock(
-                expected_instance_id=expected_instance_id,
-                expected_pid=pid,
-            )
+        self._cleanup_runtime_records_under_lock(
+            expected_instance_id=expected_instance_id,
+            expected_pid=pid,
+        )
         self._controller = None
         detail = {
             "already_stopped": "daemon not running",

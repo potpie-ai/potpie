@@ -203,6 +203,7 @@ class _CachedEngine:
     resources: tuple[HostResource, ...]
     ownership: LeaseOwnership
     active_leases: int = 0
+    engine_closed: bool = False
 
 
 class AuthorizedContextLease:
@@ -243,8 +244,16 @@ class AuthorizedContextLease:
         async with self._release_lock:
             if self._released:
                 return
+            release_task = asyncio.create_task(
+                self._manager._release_lease(self._cache_key)
+            )
+            try:
+                await asyncio.shield(release_task)
+            except asyncio.CancelledError:
+                await release_task
+                self._released = True
+                raise
             self._released = True
-            await self._manager._release_lease(self._cache_key)
 
 
 class ContextResourceManager:
@@ -393,29 +402,34 @@ class ContextResourceManager:
             failures: list[dict[str, str]] = []
             for cache_key in reversed(self._creation_order):
                 cached = self._cache[cache_key]
-                try:
-                    closed = await cached.engine.close()
-                except Exception as exc:  # host cleanup must still be attempted
-                    failures.append(
-                        {
-                            "kind": "engine",
-                            "context": cached.context.value,
-                            "error_type": type(exc).__name__,
-                        }
-                    )
-                else:
-                    if isinstance(closed, Failure):
+                if not cached.engine_closed:
+                    try:
+                        closed = await cached.engine.close()
+                    except Exception as exc:  # host cleanup must still be attempted
                         failures.append(
                             {
                                 "kind": "engine",
                                 "context": cached.context.value,
-                                "code": closed.error.code,
+                                "error_type": type(exc).__name__,
                             }
                         )
+                    else:
+                        if isinstance(closed, Failure):
+                            failures.append(
+                                {
+                                    "kind": "engine",
+                                    "context": cached.context.value,
+                                    "code": closed.error.code,
+                                }
+                            )
+                        else:
+                            cached.engine_closed = True
+                pending_resources: list[HostResource] = []
                 for resource in reversed(cached.resources):
                     try:
                         await resource.release()
                     except Exception as exc:  # every resource still gets an attempt
+                        pending_resources.append(resource)
                         failures.append(
                             {
                                 "kind": "resource",
@@ -423,12 +437,21 @@ class ContextResourceManager:
                                 "error_type": type(exc).__name__,
                             }
                         )
+                cached.resources = tuple(reversed(pending_resources))
 
             async with self._state:
-                self._cache.clear()
-                self._creation_order.clear()
-                self._key_locks.clear()
-                self._shutdown_complete = True
+                completed_keys = {
+                    key
+                    for key, cached in self._cache.items()
+                    if cached.engine_closed and not cached.resources
+                }
+                for key in completed_keys:
+                    del self._cache[key]
+                    self._key_locks.pop(key, None)
+                self._creation_order = [
+                    key for key in self._creation_order if key not in completed_keys
+                ]
+                self._shutdown_complete = not self._cache
                 self._state.notify_all()
 
             if failures:

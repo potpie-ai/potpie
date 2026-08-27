@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 
 import pytest
@@ -216,6 +217,62 @@ async def test_repeated_close_retries_only_pending_cleanup_failures() -> None:
     assert isinstance(second, Success)
     assert isinstance(third, Success)
     assert attempts == {"flaky": 2, "stable": 1}
+
+
+async def test_close_drains_active_operations_before_releasing_resources() -> None:
+    entered = asyncio.Event()
+    proceed = asyncio.Event()
+    events: list[str] = []
+
+    class _BlockingOperations(_Operations):
+        async def resolve(self, context, request):
+            events.append("operation-entered")
+            entered.set()
+            await proceed.wait()
+            events.append("operation-finished")
+            return await super().resolve(context, request)
+
+    async def close_resource() -> None:
+        events.append("resource-closed")
+
+    operations = _BlockingOperations()
+    created = await create_engine(
+        context=ContextIdentity("context-123"),
+        config=EngineConfig(values={"profile": "test"}),
+        dependencies=EngineDependencies(
+            context=operations,
+            graph=operations,
+            workbench=operations,
+            ingestion=operations,
+            nudge=operations,
+            resources=(EngineResource("owned", "transferred", close_resource),),
+        ),
+    )
+    assert isinstance(created, Success)
+    engine = created.value
+
+    operation_task = asyncio.create_task(
+        engine.resolve(ResolveRequest(task="finish before close"))
+    )
+    await entered.wait()
+    close_task = asyncio.create_task(engine.close())
+    await asyncio.sleep(0)
+
+    rejected = await engine.resolve(ResolveRequest(task="too late"))
+    assert isinstance(rejected, Failure)
+    assert rejected.error.code == "engine_closed"
+    assert not close_task.done()
+
+    proceed.set()
+    operation, closed = await asyncio.gather(operation_task, close_task)
+
+    assert isinstance(operation, Success)
+    assert isinstance(closed, Success)
+    assert events == [
+        "operation-entered",
+        "operation-finished",
+        "resource-closed",
+    ]
 
 
 async def test_closed_engine_returns_lifecycle_failure() -> None:

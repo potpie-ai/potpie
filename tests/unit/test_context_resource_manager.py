@@ -792,7 +792,74 @@ async def test_engine_cleanup_exception_does_not_skip_host_resource_release() ->
         "release:context-a:second",
         "release:context-a:first",
     ]
-    assert isinstance(await manager.shutdown(), Success)
+    assert manager.cached_engine_count == 1
+    factory.engines[0].close_failure = None
+
+    retried = await manager.shutdown()
+
+    assert isinstance(retried, Success)
+    assert manager.cached_engine_count == 0
+    assert cleanup_events == [
+        "close:context-a",
+        "release:context-a:second",
+        "release:context-a:first",
+        "close:context-a",
+    ]
+
+
+@pytest.mark.anyio
+async def test_shutdown_retries_only_failed_host_resources() -> None:
+    events: list[Event] = []
+    cleanup_events: list[str] = []
+    composer = _Composer(
+        events,
+        cleanup_events,
+        release_failures={"second"},
+    )
+    manager, _, _ = _manager(
+        events,
+        cleanup_events=cleanup_events,
+        composer=composer,
+    )
+    acquired = await manager.acquire(_request())
+    assert isinstance(acquired, Success)
+    await acquired.value.release()
+
+    first = await manager.shutdown()
+    composer.release_failures.clear()
+    second = await manager.shutdown()
+
+    assert isinstance(first, Failure)
+    assert isinstance(second, Success)
+    assert cleanup_events == [
+        "close:context-a",
+        "release:context-a:second",
+        "release:context-a:first",
+        "release:context-a:second",
+    ]
+
+
+@pytest.mark.anyio
+async def test_cancelled_release_finishes_lease_decrement_before_marking_released() -> (
+    None
+):
+    events: list[Event] = []
+    manager, _, _ = _manager(events)
+    acquired = await manager.acquire(_request())
+    assert isinstance(acquired, Success)
+    lease = acquired.value
+
+    async with manager._state:
+        release_task = asyncio.create_task(lease.release())
+        await asyncio.sleep(0)
+        release_task.cancel()
+        assert not lease.is_released
+
+    with pytest.raises(asyncio.CancelledError):
+        await release_task
+
+    assert lease.is_released
+    assert isinstance(await asyncio.wait_for(manager.shutdown(), timeout=1), Success)
 
 
 @pytest.mark.anyio

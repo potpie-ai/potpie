@@ -278,6 +278,8 @@ class ContextEngine:
         self._dependencies = dependencies
         self._closed = False
         self._close_lock = asyncio.Lock()
+        self._lifecycle = asyncio.Condition()
+        self._active_operations = 0
         self._pending_close_resources = tuple(
             resource
             for resource in reversed(dependencies.resources)
@@ -308,7 +310,9 @@ class ContextEngine:
         async with self._close_lock:
             if self._closed and not self._pending_close_resources:
                 return Success(None)
-            self._closed = True
+            async with self._lifecycle:
+                self._closed = True
+                await self._lifecycle.wait_for(lambda: self._active_operations == 0)
             failures: list[dict[str, str]] = []
             pending: list[EngineResource] = []
             for resource in self._pending_close_resources:
@@ -339,31 +343,38 @@ class ContextEngine:
         handler: Operation[RequestT, ResultT],
         request: RequestT,
     ) -> Outcome[ResultT]:
-        if self._closed:
-            return Failure(
-                EngineLifecycleError(
-                    code="engine_closed",
-                    message="the ContextEngine is closed",
+        async with self._lifecycle:
+            if self._closed:
+                return Failure(
+                    EngineLifecycleError(
+                        code="engine_closed",
+                        message="the ContextEngine is closed",
+                    )
                 )
-            )
+            self._active_operations += 1
         try:
-            result = await handler(self._context, request)
-        except Exception as exc:
-            return Failure(
-                DependencyError(
-                    code="engine_dependency_failed",
-                    message="a Context Engine dependency failed",
-                    details={
-                        "operation": operation,
-                        "error_type": type(exc).__name__,
-                    },
-                    recommended_next_action="inspect dependency and runtime logs",
-                    retry_posture="unknown",
+            try:
+                result = await handler(self._context, request)
+            except Exception as exc:
+                return Failure(
+                    DependencyError(
+                        code="engine_dependency_failed",
+                        message="a Context Engine dependency failed",
+                        details={
+                            "operation": operation,
+                            "error_type": type(exc).__name__,
+                        },
+                        recommended_next_action="inspect dependency and runtime logs",
+                        retry_posture="unknown",
+                    )
                 )
-            )
-        if isinstance(result, (Success, Failure)):
-            return result
-        return Success(result)
+            if isinstance(result, (Success, Failure)):
+                return result
+            return Success(result)
+        finally:
+            async with self._lifecycle:
+                self._active_operations -= 1
+                self._lifecycle.notify_all()
 
     async def resolve(self, request: ResolveRequest) -> Outcome[ResolveResult]:
         return await self._invoke(
