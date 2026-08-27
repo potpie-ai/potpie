@@ -9,7 +9,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from potpie.cli import main as host_cli
-from potpie.cli.commands import _common, bootstrap
+from potpie.cli.commands import _common, bootstrap, daemon as daemon_commands
 from potpie.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
 from potpie.daemon.lifecycle import DaemonStopError
 from potpie.runtime.resource_manager import ResourceLifecycleError
@@ -69,9 +69,11 @@ class _FakeHost:
     )
 
 
-def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
+def test_daemon_lifecycle_commands_use_detached_daemon(
+    tmp_path: Path, monkeypatch
+) -> None:
     daemon = _FakeDaemon(home=tmp_path)
-    _common.set_runtime(_FakeHost(daemon=daemon))
+    monkeypatch.setattr(daemon_commands, "Daemon", lambda **_kwargs: daemon)
 
     start = runner.invoke(host_cli.app, ["--json", "daemon", "start"])
     status = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
@@ -87,7 +89,28 @@ def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
     assert daemon.calls == ["start", "status", "stop", "start", "stop"]
 
 
-def test_daemon_stop_refusal_is_a_typed_nonzero_cli_failure(tmp_path: Path) -> None:
+def test_daemon_recovery_does_not_compose_root_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    daemon = _FakeDaemon(home=tmp_path)
+    monkeypatch.setattr(daemon_commands, "Daemon", lambda **_kwargs: daemon)
+    monkeypatch.setattr(
+        _common,
+        "get_root_runtime",
+        lambda: (_ for _ in ()).throw(RuntimeError("invalid graph backend")),
+    )
+
+    status = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
+    stop = runner.invoke(host_cli.app, ["--json", "daemon", "stop"])
+
+    assert status.exit_code == 0, status.stdout
+    assert stop.exit_code == 0, stop.stdout
+    assert daemon.calls == ["status", "stop"]
+
+
+def test_daemon_stop_refusal_is_a_typed_nonzero_cli_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
     daemon = _FakeDaemon(home=tmp_path)
 
     def refuse_stop() -> dict[str, str]:
@@ -101,7 +124,7 @@ def test_daemon_stop_refusal_is_a_typed_nonzero_cli_failure(tmp_path: Path) -> N
         )
 
     daemon.stop = refuse_stop  # type: ignore[method-assign]
-    _common.set_runtime(_FakeHost(daemon=daemon))
+    monkeypatch.setattr(daemon_commands, "Daemon", lambda **_kwargs: daemon)
 
     result = runner.invoke(host_cli.app, ["--json", "daemon", "stop"])
 

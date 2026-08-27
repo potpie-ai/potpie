@@ -11,7 +11,6 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
-    get_daemon_service,
 )
 from potpie.daemon.lifecycle import Daemon, DaemonStartError, DaemonStopError
 
@@ -19,10 +18,7 @@ daemon_app = typer.Typer(help="Local daemon lifecycle (recovery tools).")
 
 
 def _detached_daemon() -> Daemon:
-    daemon = get_daemon_service()
-    if not daemon.in_process:
-        return daemon
-    return Daemon(home=daemon.home, in_process=False)
+    return Daemon(in_process=False)
 
 
 def _start(daemon: Daemon) -> dict[str, int | str]:

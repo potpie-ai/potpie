@@ -12,6 +12,9 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
+    locked_json_store,
+)
 from potpie_context_engine.adapters.outbound.local_paths import default_home
 from potpie_context_engine.domain.ports.ledger.client import LedgerCursor
 
@@ -33,8 +36,11 @@ class LocalLedgerCursorStore:
 
     def _save(self, data: dict[str, str]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
-        with open(self._path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
+        temporary = self._path.with_suffix(self._path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(data, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        temporary.replace(self._path)
 
     def get(self, *, pot_id: str, source_id: str) -> LedgerCursor | None:
         token = self._load().get(f"{pot_id}:{source_id}")
@@ -45,9 +51,10 @@ class LocalLedgerCursorStore:
         )
 
     def set(self, *, pot_id: str, cursor: LedgerCursor) -> None:
-        data = self._load()
-        data[f"{pot_id}:{cursor.source_id}"] = cursor.token or ""
-        self._save(data)
+        with locked_json_store(self._path):
+            data = self._load()
+            data[f"{pot_id}:{cursor.source_id}"] = cursor.token or ""
+            self._save(data)
 
 
 __all__ = ["LocalLedgerCursorStore"]
