@@ -6,13 +6,13 @@ record_status: final
 spec_id: SPEC-CLI
 spec_revision: 1
 spec_ref: 047cbe067c9c726e7e14f066675453372d8a8406
-implementation_ref: 1db96d660b87d5cf50398a37318e1dbbf704610e
+implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
 performed_by: agent:codex
-performed_at: "2026-08-27T11:20:28+05:30"
+performed_at: "2026-08-27T12:35:42+05:30"
 result: passed
 previous_record: null
 previous_record_id: CONF-CLI
-previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_ref: f8ed92a5d8e64150fb548b9e589ffcf5ed3807d2
 previous_record_path: spec/conformance/cli.md
 ---
 
@@ -21,7 +21,10 @@ previous_record_path: spec/conformance/cli.md
 ## Scope
 
 This final record version verifies every active CLI behavior, `CLI-001`
-through `CLI-033`, after the internal capability relocation.
+through `CLI-033`, after the PR-review remediation. Snapshot capability is
+decided by the executing runtime, destructive non-TTY calls fail before stdin
+or dispatch, `graph describe` is context-free, and `pot reset` is a typed
+Context Engine operation.
 
 ## Behavior Trace
 
@@ -35,7 +38,7 @@ through `CLI-033`, after the internal capability relocation.
 | CLI-006 | complete | passed | CLI2-E1, CLI2-E3 | CLI owns no domain semantics. |
 | CLI-007 | complete | passed | CLI2-E2 | Lower boundaries authenticate and authorize. |
 | CLI-008 | complete | passed | CLI2-E2 | Presentation and prompting remain explicit. |
-| CLI-009 | complete | passed | CLI2-E2 | Destructive actions require confirmation. |
+| CLI-009 | complete | passed | CLI2-E2, CLI2-E5 | Destructive actions require confirmation before dispatch. |
 | CLI-010 | complete | passed | CLI2-E2 | Confirmation remains request-bound intent. |
 | CLI-011 | complete | passed | CLI2-E2 | Human decline remains typed cancellation. |
 | CLI-012 | complete | passed | CLI2-E2 | Unknown lower outcomes are not cancellation. |
@@ -43,7 +46,7 @@ through `CLI-033`, after the internal capability relocation.
 | CLI-014 | complete | passed | CLI2-E2 | Machine mode never prompts. |
 | CLI-015 | complete | passed | CLI2-E2 | Machine output remains one JSON document. |
 | CLI-016 | complete | passed | CLI2-E2 | Machine stdout remains uncontaminated. |
-| CLI-017 | complete | passed | CLI2-E2 | Noninteractive execution does not block. |
+| CLI-017 | complete | passed | CLI2-E2, CLI2-E5 | Noninteractive execution rejects missing confirmation before reading stdin. |
 | CLI-018 | complete | passed | CLI2-E2 | Missing machine intent fails pre-dispatch. |
 | CLI-019 | complete | passed | CLI2-E2 | Successful commands exit zero. |
 | CLI-020 | complete | passed | CLI2-E2 | Typed codes drive exit mapping. |
@@ -65,18 +68,16 @@ through `CLI-033`, after the internal capability relocation.
 
 - **CLI2-E1 — pinned source review:** root CLI command, formatting, bootstrap,
   setup, and typed client paths at the implementation ref.
-- **CLI2-E2 — complete root lane with the unrelated UI redirect assertion
-  deselected:** `uv run pytest -q -k
-  'not canonical_daemon_uses_private_discovery_and_separate_credential'`;
-  result: `1424 passed, 4 skipped, 1 deselected in 123.55s`.
+- **CLI2-E2 — complete root lane:** `uv run pytest tests -m "not
+  premerge_journey" -q`; result: `1446 passed, 4 skipped, 1 deselected`.
 - **CLI2-E3 — permanent architecture and process gates:** the characterization
   lane reported `31 passed`, including unchanged command inventory, installed
   metadata entrypoints, and legacy-boundary absence.
 - **CLI2-E4 — isolated entrypoint smoke:** the fresh root installation resolved
   `potpie` to `potpie.cli.main:main` and imported `potpie.cli.main`.
-- **CLI2-E5 — daemon-stop presentation lane:** CLI and detached-daemon tests
-  verified nonzero structured output for unsafe attached-stop refusal while
-  healthy authenticated stop remains successful.
+- **CLI2-E5 — focused CLI boundary lane:** reset/import/repair confirmation,
+  backend-owned snapshot capability, context-free describe, typed reset, daemon
+  stop, and unknown-outcome tests passed.
 
 ## Related Contracts Checked
 

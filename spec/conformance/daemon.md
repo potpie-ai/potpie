@@ -6,13 +6,13 @@ record_status: final
 spec_id: SPEC-DAEMON
 spec_revision: 2
 spec_ref: e73ebdbd6f0960e063344468051f84e37174697c
-implementation_ref: 1db96d660b87d5cf50398a37318e1dbbf704610e
+implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
 performed_by: agent:codex
-performed_at: "2026-08-27T11:20:28+05:30"
+performed_at: "2026-08-27T12:35:42+05:30"
 result: passed
 previous_record: null
 previous_record_id: CONF-DAEMON
-previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_ref: f8ed92a5d8e64150fb548b9e589ffcf5ed3807d2
 previous_record_path: spec/conformance/daemon.md
 ---
 
@@ -21,7 +21,10 @@ previous_record_path: spec/conformance/daemon.md
 ## Scope
 
 This final record version verifies `DAEMON-001` through `DAEMON-056` at the
-fail-closed attached-process shutdown implementation, including the two
+complete PR-review remediation implementation: fail-closed shutdown, serialized
+boot publication, per-client protocol compatibility, bounded handshakes, typed
+transport failures, shared runtime coordination, and exact-record cleanup after
+authenticated attached shutdown. It includes the two
 verified-not-applicable compatibility-adapter conditions.
 
 ## Behavior Trace
@@ -33,22 +36,22 @@ verified-not-applicable compatibility-adapter conditions.
 | DAEMON-003 | complete | passed | D2-E1, D2-E2 | Runtime composes one Resource Manager. |
 | DAEMON-004 | complete | passed | D2-E1, D2-E2 | Typed operation catalog remains finite. |
 | DAEMON-005 | complete | passed | D2-E2, D2-E3 | Reflection and Python-class wire identity remain absent. |
-| DAEMON-006 | complete | passed | D2-E1, D2-E2 | Handlers acquire leases before engine calls. |
+| DAEMON-006 | complete | passed | D2-E1, D2-E2 | Context-required handlers acquire leases before engine calls; context-free metadata bypasses engine execution. |
 | DAEMON-007 | complete | passed | D2-E2 | Boot identity remains unique. |
 | DAEMON-008 | complete | passed | D2-E2 | Ownership lock spans runtime life. |
 | DAEMON-009 | complete | passed | D2-E2, D2-E3 | One discovery writer remains. |
 | DAEMON-010 | complete | passed | D2-E2 | Discovery alone is not readiness. |
-| DAEMON-011 | complete | passed | D2-E2 | Readiness requires authenticated handshake. |
+| DAEMON-011 | complete | passed | D2-E2, D2-E5 | Readiness requires a deadline-bounded authenticated handshake. |
 | DAEMON-012 | complete | passed | D2-E2 | PID remains diagnostic. |
 | DAEMON-013 | complete | passed | D2-E2 | Stale discovery recovers safely. |
 | DAEMON-014 | complete | passed | D2-E2 | Lifecycle states remain explicit. |
-| DAEMON-015 | complete | passed | D2-E2 | Owned discovery is removed on shutdown. |
+| DAEMON-015 | complete | passed | D2-E2, D2-E5 | Owned discovery is removed after owned or authenticated attached shutdown. |
 | DAEMON-016 | complete | passed | D2-E2 | Authentication precedes protected dispatch. |
 | DAEMON-017 | complete | passed | D2-E2 | Discovery confers no credential. |
 | DAEMON-018 | complete | passed | D2-E2, D2-E3 | Reflective RPC mutex remains absent. |
 | DAEMON-019 | complete | passed | D2-E2 | Safety and conflict keys coordinate operations. |
 | DAEMON-020 | complete | passed | D2-E2 | Safe concurrency remains available. |
-| DAEMON-021 | complete | passed | D2-E2 | Ambiguous mutations are not replayed. |
+| DAEMON-021 | complete | passed | D2-E2, D2-E5 | Dispatched or schema-invalid mutation outcomes are not replayed. |
 | DAEMON-022 | complete | passed | D2-E2 | Boundary errors remain distinct. |
 | DAEMON-023 | complete | passed | D2-E1, D2-E4 | Daemon owns no terminal presentation. |
 | DAEMON-024 | complete | passed | D2-E2 | Credentials and tracebacks remain redacted. |
@@ -68,7 +71,7 @@ verified-not-applicable compatibility-adapter conditions.
 | DAEMON-038 | complete | passed | D2-E2, D2-E3 | Legacy discovery remains absent. |
 | DAEMON-039 | not_applicable | passed | D2-E3 | No compatibility adapter exists. |
 | DAEMON-040 | complete | passed | D2-E2 | Handshake returns boot identity. |
-| DAEMON-041 | complete | passed | D2-E2 | Handshake enforces protocol compatibility. |
+| DAEMON-041 | complete | passed | D2-E2, D2-E5 | Handshake enforces recursive wire-catalog compatibility and returns a client-bound ticket. |
 | DAEMON-042 | complete | passed | D2-E2 | Handshake reports ready state. |
 | DAEMON-043 | complete | passed | D2-E2 | Handlers release leases on every outcome. |
 | DAEMON-044 | complete | passed | D2-E1, D2-E2 | Runtime stays foreground. |
@@ -90,19 +93,18 @@ verified-not-applicable compatibility-adapter conditions.
 - **D2-E1 — pinned source review:** daemon lifecycle/discovery/entrypoint and
   typed runtime controller/server/transport/protocol/client/operation modules
   at the implementation ref.
-- **D2-E2 — complete root lane with the unrelated UI redirect assertion
-  deselected:** `uv run pytest -q -k
-  'not canonical_daemon_uses_private_discovery_and_separate_credential'`;
-  result: `1424 passed, 4 skipped, 1 deselected in 123.55s`.
+- **D2-E2 — complete root lane:** `uv run pytest tests -m "not
+  premerge_journey" -q`; result: `1446 passed, 4 skipped, 1 deselected`. The
+  canonical `/ui` test verifies `307` to `/ui/` followed by `200`.
 - **D2-E3 — permanent architecture inventory:** the characterization lane
   reported `31 passed`, including the canonical-runtime and no-product-alias
   inventories.
 - **D2-E4 — isolated entrypoint smoke:** the fresh root installation resolved
   `potpie-daemon` to `potpie.daemon.__main__:main` and imported that module.
-- **D2-E5 — focused security and lifecycle lane:** controller, runtime,
-  detached-daemon E2E, CLI, ownership-race, and seam tests reported `39 passed,
-  1 deselected`; independent security re-review found no remaining attached
-  signal path or runtime-record replacement race.
+- **D2-E5 — focused protocol, security, and lifecycle lanes:** controller,
+  runtime client/codec/transport, detached-daemon E2E, ownership-race,
+  compatibility-ticket, malformed-response, handshake-timeout, and coordination
+  tests passed at the implementation ref.
 
 ## Related Contracts Checked
 
@@ -117,10 +119,7 @@ verified-not-applicable compatibility-adapter conditions.
 ## Known Gaps
 
 None for applicable active behaviors. `DAEMON-039` and `DAEMON-049` are
-verified not applicable because no adapter or alternate runtime remains. The
-deselected test's failing assertion expects HTTP `200` from `/ui` while the
-static UI route returns its normal `307`; that presentation assertion is
-outside the Daemon revision-2 behavior scope.
+verified not applicable because no adapter or alternate runtime remains.
 
 ## Aggregate Result
 

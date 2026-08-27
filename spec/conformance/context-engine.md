@@ -6,14 +6,14 @@ record_status: final
 spec_id: SPEC-CONTEXT-ENGINE
 spec_revision: 1
 spec_ref: 047cbe067c9c726e7e14f066675453372d8a8406
-implementation_ref: a0b52654f6fed50ec790cc2a72ccd581611ed3be
+implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
 performed_by: agent:codex
-performed_at: "2026-08-24T05:20:34Z"
+performed_at: "2026-08-27T12:35:42+05:30"
 result: passed
 previous_record: null
-previous_record_id: CONF-CONTEXT-ENGINE-2026-08-24-01
-previous_record_ref: 3e5edfd584aea53682720c3684e6fd78646fa1b3
-previous_record_path: spec/conformance/context-engine-2026-08-24.md
+previous_record_id: CONF-CONTEXT-ENGINE
+previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_path: spec/conformance/context-engine.md
 ---
 
 # Context Engine Conformance Record
@@ -21,9 +21,10 @@ previous_record_path: spec/conformance/context-engine-2026-08-24.md
 ## Scope
 
 This final record version verifies every active behavior, `CE-001` through
-`CE-034`, after the root Potpie capability relocation. It pins the unchanged
-accepted Context Engine contract and the capability-refactor implementation
-commit.
+`CE-034` after the PR-review remediation. It pins the unchanged accepted
+Context Engine contract and verifies typed reset execution, retryable unresolved
+cleanup, active-operation draining before resource release, and validation
+inside the domain boundary.
 
 ## Behavior Trace
 
@@ -38,14 +39,14 @@ commit.
 | CE-007 | complete | passed | CE2-E2 | Request models reject context selectors. |
 | CE-008 | complete | passed | CE2-E2 | Different identities require different instances. |
 | CE-009 | complete | passed | CE2-E2 | Context-bound instances remain isolated. |
-| CE-010 | complete | passed | CE2-E2 | Close remains idempotent. |
+| CE-010 | complete | passed | CE2-E2 | Close rejects new work, drains admitted operations, and retries only unresolved cleanup. |
 | CE-011 | complete | passed | CE2-E1, CE2-E2 | Domain semantics remain engine-owned. |
 | CE-012 | complete | passed | CE2-E1, CE2-E2 | Outcomes remain typed and transport-neutral. |
 | CE-013 | complete | passed | CE2-E1, CE2-E3 | No terminal presentation boundary exists. |
 | CE-014 | complete | passed | CE2-E1, CE2-E3 | Caller authentication and root authorization remain absent. |
 | CE-015 | complete | passed | CE2-E1, CE2-E2 | Host provisioning remains explicit. |
 | CE-016 | complete | passed | CE2-E1, CE2-E2 | Engine adapters implement engine ports. |
-| CE-017 | complete | passed | CE2-E1, CE2-E2 | Destructive operations remain explicit. |
+| CE-017 | complete | passed | CE2-E1, CE2-E2 | Typed context reset remains explicitly destructive. |
 | CE-018 | complete | passed | CE2-E1, CE2-E3 | No public extension-registration contract exists. |
 | CE-019 | complete | passed | CE2-E2 | Full engine regressions preserve parsing behavior. |
 | CE-020 | complete | passed | CE2-E1, CE2-E2 | No dynamic dispatch or service locator is exposed. |
@@ -71,7 +72,7 @@ commit.
   `potpie/context-engine/src/potpie_context_engine` at the implementation ref.
 - **CE2-E2 — complete independent engine lane:** from `potpie/context-engine`,
   `uv run --project . pytest tests -m "not premerge_journey"`; result:
-  `1148 passed, 32 skipped, 6 warnings in 105.53s`.
+  `1152 passed, 32 skipped, 6 warnings in 83.29s`.
 - **CE2-E3 — isolated distribution:** root and Context Engine wheels and sdists
   built; the engine wheel installed into a fresh environment; its public
   package and `ContextEngine` imported while `find_spec("potpie")` returned
@@ -92,7 +93,7 @@ commit.
 ## Known Gaps
 
 None for the 34 active behaviors. The 32 skipped tests require external
-integration services and do not cover obligations introduced by this refactor.
+integration services and do not cover obligations introduced by this change.
 
 ## Aggregate Result
 

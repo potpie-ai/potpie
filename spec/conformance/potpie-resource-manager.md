@@ -6,14 +6,14 @@ record_status: final
 spec_id: SPEC-POTPIE-RESOURCE-MANAGER
 spec_revision: 2
 spec_ref: a8c03337f3568232b35851dc2c86d128f7d23c0e
-implementation_ref: a0b52654f6fed50ec790cc2a72ccd581611ed3be
+implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
 performed_by: agent:codex
-performed_at: "2026-08-24T05:20:34Z"
+performed_at: "2026-08-27T12:35:42+05:30"
 result: passed
 previous_record: null
-previous_record_id: CONF-POTPIE-RESOURCE-MANAGER-2026-08-24-01
-previous_record_ref: 3e5edfd584aea53682720c3684e6fd78646fa1b3
-previous_record_path: spec/conformance/potpie-resource-manager-2026-08-24.md
+previous_record_id: CONF-POTPIE-RESOURCE-MANAGER
+previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_path: spec/conformance/potpie-resource-manager.md
 ---
 
 # Potpie Resource Manager Conformance Record
@@ -22,7 +22,10 @@ previous_record_path: spec/conformance/potpie-resource-manager-2026-08-24.md
 
 This final record version verifies all 37 active revision-2 behaviors:
 `RM-001` through `RM-014` and `RM-017` through `RM-039`. Retired `RM-015` and
-`RM-016` remain lineage rather than current obligations.
+`RM-016` remain lineage rather than current obligations. This successor also
+verifies construction-failure cleanup, shared runtime coordination, keyed
+snapshot destinations, inbox serialization, cancelled-writer wakeups,
+retryable shutdown cleanup, and cancellation-safe lease accounting.
 
 ## Behavior Trace
 
@@ -38,9 +41,9 @@ This final record version verifies all 37 active revision-2 behaviors:
 | RM-008 | complete | passed | RM2-E1, RM2-E2 | Leases carry context-bound engines. |
 | RM-009 | complete | passed | RM2-E2 | Cached engines are not retargeted. |
 | RM-010 | complete | passed | RM2-E2 | Reuse keys retain identity and composition. |
-| RM-011 | complete | passed | RM2-E2 | Owned release remains idempotent. |
+| RM-011 | complete | passed | RM2-E2 | Owned release remains idempotent and cancellation-safe. |
 | RM-012 | complete | passed | RM2-E2 | Local and daemon paths share acquisition policy. |
-| RM-013 | complete | passed | RM2-E1, RM2-E2 | Coordination keys remain narrow. |
+| RM-013 | complete | passed | RM2-E1, RM2-E2 | Coordination keys match context and normalized resource conflict scopes. |
 | RM-014 | complete | passed | RM2-E2 | Unrelated contexts remain concurrent. |
 | RM-017 | complete | passed | RM2-E1, RM2-E3 | Manager owns no domain semantics. |
 | RM-018 | complete | passed | RM2-E1, RM2-E3 | Manager owns no presentation. |
@@ -50,8 +53,8 @@ This final record version verifies all 37 active revision-2 behaviors:
 | RM-022 | complete | passed | RM2-E1, RM2-E3 | Manager and lease never dispatch domain operations. |
 | RM-023 | complete | passed | RM2-E1, RM2-E3 | Generic dispatch remains absent. |
 | RM-024 | complete | passed | RM2-E1, RM2-E3 | Daemon transport remains external. |
-| RM-025 | complete | passed | RM2-E2 | Failed acquisition releases opened resources. |
-| RM-026 | complete | passed | RM2-E2 | Engine cleanup precedes host cleanup. |
+| RM-025 | complete | passed | RM2-E2 | Failed composition or engine construction releases opened resources. |
+| RM-026 | complete | passed | RM2-E2 | Engine cleanup precedes host cleanup and unresolved failures remain retryable. |
 | RM-027 | complete | passed | RM2-E2 | Borrowed cleanup remains host-owned. |
 | RM-028 | complete | passed | RM2-E2, RM2-E4 | Sensitive values remain redacted. |
 | RM-029 | complete | passed | RM2-E2 | Transferred resources have one cleanup owner. |
@@ -72,7 +75,7 @@ This final record version verifies all 37 active revision-2 behaviors:
   typed clients, coordinator, and runtime composition at the implementation ref.
 - **RM2-E2 — complete root lane:**
   `uv run pytest tests -m "not premerge_journey" -q`; result:
-  `1417 passed, 4 skipped, 1 deselected in 32.46s`.
+  `1446 passed, 4 skipped, 1 deselected`.
 - **RM2-E3 — permanent architecture gates:** the full characterization lane
   reported `31 passed`, including service-group separation and sole concrete
   runtime assembly.

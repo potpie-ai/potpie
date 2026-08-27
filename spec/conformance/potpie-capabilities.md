@@ -6,14 +6,14 @@ record_status: final
 spec_id: SPEC-POTPIE-CAPABILITIES
 spec_revision: 1
 spec_ref: b23b6cb9158e6b929f7d5f01c4dc0ca62a69f1df
-implementation_ref: a0b52654f6fed50ec790cc2a72ccd581611ed3be
+implementation_ref: a530fcc05de8080fd982ea2c3bf796c25cfd400f
 performed_by: agent:codex
-performed_at: "2026-08-24T05:20:34Z"
+performed_at: "2026-08-27T12:35:42+05:30"
 result: passed
 previous_record: null
-previous_record_id: CONF-POTPIE-CAPABILITIES-2026-08-24-01
-previous_record_ref: 3e5edfd584aea53682720c3684e6fd78646fa1b3
-previous_record_path: spec/conformance/potpie-capabilities-2026-08-24.md
+previous_record_id: CONF-POTPIE-CAPABILITIES
+previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_path: spec/conformance/potpie-capabilities.md
 ---
 
 # Potpie Capabilities Conformance Record
@@ -22,15 +22,16 @@ previous_record_path: spec/conformance/potpie-capabilities-2026-08-24.md
 
 This final record version verifies every active capability behavior,
 `PCAP-001` through `PCAP-012`, against the completed capability-first source
-layout and behavior-preservation evidence.
+layout and behavior-preservation evidence, including process-safe configuration
+and pot persistence and metadata-only pot services.
 
 ## Behavior Trace
 
 | Behavior ID | Implementation claim | Verification result | Evidence | Notes |
 |---|---|---|---|---|
 | PCAP-001 | complete | passed | PCAP-E1, PCAP-E2 | Root source is capability-owned with no generic umbrella. |
-| PCAP-002 | complete | passed | PCAP-E1, PCAP-E3 | Configuration owns root home resolution and persistence. |
-| PCAP-003 | complete | passed | PCAP-E1, PCAP-E3 | Pots own contracts, policy, defaults, and persistence. |
+| PCAP-002 | complete | passed | PCAP-E1, PCAP-E3 | Configuration owns root home resolution and process-safe persistence. |
+| PCAP-003 | complete | passed | PCAP-E1, PCAP-E3 | Pots own metadata, policy, defaults, and process-safe persistence; graph reset remains engine-owned. |
 | PCAP-004 | complete | passed | PCAP-E1, PCAP-E3 | Skills own catalog, validation, policy, and targets. |
 | PCAP-005 | complete | passed | PCAP-E1, PCAP-E3 | Setup owns orchestration and lifecycle seams. |
 | PCAP-006 | complete | passed | PCAP-E1, PCAP-E3 | Local identity extends the existing auth capability. |
@@ -53,8 +54,8 @@ layout and behavior-preservation evidence.
   service groups, package metadata, and independent package lanes; combined
   boundary result: `18 passed`.
 - **PCAP-E3 — behavior preservation:** the complete root suite reported
-  `1417 passed, 4 skipped, 1 deselected in 32.46s`; the independent Context
-  Engine suite reported `1148 passed, 32 skipped, 6 warnings in 105.53s`.
+  `1446 passed, 4 skipped, 1 deselected`; the independent Context Engine suite
+  reported `1152 passed, 32 skipped, 6 warnings`.
 - **PCAP-E4 — packaging and isolated imports:** both wheels and sdists built;
   root artifacts contain capability packages and no `potpie/product`; fresh
   engine-only and root environments passed isolation verification; installed
@@ -68,7 +69,7 @@ layout and behavior-preservation evidence.
 | SPEC-SYSTEM | 1 | 047cbe067c9c726e7e14f066675453372d8a8406 | passed |
 | SPEC-CONTEXT-ENGINE | 1 | 047cbe067c9c726e7e14f066675453372d8a8406 | passed |
 | SPEC-POTPIE-RESOURCE-MANAGER | 2 | a8c03337f3568232b35851dc2c86d128f7d23c0e | passed |
-| SPEC-DAEMON | 1 | 047cbe067c9c726e7e14f066675453372d8a8406 | passed |
+| SPEC-DAEMON | 2 | e73ebdbd6f0960e063344468051f84e37174697c | passed |
 | SPEC-CLI | 1 | 047cbe067c9c726e7e14f066675453372d8a8406 | passed |
 
 ## Known Gaps
