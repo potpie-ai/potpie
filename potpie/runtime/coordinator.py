@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from potpie.runtime.operations import OperationSpec, SafetyClass
@@ -54,6 +55,7 @@ class _ReadWriteLock:
                 self._writer = True
             finally:
                 self._waiting_writers -= 1
+                self._condition.notify_all()
         try:
             yield
         finally:
@@ -109,16 +111,42 @@ class OperationCoordinator:
         if spec.safety is SafetyClass.EXCLUSIVE_CONTEXT_MUTATION:
             return ((context_key, "write"),)
         if spec.safety is SafetyClass.EXCLUSIVE_RESOURCE_MUTATION:
-            resource_identity = ":".join(
-                str(getattr(request, field)) for field in spec.resource_identity_fields
+            return OperationCoordinator._context_and_resource_requirements(
+                spec=spec,
+                context_mode="write",
+                context_key=context_key,
+                request=request,
             )
-            resource_key = ConflictKey(
-                "resource", f"{spec.resource_type}:{resource_identity}"
+        if spec.safety is SafetyClass.SHARED_CONTEXT_READ_EXCLUSIVE_RESOURCE_WRITE:
+            return OperationCoordinator._context_and_resource_requirements(
+                spec=spec,
+                context_mode="read",
+                context_key=context_key,
+                request=request,
             )
-            return tuple(sorted(((context_key, "write"), (resource_key, "write"))))
         raise ValueError(
             f"{spec.operation.value} is not a context or resource operation"
         )
+
+    @staticmethod
+    def _context_and_resource_requirements(
+        *,
+        spec: OperationSpec,
+        context_mode: LockMode,
+        context_key: ConflictKey,
+        request: EngineRequest,
+    ) -> tuple[tuple[ConflictKey, LockMode], ...]:
+        values = []
+        for field in spec.resource_identity_fields:
+            value = str(getattr(request, field))
+            if spec.resource_type == "snapshot_destination":
+                value = str(Path(value).expanduser().resolve(strict=False))
+            values.append(value)
+        resource_identity = ":".join(values)
+        resource_key = ConflictKey(
+            "resource", f"{spec.resource_type}:{resource_identity}"
+        )
+        return tuple(sorted(((context_key, context_mode), (resource_key, "write"))))
 
 
 __all__ = ["ConflictKey", "OperationCoordinator"]

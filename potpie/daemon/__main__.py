@@ -58,7 +58,10 @@ async def _run() -> None:
     runtime = CanonicalDaemonRuntime(
         endpoint=endpoint,
         bearer_token=bearer_token,
-        operation_handler=TypedEngineOperationHandler(resource_manager),
+        operation_handler=TypedEngineOperationHandler(
+            resource_manager,
+            coordinator=composition.coordinator,
+        ),
         ownership_lock_path=home / "daemon.runtime.lock",
         instance_id=instance_id,
         shutdown_resources=resource_manager.shutdown,
@@ -72,6 +75,7 @@ async def _run() -> None:
         ),
         backend_profile=str(composition.root.backend.profile),
         ui_url=ui_url,
+        coordinator=composition.coordinator,
     )
     try:
         await _wait_for_ui_start(ui_server, ui_task)

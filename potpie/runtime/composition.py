@@ -8,6 +8,7 @@ from typing import Any
 
 from potpie.daemon.lifecycle import Daemon
 from potpie.runtime.local_engine import LocalEngineServices
+from potpie.runtime.coordinator import OperationCoordinator
 from potpie.runtime.root_services import (
     LedgerService,
     PotResourceService,
@@ -75,6 +76,7 @@ class LocalRuntimeComposition:
 
     root: RootRuntimeServices
     engine: LocalEngineServices
+    coordinator: OperationCoordinator
 
 
 def default_backend_profile() -> str:
@@ -187,6 +189,7 @@ def build_local_runtime(
                 backend=selected_backend,
                 nudge=nudge,
             ),
+            coordinator=OperationCoordinator(),
         )
 
 

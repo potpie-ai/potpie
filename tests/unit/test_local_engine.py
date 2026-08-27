@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from potpie.pots.contracts import PotInfo, SourceInfo
-from potpie.runtime import ContextSelector, LocalEngineClient
+from potpie.runtime import ContextSelector, LocalEngineClient, OperationCoordinator
 from potpie.runtime.local_engine import (
     LocalContextSelectorResolver,
     LocalEngineOperations,
@@ -98,6 +98,7 @@ async def test_local_client_executes_typed_search_against_bound_context() -> Non
         selector=ContextSelector(kind="explicit", value="selected"),
         authentication={"kind": "local_cli"},
         resource_manager=manager,
+        coordinator=OperationCoordinator(),
     )
 
     outcome = await client.search(

@@ -14,7 +14,11 @@ from potpie.runtime import (
     SafetyClass,
 )
 from potpie_context_engine import ContextIdentity
-from potpie_context_engine.requests import RecordRequest, SearchRequest
+from potpie_context_engine.requests import (
+    ExportSnapshotRequest,
+    RecordRequest,
+    SearchRequest,
+)
 
 
 @pytest.mark.anyio
@@ -178,3 +182,117 @@ async def test_daemon_lifecycle_controls_are_process_exclusive() -> None:
     release_first.set()
     await asyncio.gather(first_task, second_task)
     assert second_entered.is_set()
+
+
+@pytest.mark.anyio
+async def test_snapshot_exports_serialize_by_normalized_destination(tmp_path) -> None:
+    coordinator = OperationCoordinator()
+    spec = ENGINE_OPERATION_CATALOG[EngineOperation.EXPORT_SNAPSHOT]
+    destination = tmp_path / "snapshot.json"
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_entered = asyncio.Event()
+
+    async def first() -> None:
+        async with coordinator.coordinate(
+            spec=spec,
+            context=ContextIdentity("context-a"),
+            request=ExportSnapshotRequest(destination=str(destination)),
+        ):
+            first_entered.set()
+            await release_first.wait()
+
+    async def second() -> None:
+        equivalent = destination.parent / "." / destination.name
+        async with coordinator.coordinate(
+            spec=spec,
+            context=ContextIdentity("context-b"),
+            request=ExportSnapshotRequest(destination=str(equivalent)),
+        ):
+            second_entered.set()
+
+    first_task = asyncio.create_task(first())
+    await first_entered.wait()
+    second_task = asyncio.create_task(second())
+    await asyncio.sleep(0)
+
+    assert not second_entered.is_set()
+    release_first.set()
+    await asyncio.gather(first_task, second_task)
+    assert second_entered.is_set()
+
+
+@pytest.mark.anyio
+async def test_snapshot_exports_to_distinct_destinations_run_together(tmp_path) -> None:
+    coordinator = OperationCoordinator()
+    spec = ENGINE_OPERATION_CATALOG[EngineOperation.EXPORT_SNAPSHOT]
+    gate = asyncio.Event()
+    both_entered = asyncio.Event()
+    entered = 0
+
+    async def export(name: str) -> None:
+        nonlocal entered
+        async with coordinator.coordinate(
+            spec=spec,
+            context=ContextIdentity("context-a"),
+            request=ExportSnapshotRequest(destination=str(tmp_path / name)),
+        ):
+            entered += 1
+            if entered == 2:
+                both_entered.set()
+            await gate.wait()
+
+    first = asyncio.create_task(export("first.json"))
+    second = asyncio.create_task(export("second.json"))
+    await asyncio.wait_for(both_entered.wait(), timeout=1)
+    gate.set()
+    await asyncio.gather(first, second)
+
+
+@pytest.mark.anyio
+async def test_cancelling_queued_writer_wakes_waiting_reader() -> None:
+    coordinator = OperationCoordinator()
+    first_read_entered = asyncio.Event()
+    release_first_read = asyncio.Event()
+    second_read_entered = asyncio.Event()
+
+    async def first_read() -> None:
+        async with coordinator.coordinate(
+            spec=ENGINE_OPERATION_CATALOG[EngineOperation.SEARCH],
+            context=ContextIdentity("context-a"),
+            request=SearchRequest(),
+        ):
+            first_read_entered.set()
+            await release_first_read.wait()
+
+    async def write() -> None:
+        async with coordinator.coordinate(
+            spec=ENGINE_OPERATION_CATALOG[EngineOperation.RECORD],
+            context=ContextIdentity("context-a"),
+            request=RecordRequest(),
+        ):
+            raise AssertionError("cancelled writer must not enter")
+
+    async def second_read() -> None:
+        async with coordinator.coordinate(
+            spec=ENGINE_OPERATION_CATALOG[EngineOperation.SEARCH],
+            context=ContextIdentity("context-a"),
+            request=SearchRequest(),
+        ):
+            second_read_entered.set()
+
+    first_task = asyncio.create_task(first_read())
+    await first_read_entered.wait()
+    writer_task = asyncio.create_task(write())
+    await asyncio.sleep(0)
+    second_task = asyncio.create_task(second_read())
+    await asyncio.sleep(0)
+    assert not second_read_entered.is_set()
+
+    writer_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await writer_task
+    await asyncio.wait_for(second_read_entered.wait(), timeout=1)
+
+    release_first_read.set()
+    await asyncio.gather(first_task, second_task)

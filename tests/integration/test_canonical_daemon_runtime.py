@@ -22,6 +22,7 @@ from potpie.runtime import (
     EngineOperationRequest,
     FailureResponse,
     HttpDaemonTransport,
+    OperationCoordinator,
     ProtocolError,
     ResourceLifecycleError,
     RuntimeEndpoint,
@@ -80,6 +81,7 @@ async def _running_runtime(kind: str, tmp_path: Path, handler: _Handler):
         instance_id="instance-1",
         backend_profile="embedded",
         ui_url="http://127.0.0.1:8765",
+        coordinator=OperationCoordinator(),
     )
     await runtime.start()
     serve_task = asyncio.create_task(runtime.serve_until_shutdown())
@@ -493,6 +495,7 @@ async def test_shutdown_cleanup_failure_releases_runtime_ownership(
         instance_id="instance-1",
         shutdown_resources=failed_cleanup,
         before_ownership_release=cleanup_runtime_records,
+        coordinator=OperationCoordinator(),
     )
     await runtime.start()
     serve_task = asyncio.create_task(runtime.serve_until_shutdown())

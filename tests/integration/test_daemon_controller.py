@@ -27,7 +27,12 @@ _CHILD_RUNTIME = """
 import asyncio
 import os
 from pathlib import Path
-from potpie.runtime import CanonicalDaemonRuntime, RuntimeEndpoint, run_foreground
+from potpie.runtime import (
+    CanonicalDaemonRuntime,
+    OperationCoordinator,
+    RuntimeEndpoint,
+    run_foreground,
+)
 from potpie_context_engine import Success
 
 class Handler:
@@ -40,6 +45,7 @@ runtime = CanonicalDaemonRuntime(
     operation_handler=Handler(),
     ownership_lock_path=Path(os.environ["TEST_DAEMON_LOCK"]),
     instance_id=os.environ["TEST_DAEMON_INSTANCE"],
+    coordinator=OperationCoordinator(),
 )
 asyncio.run(run_foreground(runtime))
 """

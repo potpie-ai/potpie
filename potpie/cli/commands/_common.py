@@ -312,10 +312,20 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
         manager = build_local_resource_manager(engine_services)
         _state["engine_manager"] = manager
         _state["engine_runtime"] = runtime
+        if not isinstance(runtime, LocalRuntimeComposition):
+            from potpie.runtime import OperationCoordinator
+
+            _state["engine_coordinator"] = OperationCoordinator()
+    coordinator = (
+        runtime.coordinator
+        if isinstance(runtime, LocalRuntimeComposition)
+        else _state["engine_coordinator"]
+    )
     return LocalEngineClient(
         selector=selector,
         authentication={"kind": "local_cli"},
         resource_manager=manager,
+        coordinator=coordinator,
     )
 
 

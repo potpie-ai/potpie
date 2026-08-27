@@ -89,7 +89,7 @@ class CanonicalDaemonRuntime:
         shutdown_resources: ShutdownResources | None = None,
         after_ownership_acquired: AfterOwnershipAcquired | None = None,
         before_ownership_release: BeforeOwnershipRelease | None = None,
-        coordinator: OperationCoordinator | None = None,
+        coordinator: OperationCoordinator,
         backend_profile: str = "unknown",
         ui_url: str = "http://127.0.0.1",
     ) -> None:
@@ -103,7 +103,7 @@ class CanonicalDaemonRuntime:
         self._shutdown_resources = shutdown_resources
         self._after_ownership_acquired = after_ownership_acquired
         self._before_ownership_release = before_ownership_release
-        self._coordinator = coordinator or OperationCoordinator()
+        self._coordinator = coordinator
         self._backend_profile = backend_profile
         self._ui_url = ui_url
         self._state = "starting"

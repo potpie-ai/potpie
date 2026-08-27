@@ -402,10 +402,10 @@ class TypedEngineOperationHandler:
         self,
         resource_manager: ContextResourceManager,
         *,
-        coordinator: OperationCoordinator | None = None,
+        coordinator: OperationCoordinator,
     ) -> None:
         self._resource_manager = resource_manager
-        self._coordinator = coordinator or OperationCoordinator()
+        self._coordinator = coordinator
 
     async def handle(
         self,
@@ -469,7 +469,7 @@ class LocalEngineClient(EngineClient):
         selector: ContextSelector,
         authentication: object,
         resource_manager: ContextResourceManager,
-        coordinator: OperationCoordinator | None = None,
+        coordinator: OperationCoordinator,
         request_id_factory: RequestIdFactory | None = None,
     ) -> None:
         self._selector = selector

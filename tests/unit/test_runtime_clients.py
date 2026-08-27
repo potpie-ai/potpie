@@ -23,6 +23,7 @@ from potpie.runtime import (
     HandshakeRequest,
     HandshakeResult,
     LocalEngineClient,
+    OperationCoordinator,
     ProtocolError,
     SafetyClass,
     SuccessResponse,
@@ -149,6 +150,7 @@ async def test_engine_client_surface_matches_finite_context_engine_catalog() -> 
         spec.safety
         in {
             SafetyClass.SHARED_CONTEXT_READ,
+            SafetyClass.SHARED_CONTEXT_READ_EXCLUSIVE_RESOURCE_WRITE,
             SafetyClass.EXCLUSIVE_CONTEXT_MUTATION,
         }
         for spec in ENGINE_OPERATION_CATALOG.values()
@@ -175,6 +177,7 @@ async def test_local_client_acquires_lease_invokes_named_handler_and_releases() 
         selector=ContextSelector(kind="explicit", value="context-a"),
         authentication="credential",
         resource_manager=cast(ContextResourceManager, manager),
+        coordinator=OperationCoordinator(),
         request_id_factory=_request_ids("request-1"),
     )
 
@@ -202,6 +205,7 @@ async def test_local_client_binds_destructive_confirmation_to_exact_request() ->
         selector=selector,
         authentication="credential",
         resource_manager=cast(ContextResourceManager, manager),
+        coordinator=OperationCoordinator(),
         request_id_factory=_request_ids("repair-request"),
     )
 
@@ -229,6 +233,7 @@ async def test_local_client_redacts_handler_defect_and_releases_lease() -> None:
         selector=ContextSelector(kind="explicit", value="context-a"),
         authentication="credential",
         resource_manager=cast(ContextResourceManager, manager),
+        coordinator=OperationCoordinator(),
         request_id_factory=_request_ids("request-1"),
     )
 

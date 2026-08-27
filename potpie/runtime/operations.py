@@ -114,6 +114,9 @@ class DaemonControlOperation(StrEnum):
 
 class SafetyClass(StrEnum):
     SHARED_CONTEXT_READ = "shared_context_read"
+    SHARED_CONTEXT_READ_EXCLUSIVE_RESOURCE_WRITE = (
+        "shared_context_read_exclusive_resource_write"
+    )
     EXCLUSIVE_CONTEXT_MUTATION = "exclusive_context_mutation"
     EXCLUSIVE_RESOURCE_MUTATION = "exclusive_resource_mutation"
     DAEMON_LIFECYCLE_CONTROL = "daemon_lifecycle_control"
@@ -130,7 +133,10 @@ class OperationSpec:
     resource_identity_fields: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.safety is SafetyClass.EXCLUSIVE_RESOURCE_MUTATION:
+        if self.safety in {
+            SafetyClass.EXCLUSIVE_RESOURCE_MUTATION,
+            SafetyClass.SHARED_CONTEXT_READ_EXCLUSIVE_RESOURCE_WRITE,
+        }:
             if self.resource_type is None or not self.resource_identity_fields:
                 raise ValueError(
                     "exclusive resource mutations require resource conflict metadata"
@@ -175,7 +181,9 @@ _SPECS = (
         EngineOperation.EXPORT_SNAPSHOT,
         ExportSnapshotRequest,
         ExportSnapshotResult,
-        _READ,
+        SafetyClass.SHARED_CONTEXT_READ_EXCLUSIVE_RESOURCE_WRITE,
+        resource_type="snapshot_destination",
+        resource_identity_fields=("destination",),
     ),
     OperationSpec(
         EngineOperation.IMPORT_SNAPSHOT,
