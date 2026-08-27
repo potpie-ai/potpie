@@ -35,6 +35,7 @@ from potpie_context_engine.requests import (
     ReadRequest,
     RecordRequest,
     RepairRequest,
+    ResetContextRequest,
     ResolveRequest,
     SearchEntitiesRequest,
     SearchRequest,
@@ -66,6 +67,7 @@ from potpie_context_engine.results import (
     ReadResult,
     RecordResult,
     RepairResult,
+    ResetContextResult,
     ResolveResult,
     SearchEntitiesResult,
     SearchResult,
@@ -89,6 +91,7 @@ class EngineOperation(StrEnum):
     EXPORT_SNAPSHOT = "export_snapshot"
     IMPORT_SNAPSHOT = "import_snapshot"
     REPAIR = "repair"
+    RESET_CONTEXT = "reset_context"
     PROPOSE = "propose"
     COMMIT = "commit"
     HISTORY = "history"
@@ -196,6 +199,13 @@ _SPECS = (
         EngineOperation.REPAIR,
         RepairRequest,
         RepairResult,
+        _WRITE,
+        destructive=True,
+    ),
+    OperationSpec(
+        EngineOperation.RESET_CONTEXT,
+        ResetContextRequest,
+        ResetContextResult,
         _WRITE,
         destructive=True,
     ),

@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -335,6 +336,39 @@ def run_engine_operation(awaitable):
     if not getattr(outcome, "ok", False):
         raise EngineClientError(outcome.error)
     return outcome.value
+
+
+def confirm_destructive_operation(
+    *,
+    confirmed_by_flag: bool,
+    prompt: str,
+    rerun_command: str,
+):
+    """Bind explicit confirmation before dispatching a destructive operation."""
+
+    from potpie.runtime import DestructiveConfirmation
+
+    if confirmed_by_flag:
+        return DestructiveConfirmation(confirmed=True)
+    if is_json() or not sys.stdin.isatty():
+        fail(
+            code="destructive_confirmation_required",
+            message="Destructive operation requires explicit confirmation.",
+            next_action=f"review the target, then rerun '{rerun_command}'",
+            exit_code=EXIT_VALIDATION,
+        )
+    try:
+        confirmed = typer.confirm(prompt, default=False)
+    except (typer.Abort, EOFError):
+        confirmed = False
+    if not confirmed:
+        cancel(
+            code="destructive_confirmation_declined",
+            message="Destructive operation was not confirmed.",
+            next_action=f"review the target, then rerun '{rerun_command}'",
+            exit_code=EXIT_VALIDATION,
+        )
+    return DestructiveConfirmation(confirmed=True)
 
 
 def _run_engine_awaitable(awaitable):
@@ -1209,6 +1243,7 @@ __all__ = [
     "EXIT_UNAVAILABLE",
     "EXIT_VALIDATION",
     "bootstrap_output_flags_from_argv",
+    "confirm_destructive_operation",
     "contract",
     "emit",
     "fail",

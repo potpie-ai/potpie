@@ -81,10 +81,6 @@ class PotManagementService(Protocol):
 
     def rename_pot(self, *, ref: str, new_name: str) -> PotInfo: ...
 
-    def reset_pot(self, *, ref: str, confirm: bool = False) -> PotInfo:
-        """Clear a pot's graph state (control-plane side of the reset)."""
-        ...
-
     def archive_pot(self, *, ref: str) -> PotInfo: ...
 
     # --- sources ------------------------------------------------------------

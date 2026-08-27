@@ -43,9 +43,6 @@ class PotResourceService:
     def rename_pot(self, *, ref: str, new_name: str):
         return self._backend.rename_pot(ref=ref, new_name=new_name)
 
-    def reset_pot(self, *, ref: str, confirm: bool = False):
-        return self._backend.reset_pot(ref=ref, confirm=confirm)
-
     def archive_pot(self, *, ref: str):
         return self._backend.archive_pot(ref=ref)
 

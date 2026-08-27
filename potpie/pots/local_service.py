@@ -59,17 +59,6 @@ class LocalPotManagementService:
             raise PotNotFound(f"No pot matching '{ref}'.")
         return _pot(row)
 
-    def reset_pot(self, *, ref: str, confirm: bool = False) -> PotInfo:
-        # Resolve the pot, then clear its graph state through the backend.
-        target = next(
-            (p for p in self.store.list_pots() if ref in (p["pot_id"], p["name"])),
-            None,
-        )
-        if target is None:
-            raise PotNotFound(f"No pot matching '{ref}'.")
-        self.backend.mutation.reset_pot(target["pot_id"])
-        return _pot(target)
-
     def archive_pot(self, *, ref: str) -> PotInfo:
         row = self.store.archive(ref=ref)
         if row is None:

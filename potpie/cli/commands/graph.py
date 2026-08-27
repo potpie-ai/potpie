@@ -20,7 +20,6 @@ from typing import Any
 
 import typer
 
-from potpie.runtime import DestructiveConfirmation
 from potpie_context_engine.bootstrap.observability_runtime import get_observability
 from potpie_context_engine.core.workbench_service import (
     graph_error_envelope,
@@ -34,7 +33,7 @@ from potpie.cli.commands._common import (
     CliCancellationExit,
     EXIT_UNAVAILABLE,
     EXIT_VALIDATION,
-    cancel,
+    confirm_destructive_operation,
     contract,
     empty_pot_warnings,
     emit,
@@ -2202,8 +2201,8 @@ def graph_import(
         ctx.set_pot_id(pot_id)
         source = _absolute_snapshot_path(file)
         rerun = f"potpie graph import {shlex.quote(source)} --pot {shlex.quote(pot_id)}"
-        confirmation = _confirm_destructive_operation(
-            yes=yes,
+        confirmation = confirm_destructive_operation(
+            confirmed_by_flag=yes,
             prompt=(
                 f"Import snapshot '{source}' into context '{pot_id}'? "
                 "This can replace graph data."
@@ -2261,8 +2260,8 @@ def graph_repair(
             rerun_parts.append("--all")
         rerun_parts.extend(("--pot", shlex.quote(pot_id)))
         rerun_parts.append("--yes")
-        confirmation = _confirm_destructive_operation(
-            yes=yes,
+        confirmation = confirm_destructive_operation(
+            confirmed_by_flag=yes,
             prompt=(
                 f"Repair {target_label} in context '{pot_id}'? "
                 "This can mutate graph data."
@@ -2286,35 +2285,6 @@ def _absolute_snapshot_path(file: str) -> str:
     """Resolve one CLI snapshot path before it crosses into the daemon."""
 
     return str(Path(file).expanduser().resolve(strict=False))
-
-
-def _confirm_destructive_operation(
-    *,
-    yes: bool,
-    prompt: str,
-    rerun_command: str,
-) -> DestructiveConfirmation:
-    if yes:
-        return DestructiveConfirmation(confirmed=True)
-    if is_json():
-        fail(
-            code="destructive_confirmation_required",
-            message="Destructive operation requires explicit confirmation.",
-            next_action=f"review the target, then rerun '{rerun_command}'",
-            exit_code=EXIT_VALIDATION,
-        )
-    try:
-        confirmed = typer.confirm(prompt, default=False)
-    except (typer.Abort, EOFError):
-        confirmed = False
-    if not confirmed:
-        cancel(
-            code="destructive_confirmation_declined",
-            message="Destructive operation was not confirmed.",
-            next_action=f"review the target, then rerun '{rerun_command}'",
-            exit_code=EXIT_VALIDATION,
-        )
-    return DestructiveConfirmation(confirmed=True)
 
 
 @backend_app.command("list")

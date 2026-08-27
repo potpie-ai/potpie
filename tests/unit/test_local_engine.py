@@ -23,6 +23,7 @@ from potpie_context_engine.domain.ingestion_event_models import (
 )
 from potpie_context_engine.requests import (
     ProcessingStatusRequest,
+    ResetContextRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
@@ -250,3 +251,22 @@ async def test_invalid_ingestion_requests_return_domain_failures(
     assert isinstance(outcome, Failure)
     assert outcome.error.category == "domain"
     assert outcome.error.code == "validation_error"
+
+
+@pytest.mark.anyio
+async def test_reset_context_uses_the_bound_backend_partition() -> None:
+    mutation = SimpleNamespace(
+        reset_pot=MagicMock(return_value={"pot_id": "pot-1", "ok": True})
+    )
+    operations = LocalEngineOperations(
+        SimpleNamespace(backend=SimpleNamespace(mutation=mutation))
+    )
+
+    outcome = await operations.reset_context(
+        ContextIdentity("pot-1"), ResetContextRequest()
+    )
+
+    assert isinstance(outcome, Success)
+    assert outcome.value.context_id == "pot-1"
+    assert outcome.value.reset is True
+    mutation.reset_pot.assert_called_once_with("pot-1")

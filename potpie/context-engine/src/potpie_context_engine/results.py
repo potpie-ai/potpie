@@ -64,6 +64,12 @@ NudgeResult: TypeAlias = GraphNudgeResult
 
 
 @dataclass(frozen=True, slots=True)
+class ResetContextResult:
+    context_id: str
+    reset: bool
+
+
+@dataclass(frozen=True, slots=True)
 class DescribeResult(Mapping[str, Any]):
     """Executable graph contract returned by ``describe``."""
 
@@ -116,6 +122,7 @@ __all__ = [
     "ReadResult",
     "RecordResult",
     "RepairResult",
+    "ResetContextResult",
     "ResolveResult",
     "SearchEntitiesResult",
     "SearchResult",

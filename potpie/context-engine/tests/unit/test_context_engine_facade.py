@@ -21,6 +21,7 @@ from potpie_context_engine.requests import (
     InboxAddRequest,
     NudgeRequest,
     ResolveRequest,
+    ResetContextRequest,
     SearchRequest,
     SubmitEventRequest,
 )
@@ -55,6 +56,9 @@ class _Operations:
 
     async def nudge(self, context, request):
         return await self._record("nudge", context, request)
+
+    async def reset_context(self, context, request):
+        return await self._record("reset_context", context, request)
 
 
 async def _engine(
@@ -93,6 +97,7 @@ async def _engine(
             ),
         ),
         ("nudge", NudgeRequest(event="prompt", session_id="session-1")),
+        ("reset_context", ResetContextRequest()),
     ],
 )
 async def test_facade_delegates_with_the_bound_context(method, request_value) -> None:
@@ -241,6 +246,7 @@ def test_public_facade_has_the_accepted_flat_method_catalog() -> None:
         "export_snapshot",
         "import_snapshot",
         "repair",
+        "reset_context",
         "propose",
         "commit",
         "history",

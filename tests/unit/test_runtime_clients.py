@@ -41,6 +41,7 @@ from potpie_context_engine import (
 from potpie_context_engine.requests import (
     RecordRequest,
     RepairRequest,
+    ResetContextRequest,
     ResolveRequest,
     SearchRequest,
 )
@@ -69,6 +70,10 @@ class _RecordingEngine:
     async def repair(self, request: RepairRequest):
         self.calls.append(("repair", request.to_payload()))
         return Success({"repaired": True})
+
+    async def reset_context(self, request: ResetContextRequest):
+        self.calls.append(("reset_context", request.to_payload()))
+        return Success({"context_id": self.context.value, "reset": True})
 
 
 class _Lease:
@@ -222,6 +227,33 @@ async def test_local_client_binds_destructive_confirmation_to_exact_request() ->
     assert acquisition.destructive_intent.operation == "repair"
     assert acquisition.destructive_intent.selector == selector
     assert acquisition.destructive_intent.request_id == "repair-request"
+
+
+@pytest.mark.anyio
+async def test_local_client_binds_reset_confirmation_to_exact_context() -> None:
+    engine = _RecordingEngine()
+    manager = _ResourceManager(engine)
+    selector = ContextSelector(kind="explicit", value="context-a")
+    client = LocalEngineClient(
+        selector=selector,
+        authentication="credential",
+        resource_manager=cast(ContextResourceManager, manager),
+        coordinator=OperationCoordinator(),
+        request_id_factory=_request_ids("reset-request"),
+    )
+
+    outcome = await client.reset_context(
+        ResetContextRequest(),
+        confirmation=DestructiveConfirmation(confirmed=True),
+    )
+
+    assert isinstance(outcome, Success)
+    acquisition = manager.requests[0]
+    assert acquisition.operation == "reset_context"
+    assert acquisition.destructive is True
+    assert acquisition.destructive_intent is not None
+    assert acquisition.destructive_intent.selector == selector
+    assert acquisition.destructive_intent.request_id == "reset-request"
 
 
 @pytest.mark.anyio

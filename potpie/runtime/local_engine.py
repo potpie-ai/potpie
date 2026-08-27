@@ -79,6 +79,7 @@ from potpie_context_engine.requests import (
     ReadRequest,
     RecordRequest,
     RepairRequest,
+    ResetContextRequest,
     ResolveRequest,
     SearchEntitiesRequest,
     SearchRequest,
@@ -86,7 +87,7 @@ from potpie_context_engine.requests import (
     SubmitEventRequest,
     ProcessingStatusRequest,
 )
-from potpie_context_engine.results import DescribeResult
+from potpie_context_engine.results import DescribeResult, ResetContextResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,6 +430,20 @@ class LocalEngineOperations:
                 targets=request.targets,
             )
         )
+
+    async def reset_context(
+        self, context: ContextIdentity, request: ResetContextRequest
+    ) -> Outcome[object]:
+        del request
+
+        def reset() -> ResetContextResult:
+            result = self._services.backend.mutation.reset_pot(context.value)
+            return ResetContextResult(
+                context_id=context.value,
+                reset=bool(result.get("ok", True)),
+            )
+
+        return await self._call(reset)
 
     async def propose(
         self, context: ContextIdentity, request: ProposeRequest

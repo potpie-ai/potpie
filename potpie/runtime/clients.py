@@ -74,6 +74,7 @@ from potpie_context_engine.requests import (
     ReadRequest,
     RecordRequest,
     RepairRequest,
+    ResetContextRequest,
     ResolveRequest,
     SearchEntitiesRequest,
     SearchRequest,
@@ -161,6 +162,16 @@ class EngineClient(ABC):
         confirmation: DestructiveConfirmation | None = None,
     ) -> ClientOutcome:
         return await self._dispatch(EngineOperation.REPAIR, request, confirmation)
+
+    async def reset_context(
+        self,
+        request: ResetContextRequest,
+        *,
+        confirmation: DestructiveConfirmation | None = None,
+    ) -> ClientOutcome:
+        return await self._dispatch(
+            EngineOperation.RESET_CONTEXT, request, confirmation
+        )
 
     async def propose(self, request: ProposeRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.PROPOSE, request)
@@ -285,6 +296,12 @@ async def _repair(engine: ContextEngine, request: EngineRequest) -> Outcome[obje
     return await engine.repair(cast(RepairRequest, request))
 
 
+async def _reset_context(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.reset_context(cast(ResetContextRequest, request))
+
+
 async def _propose(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
     return await engine.propose(cast(ProposeRequest, request))
 
@@ -374,6 +391,7 @@ _ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
     EngineOperation.EXPORT_SNAPSHOT: _export_snapshot,
     EngineOperation.IMPORT_SNAPSHOT: _import_snapshot,
     EngineOperation.REPAIR: _repair,
+    EngineOperation.RESET_CONTEXT: _reset_context,
     EngineOperation.PROPOSE: _propose,
     EngineOperation.COMMIT: _commit,
     EngineOperation.HISTORY: _history,

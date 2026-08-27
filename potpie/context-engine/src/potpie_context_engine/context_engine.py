@@ -39,6 +39,7 @@ from potpie_context_engine.results import (
     ReadResult,
     RecordResult,
     RepairResult,
+    ResetContextResult,
     ResolveResult,
     SearchEntitiesResult,
     SearchResult,
@@ -71,6 +72,7 @@ from potpie_context_engine.requests import (
     ReadRequest,
     RecordRequest,
     RepairRequest,
+    ResetContextRequest,
     ResolveRequest,
     SearchEntitiesRequest,
     SearchRequest,
@@ -172,6 +174,10 @@ class GraphOperations(Protocol):
     async def repair(
         self, context: ContextIdentity, request: RepairRequest
     ) -> RepairResult | Outcome[RepairResult]: ...
+
+    async def reset_context(
+        self, context: ContextIdentity, request: ResetContextRequest
+    ) -> ResetContextResult | Outcome[ResetContextResult]: ...
 
 
 class WorkbenchOperations(Protocol):
@@ -424,6 +430,13 @@ class ContextEngine:
 
     async def repair(self, request: RepairRequest) -> Outcome[RepairResult]:
         return await self._invoke("repair", self._dependencies.graph.repair, request)
+
+    async def reset_context(
+        self, request: ResetContextRequest
+    ) -> Outcome[ResetContextResult]:
+        return await self._invoke(
+            "reset_context", self._dependencies.graph.reset_context, request
+        )
 
     async def propose(self, request: ProposeRequest) -> Outcome[ProposeResult]:
         return await self._invoke(

@@ -7,12 +7,14 @@ from typing import Any
 import typer
 
 from potpie.cli.commands._common import (
+    confirm_destructive_operation,
     contract,
     current_repo_identity_for_cli,
     emit,
     enrich_with_pot_guidance,
     empty_pot_warnings,
     fail,
+    get_engine_client,
     get_root_runtime,
     get_pot_service,
     pot_graph_counts,
@@ -24,6 +26,7 @@ from potpie.cli.commands._common import (
     repo_pot_candidates,
     resolve_pot_id,
     resolve_pot_scope,
+    run_engine_operation,
     use_pot_selection,
 )
 from potpie.cli.telemetry.onboarding_events import (
@@ -34,6 +37,7 @@ from potpie.cli.telemetry.onboarding_events import (
 )
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
 from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.requests import ResetContextRequest
 
 pot_app = typer.Typer(help="Pots: workspace/tenant boundaries.")
 default_app = typer.Typer(help="Repo-local default pot routing.")
@@ -420,10 +424,23 @@ def pot_reset(
 ) -> None:
     with contract():
         host = get_root_runtime()
-        target = ref or resolve_pot_id(host)
-        pot = get_pot_service(host).reset_pot(ref=target, confirm=confirm)
+        pot_id = resolve_pot_id(host, ref)
+        pot = next(
+            item for item in get_pot_service(host).list_pots() if item.pot_id == pot_id
+        )
+        confirmation = confirm_destructive_operation(
+            confirmed_by_flag=confirm,
+            prompt=f"Reset all graph state for '{pot.name}' ({pot_id})?",
+            rerun_command=f"potpie pot reset {pot_id} --confirm",
+        )
+        result = run_engine_operation(
+            get_engine_client(pot_id).reset_context(
+                ResetContextRequest(),
+                confirmation=confirmation,
+            )
+        )
         emit(
-            {"id": pot.pot_id, "reset": True},
+            {"id": result.context_id, "reset": result.reset},
             human=f"reset graph state for '{pot.name}'",
         )
 

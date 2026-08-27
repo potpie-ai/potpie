@@ -154,6 +154,11 @@ class RepairRequest(EngineRequest):
 
 
 @dataclass(frozen=True, slots=True)
+class ResetContextRequest(EngineRequest):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class ProposeRequest(EngineRequest):
     mutation: Mapping[str, Any] = field(default_factory=dict)
     ttl_seconds: int | None = None

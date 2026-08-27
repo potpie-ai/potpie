@@ -18,6 +18,9 @@ from typer.testing import CliRunner
 
 from potpie.cli import repo_location
 from potpie.cli.commands import _common, bootstrap, graph, pots, ui
+from potpie.runtime import DestructiveConfirmation
+from potpie_context_engine import Success
+from potpie_context_engine.results import ResetContextResult
 from potpie_context_engine.core.semantic_mutation_validator import (
     validate_semantic_request,
 )
@@ -31,6 +34,15 @@ def _reset_state():
     yield
     _common.set_json(False)
     _common.set_runtime(None)
+
+
+class _ResetClient:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def reset_context(self, request, *, confirmation=None):
+        self.calls.append((request, confirmation))
+        return Success(ResetContextResult(context_id="p1", reset=True))
 
 
 class _Pot:
@@ -505,6 +517,55 @@ def test_pot_use_also_default_requires_current_repo(monkeypatch) -> None:
     assert payload["code"] == "validation_error"
     assert "--also-default-for-current-repo requires a repo" in payload["message"]
     assert pots_service._active is None
+
+
+def test_pot_reset_dispatches_typed_operation_for_exact_resolved_context(
+    monkeypatch,
+) -> None:
+    selected = _Pot("p1", "shop")
+    pots_service = _Pots([selected], {}, active=selected)
+    _common.set_runtime(_Host(pots_service))
+    _common.set_json(True)
+    client = _ResetClient()
+    selected_contexts = []
+
+    def engine_client(context_id):
+        selected_contexts.append(context_id)
+        return client
+
+    monkeypatch.setattr(pots, "get_engine_client", engine_client)
+
+    result = CliRunner().invoke(pots.pot_app, ["reset", "shop", "--confirm"])
+
+    assert result.exit_code == 0, result.output
+    assert selected_contexts == ["p1"]
+    assert len(client.calls) == 1
+    assert client.calls[0][0].to_payload() == {}
+    assert client.calls[0][1] == DestructiveConfirmation(confirmed=True)
+
+
+def test_pot_reset_non_tty_fails_before_dispatch_without_confirmation(
+    monkeypatch,
+) -> None:
+    selected = _Pot("p1", "shop")
+    pots_service = _Pots([selected], {}, active=selected)
+    _common.set_runtime(_Host(pots_service))
+    _common.set_json(True)
+    dispatched = False
+
+    def engine_client(context_id):
+        nonlocal dispatched
+        del context_id
+        dispatched = True
+        return _ResetClient()
+
+    monkeypatch.setattr(pots, "get_engine_client", engine_client)
+
+    result = CliRunner().invoke(pots.pot_app, ["reset", "shop"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.output)["code"] == "destructive_confirmation_required"
+    assert dispatched is False
 
 
 def test_pot_linked_summary_skips_graph_counts(monkeypatch) -> None:
