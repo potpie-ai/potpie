@@ -40,9 +40,7 @@ def test_daemon_unexpected_failure_is_captured_with_session_id(
             (error_code, error_kind, current_telemetry_context().daemon_session_id)
         ),
     )
-    monkeypatch.setattr(
-        daemon_commands, "Daemon", lambda **_kwargs: _CrashingDaemon()
-    )
+    monkeypatch.setattr(daemon_commands, "Daemon", lambda **_kwargs: _CrashingDaemon())
     runner = CliRunner()
 
     result = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
@@ -69,9 +67,7 @@ def test_daemon_expected_not_implemented_is_not_captured(
         "potpie.cli.telemetry.sentry_runtime.capture_unexpected_cli_error",
         lambda exc, *, error_code, error_kind: captured.append(exc),
     )
-    monkeypatch.setattr(
-        daemon_commands, "Daemon", lambda **_kwargs: _CrashingDaemon()
-    )
+    monkeypatch.setattr(daemon_commands, "Daemon", lambda **_kwargs: _CrashingDaemon())
     runner = CliRunner()
 
     result = runner.invoke(host_cli.app, ["--json", "daemon", "stop"])
