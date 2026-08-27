@@ -185,6 +185,34 @@ async def test_close_continues_after_cleanup_failure() -> None:
     assert "secret cleanup detail" not in str(outcome.error.details)
 
 
+async def test_repeated_close_retries_only_pending_cleanup_failures() -> None:
+    attempts = {"flaky": 0, "stable": 0}
+
+    async def flaky() -> None:
+        attempts["flaky"] += 1
+        if attempts["flaky"] == 1:
+            raise RuntimeError("first attempt fails")
+
+    async def stable() -> None:
+        attempts["stable"] += 1
+
+    engine, _ = await _engine(
+        resources=(
+            EngineResource("stable", "transferred", stable),
+            EngineResource("flaky", "transferred", flaky),
+        )
+    )
+
+    first = await engine.close()
+    second = await engine.close()
+    third = await engine.close()
+
+    assert isinstance(first, Failure)
+    assert isinstance(second, Success)
+    assert isinstance(third, Success)
+    assert attempts == {"flaky": 2, "stable": 1}
+
+
 async def test_closed_engine_returns_lifecycle_failure() -> None:
     engine, operations = await _engine()
     await engine.close()

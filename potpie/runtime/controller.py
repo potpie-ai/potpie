@@ -253,6 +253,7 @@ class DaemonController:
                     start_new_session=True,
                 )
             except (OSError, ValueError) as exc:
+                await self._close_observer(boot.observer)
                 await self._close_log_target()
                 return Failure(
                     ResourceLifecycleError(

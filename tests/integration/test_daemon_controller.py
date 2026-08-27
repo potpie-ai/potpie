@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # ruff: noqa: S101 - pytest integration tests use assertions intentionally.
 
+import asyncio
 import signal
 import stat
 import sys
@@ -175,6 +176,30 @@ async def test_controller_falls_back_to_bounded_signal_termination() -> None:
     )
     assert observer.closed == 1
     assert controller.pid is None
+
+
+@pytest.mark.anyio
+async def test_process_creation_failure_closes_observer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observer = _FallbackObserver(ready=True)
+
+    async def fail_process_creation(*_args: object, **_kwargs: object) -> object:
+        raise OSError("cannot create process")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_process_creation)
+    controller = DaemonController(
+        boot_factory=lambda: DaemonBootSpec(
+            launch=DaemonLaunchSpec(command=(sys.executable, "-c", "pass")),
+            observer=observer,
+        )
+    )
+
+    outcome = await controller.start()
+
+    assert isinstance(outcome, Failure)
+    assert outcome.error.code == "daemon_process_creation_failed"
+    assert observer.closed == 1
 
 
 @pytest.mark.anyio

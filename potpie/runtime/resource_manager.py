@@ -486,11 +486,27 @@ class ContextResourceManager:
             )
         retained_resources = ownership.value
 
-        engine_outcome = await self._engine_factory(
-            context=context,
-            config=composition.config,
-            dependencies=composition.dependencies,
-        )
+        try:
+            engine_outcome = await self._engine_factory(
+                context=context,
+                config=composition.config,
+                dependencies=composition.dependencies,
+            )
+        except Exception as exc:
+            acquisition_error = ResourceLifecycleError(
+                code="engine_construction_failed",
+                message="Context Engine construction failed",
+                details={"error_type": type(exc).__name__},
+                retry_posture="unknown",
+            )
+            return Failure(
+                self._with_failed_acquisition_cleanup(
+                    acquisition_error=acquisition_error,
+                    cleanup_failures=await self._release_resources(
+                        composition.resources
+                    ),
+                )
+            )
         if isinstance(engine_outcome, Failure):
             cleanup_failures = await self._release_resources(composition.resources)
             acquisition_error = ResourceLifecycleError(

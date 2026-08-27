@@ -529,6 +529,42 @@ async def test_failed_engine_construction_releases_resources_in_reverse_order() 
 
 
 @pytest.mark.anyio
+async def test_engine_factory_exception_releases_composed_resources() -> None:
+    events: list[Event] = []
+    cleanup_events: list[str] = []
+
+    async def raising_factory(**_kwargs: object) -> Outcome[ContextEngine]:
+        raise RuntimeError("sensitive construction detail")
+
+    manager = ContextResourceManager(
+        resolver=_Resolver(events),
+        authenticator=_Authenticator(events),
+        authorizer=_Authorizer(events),
+        composer=_Composer(events, cleanup_events),
+        engine_factory=raising_factory,
+    )
+
+    outcome = await manager.acquire(_request())
+
+    assert isinstance(outcome, Failure)
+    assert outcome.error.code == "engine_construction_failed"
+    assert outcome.error.details == {
+        "error_type": "RuntimeError",
+        "acquisition_failure": {
+            "category": "resource_lifecycle",
+            "code": "engine_construction_failed",
+            "retry_posture": "unknown",
+        },
+    }
+    assert "sensitive" not in str(outcome.error.details)
+    assert cleanup_events == [
+        "release:context-a:second",
+        "release:context-a:first",
+    ]
+    assert manager.cached_engine_count == 0
+
+
+@pytest.mark.anyio
 async def test_fingerprint_mismatch_preserves_cleanup_failure_detail() -> None:
     events: list[Event] = []
     cleanup_events: list[str] = []

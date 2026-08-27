@@ -579,66 +579,71 @@ class LocalEngineOperations:
     async def submit_event(
         self, context: ContextIdentity, request: SubmitEventRequest
     ) -> Outcome[object]:
-        submission = IngestionSubmissionRequest(
-            pot_id=context.value,
-            ingestion_kind=request.ingestion_kind,
-            source_channel=request.source_channel,
-            source_system=_required_value(request.source_system, "source_system"),
-            event_type=_required_value(request.event_type, "event_type"),
-            action=_required_value(request.action, "action"),
-            source_id=_required_value(request.source_id, "source_id"),
-            payload=dict(request.payload),
-            metadata=dict(request.metadata),
-            idempotency_key=request.idempotency_key,
-            dedup_key=request.dedup_key,
-            event_id=request.event_id,
-            provider=request.provider,
-            provider_host=request.provider_host,
-            repo_name=request.repo_name,
-            source_event_id=request.source_event_id,
-            artifact_refs=request.artifact_refs,
-            occurred_at=request.occurred_at,
-            actor=request.actor,
-        )
-        return await self._call(
-            lambda: self._ingestion_submission().submit(
+        def submit() -> object:
+            submission = IngestionSubmissionRequest(
+                pot_id=context.value,
+                ingestion_kind=request.ingestion_kind,
+                source_channel=request.source_channel,
+                source_system=_required_value(request.source_system, "source_system"),
+                event_type=_required_value(request.event_type, "event_type"),
+                action=_required_value(request.action, "action"),
+                source_id=_required_value(request.source_id, "source_id"),
+                payload=dict(request.payload),
+                metadata=dict(request.metadata),
+                idempotency_key=request.idempotency_key,
+                dedup_key=request.dedup_key,
+                event_id=request.event_id,
+                provider=request.provider,
+                provider_host=request.provider_host,
+                repo_name=request.repo_name,
+                source_event_id=request.source_event_id,
+                artifact_refs=request.artifact_refs,
+                occurred_at=request.occurred_at,
+                actor=request.actor,
+            )
+            return self._ingestion_submission().submit(
                 submission,
                 wait=request.wait,
                 timeout_seconds=request.timeout_seconds,
             )
-        )
+
+        return await self._call(submit)
 
     async def submit_artifact(
         self, context: ContextIdentity, request: SubmitArtifactRequest
     ) -> Outcome[object]:
-        source_ref = request.source_ref or (
-            f"{request.source_system}:{request.artifact_type}:{request.artifact_id}"
-        )
-        submission = IngestionSubmissionRequest(
-            pot_id=context.value,
-            ingestion_kind="artifact_evidence",
-            source_channel=request.source_channel,
-            source_system=_required_value(request.source_system, "source_system"),
-            event_type="artifact",
-            action=_required_value(request.artifact_type, "artifact_type"),
-            source_id=_required_value(request.artifact_id, "artifact_id"),
-            payload={"artifact": dict(request.artifact), "source_ref": source_ref},
-            metadata=dict(request.metadata),
-            idempotency_key=request.idempotency_key,
-            provider=request.provider,
-            provider_host=request.provider_host,
-            repo_name=request.repo_name,
-            artifact_refs=(source_ref,),
-            occurred_at=request.occurred_at,
-            actor=request.actor,
-        )
-        return await self._call(
-            lambda: self._ingestion_submission().submit(
+        def submit() -> object:
+            source_system = _required_value(request.source_system, "source_system")
+            artifact_type = _required_value(request.artifact_type, "artifact_type")
+            artifact_id = _required_value(request.artifact_id, "artifact_id")
+            source_ref = request.source_ref or (
+                f"{source_system}:{artifact_type}:{artifact_id}"
+            )
+            submission = IngestionSubmissionRequest(
+                pot_id=context.value,
+                ingestion_kind="artifact_evidence",
+                source_channel=request.source_channel,
+                source_system=source_system,
+                event_type="artifact",
+                action=artifact_type,
+                source_id=artifact_id,
+                payload={"artifact": dict(request.artifact), "source_ref": source_ref},
+                metadata=dict(request.metadata),
+                idempotency_key=request.idempotency_key,
+                provider=request.provider,
+                provider_host=request.provider_host,
+                repo_name=request.repo_name,
+                artifact_refs=(source_ref,),
+                occurred_at=request.occurred_at,
+                actor=request.actor,
+            )
+            return self._ingestion_submission().submit(
                 submission,
                 wait=request.wait,
                 timeout_seconds=request.timeout_seconds,
             )
-        )
+
+        return await self._call(submit)
 
     async def processing_status(
         self, context: ContextIdentity, request: ProcessingStatusRequest

@@ -272,6 +272,11 @@ class ContextEngine:
         self._dependencies = dependencies
         self._closed = False
         self._close_lock = asyncio.Lock()
+        self._pending_close_resources = tuple(
+            resource
+            for resource in reversed(dependencies.resources)
+            if resource.ownership == "transferred" and resource.close is not None
+        )
 
     @property
     def context(self) -> ContextIdentity:
@@ -295,19 +300,21 @@ class ContextEngine:
 
     async def close(self) -> Outcome[None]:
         async with self._close_lock:
-            if self._closed:
+            if self._closed and not self._pending_close_resources:
                 return Success(None)
             self._closed = True
             failures: list[dict[str, str]] = []
-            for resource in reversed(self._dependencies.resources):
-                if resource.ownership != "transferred" or resource.close is None:
-                    continue
+            pending: list[EngineResource] = []
+            for resource in self._pending_close_resources:
                 try:
+                    assert resource.close is not None
                     await resource.close()
                 except Exception as exc:  # cleanup must continue for later resources
+                    pending.append(resource)
                     failures.append(
                         {"resource": resource.name, "error_type": type(exc).__name__}
                     )
+            self._pending_close_resources = tuple(pending)
             if failures:
                 return Failure(
                     EngineLifecycleError(

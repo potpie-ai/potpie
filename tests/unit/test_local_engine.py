@@ -226,3 +226,26 @@ async def test_uncomposed_evidence_dependency_returns_typed_failure() -> None:
     assert isinstance(outcome, Failure)
     assert outcome.error.category == "dependency"
     assert outcome.error.code == "unavailable"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("method", "input_request"),
+    (
+        ("submit_event", SubmitEventRequest()),
+        ("submit_artifact", SubmitArtifactRequest()),
+    ),
+)
+async def test_invalid_ingestion_requests_return_domain_failures(
+    method: str,
+    input_request: SubmitEventRequest | SubmitArtifactRequest,
+) -> None:
+    operations = LocalEngineOperations(
+        SimpleNamespace(ingestion=_Ingestion(), ingestion_events=None)
+    )
+
+    outcome = await getattr(operations, method)(ContextIdentity("pot-1"), input_request)
+
+    assert isinstance(outcome, Failure)
+    assert outcome.error.category == "domain"
+    assert outcome.error.code == "validation_error"
