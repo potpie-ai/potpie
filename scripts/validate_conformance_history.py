@@ -326,16 +326,16 @@ def main() -> int:
                 raise ValidationError(
                     f"spec/conformance/index.md: missing current-record link to {filename}"
                 )
-        if total_behaviors != 190:
+        if total_behaviors != 195:
             raise ValidationError(
-                f"spec/conformance: expected 190 covered active behaviors, found {total_behaviors}"
+                f"spec/conformance: expected 195 covered active behaviors, found {total_behaviors}"
             )
     except (OSError, ValidationError) as exc:
         print(f"conformance validation failed: {exc}", file=sys.stderr)
         return 1
 
     print(
-        "conformance validation passed: 6 stable records, 190 behaviors, history resolved"
+        "conformance validation passed: 6 stable records, 195 behaviors, history resolved"
     )
     return 0
 

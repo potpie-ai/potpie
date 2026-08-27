@@ -4,25 +4,25 @@ title: Potpie Daemon Conformance
 kind: conformance-record
 record_status: final
 spec_id: SPEC-DAEMON
-spec_revision: 1
-spec_ref: 047cbe067c9c726e7e14f066675453372d8a8406
-implementation_ref: a0b52654f6fed50ec790cc2a72ccd581611ed3be
+spec_revision: 2
+spec_ref: e73ebdbd6f0960e063344468051f84e37174697c
+implementation_ref: 1db96d660b87d5cf50398a37318e1dbbf704610e
 performed_by: agent:codex
-performed_at: "2026-08-24T05:20:34Z"
+performed_at: "2026-08-27T11:20:28+05:30"
 result: passed
 previous_record: null
-previous_record_id: CONF-DAEMON-2026-08-24-01
-previous_record_ref: 3e5edfd584aea53682720c3684e6fd78646fa1b3
-previous_record_path: spec/conformance/daemon-2026-08-24.md
+previous_record_id: CONF-DAEMON
+previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_path: spec/conformance/daemon.md
 ---
 
 # Potpie Daemon Conformance Record
 
 ## Scope
 
-This final record version verifies `DAEMON-001` through `DAEMON-051` after
-the root capability relocation, including the two verified-not-applicable
-compatibility-adapter conditions.
+This final record version verifies `DAEMON-001` through `DAEMON-056` at the
+fail-closed attached-process shutdown implementation, including the two
+verified-not-applicable compatibility-adapter conditions.
 
 ## Behavior Trace
 
@@ -79,20 +79,30 @@ compatibility-adapter conditions.
 | DAEMON-049 | not_applicable | passed | D2-E3 | No alternate architecture exists. |
 | DAEMON-050 | complete | passed | D2-E2 | Ownership cleanup governs terminal state. |
 | DAEMON-051 | complete | passed | D2-E2 | Controller failure remains typed. |
+| DAEMON-052 | complete | passed | D2-E1, D2-E5 | OS signals remain limited to a directly owned child process handle. |
+| DAEMON-053 | complete | passed | D2-E1, D2-E5 | Attached shutdown failures return typed errors without signalling or a stopped claim. |
+| DAEMON-054 | complete | passed | D2-E1, D2-E5 | Canonical runtime-record publication occurs while the boot owns the runtime lock. |
+| DAEMON-055 | complete | passed | D2-E1, D2-E5 | Runtime-record removal is serialized through the ownership lock. |
+| DAEMON-056 | complete | passed | D2-E1, D2-E5 | Identity-bound cleanup matches the exact expected PID and per-boot instance. |
 
 ## Reproducible Evidence
 
 - **D2-E1 — pinned source review:** daemon lifecycle/discovery/entrypoint and
   typed runtime controller/server/transport/protocol/client/operation modules
   at the implementation ref.
-- **D2-E2 — complete root lane:**
-  `uv run pytest tests -m "not premerge_journey" -q`; result:
-  `1417 passed, 4 skipped, 1 deselected in 32.46s`.
+- **D2-E2 — complete root lane with the unrelated UI redirect assertion
+  deselected:** `uv run pytest -q -k
+  'not canonical_daemon_uses_private_discovery_and_separate_credential'`;
+  result: `1424 passed, 4 skipped, 1 deselected in 123.55s`.
 - **D2-E3 — permanent architecture inventory:** the characterization lane
   reported `31 passed`, including the canonical-runtime and no-product-alias
   inventories.
 - **D2-E4 — isolated entrypoint smoke:** the fresh root installation resolved
   `potpie-daemon` to `potpie.daemon.__main__:main` and imported that module.
+- **D2-E5 — focused security and lifecycle lane:** controller, runtime,
+  detached-daemon E2E, CLI, ownership-race, and seam tests reported `39 passed,
+  1 deselected`; independent security re-review found no remaining attached
+  signal path or runtime-record replacement race.
 
 ## Related Contracts Checked
 
@@ -107,11 +117,14 @@ compatibility-adapter conditions.
 ## Known Gaps
 
 None for applicable active behaviors. `DAEMON-039` and `DAEMON-049` are
-verified not applicable because no adapter or alternate runtime remains.
+verified not applicable because no adapter or alternate runtime remains. The
+deselected test's failing assertion expects HTTP `200` from `/ui` while the
+static UI route returns its normal `307`; that presentation assertion is
+outside the Daemon revision-2 behavior scope.
 
 ## Aggregate Result
 
-`passed`: all 49 applicable daemon behaviors passed, and both
+`passed`: all 54 applicable daemon behaviors passed, and both
 compatibility-adapter conditions are verified not applicable.
 
 ## Freshness

@@ -158,14 +158,13 @@ active behavior depends on a deferred question.
 
 ## Conformance Summary
 
-Six stable behavior-conformance records verify the prior set of 190 applicable
-active runtime behaviors at implementation
-`a0b52654f6fed50ec790cc2a72ccd581611ed3be`. Acceptance of the five new Daemon
-revision-2 behaviors increases the applicable set to 195 and makes the Daemon,
-CLI, and cross-system records derive stale. `DAEMON-052` through `DAEMON-056`
-remain unverified until successor records pin this accepted revision and its
-implementation. The existing cross-system record continues to describe only
-its pinned PR head and `main` base.
+Successor Daemon and CLI records verify accepted Daemon revision 2 and
+implementation `1db96d660b87d5cf50398a37318e1dbbf704610e`, including
+`DAEMON-052` through `DAEMON-056`. The other three module records retain their
+prior passed identities. The cross-system record remains stale because the
+implementation commit has not been pushed and therefore is not the live PR
+head; its existing result continues to describe only its pinned PR head and
+`main` base.
 
 See the [conformance index](conformance/index.md) for the current records,
 module links, PR/base integration identity, Git-history lineage, and the stable
@@ -176,8 +175,8 @@ not stored in the index or contract metadata.
 
 Initial implementation observations remain pinned to base
 `a341978880b9d4c1b403831931279ccedf6184ae` and explain the migration need. The
-six indexed behavior-conformance records separately establish historical
-implementation and verification claims at
-`a0b52654f6fed50ec790cc2a72ccd581611ed3be`. The Daemon, CLI, and cross-system
-records are stale against accepted Daemon revision 2 until successor
-verification is published.
+five indexed module records establish current module-scope verification claims,
+with Daemon and CLI pinned to
+`1db96d660b87d5cf50398a37318e1dbbf704610e`. Cross-system PR/base integration
+verification remains stale until the implementation is the live PR head and a
+successor system record is published.

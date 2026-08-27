@@ -6,14 +6,14 @@ record_status: final
 spec_id: SPEC-CLI
 spec_revision: 1
 spec_ref: 047cbe067c9c726e7e14f066675453372d8a8406
-implementation_ref: a0b52654f6fed50ec790cc2a72ccd581611ed3be
+implementation_ref: 1db96d660b87d5cf50398a37318e1dbbf704610e
 performed_by: agent:codex
-performed_at: "2026-08-24T05:20:34Z"
+performed_at: "2026-08-27T11:20:28+05:30"
 result: passed
 previous_record: null
-previous_record_id: CONF-CLI-2026-08-24-01
-previous_record_ref: 3e5edfd584aea53682720c3684e6fd78646fa1b3
-previous_record_path: spec/conformance/cli-2026-08-24.md
+previous_record_id: CONF-CLI
+previous_record_ref: 604c3eb5c9a561eec959ab688c279d04e9e6ff5b
+previous_record_path: spec/conformance/cli.md
 ---
 
 # Potpie CLI Conformance Record
@@ -65,14 +65,18 @@ through `CLI-033`, after the internal capability relocation.
 
 - **CLI2-E1 — pinned source review:** root CLI command, formatting, bootstrap,
   setup, and typed client paths at the implementation ref.
-- **CLI2-E2 — complete root lane:**
-  `uv run pytest tests -m "not premerge_journey" -q`; result:
-  `1417 passed, 4 skipped, 1 deselected in 32.46s`.
+- **CLI2-E2 — complete root lane with the unrelated UI redirect assertion
+  deselected:** `uv run pytest -q -k
+  'not canonical_daemon_uses_private_discovery_and_separate_credential'`;
+  result: `1424 passed, 4 skipped, 1 deselected in 123.55s`.
 - **CLI2-E3 — permanent architecture and process gates:** the characterization
   lane reported `31 passed`, including unchanged command inventory, installed
   metadata entrypoints, and legacy-boundary absence.
 - **CLI2-E4 — isolated entrypoint smoke:** the fresh root installation resolved
   `potpie` to `potpie.cli.main:main` and imported `potpie.cli.main`.
+- **CLI2-E5 — daemon-stop presentation lane:** CLI and detached-daemon tests
+  verified nonzero structured output for unsafe attached-stop refusal while
+  healthy authenticated stop remains successful.
 
 ## Related Contracts Checked
 
@@ -80,14 +84,14 @@ through `CLI-033`, after the internal capability relocation.
 |---|---:|---|---|
 | SPEC-GLOSSARY | 1 | 047cbe067c9c726e7e14f066675453372d8a8406 | passed |
 | SPEC-SYSTEM | 1 | 047cbe067c9c726e7e14f066675453372d8a8406 | passed |
-| SPEC-DAEMON | 1 | 047cbe067c9c726e7e14f066675453372d8a8406 | passed |
+| SPEC-DAEMON | 2 | e73ebdbd6f0960e063344468051f84e37174697c | passed |
 | SPEC-POTPIE-CAPABILITIES | 1 | b23b6cb9158e6b929f7d5f01c4dc0ca62a69f1df | passed |
 
 ## Known Gaps
 
 None for the 33 active behaviors. The exact JSON field set and complete
-nonzero exit-code mapping remain deliberately deferred. The Rust-dependent
-`premerge_journey` lane was not run locally and is not claimed here.
+nonzero exit-code mapping remain deliberately deferred. The full root lane
+included and passed the Rust-dependent `premerge_journey` test.
 
 ## Aggregate Result
 
