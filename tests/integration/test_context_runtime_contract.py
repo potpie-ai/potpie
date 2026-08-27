@@ -271,7 +271,10 @@ def test_canonical_daemon_uses_private_discovery_and_separate_credential(
         assert (runtime_home / "daemon.credential").stat().st_mode & 0o077 == 0
         status = daemon.status()
         assert status["ready"] is True
-        assert httpx.get(f"{status['url']}/ui", timeout=3.0).status_code == 200
+        ui_redirect = httpx.get(f"{status['url']}/ui", timeout=3.0)
+        assert ui_redirect.status_code == 307
+        assert ui_redirect.headers["location"] == f"{status['url']}/ui/"
+        assert httpx.get(f"{status['url']}/ui/", timeout=3.0).status_code == 200
         assert httpx.post(f"{status['url']}/rpc", timeout=3.0).status_code == 404
         assert httpx.post(f"{status['url']}/attr", timeout=3.0).status_code == 404
     finally:
