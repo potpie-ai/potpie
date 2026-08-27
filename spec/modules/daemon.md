@@ -2,7 +2,7 @@
 id: SPEC-DAEMON
 title: Potpie Daemon Contract
 kind: module-spec
-revision: 1
+revision: 2
 maturity: accepted
 owners:
   - team:potpie
@@ -11,7 +11,7 @@ depends_on:
   - SPEC-SYSTEM
   - SPEC-POTPIE-RESOURCE-MANAGER
   - SPEC-CONTEXT-ENGINE
-change_ref: SPEC-CHANGE-0007
+change_ref: SPEC-CHANGE-0012
 ---
 
 # Potpie Daemon Contract
@@ -352,6 +352,42 @@ DAEMON-051 [active]: Failure of the daemon controller to create or observe the c
   @ DAEMON-030
   @ SYS-007
 
+DAEMON-052 [active]: The daemon controller MUST send operating-system termination signals only through a foreground child process handle created directly by that controller and MUST NOT use signal fallback for a process attached from runtime records.
+  > authority [active]: user:dsantra
+  > decision [active]: decision:ADR-0012
+  @ DAEMON-002
+  @ DAEMON-012
+  @ DAEMON-046
+
+DAEMON-053 [active]: When authenticated typed shutdown of a process attached from runtime records cannot authenticate, fails, or times out, the controller MUST return ResourceLifecycleError without signalling the process or claiming that it stopped.
+  > authority [active]: user:dsantra
+  > decision [active]: decision:ADR-0012
+  @ DAEMON-011
+  @ DAEMON-022
+  @ DAEMON-052
+  @ SYS-007
+
+DAEMON-054 [active]: Publication of the canonical PID record, discovery document, and per-boot credential MUST occur only while the corresponding daemon boot holds the runtime ownership lock.
+  > authority [active]: user:dsantra
+  > decision [active]: decision:ADR-0012
+  @ DAEMON-008
+  @ DAEMON-009
+
+DAEMON-055 [active]: Any remover of the canonical PID record, discovery document, per-boot credential, or owned UDS endpoint MUST hold or acquire the runtime ownership lock while removing those artifacts.
+  > authority [active]: user:dsantra
+  > decision [active]: decision:ADR-0012
+  @ DAEMON-008
+  @ DAEMON-015
+
+DAEMON-056 [active]: Cleanup initiated for a known daemon identity MUST remove canonical runtime artifacts only when the discovery document matches both the exact expected PID and the exact expected per-boot daemon instance identity.
+  > authority [active]: user:dsantra
+  > decision [active]: decision:ADR-0012
+  @ DAEMON-007
+  @ DAEMON-012
+  @ DAEMON-046
+  @ DAEMON-055
+  @ DAEMON-053
+
 ## Lifecycle Model
 
 The following state and transition tables summarize `DAEMON-014`,
@@ -395,9 +431,10 @@ typed request
 
 The Resource Manager never receives the domain invocation or its result.
 Readiness and runtime-control handlers remain outside the context lease path.
-Abrupt process termination relies on operating-system lock release and
-authenticated-handshake stale-record safety rather than a controlled
-failed-to-stopped transition.
+Abrupt termination of a directly owned child relies on operating-system lock
+release and authenticated-handshake stale-record safety rather than a
+controlled failed-to-stopped transition. A process attached from runtime
+records never receives operating-system signal fallback.
 
 ## Failure Summary
 
@@ -411,6 +448,7 @@ failed-to-stopped transition.
 | Context Engine failure | Preserve DomainError, DependencyError, or EngineLifecycleError |
 | Unexpected runtime defect | DaemonInternalError with redacted correlation detail |
 | Disconnect during mutation | ProtocolTransportError with unknown outcome unless separately proven |
+| Attached shutdown cannot authenticate, fails, or times out | ResourceLifecycleError; no signal and no stopped claim |
 
 ## Compatibility, Migration, And Rollout
 
@@ -426,6 +464,9 @@ is binding.
   mirroring.
 - Typed handlers, not the Resource Manager, invoke Context Engine.
 - Discovery, PID, instance identity, and readiness remain distinct.
+- OS termination is limited to a directly owned child process handle.
+- Runtime-record publication and removal are serialized by ownership, and
+  identity-bound cleanup matches both PID and per-boot instance identity.
 - The lifecycle transition graph is complete and restart creates a new identity.
 - The target cannot retain a dormant competing runtime or duplicate discovery.
 - Concurrency is scoped and ambiguous mutations are not silently replayed.

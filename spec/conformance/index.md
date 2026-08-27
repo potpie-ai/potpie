@@ -23,8 +23,11 @@ filenames.
 
 ## Current Records
 
-These six records cover all `190` applicable active behaviors at implementation
-`a0b52654f6fed50ec790cc2a72ccd581611ed3be`.
+These six records cover the prior set of `190` applicable active behaviors at
+implementation `a0b52654f6fed50ec790cc2a72ccd581611ed3be`. Accepted Daemon
+revision 2 adds five active behaviors, increasing the applicable current scope
+to `195`. Until successors are published, the Daemon, CLI, and cross-system
+records derive stale and do not verify `DAEMON-052` through `DAEMON-056`.
 
 | Scope | Contract | Current record | Spec revision | Behaviors | Result |
 |---|---|---|---:|---:|---|

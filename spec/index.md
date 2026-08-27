@@ -18,9 +18,11 @@ nodes. Decisions explain why, change records describe revision transitions,
 questions preserve deferred choices, and conformance records separately
 describe implementation and evidence.
 
-Seven revision-1 runtime contracts, Specification Process revision 2, and
-corrective Resource Manager revision 2 are accepted binding targets. Process
-revision 1 and Resource Manager revision 1 remain historically addressable at
+Seven revision-1 runtime contracts, Specification Process revision 2,
+corrective Resource Manager revision 2, and Daemon revision 2 are accepted
+binding targets. Daemon revision 2 restricts forceful termination to directly
+owned child processes. Process revision 1, Resource Manager revision 1, and
+Daemon revision 1 remain historically addressable at
 `047cbe067c9c726e7e14f066675453372d8a8406`.
 Existing architecture documents and code remain implementation snapshots and
 can disagree with the target while migration is incomplete.
@@ -81,10 +83,10 @@ remain canonical.
 | SPEC-POTPIE-CAPABILITIES | [modules/potpie-capabilities.md](modules/potpie-capabilities.md) | 1 | accepted | 12 | Capability-oriented root source ownership and behavior-preserving migration |
 | SPEC-CONTEXT-ENGINE | [modules/context-engine.md](modules/context-engine.md) | 1 | accepted | 34 | Thin importable context-domain library boundary |
 | SPEC-POTPIE-RESOURCE-MANAGER | [modules/potpie-resource-manager.md](modules/potpie-resource-manager.md) | 2 | accepted | 37 | Authorized context lease and resource-lifecycle boundary, including distinct authentication failure |
-| SPEC-DAEMON | [modules/daemon.md](modules/daemon.md) | 1 | accepted | 51 | Controller, typed runtime, discovery, readiness, lifecycle, and handlers |
+| SPEC-DAEMON | [modules/daemon.md](modules/daemon.md) | 2 | accepted | 56 | Controller, typed runtime, discovery, readiness, lifecycle, handlers, and signal authority |
 | SPEC-CLI | [modules/cli.md](modules/cli.md) | 1 | accepted | 33 | Human and machine presentation plus controller/client selection |
 
-The catalog contains 235 accepted active behavior nodes.
+The catalog contains 240 accepted active behavior nodes.
 
 ## Exact Contract Dependencies
 
@@ -129,6 +131,7 @@ read order.
 | ADR-0009 | [Typed local runtime execution contract](decisions/ADR-0009-typed-local-runtime-execution-contract.md) | accepted |
 | ADR-0010 | [Correct Resource Manager authentication outcomes](decisions/ADR-0010-resource-manager-authentication-outcomes.md) | accepted |
 | ADR-0011 | [Capability-oriented Potpie layout](decisions/ADR-0011-capability-oriented-potpie-layout.md) | accepted |
+| ADR-0012 | [Restrict forceful daemon termination](decisions/ADR-0012-restrict-forceful-daemon-termination.md) | accepted |
 
 ## Open Questions
 
@@ -151,14 +154,18 @@ active behavior depends on a deferred question.
 | [SPEC-CHANGE-0009](changes/SPEC-CHANGE-0009-correct-resource-manager-authentication-outcomes.md) | SPEC-POTPIE-RESOURCE-MANAGER | 1 → 2 | accepted |
 | [SPEC-CHANGE-0010](changes/SPEC-CHANGE-0010-initialize-potpie-capability-contract.md) | SPEC-POTPIE-CAPABILITIES | 0 → 1 | accepted |
 | [SPEC-CHANGE-0011](changes/SPEC-CHANGE-0011-stabilize-conformance-record-paths.md) | SPEC-PROCESS | 1 → 2 | accepted |
+| [SPEC-CHANGE-0012](changes/SPEC-CHANGE-0012-restrict-daemon-signal-fallback.md) | SPEC-DAEMON | 1 → 2 | accepted |
 
 ## Conformance Summary
 
-Six stable behavior-conformance records verify all 190 applicable active
-runtime behaviors at implementation
-`a0b52654f6fed50ec790cc2a72ccd581611ed3be`. The cross-system record also
-verifies PR `#1057` at its pinned head against a pinned `main` base; it does not
-create a separate PR-specific record.
+Six stable behavior-conformance records verify the prior set of 190 applicable
+active runtime behaviors at implementation
+`a0b52654f6fed50ec790cc2a72ccd581611ed3be`. Acceptance of the five new Daemon
+revision-2 behaviors increases the applicable set to 195 and makes the Daemon,
+CLI, and cross-system records derive stale. `DAEMON-052` through `DAEMON-056`
+remain unverified until successor records pin this accepted revision and its
+implementation. The existing cross-system record continues to describe only
+its pinned PR head and `main` base.
 
 See the [conformance index](conformance/index.md) for the current records,
 module links, PR/base integration identity, Git-history lineage, and the stable
@@ -169,7 +176,8 @@ not stored in the index or contract metadata.
 
 Initial implementation observations remain pinned to base
 `a341978880b9d4c1b403831931279ccedf6184ae` and explain the migration need. The
-six indexed behavior-conformance records separately establish implementation
-and verification claims at `a0b52654f6fed50ec790cc2a72ccd581611ed3be`.
-The stable cross-system record additionally establishes that the pinned PR head
-passed against the pinned `main` base.
+six indexed behavior-conformance records separately establish historical
+implementation and verification claims at
+`a0b52654f6fed50ec790cc2a72ccd581611ed3be`. The Daemon, CLI, and cross-system
+records are stale against accepted Daemon revision 2 until successor
+verification is published.
