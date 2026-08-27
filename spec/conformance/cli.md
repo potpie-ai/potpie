@@ -1,6 +1,6 @@
 ---
-id: CONF-CLI-2026-08-24-01
-title: Potpie CLI Conformance at a0b52654
+id: CONF-CLI
+title: Potpie CLI Conformance
 kind: conformance-record
 record_status: final
 spec_id: SPEC-CLI
@@ -10,14 +10,17 @@ implementation_ref: a0b52654f6fed50ec790cc2a72ccd581611ed3be
 performed_by: agent:codex
 performed_at: "2026-08-24T05:20:34Z"
 result: passed
-previous_record: CONF-CLI-2026-08-21-01
+previous_record: null
+previous_record_id: CONF-CLI-2026-08-24-01
+previous_record_ref: 3e5edfd584aea53682720c3684e6fd78646fa1b3
+previous_record_path: spec/conformance/cli-2026-08-24.md
 ---
 
 # Potpie CLI Conformance Record
 
 ## Scope
 
-This append-only record re-verifies every active CLI behavior, `CLI-001`
+This final record version verifies every active CLI behavior, `CLI-001`
 through `CLI-033`, after the internal capability relocation.
 
 ## Behavior Trace

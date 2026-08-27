@@ -18,9 +18,10 @@ nodes. Decisions explain why, change records describe revision transitions,
 questions preserve deferred choices, and conformance records separately
 describe implementation and evidence.
 
-Eight revision-1 contracts and corrective Resource Manager revision 2 are
-accepted binding targets. Resource Manager revision 1 remains historically
-addressable at `047cbe067c9c726e7e14f066675453372d8a8406`.
+Seven revision-1 runtime contracts, Specification Process revision 2, and
+corrective Resource Manager revision 2 are accepted binding targets. Process
+revision 1 and Resource Manager revision 1 remain historically addressable at
+`047cbe067c9c726e7e14f066675453372d8a8406`.
 Existing architecture documents and code remain implementation snapshots and
 can disagree with the target while migration is incomplete.
 
@@ -37,6 +38,7 @@ can disagree with the target while migration is incomplete.
 9. [CLI contract](modules/cli.md)
 10. Relevant [decisions](#decision-registry), [questions](questions/open.md), and
    [change records](#change-record-registry)
+11. [Conformance index](conformance/index.md)
 
 ## Target Paths
 
@@ -72,7 +74,7 @@ remain canonical.
 
 | ID | File | Revision | Maturity | Behaviors | Summary |
 |---|---|---:|---|---:|---|
-| SPEC-PROCESS | [process.md](process.md) | 1 | accepted | 21 | Authority, acceptance, mutation, and conformance policy |
+| SPEC-PROCESS | [process.md](process.md) | 2 | accepted | 26 | Authority, acceptance, mutation, stable conformance storage, and verification policy |
 | SPEC-GLOSSARY | [glossary.md](glossary.md) | 1 | accepted | 12 | Canonical runtime, lease, ownership, and error terminology |
 | SPEC-PRODUCT | [product.md](product.md) | 1 | accepted | 7 | Product outcomes and non-goals |
 | SPEC-SYSTEM | [system.md](system.md) | 1 | accepted | 23 | Cross-module ownership, trust, error, and call-path contract |
@@ -82,7 +84,7 @@ remain canonical.
 | SPEC-DAEMON | [modules/daemon.md](modules/daemon.md) | 1 | accepted | 51 | Controller, typed runtime, discovery, readiness, lifecycle, and handlers |
 | SPEC-CLI | [modules/cli.md](modules/cli.md) | 1 | accepted | 33 | Human and machine presentation plus controller/client selection |
 
-The catalog contains 230 accepted active behavior nodes.
+The catalog contains 235 accepted active behavior nodes.
 
 ## Exact Contract Dependencies
 
@@ -148,31 +150,26 @@ active behavior depends on a deferred question.
 | [SPEC-CHANGE-0008](changes/SPEC-CHANGE-0008-initialize-cli-contract.md) | SPEC-CLI | 0 → 1 | accepted |
 | [SPEC-CHANGE-0009](changes/SPEC-CHANGE-0009-correct-resource-manager-authentication-outcomes.md) | SPEC-POTPIE-RESOURCE-MANAGER | 1 → 2 | accepted |
 | [SPEC-CHANGE-0010](changes/SPEC-CHANGE-0010-initialize-potpie-capability-contract.md) | SPEC-POTPIE-CAPABILITIES | 0 → 1 | accepted |
+| [SPEC-CHANGE-0011](changes/SPEC-CHANGE-0011-stabilize-conformance-record-paths.md) | SPEC-PROCESS | 1 → 2 | accepted |
 
 ## Conformance Summary
 
-Six final records verify one accepted contract set at the capability-refactor
-implementation ref `a0b52654f6fed50ec790cc2a72ccd581611ed3be`:
+Six stable behavior-conformance records verify all 190 applicable active
+runtime behaviors at implementation
+`a0b52654f6fed50ec790cc2a72ccd581611ed3be`. The cross-system record also
+verifies PR `#1057` at its pinned head against a pinned `main` base; it does not
+create a separate PR-specific record.
 
-| Record | Contract | Revision | Result |
-|---|---|---:|---|
-| [CONF-CONTEXT-ENGINE-2026-08-24-01](conformance/context-engine-2026-08-24.md) | SPEC-CONTEXT-ENGINE | 1 | passed |
-| [CONF-POTPIE-RESOURCE-MANAGER-2026-08-24-01](conformance/potpie-resource-manager-2026-08-24.md) | SPEC-POTPIE-RESOURCE-MANAGER | 2 | passed |
-| [CONF-DAEMON-2026-08-24-01](conformance/daemon-2026-08-24.md) | SPEC-DAEMON | 1 | passed |
-| [CONF-CLI-2026-08-24-01](conformance/cli-2026-08-24.md) | SPEC-CLI | 1 | passed |
-| [CONF-SYSTEM-2026-08-24-01](conformance/cross-system-2026-08-24.md) | SPEC-SYSTEM | 1 | passed |
-| [CONF-POTPIE-CAPABILITIES-2026-08-24-01](conformance/potpie-capabilities-2026-08-24.md) | SPEC-POTPIE-CAPABILITIES | 1 | passed |
-
-Together they record passed verification for all 190 active behaviors in the
-five implementation/module contracts and their cross-system contract. The five
-2026-08-21 records remain immutable and are linked by `previous_record` from
-their successors. Freshness is derived from the pinned specification,
-implementation, dependency, and evidence identities; it is not stored in these
-records.
+See the [conformance index](conformance/index.md) for the current records,
+module links, PR/base integration identity, Git-history lineage, and the stable
+record update convention. Freshness is derived from pinned identities; it is
+not stored in the index or contract metadata.
 
 ## Current Snapshot
 
 Initial implementation observations remain pinned to base
 `a341978880b9d4c1b403831931279ccedf6184ae` and explain the migration need. The
-six current conformance records above separately establish implementation and
-verification claims at `a0b52654f6fed50ec790cc2a72ccd581611ed3be`.
+six indexed behavior-conformance records separately establish implementation
+and verification claims at `a0b52654f6fed50ec790cc2a72ccd581611ed3be`.
+The stable cross-system record additionally establishes that the pinned PR head
+passed against the pinned `main` base.

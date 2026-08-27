@@ -33,6 +33,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: validate-conformance-history
+        name: validate stable conformance history
+        entry: python3 scripts/validate_conformance_history.py
+        language: system
+        files: ^spec/
+        pass_filenames: false
+
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt --manifest-path potpie/parsing/Cargo.toml -- --check

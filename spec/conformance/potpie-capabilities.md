@@ -1,6 +1,6 @@
 ---
-id: CONF-POTPIE-CAPABILITIES-2026-08-24-01
-title: Potpie Capabilities Conformance at a0b52654
+id: CONF-POTPIE-CAPABILITIES
+title: Potpie Capabilities Conformance
 kind: conformance-record
 record_status: final
 spec_id: SPEC-POTPIE-CAPABILITIES
@@ -11,13 +11,16 @@ performed_by: agent:codex
 performed_at: "2026-08-24T05:20:34Z"
 result: passed
 previous_record: null
+previous_record_id: CONF-POTPIE-CAPABILITIES-2026-08-24-01
+previous_record_ref: 3e5edfd584aea53682720c3684e6fd78646fa1b3
+previous_record_path: spec/conformance/potpie-capabilities-2026-08-24.md
 ---
 
 # Potpie Capabilities Conformance Record
 
 ## Scope
 
-This first final record verifies every active capability behavior,
+This final record version verifies every active capability behavior,
 `PCAP-001` through `PCAP-012`, against the completed capability-first source
 layout and behavior-preservation evidence.
 

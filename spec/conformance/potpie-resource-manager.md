@@ -1,6 +1,6 @@
 ---
-id: CONF-POTPIE-RESOURCE-MANAGER-2026-08-24-01
-title: Potpie Resource Manager Conformance at a0b52654
+id: CONF-POTPIE-RESOURCE-MANAGER
+title: Potpie Resource Manager Conformance
 kind: conformance-record
 record_status: final
 spec_id: SPEC-POTPIE-RESOURCE-MANAGER
@@ -10,14 +10,17 @@ implementation_ref: a0b52654f6fed50ec790cc2a72ccd581611ed3be
 performed_by: agent:codex
 performed_at: "2026-08-24T05:20:34Z"
 result: passed
-previous_record: CONF-POTPIE-RESOURCE-MANAGER-2026-08-21-01
+previous_record: null
+previous_record_id: CONF-POTPIE-RESOURCE-MANAGER-2026-08-24-01
+previous_record_ref: 3e5edfd584aea53682720c3684e6fd78646fa1b3
+previous_record_path: spec/conformance/potpie-resource-manager-2026-08-24.md
 ---
 
 # Potpie Resource Manager Conformance Record
 
 ## Scope
 
-This append-only record re-verifies all 37 active revision-2 behaviors:
+This final record version verifies all 37 active revision-2 behaviors:
 `RM-001` through `RM-014` and `RM-017` through `RM-039`. Retired `RM-015` and
 `RM-016` remain lineage rather than current obligations.
 

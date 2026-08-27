@@ -2,12 +2,12 @@
 id: SPEC-PROCESS
 title: Specification Process
 kind: process
-revision: 1
+revision: 2
 maturity: accepted
 owners:
   - team:potpie
 depends_on: []
-change_ref: SPEC-CHANGE-0001
+change_ref: SPEC-CHANGE-0011
 ---
 
 # Specification Process
@@ -100,7 +100,7 @@ PROC-010 [active]: Every edit to an accepted contract MUST have a matching accep
   > decision [active]: decision:ADR-0001
   @ PROC-002
 
-PROC-011 [active]: A final conformance record MUST be immutable.
+PROC-011 [active]: A final conformance record version identified by its stable record ID, repository path, and Git ref MUST be immutable at that ref; publishing a successor at the same stable path MUST create a new Git object without altering the prior version.
   > authority [active]: user:dsantra
   > decision [active]: decision:ADR-0001
   @ PROC-005
@@ -156,6 +156,30 @@ PROC-021 [active]: An acceptance record MUST identify the accepted revision, mat
   @ PROC-003
   @ PROC-010
 
+PROC-022 [active]: Each defined conformance scope MUST have at most one current record at a stable, scope-named path; dates, sequence numbers, implementation versions, and pull-request numbers MUST NOT be encoded in current conformance filenames.
+  > authority [active]: user:dsantra
+  @ PROC-011
+
+PROC-023 [active]: A successor conformance record MUST identify the immediately preceding record version through flat `previous_record_id`, `previous_record_ref`, and `previous_record_path` fields, and that historical target MUST resolve without requiring the prior file to remain in the current tree.
+  > authority [active]: user:dsantra
+  @ PROC-011
+  @ PROC-022
+
+PROC-024 [active]: Verification evidence spanning multiple module scopes MUST be recorded in the applicable system-scope conformance record rather than in an additional pull-request-specific or release-specific conformance file.
+  > authority [active]: user:dsantra
+  @ PROC-022
+
+PROC-025 [active]: Pre-merge integration verification MUST pin the repository, pull-request number, pull-request head commit, target base ref and commit, accepted specification identities, and implementation ref; a predicted eventual merge commit MUST NOT be required as the verification identity.
+  > authority [active]: user:dsantra
+  @ PROC-012
+  @ PROC-024
+
+PROC-026 [active]: A successor commit that only publishes conformance, specification-governance, derived-index, or conformance-validation artifacts MAY point to its verified predecessor because a record cannot contain its own commit hash; any intervening change to an in-scope contract, runtime implementation, test, or cited verification evidence MUST be reverified instead of classified as publication-only.
+  > authority [active]: user:dsantra
+  @ PROC-011
+  @ PROC-012
+  @ PROC-025
+
 ## Proposals And Mutations
 
 An initial contract begins at revision 1 with a proposed change record from
@@ -183,8 +207,24 @@ requirement for later repository work.
 
 Conformance records pin an accepted specification revision and ref, an
 implementation ref, the behavior scope, claims, verification results, evidence,
-performers, and time. A new result creates a new record rather than editing a
-previous final record.
+performers, and time. Each scope has one current stable path. A new result
+publishes a successor at that path and points to the previous record's ID, full
+Git ref, and historical path. The previous Git object remains the immutable record;
+the stable filename is navigation to the current record, not its version
+identity.
+
+The system-scope record owns evidence that crosses module boundaries. For a
+GitHub pull request, it pins the repository, pull-request number and head,
+target base ref and commit, accepted specification refs, and implementation
+ref. A synthetic merge candidate and tree may be recorded as supporting
+evidence, but the eventual merge commit is not predicted or required.
+
+The commit that publishes a conformance record cannot self-pin. A later commit
+containing only conformance, specification-governance, derived-index, or
+conformance-validation artifacts may therefore point to its verified
+predecessor. This exception does not cover an in-scope contract, runtime,
+test, or cited-evidence change; any such change requires a new verification
+result at the stable path.
 
 Freshness is calculated from pinned identities, dependencies, and available
 evidence. A failed result and a stale result answer different questions:
@@ -195,24 +235,31 @@ evidence no longer establishes current state.
 
 Git history preserves accepted revisions and change records. Retired behavior
 identifiers remain as lineage tombstones and are not reused. Source and
-conformance records remain addressable at their immutable refs.
+conformance record versions remain addressable at their immutable refs even
+when their stable current paths advance or an older dated path is absent from
+the current tree.
 
 ## Acceptance Criteria
 
 This revision is ready for acceptance when:
 
-- `PROC-001` through `PROC-021` are structurally valid and carry active
+- `PROC-001` through `PROC-026` are structurally valid and carry active
   authority.
-- The contract and `SPEC-CHANGE-0001` identify the same transition.
+- The contract and `SPEC-CHANGE-0011` identify the same transition.
 - ADR-0001 explains the decision without introducing behavior absent from these
   nodes.
 - Applicable structural, semantic, provenance, consistency, and reconstruction
   reviews have no blocking findings.
 - Implementation and verification remain independently unclaimed and
   unverified until conformance records exist.
+- The current conformance tree contains one stable file per defined scope, each
+  successor resolves its historical pointer, and cross-system integration
+  evidence does not require a separate PR-specific record.
 
 ## Rationale
 
 Separating authority, desired behavior, implementation, and evidence makes it
 possible to accept a target architecture before its migration is complete
-without presenting unfinished code as compliant.
+without presenting unfinished code as compliant. Stable scope paths keep the
+current verification state discoverable while Git refs preserve every final
+record version without accumulating dated copies in the current tree.

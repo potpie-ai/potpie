@@ -1,6 +1,6 @@
 ---
-id: CONF-CONTEXT-ENGINE-2026-08-24-01
-title: Context Engine Conformance at a0b52654
+id: CONF-CONTEXT-ENGINE
+title: Context Engine Conformance
 kind: conformance-record
 record_status: final
 spec_id: SPEC-CONTEXT-ENGINE
@@ -10,14 +10,17 @@ implementation_ref: a0b52654f6fed50ec790cc2a72ccd581611ed3be
 performed_by: agent:codex
 performed_at: "2026-08-24T05:20:34Z"
 result: passed
-previous_record: CONF-CONTEXT-ENGINE-2026-08-21-01
+previous_record: null
+previous_record_id: CONF-CONTEXT-ENGINE-2026-08-24-01
+previous_record_ref: 3e5edfd584aea53682720c3684e6fd78646fa1b3
+previous_record_path: spec/conformance/context-engine-2026-08-24.md
 ---
 
 # Context Engine Conformance Record
 
 ## Scope
 
-This append-only record re-verifies every active behavior, `CE-001` through
+This final record version verifies every active behavior, `CE-001` through
 `CE-034`, after the root Potpie capability relocation. It pins the unchanged
 accepted Context Engine contract and the capability-refactor implementation
 commit.
