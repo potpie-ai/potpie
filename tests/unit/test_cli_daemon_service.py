@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: S101 - pytest assertions are intentional.
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,9 +9,12 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from potpie.cli import main as host_cli
-from potpie.cli.commands import _common, bootstrap
+from potpie.cli.commands import _common, bootstrap, daemon as daemon_commands
 from potpie.cli.telemetry.onboarding_events import CliSetupAnalyticsObserver
-from potpie_context_core.lifecycle import (
+from potpie.daemon.lifecycle import DaemonStopError
+from potpie.runtime.resource_manager import ResourceLifecycleError
+from potpie.runtime.root_services import build_root_runtime_services
+from potpie_context_engine.core.lifecycle import (
     SKIPPED,
     PlannedSetupStep,
     SetupPlan,
@@ -64,9 +69,11 @@ class _FakeHost:
     )
 
 
-def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
+def test_daemon_lifecycle_commands_use_detached_daemon(
+    tmp_path: Path, monkeypatch
+) -> None:
     daemon = _FakeDaemon(home=tmp_path)
-    _common.set_host(_FakeHost(daemon=daemon))
+    monkeypatch.setattr(daemon_commands, "Daemon", lambda **_kwargs: daemon)
 
     start = runner.invoke(host_cli.app, ["--json", "daemon", "start"])
     status = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
@@ -82,8 +89,56 @@ def test_daemon_lifecycle_commands_use_detached_daemon(tmp_path: Path) -> None:
     assert daemon.calls == ["start", "status", "stop", "start", "stop"]
 
 
+def test_daemon_recovery_does_not_compose_root_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    daemon = _FakeDaemon(home=tmp_path)
+    monkeypatch.setattr(daemon_commands, "Daemon", lambda **_kwargs: daemon)
+    monkeypatch.setattr(
+        _common,
+        "get_root_runtime",
+        lambda: (_ for _ in ()).throw(RuntimeError("invalid graph backend")),
+    )
+
+    status = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
+    stop = runner.invoke(host_cli.app, ["--json", "daemon", "stop"])
+
+    assert status.exit_code == 0, status.stdout
+    assert stop.exit_code == 0, stop.stdout
+    assert daemon.calls == ["status", "stop"]
+
+
+def test_daemon_stop_refusal_is_a_typed_nonzero_cli_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    daemon = _FakeDaemon(home=tmp_path)
+
+    def refuse_stop() -> dict[str, str]:
+        raise DaemonStopError(
+            ResourceLifecycleError(
+                code="daemon_attached_identity_unavailable",
+                message="refusing to signal an unauthenticated recorded process",
+                recommended_next_action="inspect daemon runtime records",
+                retry_posture="safe",
+            )
+        )
+
+    daemon.stop = refuse_stop  # type: ignore[method-assign]
+    monkeypatch.setattr(daemon_commands, "Daemon", lambda **_kwargs: daemon)
+
+    result = runner.invoke(host_cli.app, ["--json", "daemon", "stop"])
+
+    assert result.exit_code == _common.EXIT_UNAVAILABLE
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "daemon_attached_identity_unavailable"
+    assert payload["message"] == (
+        "refusing to signal an unauthenticated recorded process"
+    )
+    assert payload["recommended_next_action"] == "inspect daemon runtime records"
+
+
 def test_service_command_group_is_removed(tmp_path: Path) -> None:
-    _common.set_host(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
+    _common.set_runtime(_FakeHost(daemon=_FakeDaemon(home=tmp_path)))
 
     result = runner.invoke(host_cli.app, ["--json", "service", "status"])
 
@@ -96,7 +151,8 @@ def test_setup_daemon_dry_run_marks_daemon_host_mode(
     tmp_path: Path,
 ) -> None:
     host = _SetupHost(home=tmp_path)
-    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
+    runtime = build_root_runtime_services(host)
+    monkeypatch.setattr(bootstrap, "get_root_runtime", lambda: runtime)
     monkeypatch.setattr(
         "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
@@ -116,7 +172,8 @@ def test_setup_daemon_uses_daemon_status_for_backend_validation(
     host = _SetupHost(home=tmp_path)
     host.backend.profile = "falkordb_lite"
     host.daemon.backend = "embedded"
-    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
+    runtime = build_root_runtime_services(host)
+    monkeypatch.setattr(bootstrap, "get_root_runtime", lambda: runtime)
     monkeypatch.setattr(
         "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
@@ -137,7 +194,8 @@ def test_setup_daemon_fails_when_requested_backend_cannot_be_verified(
     tmp_path: Path,
 ) -> None:
     host = _SetupHost(home=tmp_path)
-    monkeypatch.setattr(bootstrap, "get_host", lambda: host)
+    runtime = build_root_runtime_services(host)
+    monkeypatch.setattr(bootstrap, "get_root_runtime", lambda: runtime)
     monkeypatch.setattr(
         "potpie.cli.ui.setup_ux.rich_enabled",
         lambda **_kwargs: False,
@@ -197,6 +255,7 @@ class _Backend:
 class _SetupHost:
     home: Path
     profile: str = "local"
+    pots: object = field(default_factory=object)
     backend: _Backend = field(init=False)
     daemon: _FakeDaemon = field(init=False)
     setup: _Setup = field(init=False)

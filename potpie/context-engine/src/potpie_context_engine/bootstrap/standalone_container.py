@@ -22,7 +22,9 @@ from potpie_context_engine.bootstrap.ingestion_server import (
 from potpie_context_engine.bootstrap.env_pots import merged_pot_repo_map
 from potpie_context_engine.bootstrap.http_projects import ExplicitPotResolution
 from potpie_context_engine.bootstrap.queue_factory import get_context_graph_job_queue
-from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
 
 
 def build_standalone_context_engine_container() -> IngestionServerContainer:

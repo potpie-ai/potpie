@@ -1,4 +1,4 @@
-"""Setup wizard UI for the real host-routed setup flow."""
+"""Setup wizard UI for the root-owned setup service flow."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ from potpie.cli.ui.setup_wizard_ui import (
     is_interactive_tty,
     live_ui_enabled,
 )
-from potpie_context_core.lifecycle import SetupPlan, SetupReport
-from potpie_context_engine.domain.ports.services.setup import (
+from potpie_context_engine.core.lifecycle import SetupPlan, SetupReport
+from potpie.setup.contracts import (
     SetupObserver,
     SetupOrchestrator,
 )
@@ -382,7 +382,7 @@ POST_SETUP_AGENT_ORDER: tuple[str, ...] = tuple(
 
 def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any]]:
     """Copy packaged skill bundles into *repo* for each harness id."""
-    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+    from potpie.skills.installer import (
         AGENT_TYPES,
         install_agent_bundle,
     )
@@ -398,18 +398,18 @@ def install_agents_to_repo(repo: Path, agents: list[str]) -> list[tuple[str, Any
 
 def install_agents_globally(agents: list[str]) -> list[tuple[str, Any]]:
     """Install packaged skill bundles into each harness's global skill location."""
-    from potpie.cli.commands._common import get_host
-    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+    from potpie.cli.commands._common import get_skill_service
+    from potpie.skills.installer import (
         AGENT_TYPES,
     )
 
-    host = get_host()
+    skills = get_skill_service()
     results: list[tuple[str, Any]] = []
     for agent in agents:
         key = agent.strip().lower()
         if key not in AGENT_TYPES or key == "default":
             continue
-        results.append((key, host.skills.install(agent=key, scope="global")))
+        results.append((key, skills.install(agent=key, scope="global")))
     return results
 
 
@@ -508,15 +508,15 @@ def _agent_usage_hint(agent_ids: list[str]) -> str | None:
 
 def _globally_installed_harnesses() -> list[str]:
     """Harnesses that already have Potpie skills on disk (any prior setup run)."""
-    from potpie.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_skill_service
 
-    host = get_host()
+    skills = get_skill_service()
     installed: list[str] = []
     for agent in POST_SETUP_AGENT_ORDER:
         if agent == "default":
             continue
         try:
-            status = host.skills.status(agent=agent, scope="global")
+            status = skills.status(agent=agent, scope="global")
         except ValueError:
             continue
         if status.installed:
@@ -758,7 +758,7 @@ def maybe_prompt_github_login(
 
 
 def _register_repo_source(*, repo: str) -> str:
-    from potpie.cli.commands._common import get_host
+    from potpie.cli.commands._common import get_root_runtime
     from potpie.cli.commands.pots import register_repo_source
 
     started_ms = now_ms()
@@ -767,8 +767,11 @@ def _register_repo_source(*, repo: str) -> str:
         entrypoint="post_setup_first_pot",
         properties={"source_kind": "repo"},
     )
-    host = get_host()
-    active = host.pots.active_pot()
+    host = get_root_runtime()
+    from potpie.cli.commands._common import get_pot_service
+
+    pots = get_pot_service(host)
+    active = pots.active_pot()
     if active is None:
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_completed",
@@ -776,7 +779,7 @@ def _register_repo_source(*, repo: str) -> str:
             properties={"step_state": "skipped", "duration_ms": elapsed_ms(started_ms)},
         )
         return "skipped"
-    existing = host.pots.list_sources(pot_id=active.pot_id)
+    existing = pots.list_sources(pot_id=active.pot_id)
     resolved = resolve_repo_location(repo)
     if any(
         s.kind == "repo"
@@ -817,7 +820,6 @@ def _maybe_prompt_first_pot(
     repo: Path | None,
     default_pot_name: str,
 ) -> None:
-    from potpie.cli.commands._common import get_host
     from potpie.cli.ui.interactive_prompts import prompt_first_pot_name
 
     capture_project_binding_event(
@@ -839,7 +841,9 @@ def _maybe_prompt_first_pot(
 
     repo_str = str(repo.resolve()) if repo is not None else None
     name_source = "default" if name == default_pot_name else "custom"
-    pot = get_host().pots.create_pot(name=name, use=True)
+    from potpie.cli.commands._common import get_pot_service
+
+    pot = get_pot_service().create_pot(name=name, use=True)
     capture_project_binding_event(
         "cli_onboarding_first_pot_created",
         entrypoint="post_setup_first_pot",

@@ -9,8 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_core.graph_inbox import GraphInboxItem
+from potpie_context_engine.adapters.outbound.local_paths import default_home
+from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
+    locked_json_store,
+)
+from potpie_context_engine.core.graph_inbox import GraphInboxItem
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +27,12 @@ class LocalJsonGraphInboxStore:
         return self.home / "graph_inbox.json"
 
     def save(self, item: GraphInboxItem) -> None:
-        state = self._load()
-        items = state.setdefault("items", {})
-        by_pot = items.setdefault(item.pot_id, {})
-        by_pot[item.item_id] = item.to_dict()
-        self._save(state)
+        with locked_json_store(self._path):
+            state = self._load()
+            items = state.setdefault("items", {})
+            by_pot = items.setdefault(item.pot_id, {})
+            by_pot[item.item_id] = item.to_dict()
+            self._save(state)
 
     def get(self, *, pot_id: str, item_id: str) -> GraphInboxItem | None:
         raw = self._load().get("items", {}).get(pot_id, {}).get(item_id)

@@ -6,7 +6,7 @@ from types import ModuleType
 
 import pytest
 
-from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 from potpie_context_engine.adapters.outbound.reconciliation.factory import (
     try_pydantic_deep_reconciliation_agent,
 )

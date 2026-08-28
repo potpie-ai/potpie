@@ -1,9 +1,10 @@
-"""Shared CLI plumbing for the host-routed command surface.
+"""Shared CLI plumbing for the migrating runtime boundary.
 
-Every command in this package routes ``CLI -> HostShell -> service(s) -> ports``.
-This module owns the cross-cutting concerns so the command bodies stay thin:
+Context-domain commands acquire a typed ``EngineClient``; root-owned commands
+continue to use explicit Potpie services while their callers migrate. This
+module owns the cross-cutting concerns so command bodies stay thin:
 
-- one cached ``HostShell`` per process (``get_host``);
+- one cached explicit runtime composition and context resource manager per process;
 - ``--json`` output state + ``emit`` / ``fail`` helpers;
 - the ``contract()`` error boundary that maps domain errors to the documented
   exit codes (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth) and the
@@ -14,12 +15,14 @@ This module owns the cross-cutting concerns so the command bodies stay thin:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Final, Iterator, NoReturn, Sequence
+from typing import Any, Callable, Final, Iterator, Mapping, NoReturn, Sequence
 
 import click
 import typer
@@ -29,12 +32,12 @@ from potpie.cli.repo_location import (
     normalize_repo_ref as shared_normalize_repo_ref,
     repo_identity_key,
 )
-from potpie_context_core.errors import (
+from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,
 )
-from potpie_context_engine.domain.ports.cli_auth.credentials import CredentialStore
+from potpie.auth.ports.credentials import CredentialStore
 
 # --- exit codes (cli-flow.md output contract) -------------------------------
 EXIT_OK = 0
@@ -43,12 +46,52 @@ EXIT_UNAVAILABLE = 2
 EXIT_DEGRADED = 3
 EXIT_AUTH = 4
 
+
+class CliCancellation(Exception):
+    """Typed CLI-local non-success outcome for cancellation before dispatch."""
+
+    category: Final[str] = "cancellation"
+
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        recommended_next_action: str | None = None,
+        exit_code: int = EXIT_VALIDATION,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.recommended_next_action = recommended_next_action
+        self.exit_code = exit_code
+
+
+class CliCancellationExit(typer.Exit):
+    """Process-boundary signal retaining its typed cancellation outcome."""
+
+    def __init__(self, outcome: CliCancellation) -> None:
+        super().__init__(code=outcome.exit_code)
+        self.outcome = outcome
+
+
 _state: dict[str, Any] = {
     "json": False,
     "verbose": False,
-    "host": None,
+    "runtime": None,
     "store": None,
     "json_error_formatter": None,
+    "engine_runner": None,
+    "engine_manager": None,
+    "engine_runtime": None,
+    "engine_daemon_client": None,
+    "engine_daemon_key": None,
+    "pot_service": None,
+    "pot_service_runtime": None,
+    "root_product_services": {},
+    "root_product_services_runtime": None,
+    "root_runtime": None,
+    "root_runtime_source": None,
 }
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
@@ -94,41 +137,278 @@ def is_verbose() -> bool:
     return bool(_state["verbose"])
 
 
-def get_host():
-    """Return the process-wide ``HostShell`` (built lazily)."""
-    if _state["host"] is None:
-        mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "").strip().lower()
-        if mode != "in_process":
-            try:
-                from potpie.daemon.client import RemoteHostShell
-            except ModuleNotFoundError as exc:
-                if exc.name not in {"potpie.daemon", "potpie.daemon.client"}:
-                    raise
-            else:
-                _state["host"] = RemoteHostShell()
-                return _state["host"]
+def get_runtime():
+    """Return the process-wide explicit runtime composition, built lazily."""
+    if _state["runtime"] is None:
+        from potpie.runtime.composition import build_local_runtime
 
-        from potpie_context_engine.bootstrap.host_wiring import build_host_shell
-
-        _state["host"] = build_host_shell()
-    return _state["host"]
+        _state["runtime"] = build_local_runtime()
+    return _state["runtime"]
 
 
-def set_host(host: Any) -> None:
-    """Inject a host (tests / alternate wiring)."""
-    _state["host"] = host
+def set_runtime(runtime: Any) -> None:
+    """Inject an explicit runtime composition or focused test double."""
+    _state["runtime"] = runtime
+    _state["engine_manager"] = None
+    _state["engine_runtime"] = None
+    _state["engine_daemon_client"] = None
+    _state["engine_daemon_key"] = None
+    _state["pot_service"] = None
+    _state["pot_service_runtime"] = None
+    _state["root_product_services"] = {}
+    _state["root_product_services_runtime"] = None
+    _state["root_runtime"] = None
+    _state["root_runtime_source"] = None
+
+
+def get_pot_service(runtime: Any | None = None):
+    """Return the finite Potpie-owned pot/source control-plane service."""
+    from potpie.runtime.root_services import build_pot_resource_service
+
+    runtime = runtime if runtime is not None else get_runtime()
+    service = _state.get("pot_service")
+    if service is None or _state.get("pot_service_runtime") is not runtime:
+        service = build_pot_resource_service(runtime)
+        _state["pot_service"] = service
+        _state["pot_service_runtime"] = runtime
+    return service
+
+
+def get_root_runtime():
+    """Return the explicit Potpie-owned product service group."""
+    from potpie.runtime.root_services import build_root_runtime_services
+
+    runtime_source = get_runtime()
+    runtime = _state.get("root_runtime")
+    if runtime is None or _state.get("root_runtime_source") is not runtime_source:
+        runtime = build_root_runtime_services(runtime_source)
+        _state["root_runtime"] = runtime
+        _state["root_runtime_source"] = runtime_source
+    return runtime
+
+
+def _get_root_product_service(
+    name: str,
+    builder: Callable[[Any], object],
+    runtime: Any | None = None,
+):
+    runtime = runtime if runtime is not None else get_root_runtime()
+    if _state.get("root_product_services_runtime") is not runtime:
+        _state["root_product_services"] = {}
+        _state["root_product_services_runtime"] = runtime
+    services = _state["root_product_services"]
+    if name not in services:
+        services[name] = builder(runtime)
+    return services[name]
+
+
+def get_auth_service(runtime: Any | None = None):
+    from potpie.runtime.root_services import build_auth_service
+
+    return _get_root_product_service("auth", build_auth_service, runtime)
+
+
+def get_config_service(runtime: Any | None = None):
+    from potpie.runtime.root_services import build_config_service
+
+    return _get_root_product_service("config", build_config_service, runtime)
+
+
+def get_daemon_service(runtime: Any | None = None):
+    from potpie.runtime.root_services import build_daemon_service
+
+    return _get_root_product_service("daemon", build_daemon_service, runtime)
+
+
+def get_ledger_service(runtime: Any | None = None):
+    from potpie.runtime.root_services import build_ledger_service
+
+    return _get_root_product_service("ledger", build_ledger_service, runtime)
+
+
+def get_setup_service(runtime: Any | None = None):
+    from potpie.runtime.root_services import build_setup_service
+
+    return _get_root_product_service("setup", build_setup_service, runtime)
+
+
+def get_skill_service(runtime: Any | None = None):
+    from potpie.runtime.root_services import build_skill_service
+
+    return _get_root_product_service("skills", build_skill_service, runtime)
+
+
+class EngineClientError(Exception):
+    """Root presentation error carrying one stable typed-boundary failure."""
+
+    def __init__(self, error: object) -> None:
+        super().__init__(str(getattr(error, "message", "Context operation failed.")))
+        self.error = error
+
+
+def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = None):
+    """Compose the explicitly selected local or canonical daemon engine client."""
+    from potpie.runtime import (
+        DaemonEngineClient,
+        HttpDaemonTransport,
+        LocalEngineClient,
+        ProtocolTransportError,
+    )
+    from potpie.runtime.local_engine import build_local_resource_manager
+
+    selector = _context_selector(explicit_pot)
+    mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "daemon").strip().lower()
+    if mode != "in_process":
+        from potpie.daemon.discovery import (
+            DaemonDiscoveryError,
+            load_daemon_connection,
+        )
+        from potpie.config.local_paths import (
+            default_home,
+        )
+
+        home = Path(os.getenv("CONTEXT_ENGINE_HOME") or default_home()).resolve()
+        try:
+            connection = load_daemon_connection(home)
+        except DaemonDiscoveryError as exc:
+            raise EngineClientError(
+                ProtocolTransportError(
+                    code="daemon_discovery_unavailable",
+                    message="canonical daemon discovery is unavailable",
+                    recommended_next_action="run 'potpie daemon restart'",
+                    retry_posture="safe",
+                )
+            ) from exc
+        key = (
+            str(home),
+            connection.discovery.instance_id,
+            selector.kind,
+            selector.value,
+        )
+        client = _state.get("engine_daemon_client")
+        if client is None or _state.get("engine_daemon_key") != key:
+            client = DaemonEngineClient(
+                selector=selector,
+                transport=HttpDaemonTransport(
+                    endpoint=connection.discovery.endpoint,
+                    bearer_token=connection.bearer_token,
+                ),
+                expected_instance_id=connection.discovery.instance_id,
+            )
+            handshake = _run_engine_awaitable(client.handshake())
+            if not getattr(handshake, "ok", False):
+                raise EngineClientError(handshake.error)
+            _state["engine_daemon_client"] = client
+            _state["engine_daemon_key"] = key
+        return client
+
+    runtime = runtime if runtime is not None else get_runtime()
+    from potpie.runtime.composition import LocalRuntimeComposition
+
+    engine_services = (
+        runtime.engine if isinstance(runtime, LocalRuntimeComposition) else runtime
+    )
+    from potpie.runtime.local_engine import LocalGraphMetadataOperationHandler
+
+    context_free_handler = (
+        runtime.graph_metadata
+        if isinstance(runtime, LocalRuntimeComposition)
+        else LocalGraphMetadataOperationHandler(engine_services)
+    )
+    manager = _state.get("engine_manager")
+    if manager is None or _state.get("engine_runtime") is not runtime:
+        manager = build_local_resource_manager(engine_services)
+        _state["engine_manager"] = manager
+        _state["engine_runtime"] = runtime
+        if not isinstance(runtime, LocalRuntimeComposition):
+            from potpie.runtime import OperationCoordinator
+
+            _state["engine_coordinator"] = OperationCoordinator()
+    coordinator = (
+        runtime.coordinator
+        if isinstance(runtime, LocalRuntimeComposition)
+        else _state["engine_coordinator"]
+    )
+    return LocalEngineClient(
+        selector=selector,
+        authentication={"kind": "local_cli"},
+        resource_manager=manager,
+        coordinator=coordinator,
+        context_free_handler=context_free_handler,
+    )
+
+
+def run_engine_operation(awaitable):
+    """Run one async engine-client call and expose typed failures to contract()."""
+    outcome = _run_engine_awaitable(awaitable)
+    if not getattr(outcome, "ok", False):
+        raise EngineClientError(outcome.error)
+    return outcome.value
+
+
+def confirm_destructive_operation(
+    *,
+    confirmed_by_flag: bool,
+    prompt: str,
+    rerun_command: str,
+):
+    """Bind explicit confirmation before dispatching a destructive operation."""
+
+    from potpie.runtime import DestructiveConfirmation
+
+    if confirmed_by_flag:
+        return DestructiveConfirmation(confirmed=True)
+    if is_json() or not sys.stdin.isatty():
+        fail(
+            code="destructive_confirmation_required",
+            message="Destructive operation requires explicit confirmation.",
+            next_action=f"review the target, then rerun '{rerun_command}'",
+            exit_code=EXIT_VALIDATION,
+        )
+    try:
+        confirmed = typer.confirm(prompt, default=False)
+    except (typer.Abort, EOFError):
+        confirmed = False
+    if not confirmed:
+        cancel(
+            code="destructive_confirmation_declined",
+            message="Destructive operation was not confirmed.",
+            next_action=f"review the target, then rerun '{rerun_command}'",
+            exit_code=EXIT_VALIDATION,
+        )
+    return DestructiveConfirmation(confirmed=True)
+
+
+def _run_engine_awaitable(awaitable):
+    runner = _state.get("engine_runner")
+    if runner is None:
+        runner = asyncio.Runner()
+        _state["engine_runner"] = runner
+    outcome = runner.run(awaitable)
+    return outcome
+
+
+def _context_selector(explicit_pot: str | None):
+    from potpie.runtime import ContextSelector
+
+    if explicit_pot:
+        return ContextSelector(kind="explicit", value=explicit_pot)
+    repo = current_repo_identity_for_cli()
+    if repo:
+        return ContextSelector(kind="repository", value=repo_identity_key(repo))
+    return ContextSelector(kind="active")
 
 
 def get_store() -> CredentialStore:
     """Return the process-wide ``CredentialStore`` (built lazily).
 
     The auth/credential subsystem persists through this domain port; the concrete
-    is chosen at the composition root (``potpie_context_engine.bootstrap.cli_auth_wiring``), so this
+    is chosen at the composition root (``potpie.auth.wiring``), so this
     inbound module never imports an adapter. The default is the real
     file-backed store; tests inject an in-memory fake via ``set_store``.
     """
     if _state["store"] is None:
-        from potpie_context_engine.bootstrap.cli_auth_wiring import (
+        from potpie.auth.wiring import (
             build_credential_store,
         )
 
@@ -208,6 +488,23 @@ def fail(
     raise typer.Exit(code=exit_code)
 
 
+def cancel(
+    *,
+    code: str,
+    message: str,
+    next_action: str | None = None,
+    exit_code: int = EXIT_VALIDATION,
+) -> NoReturn:
+    """Raise a typed CLI-local cancellation for the command boundary to render."""
+
+    raise CliCancellation(
+        code=code,
+        message=message,
+        recommended_next_action=next_action,
+        exit_code=exit_code,
+    )
+
+
 @contextmanager
 def contract() -> Iterator[None]:
     """Error boundary: map domain errors to the documented exit codes.
@@ -220,6 +517,41 @@ def contract() -> Iterator[None]:
     error_code = "none"
     try:
         yield
+    except CliCancellation as exc:
+        result = "cancelled"
+        error_code = "none"
+        from potpie.cli.ui.format import print_human_block
+
+        human = exc.message
+        if exc.recommended_next_action:
+            human = f"{human}\nNext: {exc.recommended_next_action}"
+        print_human_block(human)
+        raise CliCancellationExit(exc) from None
+    except EngineClientError as exc:
+        error = exc.error
+        code = str(getattr(error, "code", "context_operation_failed"))
+        category = str(getattr(error, "category", "dependency"))
+        details = getattr(error, "details", None)
+        detail = details.get("detail") if isinstance(details, Mapping) else None
+        if detail is None and details:
+            detail = details
+        result = code
+        error_code = code
+        if code == "not_implemented":
+            exit_code = EXIT_UNAVAILABLE
+        elif category in {"authentication", "authorization"}:
+            exit_code = EXIT_AUTH
+        elif category in {"selection", "domain"}:
+            exit_code = EXIT_VALIDATION
+        else:
+            exit_code = EXIT_UNAVAILABLE
+        fail(
+            code=code,
+            message=str(getattr(error, "message", str(exc))),
+            detail=detail,
+            next_action=getattr(error, "recommended_next_action", None),
+            exit_code=exit_code,
+        )
     except CapabilityNotImplemented as exc:
         result = "not_implemented"
         error_code = "not_implemented"
@@ -357,7 +689,7 @@ def resolve_pot_scope(
     from existing registrations would route the new source to the wrong pot
     (or fail as ambiguous when other pots already track the same repo).
     """
-    pots = host.pots
+    pots = get_pot_service(host)
     if explicit:
         for pot in pots.list_pots():
             if explicit in (pot.pot_id, pot.name):
@@ -415,7 +747,7 @@ def repo_pot_candidates(
         else _pots_matching_repo_identity(host, repo_identity)
     )
     default_pot_id = _repo_default_pot_id(host, repo_identity)
-    active = _safe_call(lambda: host.pots.active_pot(), None)
+    active = _safe_call(lambda: get_pot_service(host).active_pot(), None)
     rows: list[dict[str, Any]] = []
     for pot_id, name in matches:
         row = {
@@ -445,7 +777,7 @@ def repo_effective_pot_info(host: Any, repo: str | None = None) -> dict[str, Any
         else _pots_matching_repo_identity(host, repo_identity)
     )
     default_pot_id = _repo_default_pot_id(host, repo_identity)
-    active = _safe_call(lambda: host.pots.active_pot(), None)
+    active = _safe_call(lambda: get_pot_service(host).active_pot(), None)
     active_id = getattr(active, "pot_id", None) if active is not None else None
     match_ids = {pot_id for pot_id, _ in matches}
 
@@ -669,10 +1001,11 @@ def use_pot_selection(
         if not repo_key:
             raise ValueError("--also-default-for-current-repo requires a repo")
 
-    pot = host.pots.use_pot(ref=ref)
+    pots = get_pot_service(host)
+    pot = pots.use_pot(ref=ref)
     repo_default_set = False
     if repo_key:
-        host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
+        pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
         repo_default_set = True
 
     routing = repo_effective_pot_info(host)
@@ -709,10 +1042,14 @@ def use_pot_selection(
 
 
 def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
-    graph = getattr(host, "graph", None)
-    if graph is None:
-        return {}
-    status = _safe_call(lambda: graph.data_plane_status(pot_id), None)
+    from potpie_context_engine.requests import DataPlaneStatusRequest
+
+    status = _safe_call(
+        lambda: run_engine_operation(
+            get_engine_client(pot_id).data_plane_status(DataPlaneStatusRequest())
+        ),
+        None,
+    )
     if status is None:
         return {}
     counts = getattr(status, "counts", {}) or {}
@@ -726,7 +1063,9 @@ def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
 
 
 def pot_source_count(host: Any, pot_id: str) -> int:
-    return len(_safe_call(lambda: host.pots.list_sources(pot_id=pot_id), []) or [])
+    return len(
+        _safe_call(lambda: get_pot_service(host).list_sources(pot_id=pot_id), []) or []
+    )
 
 
 def _repo_identity_from_option(repo: str | None) -> str | None:
@@ -766,12 +1105,13 @@ def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
     remote = _current_git_remote(cwd)
     matches: list[tuple[str, str]] = []
     try:
-        pots = list(host.pots.list_pots())
+        service = get_pot_service(host)
+        pots = list(service.list_pots())
     except Exception:  # noqa: BLE001 - pot resolution should not mask commands
         return []
     for pot in pots:
         try:
-            sources = host.pots.list_sources(pot_id=pot.pot_id)
+            sources = service.list_sources(pot_id=pot.pot_id)
         except Exception:  # noqa: BLE001
             continue
         for source in sources:
@@ -798,12 +1138,13 @@ def _pots_matching_repo_identity(
         return []
     matches: list[tuple[str, str]] = []
     try:
-        pots = list(host.pots.list_pots())
+        service = get_pot_service(host)
+        pots = list(service.list_pots())
     except Exception:  # noqa: BLE001
         return []
     for pot in pots:
         try:
-            sources = host.pots.list_sources(pot_id=pot.pot_id)
+            sources = service.list_sources(pot_id=pot.pot_id)
         except Exception:  # noqa: BLE001
             continue
         for source in sources:
@@ -831,7 +1172,7 @@ def repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
     """Return the locally persisted default pot id for a repo identity, if valid."""
     if not repo_identity:
         return None
-    getter = getattr(host.pots, "repo_default", None)
+    getter = getattr(get_pot_service(host), "repo_default", None)
     if not callable(getter):
         return None
     pot_id = _safe_call(lambda: getter(repo=repo_identity), None)
@@ -852,7 +1193,7 @@ def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
 
 
 def _pot_for_id(host: Any, pot_id: str):
-    for pot in _safe_call(lambda: host.pots.list_pots(), []) or []:
+    for pot in _safe_call(lambda: get_pot_service(host).list_pots(), []) or []:
         if getattr(pot, "pot_id", None) == pot_id:
             return pot
     return None
@@ -910,10 +1251,11 @@ __all__ = [
     "EXIT_UNAVAILABLE",
     "EXIT_VALIDATION",
     "bootstrap_output_flags_from_argv",
+    "confirm_destructive_operation",
     "contract",
     "emit",
     "fail",
-    "get_host",
+    "get_runtime",
     "get_store",
     "current_repo_identity_for_cli",
     "empty_pot_guidance",
@@ -934,7 +1276,7 @@ __all__ = [
     "repo_pot_candidates",
     "resolve_pot_id",
     "resolve_pot_scope",
-    "set_host",
+    "set_runtime",
     "set_store",
     "set_json",
     "set_verbose",

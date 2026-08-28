@@ -11,7 +11,7 @@ from typing import Optional, Union
 
 import pytest
 
-from potpie.cli.telemetry.settings import SentrySettings
+from potpie_context_engine.bootstrap.sentry_settings import SentrySettings
 
 sentry_metrics_runtime = import_module(
     "potpie_context_engine.bootstrap.sentry_metrics_runtime"

@@ -24,15 +24,15 @@ from potpie_context_engine.adapters.outbound.graph.inbox_stores.local_json impor
 from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
     LocalJsonGraphPlanStore,
 )
-from potpie_context_core.workbench_service import (
+from potpie_context_engine.core.workbench_service import (
     GraphWorkbenchService,
 )
-from potpie_context_core.context_events import EventRef
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
-from potpie_context_core.ports.graph.backend import GraphBackend
-from potpie_context_core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.context_events import EventRef
+from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.graph.backend import GraphBackend
+from potpie_context_engine.core.reconciliation import ReconciliationPlan
 
 POT = "conformance-pot"
 

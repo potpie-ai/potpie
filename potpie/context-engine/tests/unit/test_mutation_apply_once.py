@@ -8,16 +8,15 @@ import threading
 
 import pytest
 
-from potpie_context_core.context_events import EventRef
-from potpie_context_core.graph_mutations import (
+from potpie_context_engine.core.context_events import EventRef
+from potpie_context_engine.core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
     ProvenanceContext,
 )
-from potpie_context_core.lifecycle import SetupPlan
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
-from potpie_context_core.ports.graph.mutation import MutationExecutionState
-from potpie_context_core.reconciliation import MutationBatch
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.graph.mutation import MutationExecutionState
+from potpie_context_engine.core.reconciliation import MutationBatch
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionReuseError,
 )
@@ -226,7 +225,7 @@ def test_embedded_stale_lifecycle_writes_preserve_newer_graph_and_receipt(
         == 0
     )
     assert stale.mutation.reset_pot("different-pot") == {"removed_claims": 0}
-    assert stale.provision(SetupPlan()).ok
+    assert stale.provision().ok
 
     fresh = EmbeddedGraphBackend(home=tmp_path)
     rows = fresh.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))

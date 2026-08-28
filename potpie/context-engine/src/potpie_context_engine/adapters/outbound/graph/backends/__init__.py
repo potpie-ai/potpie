@@ -33,7 +33,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 from potpie_context_engine.adapters.outbound.graph.backends.stub_backend import (
     StubGraphBackend,
 )
-from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_engine.core.ports.graph.backend import GraphBackend
 
 KNOWN_PROFILES: tuple[str, ...] = (
     "in_memory",

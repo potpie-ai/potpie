@@ -48,7 +48,7 @@ internal Postgres store has no cursor.
 
 Ingestion is a property of the **second composition root** — the HTTP ingestion
 server (`bootstrap/ingestion_server.py`, default backend `neo4j`), which is
-distinct from the local agent spine (`build_host_shell()`, default
+distinct from the root-owned local runtime composition (default
 `falkordb_lite`). The local OSS CLI/daemon path does **not** run this server;
 local repo baseline is harness-led via skills. See
 [architecture.md](./architecture.md) for the two-root split.
@@ -260,9 +260,9 @@ similarity via the **local embedder only**) plus a per-session
 - **Instruction events** — return the directive string verbatim.
 - Returns `silent=True` when nothing is fresh/relevant.
 
-`NudgeService` is wired in `host_wiring.py` as `NudgeService(graph=graph,
-ledger=LocalInjectionLedger())` and exposed on `HostShell.nudge`; it runs
-**in-process**.
+`NudgeService` is wired by `potpie/runtime/composition.py` with the graph service
+and `LocalInjectionLedger`, then exposed through the context-bound typed
+operation catalog.
 
 ### 7.3 Dedup ledger (`adapters/outbound/session/injection_ledger.py`)
 

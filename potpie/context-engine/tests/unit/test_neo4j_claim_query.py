@@ -16,7 +16,7 @@ from potpie_context_engine.adapters.outbound.graph.neo4j_reader import (
     Neo4jClaimQueryStore,
     _row_from_record,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 

@@ -1,8 +1,7 @@
-"""Minimal composition root for legacy Potpie host wiring.
+"""Minimal composition root for the standalone Context Engine HTTP surface.
 
-The standalone context-engine server uses ``ingestion_server`` / ``host_wiring``.
-The legacy FastAPI app still imports ``build_container`` when mounting agent tools;
-this shim preserves that contract without the removed legacy episodic/Neo4j DI graph.
+The FastAPI application imports ``build_container`` when mounting agent tools.
+This container is independent of the Potpie-owned local runtime composition.
 """
 
 from __future__ import annotations
@@ -10,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from potpie_context_core.ports.pot_resolution import PotResolutionPort
+from potpie_context_engine.core.ports.pot_resolution import PotResolutionPort
 from potpie_context_engine.domain.ports.pot_source_listing import PotSourceListingPort
 from potpie_context_engine.domain.ports.reconciliation_agent import (
     ReconciliationAgentPort,

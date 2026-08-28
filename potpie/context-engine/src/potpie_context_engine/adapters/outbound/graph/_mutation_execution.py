@@ -11,12 +11,12 @@ import json
 import threading
 from typing import Any
 
-from potpie_context_core.graph_plans import mutation_batch_to_dict
-from potpie_context_core.ports.graph.mutation import (
+from potpie_context_engine.core.graph_plans import mutation_batch_to_dict
+from potpie_context_engine.core.ports.graph.mutation import (
     MutationExecutionLookup,
     MutationExecutionState,
 )
-from potpie_context_core.reconciliation import (
+from potpie_context_engine.core.reconciliation import (
     MutationBatch,
     MutationResult,
     MutationSummary,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
+from pathlib import Path
 
 import pytest
 
@@ -10,15 +12,26 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 from potpie_context_engine.adapters.outbound.graph.inbox_stores.local_json import (
     LocalJsonGraphInboxStore,
 )
-from potpie_context_core.workbench_service import (
+from potpie_context_engine.core.workbench_service import (
     GraphWorkbenchService,
 )
-from potpie_context_core.graph_inbox import GraphInboxItem
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.graph_inbox import GraphInboxItem
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 
 POT = "p"
+
+
+def _save_inbox_item(home: str, pot_id: str, item_id: str) -> None:
+    LocalJsonGraphInboxStore(home=Path(home)).save(
+        GraphInboxItem(
+            item_id=item_id,
+            pot_id=pot_id,
+            status="pending",
+            summary=item_id,
+        )
+    )
 
 
 class _UnusedPlanStore:
@@ -202,3 +215,26 @@ def test_local_json_inbox_store_round_trips_items(tmp_path) -> None:
     assert reloaded == item
     raw = json.loads((tmp_path / "graph_inbox.json").read_text(encoding="utf-8"))
     assert item.item_id in raw["items"][POT]
+
+
+def test_local_json_inbox_store_preserves_cross_process_writes(tmp_path) -> None:
+    context = multiprocessing.get_context("spawn")
+    first = context.Process(
+        target=_save_inbox_item,
+        args=(str(tmp_path), "pot-a", "graph-inbox:first"),
+    )
+    second = context.Process(
+        target=_save_inbox_item,
+        args=(str(tmp_path), "pot-b", "graph-inbox:second"),
+    )
+
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert first.exitcode == 0
+    assert second.exitcode == 0
+    state = json.loads((tmp_path / "graph_inbox.json").read_text(encoding="utf-8"))
+    assert "graph-inbox:first" in state["items"]["pot-a"]
+    assert "graph-inbox:second" in state["items"]["pot-b"]

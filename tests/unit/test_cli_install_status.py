@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 from potpie.cli import cli_install_status as cis
 from potpie.cli.commands import bootstrap
 from potpie.cli import main as cli_main
+from potpie.runtime.root_services import build_root_runtime_services
 
 pytestmark = pytest.mark.unit
 
@@ -277,7 +278,8 @@ def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     mock_host.pots.active_pot.return_value = None
     mock_host.ledger.status.return_value = MagicMock(available=True, binding="local")
-    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    runtime = build_root_runtime_services(mock_host)
+    monkeypatch.setattr(bootstrap, "get_root_runtime", lambda: runtime)
     monkeypatch.setattr(
         bootstrap,
         "collect_cli_install_status",

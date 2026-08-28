@@ -16,8 +16,8 @@ site is safe to invoke unconditionally, and a local CLI/daemon stays completely 
 unless an operator opts in. Observability never raises into a caller — it can never
 fail a request.
 
-Both composition roots wire the same port: the local agent spine
-(`bootstrap/host_wiring.py`) and the ingestion HTTP server
+Both composition roots wire the same port: the root-owned local runtime
+(`potpie/runtime/composition.py`) and the standalone ingestion HTTP server
 (`bootstrap/ingestion_server.py`) — see [architecture.md](./architecture.md).
 
 ## Shape

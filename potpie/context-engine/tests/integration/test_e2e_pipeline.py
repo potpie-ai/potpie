@@ -21,9 +21,9 @@ import asyncio
 import pytest
 
 from potpie_context_engine.application.use_cases.process_batch import process_batch
-from potpie_context_core.context_events import EventRef
-from potpie_context_core.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie_context_core.graph_query import (
+from potpie_context_engine.core.context_events import EventRef
+from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert
+from potpie_context_engine.core.graph_query import (
     ContextGraphGoal,
     ContextGraphQuery,
     ContextGraphScope,
@@ -34,7 +34,7 @@ from potpie_context_engine.domain.ingestion_event_models import (
 from potpie_context_engine.domain.ingestion_kinds import (
     INGESTION_KIND_AGENT_RECONCILIATION,
 )
-from potpie_context_core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import ReconciliationPlan
 
 pytestmark = pytest.mark.integration
 
