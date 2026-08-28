@@ -45,6 +45,7 @@ def distribution_default_values(
     *,
     dotenv_start: Path | None = None,
 ) -> dict[str, str]:
+    """Collect distribution-level default values from the environment or a .env file."""
     source = _merged_build_environ(environ, dotenv_start=dotenv_start)
     return {
         "environment": _env_or_default(
