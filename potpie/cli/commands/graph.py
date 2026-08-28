@@ -1399,6 +1399,8 @@ def graph_describe(
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.describe") as ctx:
+        if not subgraph:
+            raise ValueError("subgraph is required")
         del pot
         payload = run_engine_operation(
             get_engine_client().describe(

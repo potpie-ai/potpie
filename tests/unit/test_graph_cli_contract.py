@@ -2470,6 +2470,21 @@ def test_graph_describe_returns_executable_view_contract() -> None:
     assert graph_service.describe_request.include_examples is True
 
 
+def test_graph_describe_requires_subgraph_before_dispatch() -> None:
+    _common.set_json(True)
+    graph_service = _Graph()
+    _common.set_runtime(_Host(graph_service))
+
+    result = CliRunner().invoke(graph.graph_app, ["describe"])
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.describe", ok=False)
+    assert emitted["error"]["code"] == "validation_error"
+    assert emitted["error"]["message"] == "subgraph is required"
+    assert graph_service.describe_request is None
+
+
 def test_graph_describe_unknown_view_uses_error_envelope() -> None:
     _common.set_json(True)
     _common.set_runtime(_Host(_Graph()))

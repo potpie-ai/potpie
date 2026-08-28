@@ -68,7 +68,14 @@ def _pid_alive(pid: int) -> bool:
             return False
     try:
         os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError, OSError):
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # EPERM means the process exists but this user cannot signal it. Treat
+        # that as live so status/start cannot mistake a cross-user process for
+        # a stale PID and attempt runtime-record cleanup.
+        return True
+    except OSError:
         return False
     return True
 

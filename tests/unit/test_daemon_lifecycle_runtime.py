@@ -48,6 +48,19 @@ def test_pid_alive_uses_signal_probe_for_a_non_child(monkeypatch) -> None:
     assert signaled == [(4242, 0)]
 
 
+def test_pid_alive_treats_permission_denied_signal_probe_as_alive(monkeypatch) -> None:
+    def not_a_child(_pid: int, _options: int) -> tuple[int, int]:
+        raise ChildProcessError
+
+    def permission_denied(_pid: int, _signal: int) -> None:
+        raise PermissionError
+
+    monkeypatch.setattr("potpie.daemon.lifecycle.os.waitpid", not_a_child)
+    monkeypatch.setattr("potpie.daemon.lifecycle.os.kill", permission_denied)
+
+    assert _pid_alive(4242) is True
+
+
 def test_daemon_restart_refuses_when_running_backend_unknown(
     tmp_path: Path, monkeypatch
 ) -> None:
