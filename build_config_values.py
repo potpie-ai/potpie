@@ -45,6 +45,7 @@ def distribution_default_values(
     *,
     dotenv_start: Path | None = None,
 ) -> dict[str, str]:
+    """Collect distribution-default values from the build environment."""
     source = _merged_build_environ(environ, dotenv_start=dotenv_start)
     return {
         "environment": _env_or_default(
@@ -65,6 +66,7 @@ def build_info_values(
     *,
     dotenv_start: Path | None = None,
 ) -> dict[str, str]:
+    """Collect build-metadata values from the build environment."""
     source = _merged_build_environ(environ, dotenv_start=dotenv_start)
     return {
         "GIT_SHA": _env("POTPIE_BUILD_GIT_SHA", source) or _env("GITHUB_SHA", source),
