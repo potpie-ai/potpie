@@ -77,6 +77,7 @@ def should_validate_distribution_defaults(
     *,
     dotenv_start: Path | None = None,
 ) -> bool:
+    """Return True when POTPIE_VALIDATE_DISTRIBUTION_DEFAULTS is set to a truthy value."""
     source = _merged_build_environ(environ, dotenv_start=dotenv_start)
     return _env("POTPIE_VALIDATE_DISTRIBUTION_DEFAULTS", source).lower() in {
         "1",
