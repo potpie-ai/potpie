@@ -109,6 +109,7 @@ class DefaultGraphService:
     )
     validator: Callable[[SemanticMutationRequest], Any] | None = None
     lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None
+    chunk_search: Callable[[str, str, int], list[dict[str, Any]]] | None = None
     _orchestrator: ReadOrchestrator = field(init=False)
 
     def __post_init__(self) -> None:
@@ -116,6 +117,7 @@ class DefaultGraphService:
         self._orchestrator = ReadOrchestrator(
             claim_query=self.backend.claim_query,
             reader_registry=self.definition.readers,
+            chunk_search=self.chunk_search,
         )
         if self.validator is None:
             self.validator = lambda request: validate_semantic_request(
@@ -129,6 +131,15 @@ class DefaultGraphService:
     @property
     def backed_includes(self) -> frozenset[str]:
         return self._orchestrator.backed_includes
+
+    def wire_chunk_search(
+        self,
+        fn: Callable[[str, str, int], list[dict[str, Any]]],
+    ) -> None:
+        """Attach FTS chunk search to the docs reader (post-composition hook)."""
+        reader = self._orchestrator._routing.get("docs")
+        if reader is not None:
+            reader.chunk_search = fn
 
     # --- reads --------------------------------------------------------------
     def resolve(self, request: ResolveRequest) -> AgentEnvelope:

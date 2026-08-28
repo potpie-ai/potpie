@@ -57,6 +57,7 @@ class ReadOrchestrator:
     ranker: RankingService = field(default_factory=RankingService)
     builder: EnvelopeBuilder = field(default_factory=EnvelopeBuilder)
     reader_registry: Mapping[str, GraphReaderSpec] = field(default_factory=dict)
+    chunk_search: Any | None = None
     _routing: dict[str, _ReaderT] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -70,7 +71,9 @@ class ReadOrchestrator:
             "prior_bugs": PriorBugsReader(claim_query=cq, ranker=rk),
             "decisions": DecisionsReader(claim_query=cq, ranker=rk),
             "owners": OwnersReader(claim_query=cq, ranker=rk),
-            "docs": DocsReader(claim_query=cq, ranker=rk),
+            "docs": DocsReader(
+                claim_query=cq, ranker=rk, chunk_search=self.chunk_search
+            ),
             # Visualization read: the whole canonical partition (all RELATES_TO,
             # incl. generic RELATED_TO) for the graph explorer — not a UC slice.
             "raw_graph": RawGraphReader(claim_query=cq, ranker=rk),

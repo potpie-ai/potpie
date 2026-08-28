@@ -21,6 +21,7 @@ Surfaces:
     .installer       Installer          CLI-on-PATH + service-unit registration
     .auth            AuthService        local identity/credentials
     .setup           SetupOrchestrator  the one first-run sequence
+    .resources       ResourceService    document chunk payload plane (optional)
 
 Built by ``potpie_context_engine.bootstrap.host_wiring.build_host_shell``. In-process by default; the
 managed profile swaps the wiring without changing this facade.
@@ -50,6 +51,7 @@ from potpie_context_engine.domain.ports.services.pot_management import (
 )
 from potpie_context_engine.domain.ports.services.setup import SetupOrchestrator
 from potpie_context_engine.domain.ports.services.skill_manager import SkillManager
+from potpie_context_engine.application.services.resource_service import ResourceService
 from potpie.daemon.lifecycle import Daemon
 
 
@@ -113,6 +115,7 @@ class HostShell:
     installer: Installer
     auth: AuthService
     setup: SetupOrchestrator
+    resources: ResourceService | None = None
     profile: str = "local"
 
 

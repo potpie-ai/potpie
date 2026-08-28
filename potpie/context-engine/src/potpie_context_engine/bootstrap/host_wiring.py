@@ -56,6 +56,7 @@ from potpie_context_engine.application.services.nudge_service import NudgeServic
 from potpie_context_engine.application.services.pot_management import (
     LocalPotManagementService,
 )
+from potpie_context_engine.application.services.resource_service import ResourceService
 from potpie_context_engine.application.services.setup_orchestrator import (
     DefaultSetupOrchestrator,
 )
@@ -171,6 +172,13 @@ def build_host_shell(
             skills=skills,
         )
 
+        resources = ResourceService(graph=graph)
+        graph.wire_chunk_search(
+            lambda pot_id, query, limit: resources.search_chunks(
+                pot_id=pot_id, query=query, limit=limit
+            )
+        )
+
         return HostShell(
             agent_context=agent_context,
             graph=graph,
@@ -185,6 +193,7 @@ def build_host_shell(
             installer=installer,
             auth=auth,
             setup=setup,
+            resources=resources,
             profile=profile,
         )
 

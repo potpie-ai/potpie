@@ -391,10 +391,22 @@ def register(root: typer.Typer) -> None:
             default_pot_id = repo_default_pot_id(host, repo_identity)
 
             cli_install = collect_cli_install_status()
+            try:
+                from potpie_context_engine.adapters.outbound.resources.capabilities import (
+                    collect_documents_doctor_report,
+                )
+
+                documents_status = collect_documents_doctor_report()
+            except ImportError:
+                documents_status = {"tier": "unknown", "capabilities": {}}
+            ingest_gate = documents_status.get("document_ingest") or {}
             emit(
                 {
                     "daemon": daemon_status,
                     "cli_install": cli_install,
+                    "documents": documents_status,
+                    "document_ingest_ready": ingest_gate.get("document_ingest_ready"),
+                    "full_documents_ready": ingest_gate.get("full_documents_ready"),
                     "backend_profile": host.backend.profile,
                     "backend_ready": readiness.ready,
                     "backend_readiness": {
@@ -418,6 +430,10 @@ def register(root: typer.Typer) -> None:
                 human=(
                     f"daemon: {daemon_status['mode']} (up={daemon_status.get('up')})\n"
                     f"{cli_install_human(cli_install)}\n"
+                    f"documents: tier={documents_status.get('tier')} "
+                    f"ingest_ready={ingest_gate.get('document_ingest_ready')} "
+                    f"full_ready={ingest_gate.get('full_documents_ready')} "
+                    f"ollama={documents_status.get('ollama_reachable')}\n"
                     f"backend: {host.backend.profile} ready={readiness.ready} "
                     f"caps={', '.join(caps.implemented())}\n"
                     f"ledger: {host.ledger.status().binding} "
