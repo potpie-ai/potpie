@@ -21,13 +21,12 @@ on:
           - context-engine
           - potpie
       publish_target:
-        description: "Build only, publish to TestPyPI, or publish to PyPI."
+        description: "Build only or publish to PyPI."
         required: true
         default: build-only
         type: choice
         options:
           - build-only
-          - testpypi
           - pypi
       confirm_publish:
         description: "Required literal value 'publish' only for a PyPI release."
@@ -312,14 +311,14 @@ jobs:
 
   publish:
     name: Publish selected packages to ${{ needs.preflight.outputs.publish_target }}
-    if: ${{ github.event_name == 'workflow_dispatch' && needs.preflight.outputs.publish_target != 'build-only' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.preflight.outputs.publish_target == 'pypi' }}
     needs:
       - preflight
       - assemble
     runs-on: ubuntu-latest
     environment:
-      name: ${{ needs.preflight.outputs.publish_target }}
-      url: ${{ needs.preflight.outputs.publish_target == 'pypi' && 'https://pypi.org/' || 'https://test.pypi.org/' }}
+      name: pypi
+      url: https://pypi.org/
     permissions:
       contents: read
       id-token: write

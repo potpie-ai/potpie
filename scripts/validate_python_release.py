@@ -26,14 +26,8 @@ except ImportError as exc:  # pragma: no cover - exercised in CI bootstrap failu
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PYPI_BASE = {
-    "pypi": "https://pypi.org/pypi",
-    "testpypi": "https://test.pypi.org/pypi",
-}
-PYPI_REPOSITORY_URL = {
-    "pypi": "https://upload.pypi.org/legacy/",
-    "testpypi": "https://test.pypi.org/legacy/",
-}
+PYPI_BASE = "https://pypi.org/pypi"
+PYPI_REPOSITORY_URL = "https://upload.pypi.org/legacy/"
 PACKAGE_SOURCES = {
     "context-engine": (
         "potpie/context-engine/pyproject.toml",
@@ -172,11 +166,10 @@ def validate_dependency_chain(packages: dict[str, PackageInfo]) -> None:
     validate_exact_requirement(packages["potpie"], packages["context-engine"])
 
 
-def package_version_exists(index: str, package_name: str, version: str) -> bool:
-    base_url = PYPI_BASE[index]
+def package_version_exists(package_name: str, version: str) -> bool:
     name = urllib.parse.quote(package_name)
     release = urllib.parse.quote(version)
-    url = f"{base_url}/{name}/{release}/json"
+    url = f"{PYPI_BASE}/{name}/{release}/json"
     # The scheme and host come only from the fixed HTTPS constants above.
     request = urllib.request.Request(  # noqa: S310
         url,
@@ -188,14 +181,10 @@ def package_version_exists(index: str, package_name: str, version: str) -> bool:
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return False
-        fail(f"could not check {index} for {package_name}=={version}: HTTP {exc.code}")
+        fail(f"could not check pypi for {package_name}=={version}: HTTP {exc.code}")
     except urllib.error.URLError as exc:
-        fail(f"could not check {index} for {package_name}=={version}: {exc.reason}")
+        fail(f"could not check pypi for {package_name}=={version}: {exc.reason}")
     return False
-
-
-def index_for_target(publish_target: str) -> str:
-    return "testpypi" if publish_target == "testpypi" else "pypi"
 
 
 def validate_index_availability(
@@ -204,10 +193,9 @@ def validate_index_availability(
 ) -> None:
     if publish_target == "build-only":
         return
-    index = index_for_target(publish_target)
     for package in selected:
-        if package_version_exists(index, package.name, package.version):
-            fail(f"{package.name}=={package.version} already exists on {index}")
+        if package_version_exists(package.name, package.version):
+            fail(f"{package.name}=={package.version} already exists on pypi")
 
 
 def validate_external_dependencies(
@@ -217,7 +205,6 @@ def validate_external_dependencies(
 ) -> None:
     if publish_target == "build-only":
         return
-    index = index_for_target(publish_target)
     required_keys = {
         dependency_key
         for package_key in selected_keys
@@ -226,9 +213,9 @@ def validate_external_dependencies(
     }
     for dependency_key in sorted(required_keys):
         dependency = packages[dependency_key]
-        if not package_version_exists(index, dependency.name, dependency.version):
+        if not package_version_exists(dependency.name, dependency.version):
             fail(
-                f"{dependency.name}=={dependency.version} must already exist on {index} "
+                f"{dependency.name}=={dependency.version} must already exist on pypi "
                 "when it is outside the selected release scope"
             )
 
@@ -328,7 +315,7 @@ def emit_github_outputs(
         f"potpie_version={packages['potpie'].version}",
     ]
     if publish_target != "build-only":
-        lines.append(f"repository_url={PYPI_REPOSITORY_URL[publish_target]}")
+        lines.append(f"repository_url={PYPI_REPOSITORY_URL}")
     with Path(github_output).open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
 
@@ -343,7 +330,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--publish-target",
         required=True,
-        choices=["build-only", "testpypi", "pypi"],
+        choices=["build-only", "pypi"],
     )
     parser.add_argument("--confirm-publish", default="")
     parser.add_argument("--output-dir", default="release-metadata")

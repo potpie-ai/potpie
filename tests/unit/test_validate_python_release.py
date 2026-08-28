@@ -45,7 +45,7 @@ def test_build_only_all_accepts_current_dependency_chain(
     }
 
 
-def test_potpie_only_publish_requires_engine_on_target_index(
+def test_potpie_only_publish_requires_engine_on_pypi(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -53,7 +53,13 @@ def test_potpie_only_publish_requires_engine_on_target_index(
         "context-engine": package("context-engine", "potpie-context-engine", "0.2.0"),
         "potpie": package("potpie", "potpie", "2.1.0"),
     }
-    monkeypatch.setattr(release, "package_version_exists", lambda *_args: False)
+    checked: list[tuple[str, str]] = []
+
+    def version_exists(name: str, version: str) -> bool:
+        checked.append((name, version))
+        return False
+
+    monkeypatch.setattr(release, "package_version_exists", version_exists)
 
     with pytest.raises(SystemExit):
         release.validate_external_dependencies(
@@ -66,6 +72,7 @@ def test_potpie_only_publish_requires_engine_on_target_index(
         "potpie-context-engine==0.2.0 must already exist on pypi"
         in capsys.readouterr().err
     )
+    assert checked == [("potpie-context-engine", "0.2.0")]
 
 
 def test_all_scope_uses_aggregate_release_tag(
