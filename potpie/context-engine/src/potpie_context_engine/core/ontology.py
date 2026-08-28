@@ -600,32 +600,40 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         text_patterns=(r"\bdecision\b", r"\b(ADR|architecture decision)\b"),
         property_signatures=("rationale", "alternatives_rejected"),
     ),
-    # --- Ingested reference material ----------------------------------------
-    # A document is split in half: its structure lives here, its payload bytes
-    # live in the resource store as chunk files (see "Resource store" in
-    # ``docs/context-graph/architecture.md``). Sections are the searchable grain —
-    # each carries an agent-authored summary that becomes an ordinary claim, so
-    # the existing embedding path is the index and no chunk ever enters a node.
+    "DocumentSection": _e(
+        "DocumentSection",
+        "memory",
+        "A searchable division of an ingested document (section with summary + chunk refs).",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="document-section",
+        fact_family="docs",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=24 * WEEK,
+    ),
+    "DocumentElement": _e(
+        "DocumentElement",
+        "memory",
+        "A provenance element from an ingested document (page region, table, figure, text block).",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="document-element",
+        fact_family="docs",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=24 * WEEK,
+    ),
+    # --- Generic fail-open fallbacks (soft-fail downgrade targets) ----------
+    # The agent reconciliation path coerces unrecognized output onto these
+    # rather than rejecting the batch. ``public=False`` keeps them out of the
+    # agent-facing topology contract; they carry no project-map family.
     "Document": _e(
         "Document",
-        "evidence",
-        "A named document ingested into the pot — a PDF, spreadsheet, runbook, "
-        "or design note. The graph holds its identity and section structure; "
-        "the payload bytes live in the resource store as chunk files, never as "
-        "node properties.",
+        "memory",
+        "An ingested or referenced project document (slug identity, chunk refs off-graph).",
         identity_class=IdentityClass.SLUG_ALIAS,
         key_prefix="document",
-        identity_policy="document:<slug>",
-        # Own SoT family so a doc corpus does not share freshness / ranking
-        # policy with soft-fail Observation nodes (resources P9).
-        fact_family="documents",
+        public=True,
+        fact_family="docs",
         source_of_truth=SOT_MEMORY,
-        freshness_ttl_hours=12 * WEEK,
-        # No property signature: ``source_kind`` is this codebase's general
-        # provenance word (``ProvenanceContext.source_kind``), and the
-        # classifier treats one signature property as sufficient — a Service
-        # carrying ``source_kind: github`` would be labelled a Document. The
-        # ``document:`` key prefix already classifies these nodes.
+        freshness_ttl_hours=24 * WEEK,
     ),
     "DocumentSection": _e(
         "DocumentSection",
@@ -947,31 +955,23 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         category="memory",
         source_inferred=("Decision",),
     ),
-    # --- Reference material (ingested documents) ----------------------------
-    # The structural half of the resource store: SECTION_OF holds a document
-    # together, DOCUMENTS points it at whatever it is reference material for.
     "SECTION_OF": _x(
         "SECTION_OF",
-        "A section belongs to a document. Singleton on purpose: a section has "
-        "exactly one parent, so re-parenting supersedes the prior claim "
-        "instead of leaving the section attached to two documents.",
+        "A document section belongs to its parent document.",
         [("DocumentSection", "Document")],
-        category="knowledge",
+        category="memory",
         predicate_family="document_structure",
-        exclusive_family="document_structure",
-        singleton=True,
         source_inferred=("DocumentSection",),
         target_inferred=("Document",),
     ),
-    "DOCUMENTS": _x(
-        "DOCUMENTS",
-        "A document, or one of its sections, is reference material for an "
-        "entity — the structural answer to 'what documentation covers "
-        "service:payments-api'. doc_reference records emit this predicate. The "
-        "source label is ambiguous between Document and DocumentSection, so "
-        "neither is inferred.",
-        [("Document", WILDCARD_ENDPOINT), ("DocumentSection", WILDCARD_ENDPOINT)],
-        category="knowledge",
+    "ELEMENT_OF": _x(
+        "ELEMENT_OF",
+        "A document element belongs to its parent document (provenance ledger projection).",
+        [("DocumentElement", "Document")],
+        category="memory",
+        predicate_family="document_structure",
+        source_inferred=("DocumentElement",),
+        target_inferred=("Document",),
     ),
     # --- Generic fail-open fallback (soft-fail downgrade target) ------------
     # Unrecognized agent-emitted edge types coerce onto this wildcard edge

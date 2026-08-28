@@ -32,6 +32,7 @@ from potpie.cli.commands import (
 )
 from potpie.cli.commands import host as host_cmds
 from potpie.cli.commands import query as query_cmds
+from potpie.cli.commands import document as document_cmds
 from potpie.cli.commands import resource as resource_cmds
 from potpie.cli.commands import skills as skills_cmds
 from potpie.cli.commands import ui as ui_cmds
@@ -200,6 +201,8 @@ def build_app() -> typer.Typer:
     app.add_typer(graph.graph_app, name="graph")
     app.add_typer(graph.timeline_app, name="timeline")
     app.add_typer(graph.backend_app, name="backend")
+    document_cmds.register(app)
+    resource_cmds.register(app)
     app.add_typer(skills_cmds.skills_app, name="skills")
     app.add_typer(resource_cmds.resource_app, name="resource")
     # Keep cloud discoverable but below the local happy path — managed routing

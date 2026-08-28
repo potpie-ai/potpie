@@ -152,6 +152,11 @@ exclude = ["scripts/packaging/falkordblite"]
 potpie-context-engine = { workspace = true, editable = true }
 potpie-falkordblite = { path = "scripts/packaging/falkordblite" }
 
+[project.optional-dependencies]
+documents = [
+    "potpie-context-engine[documents]==0.1.0",
+]
+
 [dependency-groups]
 dev = [
     "black>=26.3.1",
