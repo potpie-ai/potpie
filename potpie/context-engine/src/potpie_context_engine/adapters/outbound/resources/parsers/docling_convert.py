@@ -7,6 +7,7 @@ from pathlib import Path
 from potpie_context_engine.adapters.outbound.resources.local_chunk_store import file_sha256
 from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
     _auto_summary,
+    auto_keywords,
     _manifest_from_parsed,
     _parse_sections_from_markdown,
     write_staging_from_parsed,
@@ -104,7 +105,12 @@ def parse_docling_file(
     for section in manifest.sections:
         body = "\n\n".join(section_texts.get(section.slug, []))
         updated_sections.append(
-            section.model_copy(update={"summary": _auto_summary(section.title, body)})
+            section.model_copy(
+                update={
+                    "summary": _auto_summary(section.title, body),
+                    "keywords": auto_keywords(section.title, body),
+                }
+            )
         )
     if elements and provenance_map:
         provenance_version = _PROVENANCE_VERSION
