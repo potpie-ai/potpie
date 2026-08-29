@@ -61,11 +61,12 @@ def test_parse_pdf_empty_raises_scanned_hint(tmp_path: Path) -> None:
         parse_pdf_pypdf(blank)
 
 
-def test_auto_summary_carries_salient_terms_from_beyond_the_lead() -> None:
-    """The summary is the retrieval index; distinctive terms living past the
-    first 500 chars must still be represented."""
+def test_auto_summary_stays_prose_and_auto_keywords_carries_salient_terms() -> None:
+    """Keywords are a structured field, not text bolted onto the summary; the
+    distinctive terms living past the first 500 chars go into auto_keywords."""
     from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
         _auto_summary,
+        auto_keywords,
     )
 
     lead = (
@@ -79,11 +80,13 @@ def test_auto_summary_carries_salient_terms_from_beyond_the_lead() -> None:
         "supported supply range is 1.8V to 5.5V via VSYS."
     )
     summary = _auto_summary("Programming the flash", lead + tail)
+    keywords = auto_keywords("Programming the flash", lead + tail)
 
     assert "Programming the flash" in summary
-    assert "BOOTSEL" in summary
-    assert "UF2" in summary
+    assert "Key terms" not in summary
     assert len(summary) <= 2000
+    assert "BOOTSEL" in keywords
+    assert "UF2" in keywords
 
 
 def test_salient_terms_exclusion_is_token_based_not_substring() -> None:

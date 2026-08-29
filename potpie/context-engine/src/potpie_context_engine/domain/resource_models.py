@@ -29,6 +29,7 @@ class SectionManifest(BaseModel):
     slug: str
     title: str = Field(max_length=TITLE_MAX)
     summary: str = Field(default="", max_length=SUMMARY_MAX)
+    keywords: list[str] = Field(default_factory=list, max_length=16)
     ordinal: int = Field(default=0, ge=0)
     content_hash: str = ""
     chunks: list[ChunkRef] = Field(min_length=1, max_length=SECTION_CHUNK_MAX)

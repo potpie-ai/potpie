@@ -184,15 +184,26 @@ def _salient_terms(text: str, exclude: str, limit: int = 12) -> list[str]:
     return terms
 
 
-def _auto_summary(title: str, text: str, max_len: int = 2000) -> str:
+def _lead_excerpt(text: str) -> str:
     excerpt = text.strip().replace("\n", " ")
     if len(excerpt) > 500:
         excerpt = excerpt[:497] + "..."
-    summary = f"{title}: {excerpt}".strip()
-    terms = _salient_terms(text, exclude=f"{title} {excerpt}")
-    if terms:
-        summary = f"{summary} Key terms: {', '.join(terms)}."
+    return excerpt
+
+
+def _auto_summary(title: str, text: str, max_len: int = 2000) -> str:
+    summary = f"{title}: {_lead_excerpt(text)}".strip()
     return summary[:max_len]
+
+
+def auto_keywords(title: str, text: str) -> list[str]:
+    """Salient terms complementing the summary's lead excerpt.
+
+    Carried as a structured section field (not appended to the summary
+    prose) so the graph bridge can feed them to retrieval while display
+    surfaces keep the plain summary.
+    """
+    return _salient_terms(text, exclude=f"{title} {_lead_excerpt(text)}")
 
 
 def _parse_sections_from_markdown(text: str, chunk_target: int) -> list[ParsedSection]:
@@ -286,6 +297,7 @@ def _manifest_from_parsed(
                     slug=slug,
                     title=part.title[:200],
                     summary=_auto_summary(part.title, part.text),
+                    keywords=auto_keywords(part.title, part.text),
                     ordinal=section_ordinal,
                     content_hash=text_sha256(part.text),
                     chunks=chunk_refs,

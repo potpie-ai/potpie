@@ -68,3 +68,34 @@ def test_resource_ingest_writes_graph_claims(tmp_path: Path) -> None:
     predicates = {row.predicate for row in rows}
     assert "SECTION_OF" in predicates
     assert "RELATED_TO" in predicates
+
+
+def test_section_keywords_enrich_description_but_not_summary() -> None:
+    from potpie_context_engine.adapters.outbound.resources.graph_bridge import (
+        build_import_mutations,
+    )
+    from potpie_context_engine.domain.resource_models import (
+        ChunkRef,
+        ResourceManifest,
+        SectionManifest,
+    )
+
+    manifest = ResourceManifest(
+        source_ref="file:///guide.pdf",
+        source_kind="pdf",
+        sections=[
+            SectionManifest(
+                slug="flash",
+                title="Programming the flash",
+                summary="How to reprogram the on-board flash.",
+                ordinal=0,
+                chunks=[ChunkRef(seq=0, label="flash")],
+                keywords=["BOOTSEL", "UF2"],
+            )
+        ],
+    )
+    batch = build_import_mutations(pot_id="pot-test", doc_slug="guide", manifest=manifest)
+    claim = next(op for op in batch["operations"] if op["op"] == "assert_claim")
+
+    assert "Key terms: BOOTSEL, UF2" in claim["description"]
+    assert "Key terms" not in claim["subject"]["summary"]

@@ -90,6 +90,11 @@ def build_import_mutations(
     for section in manifest.sections:
         sec_key = section_entity_key(doc_slug, section.slug)
         summary = section.summary.strip() or section.title
+        # Keywords enrich the embedded/searchable description only; the
+        # summary property stays prose for display surfaces.
+        description = summary
+        if section.keywords:
+            description = f"{summary} Key terms: {', '.join(section.keywords)}."
         evidence = [
             {"source_ref": chunk_uri(doc_slug, section.slug, chunk_ref.seq)}
             for chunk_ref in section.chunks
@@ -105,7 +110,7 @@ def build_import_mutations(
                     "type": "DocumentSection",
                     "name": section.title,
                     "summary": summary[:2000],
-                    "description": summary[:2000],
+                    "description": description[:2000],
                 },
                 "predicate": "SECTION_OF",
                 "object": {
@@ -134,13 +139,13 @@ def build_import_mutations(
                     "key": sec_key,
                     "type": "DocumentSection",
                     "summary": summary[:2000],
-                    "description": summary[:2000],
+                    "description": description[:2000],
                 },
                 "predicate": "RELATED_TO",
                 "object": {"key": doc_key, "type": "Document"},
                 "truth": "source_observation",
                 "confidence": 0.95,
-                "description": summary[:2000],
+                "description": description[:2000],
                 "evidence": evidence,
             }
         )
