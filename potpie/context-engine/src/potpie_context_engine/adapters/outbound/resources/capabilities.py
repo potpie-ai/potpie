@@ -17,7 +17,7 @@ def documents_capabilities() -> dict[str, bool]:
         "pypdf": _has_module("pypdf"),
         "pypdfium2": _has_module("pypdfium2"),
         "docling": _has_module("docling"),
-        "rapidocr": _has_module("rapidocr_onnxruntime"),
+        "rapidocr": _has_module("rapidocr") or _has_module("rapidocr_onnxruntime"),
         "httpx": _has_module("httpx"),
     }
 
@@ -59,7 +59,7 @@ def assess_document_ingest_readiness() -> dict[str, Any]:
             "install potpie[documents] for PDF provenance, office formats, Docling HTML, and images"
         )
     if not caps["rapidocr"] and caps["docling"]:
-        recommendations.append("rapidocr_onnxruntime missing — image OCR may be limited")
+        recommendations.append("rapidocr missing — image OCR may be limited")
     if not caps["httpx"]:
         recommendations.append("httpx missing — vision captions unavailable")
     if host_mode != "in_process":

@@ -2,10 +2,47 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+_FTS_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+_FTS_STOPWORDS = frozenset(
+    """a an and are as at be but by did do does for from had has have how in
+    into is it its no not of on or than that the their then there these this
+    those to was were what when where which who why will with would""".split()
+)
+
+
+def _fts_query_forms(query: str) -> list[str]:
+    """FTS5 match expressions to try in order, strictest first.
+
+    The raw query goes first so deliberate FTS5 syntax (phrases, prefix*,
+    NEAR) keeps working — a syntax error just skips to the next form. The
+    quoted all-terms form keeps exact keyword precision for text FTS5 cannot
+    parse; the stopword-filtered any-term form, ranked by bm25, is the last
+    resort that lets a natural-language question match a chunk containing
+    only its salient words — without stopwords it would match every chunk
+    sharing a "the".
+    """
+    forms: list[str] = []
+    raw = query.strip()
+    if raw:
+        forms.append(raw)
+    tokens = _FTS_TOKEN_RE.findall(query)
+    quoted = [f'"{t}"' for t in tokens]
+    if quoted:
+        and_form = " ".join(quoted)
+        if and_form != raw:
+            forms.append(and_form)
+    salient = [f'"{t}"' for t in tokens if t.lower() not in _FTS_STOPWORDS]
+    if len(quoted) > 1 and salient:
+        or_form = " OR ".join(salient)
+        if or_form not in forms:
+            forms.append(or_form)
+    return forms
 
 
 @dataclass(slots=True)
@@ -481,24 +518,27 @@ class SqliteResourceRegistry:
     def search_chunks(
         self, pot_id: str, query: str, limit: int = 20
     ) -> list[dict[str, Any]]:
-        fts_query = query.strip()
-        if not fts_query:
+        forms = _fts_query_forms(query)
+        if not forms:
             return []
         with self.connect() as conn:
-            try:
-                rows = conn.execute(
-                    """
-                    SELECT pot_id, doc_slug, section_slug, seq, bm25(chunks_fts) AS score
-                    FROM chunks_fts
-                    WHERE chunks_fts MATCH ? AND pot_id = ?
-                    ORDER BY score
-                    LIMIT ?
-                    """,
-                    (fts_query, pot_id, limit),
-                ).fetchall()
-            except sqlite3.OperationalError:
-                return []
-            return [dict(row) for row in rows]
+            for fts_query in forms:
+                try:
+                    rows = conn.execute(
+                        """
+                        SELECT pot_id, doc_slug, section_slug, seq, bm25(chunks_fts) AS score
+                        FROM chunks_fts
+                        WHERE chunks_fts MATCH ? AND pot_id = ?
+                        ORDER BY score
+                        LIMIT ?
+                        """,
+                        (fts_query, pot_id, limit),
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    continue
+                if rows:
+                    return [dict(row) for row in rows]
+        return []
 
     def list_documents(self, pot_id: str) -> list[dict[str, Any]]:
         with self.connect() as conn:
