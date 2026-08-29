@@ -137,11 +137,61 @@ def _section_from_body(
     return ParsedSection(slug=slug, title=title, ordinal=ordinal, text=body, chunks=chunks)
 
 
+_SUMMARY_STOPWORDS = frozenset(
+    """a about above after again all also an and any are as at be because been
+    before being below between both but by can could did do does doing down
+    during each few for from further had has have having he her here hers him
+    his how however if in into is it its itself just like may means might more
+    most must not of off on once only onto or other our out over own same
+    shall should since so some such than that the their theirs them then there
+    these they this those through to too under until up upon use used uses
+    using very was we were what when where which while who whom why will with
+    would you your""".split()
+)
+_SUMMARY_TERM_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{2,}")
+
+
+def _salient_terms(text: str, exclude: str, limit: int = 12) -> list[str]:
+    """Distinctive terms from the whole section, for the retrieval summary.
+
+    Acronym-shaped tokens (an uppercase letter or digit past the first
+    character) outrank plain words: they are the identifiers a searcher
+    types, and they are the terms a leading excerpt most often misses.
+    """
+    counts: dict[str, list[object]] = {}
+    for token in _SUMMARY_TERM_RE.findall(text):
+        key = token.lower()
+        if key in _SUMMARY_STOPWORDS:
+            continue
+        acronym_like = any(c.isupper() or c.isdigit() for c in token[1:])
+        entry = counts.get(key)
+        if entry is None:
+            counts[key] = [1, token, acronym_like]
+            continue
+        entry[0] += 1
+        if acronym_like and not entry[2]:
+            entry[1] = token
+            entry[2] = True
+    excluded = {t.lower() for t in _SUMMARY_TERM_RE.findall(exclude)}
+    ranked = sorted(counts.items(), key=lambda kv: (not kv[1][2], -kv[1][0], kv[0]))
+    terms: list[str] = []
+    for key, (_, original, _acronym) in ranked:
+        if key in excluded:
+            continue
+        terms.append(original)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
 def _auto_summary(title: str, text: str, max_len: int = 2000) -> str:
     excerpt = text.strip().replace("\n", " ")
     if len(excerpt) > 500:
         excerpt = excerpt[:497] + "..."
     summary = f"{title}: {excerpt}".strip()
+    terms = _salient_terms(text, exclude=f"{title} {excerpt}")
+    if terms:
+        summary = f"{summary} Key terms: {', '.join(terms)}."
     return summary[:max_len]
 
 

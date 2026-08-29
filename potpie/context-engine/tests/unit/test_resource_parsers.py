@@ -59,3 +59,52 @@ def test_parse_pdf_empty_raises_scanned_hint(tmp_path: Path) -> None:
     writer.write(blank)
     with pytest.raises(ValueError, match="potpie\\[documents\\]"):
         parse_pdf_pypdf(blank)
+
+
+def test_auto_summary_carries_salient_terms_from_beyond_the_lead() -> None:
+    """The summary is the retrieval index; distinctive terms living past the
+    first 500 chars must still be represented."""
+    from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
+        _auto_summary,
+    )
+
+    lead = (
+        "This section explains how the board is prepared for everyday use and "
+        "covers the general workflow that most users follow when they first "
+        "receive the device. "
+    ) * 4  # ~600 chars of generic lead
+    tail = (
+        "Hold the BOOTSEL button during power-up and the device mounts as mass "
+        "storage; drag a UF2 file onto the disk to reprogram the flash. The "
+        "supported supply range is 1.8V to 5.5V via VSYS."
+    )
+    summary = _auto_summary("Programming the flash", lead + tail)
+
+    assert "Programming the flash" in summary
+    assert "BOOTSEL" in summary
+    assert "UF2" in summary
+    assert len(summary) <= 2000
+
+
+def test_salient_terms_exclusion_is_token_based_not_substring() -> None:
+    from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
+        _salient_terms,
+    )
+
+    terms = _salient_terms(
+        "The RAM subsystem uses RAM banks and RAM refresh cycles.",
+        exclude="programming the flash",
+    )
+    assert "RAM" in terms
+
+
+def test_salient_terms_upgrades_casing_when_acronym_form_dominates() -> None:
+    from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
+        _salient_terms,
+    )
+
+    terms = _salient_terms(
+        "the bootsel pin works. Hold BOOTSEL now. Press BOOTSEL again.",
+        exclude="",
+    )
+    assert "BOOTSEL" in terms
