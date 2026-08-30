@@ -15,6 +15,7 @@ import platform
 import sys
 from importlib import metadata
 
+import click
 import typer
 
 from potpie.cli.commands import auth as auth_cmds
@@ -152,11 +153,22 @@ def _click_error_message(exc: Exception) -> str:
     return str(exc)
 
 
+def _is_click_exception(exc: Exception) -> bool:
+    """Recognize public Click errors and Typer's vendored Click errors."""
+    typer_exception = getattr(typer, "TyperException", None)
+    is_typer_exception = isinstance(typer_exception, type) and isinstance(
+        exc, typer_exception
+    )
+    is_legacy_typer_click = exc.__class__.__module__ == "typer._click.exceptions"
+    return (
+        isinstance(exc, click.ClickException)
+        or is_typer_exception
+        or is_legacy_typer_click
+    ) and callable(getattr(exc, "show", None))
+
+
 def run_cli(argv: list[str] | None = None) -> None:
     """Invoke the Typer app with the documented parse-error contract."""
-    import click
-    from typer._click.exceptions import Abort, ClickException
-
     from potpie.cli.ui.output import (
         configure_cli_logging,
         configure_error_output,
@@ -170,9 +182,11 @@ def run_cli(argv: list[str] | None = None) -> None:
 
     try:
         exit_code = app(args, standalone_mode=False)
-    except (Abort, click.Abort):
+    except (typer.Abort, click.Abort):
         raise typer.Exit(code=1) from None
-    except ClickException as exc:
+    except Exception as exc:
+        if not _is_click_exception(exc):
+            raise
         if is_json():
             fail(
                 code="usage_error",

@@ -8,7 +8,6 @@ from unittest.mock import patch
 import click
 import pytest
 import typer
-from typer._click.exceptions import Abort as TyperAbort
 from typer.testing import CliRunner
 
 from potpie.cli import main as host_cli
@@ -139,7 +138,7 @@ def test_bootstrap_output_flags_ignore_positional_after_double_dash() -> None:
     assert not _common.is_verbose()
 
 
-@pytest.mark.parametrize("abort_exc", [TyperAbort(), click.Abort()])
+@pytest.mark.parametrize("abort_exc", [typer.Abort(), click.Abort()])
 def test_run_cli_abort_exits_cleanly(
     abort_exc: BaseException,
     capsys: pytest.CaptureFixture[str],
@@ -155,7 +154,7 @@ def test_run_cli_abort_exits_cleanly(
 
 
 def test_main_converts_abort_to_system_exit() -> None:
-    with patch.object(host_cli, "app", side_effect=TyperAbort()):
+    with patch.object(host_cli, "app", side_effect=typer.Abort()):
         with pytest.raises(SystemExit) as exc_info:
             host_cli.main()
 
