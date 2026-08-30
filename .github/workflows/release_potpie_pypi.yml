@@ -4,11 +4,17 @@ on:
   pull_request:
     paths:
       - ".github/workflows/release_potpie_pypi.yml"
+      - "LICENSE"
+      - "Makefile"
+      - "README.md"
+      - "build_config_values.py"
+      - "distribution_defaults_hook.py"
+      - "potpie/**"
       - "scripts/validate_python_release.py"
+      - "scripts/context_engine_lab.py"
+      - "scripts/generate-potpie-ascii.mjs"
       - "tests/unit/test_validate_python_release.py"
       - "pyproject.toml"
-      - "potpie/context-engine/**"
-      - "potpie/daemon/http/ui/frontend/**"
   workflow_dispatch:
     inputs:
       release_scope:
@@ -58,6 +64,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
@@ -74,6 +81,7 @@ jobs:
           RELEASE_SCOPE: ${{ github.event_name == 'pull_request' && 'all' || inputs.release_scope }}
           PUBLISH_TARGET: ${{ github.event_name == 'pull_request' && 'build-only' || inputs.publish_target }}
           CONFIRM_PUBLISH: ${{ inputs.confirm_publish }}
+          REPOSITORY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: >-
           python scripts/validate_python_release.py
           --release-scope "$RELEASE_SCOPE"
@@ -210,16 +218,20 @@ jobs:
           release_python="$PWD/.release-smoke/bin/python"
           "$release_python" -m pip install --upgrade pip
 
-          find_links=(
-            --find-links dist/context-engine
-            --find-links dist/potpie
-          )
+          find_links=()
           engine_wheel="$(find dist/context-engine -maxdepth 1 -name '*.whl' -print -quit)"
           potpie_wheel="$(find dist/potpie -maxdepth 1 -name '*.whl' -print -quit)"
-          local_specs=("potpie-context-engine==${CONTEXT_ENGINE_VERSION}")
-          install_targets=("${engine_wheel}[all]")
+          local_specs=()
+          install_targets=()
+
+          if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "context-engine" ]]; then
+            find_links+=(--find-links dist/context-engine)
+            local_specs+=("potpie-context-engine==${CONTEXT_ENGINE_VERSION}")
+            install_targets+=("${engine_wheel}[all]")
+          fi
 
           if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "potpie" ]]; then
+            find_links+=(--find-links dist/potpie)
             local_specs+=("potpie==${POTPIE_VERSION}")
             install_targets+=("$potpie_wheel")
           fi

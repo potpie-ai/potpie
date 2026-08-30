@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 
 import pytest
@@ -85,6 +86,13 @@ def test_all_scope_uses_aggregate_release_tag(
     args = argparse.Namespace(publish_target="pypi", confirm_publish="publish")
     monkeypatch.setenv("GITHUB_REF_TYPE", "tag")
     monkeypatch.setenv("GITHUB_REF_NAME", "python-v2.1.0")
+    monkeypatch.setenv("GITHUB_SHA", "release-sha")
+    monkeypatch.setenv("REPOSITORY_DEFAULT_BRANCH", "main")
+    monkeypatch.setattr(
+        release.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0),
+    )
 
     release.validate_publish_policy(
         args,
@@ -92,6 +100,36 @@ def test_all_scope_uses_aggregate_release_tag(
         list(packages.values()),
         packages,
     )
+
+
+def test_publish_rejects_tag_not_reachable_from_default_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    packages = {
+        "context-engine": package("context-engine", "potpie-context-engine", "0.2.0"),
+        "potpie": package("potpie", "potpie", "2.1.0"),
+    }
+    args = argparse.Namespace(publish_target="pypi", confirm_publish="publish")
+    monkeypatch.setenv("GITHUB_REF_TYPE", "tag")
+    monkeypatch.setenv("GITHUB_REF_NAME", "python-v2.1.0")
+    monkeypatch.setenv("GITHUB_SHA", "release-sha")
+    monkeypatch.setenv("REPOSITORY_DEFAULT_BRANCH", "main")
+    monkeypatch.setattr(
+        release.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1),
+    )
+
+    with pytest.raises(SystemExit):
+        release.validate_publish_policy(
+            args,
+            "all",
+            list(packages.values()),
+            packages,
+        )
+
+    assert "not reachable from origin/main" in capsys.readouterr().err
 
 
 def test_package_scope_rejects_wrong_release_tag(

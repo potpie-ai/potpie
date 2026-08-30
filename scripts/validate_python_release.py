@@ -7,6 +7,8 @@ import argparse
 import datetime as dt
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tomllib
 import urllib.error
@@ -245,6 +247,38 @@ def validate_publish_policy(
             "publish_target=pypi must run from an allowed release tag "
             f"({rendered}); got ref_type={ref_type!r}, ref_name={ref_name!r}"
         )
+
+    commit_sha = os.getenv("GITHUB_SHA", "")
+    default_branch = os.getenv("REPOSITORY_DEFAULT_BRANCH", "")
+    if not commit_sha or not default_branch:
+        fail(
+            "publish_target=pypi requires GITHUB_SHA and "
+            "REPOSITORY_DEFAULT_BRANCH to verify tag ancestry"
+        )
+    git = shutil.which("git")
+    if git is None:
+        fail("could not verify release tag ancestry: git is unavailable")
+    result = subprocess.run(  # noqa: S603
+        [
+            git,
+            "merge-base",
+            "--is-ancestor",
+            commit_sha,
+            f"origin/{default_branch}",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 1:
+        fail(
+            f"release tag commit {commit_sha} is not reachable from "
+            f"origin/{default_branch}"
+        )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"git exited {result.returncode}"
+        fail(f"could not verify release tag ancestry: {detail}")
 
 
 def github_run_url() -> str:
