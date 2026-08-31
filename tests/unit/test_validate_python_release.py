@@ -30,6 +30,7 @@ def test_all_release_accepts_matching_dependency_chain(
     monkeypatch.setenv("GITHUB_REF_NAME", "main")
     monkeypatch.setenv("GITHUB_SHA", "release-sha")
     monkeypatch.setenv("REPOSITORY_DEFAULT_BRANCH", "main")
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     monkeypatch.setattr(release, "pyproject_package", packages.__getitem__)
     monkeypatch.setattr(
         release,
@@ -353,3 +354,14 @@ def test_dev_release_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
         release.channel_for_version(dev)
 
     assert "must not be a dev release" in capsys.readouterr().err
+
+
+def test_non_normalized_version_spelling_is_rejected(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    non_normalized = package("potpie", "potpie", "2.1.0-rc.1")
+
+    with pytest.raises(SystemExit):
+        release.channel_for_version(non_normalized)
+
+    assert "normalized PEP 440 spelling '2.1.0rc1'" in capsys.readouterr().err

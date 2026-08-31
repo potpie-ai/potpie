@@ -83,6 +83,12 @@ def channel_for_version(package: PackageInfo) -> str:
     except InvalidVersion as exc:
         fail(f"{package.name} version {package.version!r} is not PEP 440: {exc}")
 
+    normalized = str(version)
+    if normalized != package.version:
+        fail(
+            f"{package.name} version {package.version!r} must use its normalized "
+            f"PEP 440 spelling {normalized!r}"
+        )
     if version.local is not None:
         fail(
             f"{package.name} version {package.version!r} must not use a local '+...' segment"
