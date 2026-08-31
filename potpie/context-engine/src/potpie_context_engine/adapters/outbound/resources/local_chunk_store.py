@@ -8,7 +8,7 @@ import shutil
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 from potpie_context_engine.adapters.outbound.resources.sqlite_registry import (
@@ -27,9 +27,18 @@ from potpie_context_engine.domain.resource_models import (
 from potpie_context_core.ports.resource_store import (
     RESOURCE_NOT_FOUND,
     Chunk,
+    ChunkWrite,
+    DocumentInfo,
     ResourceStoreError,
     ResourceStoreStatus,
+    SectionInfo,
 )
+
+
+def pot_resources_root(home: Path, pot_id: str) -> Path:
+    """Per-pot resource root — shared with index adapters that colocate here."""
+    safe = pot_id.replace("/", "_")
+    return home / "resources" / safe
 
 
 def file_sha256(path: Path) -> str:
@@ -45,8 +54,7 @@ class LocalResourceStore:
     home: Path = field(default_factory=default_home)
 
     def pot_resources_root(self, pot_id: str) -> Path:
-        safe = pot_id.replace("/", "_")
-        return self.home / "resources" / safe
+        return pot_resources_root(self.home, pot_id)
 
     def registry(self, pot_id: str) -> SqliteResourceRegistry:
         return SqliteResourceRegistry(self.pot_resources_root(pot_id) / "registry.db")
@@ -396,6 +404,65 @@ class LocalResourceStore:
                     continue
         return chunks
 
+    def put_document(
+        self,
+        *,
+        pot_id: str,
+        doc_slug: str,
+        manifest: ResourceManifest,
+        chunks: Iterable[ChunkWrite],
+        force: bool = False,
+    ) -> ResourceImportReport:
+        """Direct write path: materialize a staging tree internally, then run
+        the same atomic import — agents and RPC callers never touch disk."""
+        stage = self.pot_resources_root(pot_id) / f".staging-put-{uuid.uuid4().hex[:8]}"
+        try:
+            stage.mkdir(parents=True, exist_ok=True)
+            (stage / "meta.json").write_text(
+                json.dumps(manifest.model_dump(mode="json")), encoding="utf-8"
+            )
+            for chunk in chunks:
+                section_dir = stage / chunk.section_slug
+                section_dir.mkdir(exist_ok=True)
+                (section_dir / f"{chunk.seq:04d}.txt").write_text(
+                    chunk.content, encoding="utf-8"
+                )
+                if chunk.ocr_text:
+                    (section_dir / f"{chunk.seq:04d}.ocr.txt").write_text(
+                        chunk.ocr_text, encoding="utf-8"
+                    )
+            return self.import_manifest(
+                pot_id=pot_id,
+                doc_slug=doc_slug,
+                staging_dir=stage,
+                manifest=manifest,
+                force=force,
+            )
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
+
+    def list_sections(self, *, pot_id: str, doc_slug: str) -> list[SectionInfo]:
+        doc_slug = validate_doc_slug(doc_slug)
+        return [
+            SectionInfo(
+                slug=row["section_slug"],
+                title=row.get("title") or "",
+                summary=row.get("summary") or "",
+                ordinal=row.get("ordinal") or 0,
+            )
+            for row in self.registry(pot_id).get_section_summaries(pot_id, doc_slug)
+        ]
+
+    def staging_root(self, *, pot_id: str) -> Path:
+        return self.pot_resources_root(pot_id) / ".staging"
+
+    def default_index(self) -> Any:
+        from potpie_context_engine.adapters.outbound.resources.fts_index import (
+            SqliteFtsResourceIndex,
+        )
+
+        return SqliteFtsResourceIndex(home=self.home)
+
     def delete(self, *, pot_id: str, doc_slug: str) -> dict[str, Any]:
         return self.remove_document(pot_id=pot_id, doc_slug=doc_slug)
 
@@ -412,8 +479,18 @@ class LocalResourceStore:
             location=str(self.home / "resources"),
         )
 
-    def list_documents(self, *, pot_id: str) -> list[dict[str, Any]]:
-        return self.registry(pot_id).list_documents(pot_id)
+    def list_documents(self, *, pot_id: str) -> list[DocumentInfo]:
+        return [
+            DocumentInfo(
+                doc_slug=row["doc_slug"],
+                source_ref=row.get("source_ref"),
+                source_kind=row.get("source_kind"),
+                revision=row.get("revision"),
+                updated_at=row.get("updated_at"),
+                section_count=row.get("section_count") or 0,
+            )
+            for row in self.registry(pot_id).list_documents(pot_id)
+        ]
 
     def remove_document(self, *, pot_id: str, doc_slug: str) -> dict[str, Any]:
         doc_slug = validate_doc_slug(doc_slug)
