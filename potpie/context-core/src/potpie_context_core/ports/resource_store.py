@@ -14,7 +14,7 @@ retry a bad slug and an oversized chunk differently.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Iterable, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -23,6 +23,9 @@ from potpie_context_core.resource_models import (
     ResourceImportReport,
     ResourceManifest,
 )
+
+if TYPE_CHECKING:
+    from potpie_context_core.ports.resource_index import ResourceIndexPort
 
 RESOURCE_NOT_FOUND = "resource_not_found"
 RESOURCE_MANIFEST_INVALID = "resource_manifest_invalid"
@@ -76,6 +79,44 @@ class Chunk(BaseModel):
         return payload
 
 
+class ChunkWrite(BaseModel):
+    """One chunk of content handed to the store directly — the agent-driven
+    and RPC write path, no staging tree required."""
+
+    section_slug: str
+    seq: int
+    content: str
+    ocr_text: str = ""
+
+
+class DocumentInfo(BaseModel):
+    """One catalog row; the wire shape is ``to_payload()``, never a raw DB row."""
+
+    doc_slug: str
+    source_ref: str | None = None
+    source_kind: str | None = None
+    revision: int | None = None
+    updated_at: str | None = None
+    section_count: int = 0
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "doc_slug": self.doc_slug,
+            "source_ref": self.source_ref,
+            "source_kind": self.source_kind,
+            "revision": self.revision,
+            "updated_at": self.updated_at,
+            "section_count": self.section_count,
+        }
+
+
+class SectionInfo(BaseModel):
+    slug: str
+    title: str = ""
+    summary: str = ""
+    ordinal: int = 0
+
+
 class ResourceStoreStatus(BaseModel):
     ready: bool
     backend: str
@@ -97,6 +138,16 @@ class ResourceStorePort(Protocol):
         force: bool = False,
     ) -> ResourceImportReport: ...
 
+    def put_document(
+        self,
+        *,
+        pot_id: str,
+        doc_slug: str,
+        manifest: ResourceManifest,
+        chunks: Iterable[ChunkWrite],
+        force: bool = False,
+    ) -> ResourceImportReport: ...
+
     def read_manifest(self, source_dir: Path) -> ResourceManifest: ...
 
     def read_elements(
@@ -115,13 +166,23 @@ class ResourceStorePort(Protocol):
 
     def iter_chunks(self, *, pot_id: str, doc_slug: str) -> Iterable[Chunk]: ...
 
-    def list_documents(self, *, pot_id: str) -> list[dict[str, Any]]: ...
+    def list_documents(self, *, pot_id: str) -> list[DocumentInfo]: ...
+
+    def list_sections(self, *, pot_id: str, doc_slug: str) -> list[SectionInfo]: ...
 
     def delete(self, *, pot_id: str, doc_slug: str) -> dict[str, Any]: ...
 
     def purge_pot(self, pot_id: str) -> bool: ...
 
     def status(self, pot_id: str | None = None) -> ResourceStoreStatus: ...
+
+    def staging_root(self, *, pot_id: str) -> Path:
+        """Where this store wants parse output staged before import_dir."""
+        ...
+
+    def default_index(self) -> "ResourceIndexPort | None":
+        """The index this store pairs with when the composition root names none."""
+        ...
 
     def is_file_imported(self, *, pot_id: str, content_hash: str) -> bool: ...
 
@@ -135,7 +196,10 @@ __all__ = [
     "RESOURCE_MANIFEST_INVALID",
     "RESOURCE_NOT_FOUND",
     "Chunk",
+    "ChunkWrite",
+    "DocumentInfo",
     "ResourceStoreError",
     "ResourceStorePort",
     "ResourceStoreStatus",
+    "SectionInfo",
 ]

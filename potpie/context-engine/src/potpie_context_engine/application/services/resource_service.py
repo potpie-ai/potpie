@@ -43,12 +43,8 @@ class ResourceService:
     graph: GraphService | None = None
 
     def __post_init__(self) -> None:
-        if self.index is None and isinstance(self.store, LocalResourceStore):
-            from potpie_context_engine.adapters.outbound.resources.fts_index import (
-                SqliteFtsResourceIndex,
-            )
-
-            self.index = SqliteFtsResourceIndex(store=self.store)
+        if self.index is None:
+            self.index = self.store.default_index()
 
     def parse_to_staging(
         self,
@@ -99,12 +95,8 @@ class ResourceService:
         source = Path(source_path).expanduser().resolve()
         if staging_dir:
             stage = Path(staging_dir).expanduser().resolve()
-        elif isinstance(self.store, LocalResourceStore):
-            stage = self.store.pot_resources_root(pot_id) / ".staging" / doc_slug
         else:
-            import tempfile
-
-            stage = Path(tempfile.gettempdir()) / "potpie-staging" / pot_id / doc_slug
+            stage = self.store.staging_root(pot_id=pot_id) / doc_slug
         if stage.exists():
             import shutil
 
@@ -224,19 +216,18 @@ class ResourceService:
         ).to_payload()
 
     def list_documents(self, *, pot_id: str) -> list[dict[str, Any]]:
-        return self.store.list_documents(pot_id=pot_id)
+        return [info.to_payload() for info in self.store.list_documents(pot_id=pot_id)]
 
     def remove_document(self, *, pot_id: str, doc_slug: str) -> dict[str, Any]:
         doc_slug = validate_doc_slug(doc_slug)
-        section_slugs: list[str] = []
-        element_ids: list[str] = []
-        if isinstance(self.store, LocalResourceStore):
-            registry = self.store.registry(pot_id)
-            section_slugs = [
-                row["section_slug"]
-                for row in registry.get_section_summaries(pot_id, doc_slug)
-            ]
-            element_ids = registry.list_element_ids(pot_id, doc_slug)
+        section_slugs = [
+            section.slug
+            for section in self.store.list_sections(pot_id=pot_id, doc_slug=doc_slug)
+        ]
+        element_ids = [
+            element.element_id
+            for element in self.store.read_elements(pot_id=pot_id, doc_slug=doc_slug)
+        ]
 
         if self.graph is not None and (section_slugs or element_ids):
             payload = {

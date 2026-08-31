@@ -140,7 +140,7 @@ def test_store_delete_removes_document(store_factory, tmp_path: Path) -> None:
     _import(store, tmp_path)
     result = store.delete(pot_id=POT, doc_slug="guide")
     assert result["removed"] is True
-    assert all(d["doc_slug"] != "guide" for d in store.list_documents(pot_id=POT))
+    assert all(d.doc_slug != "guide" for d in store.list_documents(pot_id=POT))
     with pytest.raises(ResourceStoreError):
         store.get(pot_id=POT, doc_slug="guide", section_slug="intro", seq=0)
 
@@ -173,7 +173,7 @@ def index_and_store(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Any
         )
 
         store = LocalResourceStore(home=tmp_path / "home")
-        return SqliteFtsResourceIndex(store=store), store
+        return SqliteFtsResourceIndex(home=tmp_path / "home"), store
     from potpie_context_engine.testing_resources import (
         InMemoryResourceIndex,
         InMemoryResourceStore,
@@ -217,3 +217,105 @@ def test_index_capabilities_and_status(index_and_store, tmp_path: Path) -> None:
     status = index.status()
     assert status.ready is True
     assert status.profile
+
+
+# --- contract additions: agent-driven writes, typed catalog, wiring hooks ----
+
+
+def test_store_put_document_writes_without_a_staging_tree(store_factory, tmp_path: Path) -> None:
+    """Agents and RPC callers hold content in memory; the port must accept it
+    directly — fabricating an on-disk staging tree is not a contract."""
+    from potpie_context_core.ports.resource_store import ChunkWrite
+    from potpie_context_core.resource_models import ResourceManifest
+
+    store = store_factory()
+    manifest = ResourceManifest.model_validate(
+        {
+            "source_ref": "agent://session/1",
+            "source_kind": "markdown",
+            "sections": [
+                {
+                    "slug": "notes",
+                    "title": "Notes",
+                    "summary": "Agent notes about zebra migration.",
+                    "ordinal": 0,
+                    "content_hash": "",
+                    "chunks": [{"seq": 0, "label": "notes"}],
+                }
+            ],
+        }
+    )
+    report = store.put_document(
+        pot_id=POT,
+        doc_slug="agent-doc",
+        manifest=manifest,
+        chunks=[ChunkWrite(section_slug="notes", seq=0, content="Zebra migration notes.")],
+    )
+    assert not report.errors
+    assert "notes" in report.sections_added
+    chunk = store.get(pot_id=POT, doc_slug="agent-doc", section_slug="notes", seq=0)
+    assert chunk.content == "Zebra migration notes."
+
+
+def test_store_list_documents_returns_typed_document_info(store_factory, tmp_path: Path) -> None:
+    from potpie_context_core.ports.resource_store import DocumentInfo
+
+    store = store_factory()
+    _import(store, tmp_path)
+    docs = store.list_documents(pot_id=POT)
+    assert docs and isinstance(docs[0], DocumentInfo)
+    info = docs[0]
+    assert info.doc_slug == "guide"
+    assert info.section_count == 1
+    payload = info.to_payload()
+    assert set(payload) == {
+        "doc_slug",
+        "source_ref",
+        "source_kind",
+        "revision",
+        "updated_at",
+        "section_count",
+    }
+
+
+def test_store_list_sections_returns_slugs(store_factory, tmp_path: Path) -> None:
+    store = store_factory()
+    _import(store, tmp_path, sections={"intro": ["Intro."], "ops": ["Ops text."]})
+    sections = store.list_sections(pot_id=POT, doc_slug="guide")
+    assert {s.slug for s in sections} == {"intro", "ops"}
+
+
+def test_store_staging_root_is_a_writable_path(store_factory, tmp_path: Path) -> None:
+    store = store_factory()
+    root = store.staging_root(pot_id=POT)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "probe.txt").write_text("ok", encoding="utf-8")
+    assert (root / "probe.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_store_default_index_satisfies_the_index_port(store_factory, tmp_path: Path) -> None:
+    store = store_factory()
+    index = store.default_index()
+    assert index is not None
+    assert index.capabilities().lexical is True
+
+
+def test_sqlite_index_works_over_a_non_local_store(tmp_path: Path) -> None:
+    """The S3-bytes + local-FTS hybrid: the index must not require the local store."""
+    from potpie_context_engine.adapters.outbound.resources.fts_index import (
+        SqliteFtsResourceIndex,
+    )
+    from potpie_context_engine.testing_resources import InMemoryResourceStore
+
+    store = InMemoryResourceStore()
+    stage = make_staging(tmp_path, name="stage-hybrid", sections={"ops": ["Rollback for payments."]})
+    store.import_dir(pot_id=POT, doc_slug="runbook", source_dir=stage)
+
+    index = SqliteFtsResourceIndex(home=tmp_path / "index-home")
+    index.index_document(
+        pot_id=POT,
+        doc_slug="runbook",
+        chunks=store.iter_chunks(pot_id=POT, doc_slug="runbook"),
+    )
+    hits = index.search(pot_id=POT, query="payments rollback", limit=5)
+    assert hits and hits[0].doc_slug == "runbook"

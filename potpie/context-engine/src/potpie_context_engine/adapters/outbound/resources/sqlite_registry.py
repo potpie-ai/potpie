@@ -449,15 +449,13 @@ class SqliteResourceRegistry:
                 "DELETE FROM chunks_fts WHERE pot_id = ? AND doc_slug = ?",
                 (pot_id, doc_slug),
             )
+            # Derive purely from chunk_text: the index plane must not depend
+            # on the local catalog tables, so it works over any byte store.
             rows = conn.execute(
                 """
-                SELECT c.pot_id, c.doc_slug, c.section_slug, c.seq,
-                       ch.content, ch.ocr_text
-                FROM chunks c
-                INNER JOIN chunk_text ch ON
-                    ch.pot_id = c.pot_id AND ch.doc_slug = c.doc_slug
-                    AND ch.section_slug = c.section_slug AND ch.seq = c.seq
-                WHERE c.pot_id = ? AND c.doc_slug = ?
+                SELECT pot_id, doc_slug, section_slug, seq, content, ocr_text
+                FROM chunk_text
+                WHERE pot_id = ? AND doc_slug = ?
                 """,
                 (pot_id, doc_slug),
             ).fetchall()

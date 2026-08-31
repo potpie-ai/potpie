@@ -24,8 +24,11 @@ from potpie_context_core.ports.resource_store import (
     RESOURCE_MANIFEST_INVALID,
     RESOURCE_NOT_FOUND,
     Chunk,
+    ChunkWrite,
+    DocumentInfo,
     ResourceStoreError,
     ResourceStoreStatus,
+    SectionInfo,
 )
 from potpie_context_core.resource_models import (
     CHUNK_HARD_CAP,
@@ -114,6 +117,16 @@ class InMemoryResourceStore:
                 recommended_next_action="fix staging directory and re-import",
             )
 
+        return self._commit(pot_id=pot_id, doc_slug=doc_slug, meta=meta, staged=staged)
+
+    def _commit(
+        self,
+        *,
+        pot_id: str,
+        doc_slug: str,
+        meta: ResourceManifest,
+        staged: dict[tuple[str, int], tuple[str, str]],
+    ) -> ResourceImportReport:
         prior = self._manifests.get((pot_id, doc_slug))
         prior_slugs = {s.slug for s in prior.sections} if prior else set()
         new_slugs = {s.slug for s in meta.sections}
@@ -195,12 +208,79 @@ class InMemoryResourceStore:
             if pid == pot_id and doc == doc_slug
         ]
 
-    def list_documents(self, *, pot_id: str) -> list[dict[str, Any]]:
+    def list_documents(self, *, pot_id: str) -> list[DocumentInfo]:
         return [
-            {"doc_slug": doc, "section_count": len(manifest.sections)}
+            DocumentInfo(
+                doc_slug=doc,
+                source_ref=manifest.source_ref or None,
+                source_kind=manifest.source_kind or None,
+                section_count=len(manifest.sections),
+            )
             for (pid, doc), manifest in sorted(self._manifests.items())
             if pid == pot_id
         ]
+
+    def list_sections(self, *, pot_id: str, doc_slug: str) -> list[SectionInfo]:
+        manifest = self._manifests.get((pot_id, doc_slug))
+        if manifest is None:
+            return []
+        return [
+            SectionInfo(
+                slug=s.slug, title=s.title, summary=s.summary, ordinal=s.ordinal
+            )
+            for s in manifest.sections
+        ]
+
+    def put_document(
+        self,
+        *,
+        pot_id: str,
+        doc_slug: str,
+        manifest: ResourceManifest,
+        chunks: Iterable[ChunkWrite],
+        force: bool = False,
+    ) -> ResourceImportReport:
+        staged = {(c.section_slug, c.seq): (c.content, c.ocr_text) for c in chunks}
+        errors: list[dict[str, Any]] = []
+        for section in manifest.sections:
+            for chunk_ref in section.chunks:
+                entry = staged.get((section.slug, chunk_ref.seq))
+                if entry is None:
+                    errors.append(
+                        {
+                            "code": RESOURCE_MANIFEST_INVALID,
+                            "message": f"missing chunk: {section.slug}/{chunk_ref.seq}",
+                        }
+                    )
+                elif len(entry[0]) > CHUNK_HARD_CAP:
+                    errors.append(
+                        {
+                            "code": RESOURCE_CHUNK_TOO_LARGE,
+                            "message": (
+                                f"chunk exceeds {CHUNK_HARD_CAP} chars: "
+                                f"{section.slug}/{chunk_ref.seq}"
+                            ),
+                        }
+                    )
+        if errors:
+            return ResourceImportReport(
+                pot_id=pot_id,
+                doc_slug=doc_slug,
+                graph_written=False,
+                errors=errors,
+                recommended_next_action="fix the chunk payload and re-put",
+            )
+        return self._commit(
+            pot_id=pot_id, doc_slug=doc_slug, meta=manifest, staged=staged
+        )
+
+    def staging_root(self, *, pot_id: str) -> Path:
+        import tempfile
+
+        return Path(tempfile.gettempdir()) / "potpie-staging" / pot_id
+
+    def default_index(self) -> "InMemoryResourceIndex":
+        return InMemoryResourceIndex()
 
     def delete(self, *, pot_id: str, doc_slug: str) -> dict[str, Any]:
         self._manifests.pop((pot_id, doc_slug), None)
