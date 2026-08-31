@@ -1,4 +1,11 @@
-"""Resource ingestion orchestration (parse, import, get, list, remove)."""
+"""Resource ingestion orchestration (parse, import, get, list, remove).
+
+The service depends on two ports, never on concrete storage:
+``ResourceStorePort`` owns bytes + catalog (local disk today, blob storage
+later), ``ResourceIndexPort`` owns retrieval (SQLite FTS today, hosted or
+semantic profiles later). Swapping either is wiring, not surgery, and the
+CLI/RPC payload shapes produced here do not change with the backend.
+"""
 
 from __future__ import annotations
 
@@ -25,12 +32,23 @@ from potpie_context_engine.domain.resource_models import (
     validate_doc_slug,
 )
 from potpie_context_core.ports.graph_service import GraphService
+from potpie_context_core.ports.resource_index import ResourceIndexPort
+from potpie_context_core.ports.resource_store import ResourceStoreError, ResourceStorePort
 
 
 @dataclass(slots=True)
 class ResourceService:
-    store: LocalResourceStore = field(default_factory=LocalResourceStore)
+    store: ResourceStorePort = field(default_factory=LocalResourceStore)
+    index: ResourceIndexPort | None = None
     graph: GraphService | None = None
+
+    def __post_init__(self) -> None:
+        if self.index is None and isinstance(self.store, LocalResourceStore):
+            from potpie_context_engine.adapters.outbound.resources.fts_index import (
+                SqliteFtsResourceIndex,
+            )
+
+            self.index = SqliteFtsResourceIndex(store=self.store)
 
     def parse_to_staging(
         self,
@@ -79,11 +97,14 @@ class ResourceService:
     ) -> ResourceImportReport:
         doc_slug = validate_doc_slug(doc_slug)
         source = Path(source_path).expanduser().resolve()
-        stage = (
-            Path(staging_dir).expanduser().resolve()
-            if staging_dir
-            else self.store.pot_resources_root(pot_id) / ".staging" / doc_slug
-        )
+        if staging_dir:
+            stage = Path(staging_dir).expanduser().resolve()
+        elif isinstance(self.store, LocalResourceStore):
+            stage = self.store.pot_resources_root(pot_id) / ".staging" / doc_slug
+        else:
+            import tempfile
+
+            stage = Path(tempfile.gettempdir()) / "potpie-staging" / pot_id / doc_slug
         if stage.exists():
             import shutil
 
@@ -125,15 +146,22 @@ class ResourceService:
         if source_ref:
             manifest = manifest.model_copy(update={"source_ref": source_ref})
 
-        report = self.store.import_manifest(
+        report = self.store.import_dir(
             pot_id=pot_id,
             doc_slug=doc_slug,
-            staging_dir=stage,
+            source_dir=stage,
             manifest=manifest,
             force=force,
         )
         if report.errors:
             return report
+
+        if self.index is not None:
+            self.index.index_document(
+                pot_id=pot_id,
+                doc_slug=doc_slug,
+                chunks=self.store.iter_chunks(pot_id=pot_id, doc_slug=doc_slug),
+            )
 
         if write_graph and self.graph is not None:
             elements = self.store.read_elements(pot_id=pot_id, doc_slug=doc_slug)
@@ -187,23 +215,28 @@ class ResourceService:
         with_neighbors: bool = False,
     ) -> dict[str, Any]:
         doc_slug, section_slug, seq = parse_chunk_uri(uri)
-        return self.store.get_chunk_text(
+        return self.store.get(
             pot_id=pot_id,
             doc_slug=doc_slug,
             section_slug=section_slug,
             seq=seq,
             with_neighbors=with_neighbors,
-        )
+        ).to_payload()
 
     def list_documents(self, *, pot_id: str) -> list[dict[str, Any]]:
         return self.store.list_documents(pot_id=pot_id)
 
     def remove_document(self, *, pot_id: str, doc_slug: str) -> dict[str, Any]:
         doc_slug = validate_doc_slug(doc_slug)
-        registry = self.store.registry(pot_id)
-        section_rows = registry.get_section_summaries(pot_id, doc_slug)
-        section_slugs = [row["section_slug"] for row in section_rows]
-        element_ids = registry.list_element_ids(pot_id, doc_slug)
+        section_slugs: list[str] = []
+        element_ids: list[str] = []
+        if isinstance(self.store, LocalResourceStore):
+            registry = self.store.registry(pot_id)
+            section_slugs = [
+                row["section_slug"]
+                for row in registry.get_section_summaries(pot_id, doc_slug)
+            ]
+            element_ids = registry.list_element_ids(pot_id, doc_slug)
 
         if self.graph is not None and (section_slugs or element_ids):
             payload = {
@@ -221,13 +254,31 @@ class ResourceService:
             mutation = SemanticMutationRequest.parse(payload, approved_by="resource-remove")
             self.graph.mutate(mutation)
 
-        result = self.store.remove_document(pot_id=pot_id, doc_slug=doc_slug)
+        if self.index is not None:
+            self.index.remove_document(pot_id=pot_id, doc_slug=doc_slug)
+        result = self.store.delete(pot_id=pot_id, doc_slug=doc_slug)
         result["sections_retracted"] = section_slugs
         result["elements_retracted"] = element_ids
         return result
 
     def search_chunks(self, *, pot_id: str, query: str, limit: int = 20) -> list[dict[str, Any]]:
-        return self.store.search_chunks(pot_id=pot_id, query=query, limit=limit)
+        if self.index is None:
+            return []
+        enriched: list[dict[str, Any]] = []
+        for hit in self.index.search(pot_id=pot_id, query=query, limit=limit):
+            try:
+                chunk = self.store.get(
+                    pot_id=pot_id,
+                    doc_slug=hit.doc_slug,
+                    section_slug=hit.section_slug,
+                    seq=hit.seq,
+                )
+            except ResourceStoreError:
+                continue
+            payload = chunk.to_payload()
+            payload["score"] = hit.score
+            enriched.append(payload)
+        return enriched
 
 
 __all__ = ["ResourceService"]

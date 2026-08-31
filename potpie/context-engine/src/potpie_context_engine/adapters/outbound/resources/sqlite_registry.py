@@ -557,22 +557,43 @@ class SqliteResourceRegistry:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def remove_document(self, pot_id: str, doc_slug: str) -> None:
+    def clear_chunk_text(self, pot_id: str, doc_slug: str) -> None:
+        """Drop the index plane (chunk_text + FTS) for one document."""
         with self.connect() as conn:
             conn.execute(
                 "DELETE FROM chunks_fts WHERE pot_id = ? AND doc_slug = ?",
                 (pot_id, doc_slug),
             )
+            # chunk_text is created lazily by upsert_chunk_text; a clear on a
+            # fresh registry must not require an import to have happened.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chunk_text (
+                    pot_id TEXT NOT NULL,
+                    doc_slug TEXT NOT NULL,
+                    section_slug TEXT NOT NULL,
+                    seq INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    ocr_text TEXT,
+                    PRIMARY KEY (pot_id, doc_slug, section_slug, seq)
+                )
+                """
+            )
+            conn.execute(
+                "DELETE FROM chunk_text WHERE pot_id = ? AND doc_slug = ?",
+                (pot_id, doc_slug),
+            )
+            conn.commit()
+
+    def remove_document(self, pot_id: str, doc_slug: str) -> None:
+        self.clear_chunk_text(pot_id, doc_slug)
+        with self.connect() as conn:
             conn.execute(
                 "DELETE FROM chunk_provenance WHERE pot_id = ? AND doc_slug = ?",
                 (pot_id, doc_slug),
             )
             conn.execute(
                 "DELETE FROM document_elements WHERE pot_id = ? AND doc_slug = ?",
-                (pot_id, doc_slug),
-            )
-            conn.execute(
-                "DELETE FROM chunk_text WHERE pot_id = ? AND doc_slug = ?",
                 (pot_id, doc_slug),
             )
             conn.execute(
