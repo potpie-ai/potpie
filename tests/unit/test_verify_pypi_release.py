@@ -96,6 +96,25 @@ def test_context_engine_release_rejects_source_distribution(tmp_path: Path) -> N
         verify.release_plan(metadata_path, dist_dir)
 
 
+def test_select_packages_limits_exact_readback_to_requested_package(
+    tmp_path: Path,
+) -> None:
+    metadata_path, dist_dir, _ = write_bundle(tmp_path)
+    plan = verify.release_plan(metadata_path, dist_dir)
+
+    selected = verify.select_packages(plan, ["potpie"])
+
+    assert [package.name for package in selected] == ["potpie"]
+
+
+def test_select_packages_rejects_package_outside_release_scope(tmp_path: Path) -> None:
+    metadata_path, dist_dir, _ = write_bundle(tmp_path)
+    plan = verify.release_plan(metadata_path, dist_dir)
+
+    with pytest.raises(ValueError, match="not present in release metadata"):
+        verify.select_packages(plan, ["potpie-context-engine"])
+
+
 def test_verify_release_retries_until_exact_files_are_visible(tmp_path: Path) -> None:
     metadata_path, dist_dir, hashes = write_bundle(tmp_path)
     plan = verify.release_plan(metadata_path, dist_dir)

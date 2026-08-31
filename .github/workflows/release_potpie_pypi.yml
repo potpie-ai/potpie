@@ -33,6 +33,7 @@ jobs:
       context_engine_tag: ${{ steps.validate.outputs.context_engine_tag }}
       potpie_tag: ${{ steps.validate.outputs.potpie_tag }}
       metadata_path: ${{ steps.validate.outputs.metadata_path }}
+      context_engine_preexisting: ${{ steps.validate.outputs.context_engine_preexisting }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -288,6 +289,18 @@ jobs:
       - smoke-install
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout release verifier
+        if: ${{ needs.preflight.outputs.context_engine_preexisting == 'true' }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        if: ${{ needs.preflight.outputs.context_engine_preexisting == 'true' }}
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
       - name: Download release distributions
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -299,6 +312,15 @@ jobs:
         with:
           name: release-metadata
           path: release-metadata
+
+      - name: Verify resumable Context Engine artifact
+        if: ${{ needs.preflight.outputs.context_engine_preexisting == 'true' }}
+        run: >-
+          python scripts/verify_pypi_release.py
+          --metadata release-metadata/release-metadata.json
+          --dist-dir dist
+          --package potpie-context-engine
+          --attempts 1
 
       - name: Generate checksums
         run: |
@@ -324,7 +346,8 @@ jobs:
     if: >-
       ${{
         (needs.preflight.outputs.release_scope == 'all' ||
-         needs.preflight.outputs.release_scope == 'context-engine')
+         needs.preflight.outputs.release_scope == 'context-engine') &&
+        needs.preflight.outputs.context_engine_preexisting != 'true'
       }}
     needs:
       - preflight
@@ -357,7 +380,8 @@ jobs:
         needs.assemble.result == 'success' &&
         (needs.preflight.outputs.release_scope == 'potpie' ||
          (needs.preflight.outputs.release_scope == 'all' &&
-          needs.publish_context_engine.result == 'success'))
+          (needs.preflight.outputs.context_engine_preexisting == 'true' ||
+           needs.publish_context_engine.result == 'success')))
       }}
     needs:
       - preflight
@@ -394,7 +418,8 @@ jobs:
          (needs.preflight.outputs.release_scope == 'potpie' &&
           needs.publish_potpie.result == 'success') ||
          (needs.preflight.outputs.release_scope == 'all' &&
-          needs.publish_context_engine.result == 'success' &&
+          (needs.preflight.outputs.context_engine_preexisting == 'true' ||
+           needs.publish_context_engine.result == 'success') &&
           needs.publish_potpie.result == 'success'))
       }}
     needs:

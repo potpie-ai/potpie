@@ -159,19 +159,46 @@ def verify_release(
     raise RuntimeError("; ".join(last_errors))
 
 
+def select_packages(
+    plan: list[PackageRelease],
+    requested_names: list[str],
+) -> list[PackageRelease]:
+    if not requested_names:
+        return plan
+    requested = set(requested_names)
+    available = {package.name for package in plan}
+    unknown = requested - available
+    if unknown:
+        raise ValueError(
+            "requested package is not present in release metadata: "
+            + ", ".join(sorted(unknown))
+        )
+    return [package for package in plan if package.name in requested]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--dist-dir", type=Path, required=True)
     parser.add_argument("--attempts", type=int, default=18)
     parser.add_argument("--delay-seconds", type=float, default=10)
+    parser.add_argument(
+        "--package",
+        action="append",
+        choices=sorted(PACKAGE_DIRS),
+        default=[],
+        help="Verify only this package from the release bundle; may be repeated.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
-        plan = release_plan(args.metadata, args.dist_dir)
+        plan = select_packages(
+            release_plan(args.metadata, args.dist_dir),
+            args.package,
+        )
         verify_release(
             plan,
             attempts=args.attempts,

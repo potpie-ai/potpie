@@ -192,10 +192,19 @@ def package_version_exists(package_name: str, version: str) -> bool:
     return False
 
 
-def validate_index_availability(selected: list[PackageInfo]) -> None:
+def validate_index_availability(
+    scope: str,
+    selected: list[PackageInfo],
+) -> set[str]:
+    preexisting_packages: set[str] = set()
     for package in selected:
-        if package_version_exists(package.name, package.version):
-            fail(f"{package.name}=={package.version} already exists on pypi")
+        if not package_version_exists(package.name, package.version):
+            continue
+        if scope == "all" and package.key == "context-engine":
+            preexisting_packages.add(package.name)
+            continue
+        fail(f"{package.name}=={package.version} already exists on pypi")
+    return preexisting_packages
 
 
 def validate_external_dependencies(
@@ -267,6 +276,7 @@ def emit_metadata(
     scope: str,
     selected: list[PackageInfo],
     channel: str,
+    preexisting_packages: set[str],
 ) -> Path:
     output_path_dir = ROOT / output_dir
     output_path_dir.mkdir(parents=True, exist_ok=True)
@@ -283,6 +293,7 @@ def emit_metadata(
         "run_id": os.getenv("GITHUB_RUN_ID", ""),
         "run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
         "run_url": github_run_url(),
+        "preexisting_packages": sorted(preexisting_packages),
         "release_tags": {
             package.name: f"{package.name}-v{package.version}" for package in selected
         },
@@ -305,6 +316,7 @@ def emit_github_outputs(
     packages: dict[str, PackageInfo],
     context_engine_version: str,
     metadata_path: Path,
+    preexisting_packages: set[str],
 ) -> None:
     github_output = os.getenv("GITHUB_OUTPUT")
     if not github_output:
@@ -317,6 +329,8 @@ def emit_github_outputs(
         f"release_scope={scope}",
         f"metadata_path={metadata_output}",
         f"context_engine_version={context_engine_version}",
+        "context_engine_preexisting="
+        f"{str(CONTEXT_ENGINE_NAME in preexisting_packages).lower()}",
     ]
     if engine := packages.get("context-engine"):
         lines.append(f"context_engine_tag={engine.name}-v{engine.version}")
@@ -356,20 +370,37 @@ def main() -> int:
     )
 
     validate_release_source()
-    validate_index_availability(selected)
+    preexisting_packages = validate_index_availability(scope, selected)
     validate_external_dependencies(
         selected_key_set,
         CONTEXT_ENGINE_NAME,
         context_engine_version,
     )
-    metadata_path = emit_metadata(args.output_dir, scope, selected, channel)
-    emit_github_outputs(scope, packages, context_engine_version, metadata_path)
+    metadata_path = emit_metadata(
+        args.output_dir,
+        scope,
+        selected,
+        channel,
+        preexisting_packages,
+    )
+    emit_github_outputs(
+        scope,
+        packages,
+        context_engine_version,
+        metadata_path,
+        preexisting_packages,
+    )
 
     print("release validation passed")
     print(f"- scope: {scope}")
     print(f"- channel: {channel}")
     for package in selected:
         print(f"- {package.name}=={package.version} ({package.source})")
+    if preexisting_packages:
+        print(
+            "- resumable preexisting packages: "
+            + ", ".join(sorted(preexisting_packages))
+        )
     try:
         metadata_display = str(metadata_path.relative_to(ROOT))
     except ValueError:

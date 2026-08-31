@@ -57,6 +57,7 @@ def test_all_release_accepts_matching_dependency_chain(
     assert release.main() == 0
     metadata = json.loads((tmp_path / "release-metadata.json").read_text())
     assert metadata["release_scope"] == "all"
+    assert metadata["preexisting_packages"] == []
     assert set(metadata["packages"]) == {
         "potpie",
         "potpie-context-engine",
@@ -95,6 +96,61 @@ def test_potpie_only_publish_requires_engine_on_pypi(
         "for a potpie-only release" in capsys.readouterr().err
     )
     assert checked == [("potpie-context-engine", "0.2.0")]
+
+
+def test_combined_release_allows_preexisting_engine_for_exact_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected = [
+        package("context-engine", "potpie-context-engine", "0.2.0"),
+        package("potpie", "potpie", "2.1.0"),
+    ]
+    monkeypatch.setattr(
+        release,
+        "package_version_exists",
+        lambda name, _version: name == "potpie-context-engine",
+    )
+
+    assert release.validate_index_availability("all", selected) == {
+        "potpie-context-engine"
+    }
+
+
+def test_combined_release_rejects_preexisting_potpie(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    selected = [
+        package("context-engine", "potpie-context-engine", "0.2.0"),
+        package("potpie", "potpie", "2.1.0"),
+    ]
+    monkeypatch.setattr(
+        release,
+        "package_version_exists",
+        lambda name, _version: name == "potpie",
+    )
+
+    with pytest.raises(SystemExit):
+        release.validate_index_availability("all", selected)
+
+    assert "potpie==2.1.0 already exists on pypi" in capsys.readouterr().err
+
+
+def test_engine_only_release_rejects_preexisting_version(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    selected = [
+        package("context-engine", "potpie-context-engine", "0.2.0"),
+    ]
+    monkeypatch.setattr(release, "package_version_exists", lambda *_args: True)
+
+    with pytest.raises(SystemExit):
+        release.validate_index_availability("context-engine", selected)
+
+    assert (
+        "potpie-context-engine==0.2.0 already exists on pypi" in capsys.readouterr().err
+    )
 
 
 def test_engine_only_release_uses_repository_engine_version(
@@ -261,10 +317,33 @@ def test_github_outputs_include_package_specific_tags(
     metadata = tmp_path / "release-metadata.json"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
 
-    release.emit_github_outputs("all", packages, "0.2.0", metadata)
+    release.emit_github_outputs("all", packages, "0.2.0", metadata, set())
 
     assert "context_engine_tag=potpie-context-engine-v0.2.0" in output.read_text()
     assert "potpie_tag=potpie-v2.1.0" in output.read_text()
+    assert "context_engine_preexisting=false" in output.read_text()
+
+
+def test_github_outputs_mark_preexisting_context_engine(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    packages = {
+        "context-engine": package("context-engine", "potpie-context-engine", "0.2.0"),
+        "potpie": package("potpie", "potpie", "2.1.0"),
+    }
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+
+    release.emit_github_outputs(
+        "all",
+        packages,
+        "0.2.0",
+        tmp_path / "release-metadata.json",
+        {"potpie-context-engine"},
+    )
+
+    assert "context_engine_preexisting=true" in output.read_text()
 
 
 def test_dev_release_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
