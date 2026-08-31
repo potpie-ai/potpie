@@ -25,7 +25,10 @@ def test_import_and_search_chunks(tmp_path: Path) -> None:
     service = ResourceService(store=store)
     pot_id = "pot_test"
     source = tmp_path / "guide.md"
-    source.write_text("## Payments rollback\n\nRollback steps for payments deploy failures.", encoding="utf-8")
+    source.write_text(
+        "## Payments rollback\n\nRollback steps for payments deploy failures.",
+        encoding="utf-8",
+    )
     staging = tmp_path / "staging"
     manifest = parse_file_to_staging(source, staging)
     report = service.import_staging(
@@ -45,7 +48,9 @@ def test_import_and_search_chunks(tmp_path: Path) -> None:
     assert "rollback" in chunk["content"].lower()
 
 
-def _import_doc(service: ResourceService, tmp_path: Path, pot_id: str, slug: str, body: str) -> None:
+def _import_doc(
+    service: ResourceService, tmp_path: Path, pot_id: str, slug: str, body: str
+) -> None:
     source = tmp_path / f"{slug}.md"
     source.write_text(body, encoding="utf-8")
     staging = tmp_path / f"staging-{slug}"
@@ -54,7 +59,9 @@ def _import_doc(service: ResourceService, tmp_path: Path, pot_id: str, slug: str
     assert not report.errors
 
 
-def test_search_chunks_natural_language_query_matches_on_some_terms(tmp_path: Path) -> None:
+def test_search_chunks_natural_language_query_matches_on_some_terms(
+    tmp_path: Path,
+) -> None:
     """A multi-word question must not require every token to appear in the chunk."""
     service = ResourceService(store=LocalResourceStore(home=tmp_path / "potpie-home"))
     pot_id = "pot_test"
@@ -140,7 +147,9 @@ def test_search_chunks_passes_raw_fts_prefix_syntax_through(tmp_path: Path) -> N
     assert hits[0]["doc_slug"] == "payments-guide"
 
 
-def test_search_chunks_or_fallback_ignores_stopword_only_matches(tmp_path: Path) -> None:
+def test_search_chunks_or_fallback_ignores_stopword_only_matches(
+    tmp_path: Path,
+) -> None:
     """A chunk sharing only function words with the query must not come back."""
     service = ResourceService(store=LocalResourceStore(home=tmp_path / "potpie-home"))
     pot_id = "pot_test"
@@ -151,7 +160,9 @@ def test_search_chunks_or_fallback_ignores_stopword_only_matches(tmp_path: Path)
         "weather-note",
         "## Weather\n\nThe weather is nice today and how it does change.",
     )
-    hits = service.search_chunks(pot_id=pot_id, query="how does the deploy work", limit=5)
+    hits = service.search_chunks(
+        pot_id=pot_id, query="how does the deploy work", limit=5
+    )
     assert hits == []
 
 

@@ -402,15 +402,7 @@ class ResourceIndexPort(Protocol):
         """Declare what this profile answers, without triggering an error."""
         ...
 
-    def search(
-        self,
-        *,
-        pot_id: str,
-        query: str,
-        limit: int = 12,
-        doc: str | None = None,
-    ) -> IndexSearchResult:
-        """Return the best chunks for ``query``, one item per chunk.
+    def search(self, *, pot_id: str, query: str, limit: int = 20) -> list[ChunkHit]: ...
 
         Runs every retrieval arm the profile declares and fuses them by
         reciprocal rank. A profile that declares nothing returns zero hits with

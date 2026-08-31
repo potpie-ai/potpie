@@ -39,7 +39,9 @@ def caption_image_openai(
     if not key:
         return ""
 
-    model_name = model or os.getenv("POTPIE_OPENAI_VISION_MODEL") or DEFAULT_OPENAI_VISION_MODEL
+    model_name = (
+        model or os.getenv("POTPIE_OPENAI_VISION_MODEL") or DEFAULT_OPENAI_VISION_MODEL
+    )
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     mime = _mime_type(path)
 

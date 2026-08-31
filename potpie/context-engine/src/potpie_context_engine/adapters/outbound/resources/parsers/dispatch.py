@@ -9,11 +9,16 @@ from pathlib import Path
 from potpie_context_engine.adapters.outbound.resources.capabilities import (
     documents_capabilities,
 )
-from potpie_context_engine.adapters.outbound.resources.local_chunk_store import file_sha256
+from potpie_context_engine.adapters.outbound.resources.local_chunk_store import (
+    file_sha256,
+)
 from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
     parse_file_to_staging as parse_text_to_staging,
 )
-from potpie_context_engine.domain.resource_models import CHUNK_TARGET_DEFAULT, ResourceManifest
+from potpie_context_engine.domain.resource_models import (
+    CHUNK_TARGET_DEFAULT,
+    ResourceManifest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +51,9 @@ def _manifest_degraded(
     )
 
 
-def _parse_pdf_degraded(source: Path, out_dir: Path, *, chunk_target: int) -> ResourceManifest:
+def _parse_pdf_degraded(
+    source: Path, out_dir: Path, *, chunk_target: int
+) -> ResourceManifest:
     import json
 
     caps = documents_capabilities()
@@ -58,8 +65,12 @@ def _parse_pdf_degraded(source: Path, out_dir: Path, *, chunk_target: int) -> Re
                 parse_pdf_pypdfium2_to_staging,
             )
 
-            manifest = parse_pdf_pypdfium2_to_staging(source, out_dir, chunk_target=chunk_target)
-            manifest = _manifest_degraded(manifest, parser_tier="pypdfium2-degraded", source_path=source)
+            manifest = parse_pdf_pypdfium2_to_staging(
+                source, out_dir, chunk_target=chunk_target
+            )
+            manifest = _manifest_degraded(
+                manifest, parser_tier="pypdfium2-degraded", source_path=source
+            )
             (out_dir / "meta.json").write_text(
                 json.dumps(manifest.model_dump(), indent=2),
                 encoding="utf-8",
@@ -75,7 +86,9 @@ def _parse_pdf_degraded(source: Path, out_dir: Path, *, chunk_target: int) -> Re
         )
 
         manifest = parse_pdf_to_staging(source, out_dir, chunk_target=chunk_target)
-        manifest = _manifest_degraded(manifest, parser_tier="pypdf-degraded", source_path=source)
+        manifest = _manifest_degraded(
+            manifest, parser_tier="pypdf-degraded", source_path=source
+        )
         (out_dir / "meta.json").write_text(
             json.dumps(manifest.model_dump(), indent=2),
             encoding="utf-8",
@@ -103,7 +116,9 @@ def _parse_pdf_to_staging(
             parse_pdf_docling_provenance_to_staging,
         )
 
-        return parse_pdf_docling_provenance_to_staging(source, out_dir, chunk_target=chunk_target)
+        return parse_pdf_docling_provenance_to_staging(
+            source, out_dir, chunk_target=chunk_target
+        )
 
     if allow_degraded:
         return _parse_pdf_degraded(source, out_dir, chunk_target=chunk_target)
@@ -114,7 +129,9 @@ def _parse_pdf_to_staging(
     )
 
 
-def _parse_office_to_staging(source: Path, out_dir: Path, *, chunk_target: int) -> ResourceManifest:
+def _parse_office_to_staging(
+    source: Path, out_dir: Path, *, chunk_target: int
+) -> ResourceManifest:
     caps = documents_capabilities()
     if not caps["docling"]:
         raise ImportError(
@@ -128,7 +145,9 @@ def _parse_office_to_staging(source: Path, out_dir: Path, *, chunk_target: int) 
     return parse_docling_file_to_staging(source, out_dir, chunk_target=chunk_target)
 
 
-def _parse_html_to_staging(source: Path, out_dir: Path, *, chunk_target: int) -> ResourceManifest:
+def _parse_html_to_staging(
+    source: Path, out_dir: Path, *, chunk_target: int
+) -> ResourceManifest:
     caps = documents_capabilities()
     if caps["docling"]:
         from potpie_context_engine.adapters.outbound.resources.parsers.docling_convert import (
@@ -152,7 +171,9 @@ def parse_file_to_staging(
     vision_provider: str = "local",
     options: ParseOptions | None = None,
 ) -> ResourceManifest:
-    opts = options or ParseOptions(chunk_target=chunk_target, vision_provider=vision_provider)
+    opts = options or ParseOptions(
+        chunk_target=chunk_target, vision_provider=vision_provider
+    )
     suffix = source.suffix.lower()
 
     if suffix in {".md", ".markdown", ".txt", ".text"}:

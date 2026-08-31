@@ -10,7 +10,10 @@ from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
     _section_from_body,
     write_staging_from_parsed,
 )
-from potpie_context_engine.domain.resource_models import CHUNK_TARGET_DEFAULT, ResourceManifest
+from potpie_context_engine.domain.resource_models import (
+    CHUNK_TARGET_DEFAULT,
+    ResourceManifest,
+)
 
 _DOCUMENTS_HINT = "pip install potpie[documents]"
 _SCANNED_PDF_HINT = (

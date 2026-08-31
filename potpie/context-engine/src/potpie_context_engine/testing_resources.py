@@ -44,7 +44,9 @@ class InMemoryResourceStore:
     """Dict-backed ResourceStorePort implementation."""
 
     _manifests: dict[tuple[str, str], ResourceManifest] = field(default_factory=dict)
-    _chunks: dict[tuple[str, str, str, int], tuple[str, str]] = field(default_factory=dict)
+    _chunks: dict[tuple[str, str, str, int], tuple[str, str]] = field(
+        default_factory=dict
+    )
     _file_hashes: dict[str, set[str]] = field(default_factory=dict)
 
     def read_manifest(self, source_dir: Path) -> ResourceManifest:
@@ -57,7 +59,9 @@ class InMemoryResourceStore:
             json.loads(meta_path.read_text(encoding="utf-8"))
         )
 
-    def read_elements(self, *, pot_id: str, doc_slug: str) -> list[DocumentElementRecord]:
+    def read_elements(
+        self, *, pot_id: str, doc_slug: str
+    ) -> list[DocumentElementRecord]:
         return []
 
     def import_dir(
@@ -106,7 +110,11 @@ class InMemoryResourceStore:
                     )
                     continue
                 ocr_path = section_dir / f"{chunk_ref.seq:04d}.ocr.txt"
-                ocr = ocr_path.read_text(encoding="utf-8").strip() if ocr_path.is_file() else ""
+                ocr = (
+                    ocr_path.read_text(encoding="utf-8").strip()
+                    if ocr_path.is_file()
+                    else ""
+                )
                 staged[(section.slug, chunk_ref.seq)] = (text, ocr)
         if errors:
             return ResourceImportReport(
@@ -130,9 +138,7 @@ class InMemoryResourceStore:
         prior = self._manifests.get((pot_id, doc_slug))
         prior_slugs = {s.slug for s in prior.sections} if prior else set()
         new_slugs = {s.slug for s in meta.sections}
-        prior_hashes = (
-            {s.slug: s.content_hash for s in prior.sections} if prior else {}
-        )
+        prior_hashes = {s.slug: s.content_hash for s in prior.sections} if prior else {}
 
         for key in [k for k in self._chunks if k[0] == pot_id and k[1] == doc_slug]:
             del self._chunks[key]
@@ -180,7 +186,9 @@ class InMemoryResourceStore:
         if with_neighbors:
             neighbors = []
             for neighbor_seq in (seq - 1, seq + 1):
-                sibling = self._chunks.get((pot_id, doc_slug, section_slug, neighbor_seq))
+                sibling = self._chunks.get(
+                    (pot_id, doc_slug, section_slug, neighbor_seq)
+                )
                 if sibling is not None:
                     neighbors.append(
                         {
@@ -305,7 +313,9 @@ class InMemoryResourceStore:
     def is_file_imported(self, *, pot_id: str, content_hash: str) -> bool:
         return content_hash in self._file_hashes.get(pot_id, set())
 
-    def record_file_hash(self, *, pot_id: str, content_hash: str, doc_slug: str) -> None:
+    def record_file_hash(
+        self, *, pot_id: str, content_hash: str, doc_slug: str
+    ) -> None:
         self._file_hashes.setdefault(pot_id, set()).add(content_hash)
 
 
@@ -328,7 +338,10 @@ class InMemoryResourceIndex:
     ) -> int:
         rows: list[tuple[str, int, set[str]]] = []
         for chunk in chunks:
-            tokens = {t.lower() for t in _TOKEN_RE.findall(f"{chunk.content} {chunk.ocr_text}")}
+            tokens = {
+                t.lower()
+                for t in _TOKEN_RE.findall(f"{chunk.content} {chunk.ocr_text}")
+            }
             rows.append((chunk.section_slug, chunk.seq, tokens))
         self._docs[(pot_id, doc_slug)] = rows
         return len(rows)

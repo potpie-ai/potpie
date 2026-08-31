@@ -69,7 +69,9 @@ class LocalResourceStore:
         data = json.loads(meta_path.read_text(encoding="utf-8"))
         return ResourceManifest.model_validate(data)
 
-    def read_elements(self, *, pot_id: str, doc_slug: str) -> list[DocumentElementRecord]:
+    def read_elements(
+        self, *, pot_id: str, doc_slug: str
+    ) -> list[DocumentElementRecord]:
         doc_slug = validate_doc_slug(doc_slug)
         elements_path = self.doc_root(pot_id, doc_slug) / "elements.jsonl"
         if not elements_path.is_file():
@@ -215,8 +217,7 @@ class LocalResourceStore:
         )
 
         element_dicts = [
-            element.model_dump()
-            for element in self._read_elements_file(dest)
+            element.model_dump() for element in self._read_elements_file(dest)
         ]
         elements_added, elements_removed = registry.replace_elements(
             pot_id=pot_id,
@@ -300,7 +301,9 @@ class LocalResourceStore:
             )
         text = chunk_path.read_text(encoding="utf-8")
         ocr_path = chunk_path.parent / f"{seq:04d}.ocr.txt"
-        ocr_text = ocr_path.read_text(encoding="utf-8").strip() if ocr_path.is_file() else ""
+        ocr_text = (
+            ocr_path.read_text(encoding="utf-8").strip() if ocr_path.is_file() else ""
+        )
         provenance = self.registry(pot_id).get_chunk_provenance(
             pot_id=pot_id,
             doc_slug=doc_slug,
@@ -323,7 +326,9 @@ class LocalResourceStore:
                 if neighbor_seq < 0:
                     continue
                 neighbor_path = (
-                    self.doc_root(pot_id, doc_slug) / section_slug / f"{neighbor_seq:04d}.txt"
+                    self.doc_root(pot_id, doc_slug)
+                    / section_slug
+                    / f"{neighbor_seq:04d}.txt"
                 )
                 if neighbor_path.is_file():
                     neighbors.append(

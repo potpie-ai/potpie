@@ -11,7 +11,10 @@ from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
     _parse_sections_from_markdown,
     write_staging_from_parsed,
 )
-from potpie_context_engine.domain.resource_models import CHUNK_TARGET_DEFAULT, ResourceManifest
+from potpie_context_engine.domain.resource_models import (
+    CHUNK_TARGET_DEFAULT,
+    ResourceManifest,
+)
 
 
 def html_to_markdownish(raw_html: str) -> str:
@@ -21,7 +24,8 @@ def html_to_markdownish(raw_html: str) -> str:
         prefix = "##" if level <= 2 else "###"
         cleaned = re.sub(
             rf"<h{level}[^>]*>(.*?)</h{level}>",
-            lambda m, p=prefix: f"\n\n{p} {unescape(re.sub(r'<[^>]+>', '', m.group(1))).strip()}\n\n",
+            lambda m,
+            p=prefix: f"\n\n{p} {unescape(re.sub(r'<[^>]+>', '', m.group(1))).strip()}\n\n",
             cleaned,
             flags=re.I | re.S,
         )

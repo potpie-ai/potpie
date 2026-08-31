@@ -40,7 +40,9 @@ def _slugify(title: str, fallback: str) -> str:
     return slug[:80]
 
 
-def _pack_paragraphs(paragraphs: list[str], target: int = CHUNK_TARGET_DEFAULT) -> list[str]:
+def _pack_paragraphs(
+    paragraphs: list[str], target: int = CHUNK_TARGET_DEFAULT
+) -> list[str]:
     chunks: list[str] = []
     buf = ""
     for para in paragraphs:
@@ -108,7 +110,11 @@ def _split_oversized_section(parsed: ParsedSection) -> list[ParsedSection]:
         text_slice = "\n\n".join(chunk_slice)
         part_num = part_idx // SECTION_CHUNK_MAX + 1
         title = parsed.title if part_num == 1 else f"{parsed.title} (part {part_num})"
-        slug = parsed.slug if part_num == 1 else _slugify(title, f"{parsed.slug}-part-{part_num}")
+        slug = (
+            parsed.slug
+            if part_num == 1
+            else _slugify(title, f"{parsed.slug}-part-{part_num}")
+        )
         parts.append(
             ParsedSection(
                 slug=slug,
@@ -134,7 +140,9 @@ def _section_from_body(
     if not chunks:
         chunks = [body]
     chunks = _fit_section_chunks(chunks)
-    return ParsedSection(slug=slug, title=title, ordinal=ordinal, text=body, chunks=chunks)
+    return ParsedSection(
+        slug=slug, title=title, ordinal=ordinal, text=body, chunks=chunks
+    )
 
 
 _SUMMARY_STOPWORDS = frozenset(
@@ -250,15 +258,21 @@ def _parse_sections_from_markdown(text: str, chunk_target: int) -> list[ParsedSe
     return sections
 
 
-def parse_markdown(path: Path, *, chunk_target: int = CHUNK_TARGET_DEFAULT) -> tuple[ResourceManifest, dict[str, list[str]]]:
+def parse_markdown(
+    path: Path, *, chunk_target: int = CHUNK_TARGET_DEFAULT
+) -> tuple[ResourceManifest, dict[str, list[str]]]:
     text = path.read_text(encoding="utf-8")
     parsed_sections = _parse_sections_from_markdown(text, chunk_target)
     return _manifest_from_parsed(path, "markdown", parsed_sections)
 
 
-def parse_plain_text(path: Path, *, chunk_target: int = CHUNK_TARGET_DEFAULT) -> tuple[ResourceManifest, dict[str, list[str]]]:
+def parse_plain_text(
+    path: Path, *, chunk_target: int = CHUNK_TARGET_DEFAULT
+) -> tuple[ResourceManifest, dict[str, list[str]]]:
     text = path.read_text(encoding="utf-8")
-    parsed = _section_from_body(title="body", ordinal=0, body=text, chunk_target=chunk_target)
+    parsed = _section_from_body(
+        title="body", ordinal=0, body=text, chunk_target=chunk_target
+    )
     return _manifest_from_parsed(path, "text", [parsed])
 
 

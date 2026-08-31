@@ -23,7 +23,10 @@ from potpie_context_engine.testing import InMemoryGraphBackend
 pytestmark = [pytest.mark.integration, pytest.mark.documents]
 
 FIXTURE_PDF = (
-    Path(__file__).resolve().parent.parent / "fixtures" / "resources" / "digital_one_page.pdf"
+    Path(__file__).resolve().parent.parent
+    / "fixtures"
+    / "resources"
+    / "digital_one_page.pdf"
 )
 
 
@@ -40,9 +43,18 @@ def test_docling_pdf_parse_mocked(tmp_path: Path) -> None:
         parse_pdf_docling_to_staging,
     )
 
+    class _FakeItem:
+        def __init__(self, label: str, text: str) -> None:
+            self.label = label
+            self.text = text
+            self.prov: list = []
+
     class _FakeDocument:
-        def export_to_markdown(self) -> str:
-            return "## Intro\n\nInstall dependencies from the guide."
+        def iterate_items(self):
+            return [
+                (_FakeItem("section_header", "Intro"), 0),
+                (_FakeItem("text", "Install dependencies from the guide."), 0),
+            ]
 
     class _FakeResult:
         document = _FakeDocument()
@@ -53,7 +65,8 @@ def test_docling_pdf_parse_mocked(tmp_path: Path) -> None:
 
     out = tmp_path / "staging"
     with patch(
-        "potpie_context_engine.adapters.outbound.resources.parsers.pdf_docling._build_converter",
+        "potpie_context_engine.adapters.outbound.resources.parsers."
+        "pdf_docling_provenance._build_converter",
         return_value=_FakeConverter(),
     ):
         manifest = parse_pdf_docling_to_staging(FIXTURE_PDF, out)
@@ -100,5 +113,8 @@ def test_image_ingest_with_mocked_enrichers(tmp_path: Path) -> None:
         pot_id="pot-img",
         uri="potpie://res/chart/visual/0",
     )
-    assert "Revenue" in chunk.get("content", "") or "chart" in chunk.get("content", "").lower()
+    assert (
+        "Revenue" in chunk.get("content", "")
+        or "chart" in chunk.get("content", "").lower()
+    )
     assert chunk.get("ocr_text") == "Revenue chart Q4"

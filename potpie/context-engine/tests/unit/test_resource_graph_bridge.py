@@ -94,7 +94,9 @@ def test_section_keywords_enrich_description_but_not_summary() -> None:
             )
         ],
     )
-    batch = build_import_mutations(pot_id="pot-test", doc_slug="guide", manifest=manifest)
+    batch = build_import_mutations(
+        pot_id="pot-test", doc_slug="guide", manifest=manifest
+    )
     claim = next(op for op in batch["operations"] if op["op"] == "assert_claim")
 
     assert "Key terms: BOOTSEL, UF2" in claim["description"]

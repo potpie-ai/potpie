@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from potpie_context_engine.adapters.outbound.resources.local_chunk_store import file_sha256
+from potpie_context_engine.adapters.outbound.resources.local_chunk_store import (
+    file_sha256,
+)
 from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
     _auto_summary,
     auto_keywords,
@@ -63,7 +64,12 @@ def _require_docling_types() -> tuple[Any, Any, Any, Any, Any, Any]:
             PdfPipelineOptions,
         )
         from docling.document_converter import DocumentConverter, PdfFormatOption
-        from docling_core.types.doc import DocItemLabel, PictureItem, TableItem, TextItem
+        from docling_core.types.doc import (
+            DocItemLabel,
+            PictureItem,
+            TableItem,
+            TextItem,
+        )
     except ImportError as exc:
         raise ImportError(
             f"Docling PDF parsing requires potpie[documents]. Install with: {_DOCUMENTS_INSTALL}"
@@ -129,7 +135,9 @@ def _bbox_list(bbox: object | None) -> list[float] | None:
     return [float(v) for v in values]
 
 
-def _provenance_fields(item: object) -> tuple[int | None, list[float] | None, int | None, int | None]:
+def _provenance_fields(
+    item: object,
+) -> tuple[int | None, list[float] | None, int | None, int | None]:
     page_number: int | None = None
     bbox: list[float] | None = None
     char_start: int | None = None
@@ -184,7 +192,9 @@ def _chunk_elements(
     def flush() -> None:
         nonlocal current_text, current_prov
         if current_text.strip():
-            staged.append(_StagedChunk(text=current_text.strip(), provenance=list(current_prov)))
+            staged.append(
+                _StagedChunk(text=current_text.strip(), provenance=list(current_prov))
+            )
         current_text = ""
         current_prov = []
 
@@ -281,7 +291,12 @@ def build_sections_from_docling(
     *,
     chunk_target: int,
     artifacts_dir: Path | None = None,
-) -> tuple[list[ParsedSection], list[DocumentElementRecord], dict[tuple[str, int], list[ChunkProvenanceRecord]], dict[str, list[str]]]:
+) -> tuple[
+    list[ParsedSection],
+    list[DocumentElementRecord],
+    dict[tuple[str, int], list[ChunkProvenanceRecord]],
+    dict[str, list[str]],
+]:
     (
         _,
         _,
@@ -312,7 +327,9 @@ def build_sections_from_docling(
         current_title = title.strip() or "body"
         current_group = []
 
-    def add_ledger(record: DocumentElementRecord, searchable: str, ocr: str = "") -> None:
+    def add_ledger(
+        record: DocumentElementRecord, searchable: str, ocr: str = ""
+    ) -> None:
         current_group.append(
             _LedgerElement(
                 record=record,
@@ -337,7 +354,9 @@ def build_sections_from_docling(
                 artifacts_dir.mkdir(parents=True, exist_ok=True)
                 csv_path = artifacts_dir / f"table-{table_counter:04d}.csv"
                 try:
-                    import pandas as pd
+                    # Probe for pandas up front: export_to_dataframe needs it,
+                    # and a missing install should hit the except cleanly.
+                    import pandas as pd  # noqa: F401
 
                     df = item.export_to_dataframe(doc=document)
                     df.to_csv(csv_path, index=False)
@@ -409,7 +428,10 @@ def build_sections_from_docling(
             continue
 
         text = _element_text(item, document)
-        is_header = label in _SECTION_HEADER_LABELS or label.upper() in {"SECTION_HEADER", "TITLE"}
+        is_header = label in _SECTION_HEADER_LABELS or label.upper() in {
+            "SECTION_HEADER",
+            "TITLE",
+        }
         if is_header and text:
             start_section(text)
             record = DocumentElementRecord(
@@ -449,7 +471,9 @@ def build_sections_from_docling(
     provenance_map: dict[tuple[str, int], list[ChunkProvenanceRecord]] = {}
     section_ocr: dict[str, list[str]] = {}
 
-    for ordinal, (title, group) in enumerate(zip(section_titles, section_element_groups, strict=False)):
+    for ordinal, (title, group) in enumerate(
+        zip(section_titles, section_element_groups, strict=False)
+    ):
         slug = _slugify(title, f"section-{ordinal}")
         staged = _chunk_elements(group, chunk_target=chunk_target)
         if not staged:
@@ -493,10 +517,12 @@ def parse_pdf_docling_provenance(
     document = result.document
     artifacts_dir = staging_root / "artifacts" if staging_root else None
 
-    parsed_sections, elements, provenance_map, section_ocr = build_sections_from_docling(
-        document,
-        chunk_target=chunk_target,
-        artifacts_dir=artifacts_dir,
+    parsed_sections, elements, provenance_map, section_ocr = (
+        build_sections_from_docling(
+            document,
+            chunk_target=chunk_target,
+            artifacts_dir=artifacts_dir,
+        )
     )
     if not parsed_sections:
         raise ValueError("Docling produced no sections from element ledger")
@@ -534,10 +560,12 @@ def parse_pdf_docling_provenance_to_staging(
     chunk_target: int = CHUNK_TARGET_DEFAULT,
 ) -> ResourceManifest:
     out_dir.mkdir(parents=True, exist_ok=True)
-    manifest, section_texts, elements, provenance_map, section_ocr = parse_pdf_docling_provenance(
-        source,
-        chunk_target=chunk_target,
-        staging_root=out_dir,
+    manifest, section_texts, elements, provenance_map, section_ocr = (
+        parse_pdf_docling_provenance(
+            source,
+            chunk_target=chunk_target,
+            staging_root=out_dir,
+        )
     )
     write_staging_from_parsed(
         out_dir,

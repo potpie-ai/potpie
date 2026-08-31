@@ -14,7 +14,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from potpie_context_engine.adapters.outbound.resources.graph_bridge import section_entity_key
+from potpie_context_engine.adapters.outbound.resources.graph_bridge import (
+    section_entity_key,
+)
 from potpie_context_engine.application.readers._common import (
     ReadRequest,
     ReadResponse,

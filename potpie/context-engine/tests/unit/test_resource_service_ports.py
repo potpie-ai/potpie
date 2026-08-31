@@ -70,7 +70,9 @@ def test_remove_document_retracts_graph_claims_on_any_store() -> None:
 
 
 def test_list_documents_payload_keys_are_stable_on_any_store() -> None:
-    service = ResourceService(store=InMemoryResourceStore(), index=InMemoryResourceIndex())
+    service = ResourceService(
+        store=InMemoryResourceStore(), index=InMemoryResourceIndex()
+    )
     _put_doc(service)
     docs = service.list_documents(pot_id="pot_x")
     assert docs and set(docs[0]) == {
