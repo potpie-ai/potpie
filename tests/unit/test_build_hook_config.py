@@ -7,7 +7,21 @@ from types import ModuleType
 
 import pytest
 
-import build_config_values
+
+def _load_module(name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+
+build_config_values = _load_module(
+    "_test_build_config_values", _SCRIPTS_DIR / "build_config_values.py"
+)
 
 
 def _load_distribution_defaults_hook(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
@@ -32,15 +46,8 @@ def _load_distribution_defaults_hook(monkeypatch: pytest.MonkeyPatch) -> ModuleT
         "hatchling.builders.hooks.plugin.interface",
         interface,
     )
-    path = Path(__file__).resolve().parents[2] / "distribution_defaults_hook.py"
-    spec = importlib.util.spec_from_file_location(
-        "_test_distribution_defaults_hook",
-        path,
-    )
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    path = _SCRIPTS_DIR / "distribution_defaults_hook.py"
+    module = _load_module("_test_distribution_defaults_hook", path)
     return module
 
 
