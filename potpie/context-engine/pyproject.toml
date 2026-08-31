@@ -71,6 +71,12 @@ observability = [
     "opentelemetry-instrumentation-openai>=0.40b0",
     "sentry-sdk>=2.61.1,<3.0.0",
 ]
+documents = [
+    "pypdf>=5.0",
+    "docling[rapidocr]>=2.59",
+    "pypdfium2>=4.0",
+    "httpx>=0.28.0",
+]
 # OSS distribution convenience set: everything the local potpie experience
 # uses. Excludes benchmarks (development harness) and dev tooling.
 all = [
@@ -116,11 +122,14 @@ markers = [
     "unit: unit tests",
     "integration: integration tests (no external services required, but exercise real third-party libs)",
     "premerge_journey: dedicated pre-merge CLI journey test (Rust required; run in premerge-cli-journey job only)",
+    "documents_lite: tests that require pypdf (degraded PDF path)",
+    "documents: tests that require Docling/RapidOCR ([documents] extra)",
 ]
 
 [dependency-groups]
 dev = [
     "pytest-cov>=7.1.0",
+    "pypdf>=5.0",
 ]
 
 [tool.uv]

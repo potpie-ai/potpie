@@ -139,6 +139,11 @@ members = [
 [tool.uv.sources]
 potpie-context-engine = { workspace = true, editable = true }
 
+[project.optional-dependencies]
+documents = [
+    "potpie-context-engine[documents]==0.1.0",
+]
+
 [dependency-groups]
 dev = [
     "black>=26.3.1",

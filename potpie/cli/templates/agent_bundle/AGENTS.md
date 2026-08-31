@@ -161,6 +161,8 @@ Use these repo-local skills under `.agents/skills/`:
   datastores, integrations, and durable project facts.
 - `potpie-source-ingestion` - harness-led ingestion from repo links, docs, PRs,
   issues, tickets, runbooks, logs, and web links.
+- `potpie-document-ingestion` - end-to-end file ingest (PDF, MD, TXT, images) via
+  `potpie document ingest` into chunk store, FTS, and graph search.
 - `potpie-graph` - graph CLI contract: status/catalog/describe/read/search,
   propose/commit/history, inbox, quality, and nudge handling.
 - `potpie-cli` - CLI setup, pot/source commands, graph commands, and
