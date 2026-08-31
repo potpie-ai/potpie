@@ -66,10 +66,19 @@ def current_repo_identity(cwd: Path) -> str | None:
         return str(cwd)
 
 
-# `git remote get-url` exits 2 when the remote is not configured, and 128
-# when the directory is not a work tree. Both are definitive answers ("no
-# origin"), unlike a timeout or a missing git binary.
-_GIT_DEFINITIVE_NO_REMOTE_CODES = frozenset({2, 128})
+# `git remote get-url` exits 2 only when the remote is not configured — a
+# definitive "no origin". Exit 128 is overloaded: it covers "not a git
+# repository" (also definitive) *and* fatal repository/config errors, which
+# must not be papered over as "no origin" or registration silently stores a
+# path identity for a repo that does have a remote. So 128 is classified from
+# git's own message.
+_GIT_NO_REMOTE_CODE = 2
+_GIT_FATAL_CODE = 128
+_GIT_NOT_A_REPOSITORY = (
+    "not a git repository",
+    "not a work tree",
+    "this operation must be run in a work tree",
+)
 
 
 def git_remote_or_reason(cwd: Path) -> tuple[str | None, str | None]:
@@ -93,12 +102,21 @@ def git_remote_or_reason(cwd: Path) -> tuple[str | None, str | None]:
         return None, "git did not respond within 10s"
     except OSError as exc:
         return None, f"git could not be run: {exc}"
-    if proc.returncode in _GIT_DEFINITIVE_NO_REMOTE_CODES:
+    if proc.returncode == _GIT_NO_REMOTE_CODE:
         return None, None
     if proc.returncode != 0:
-        detail = (proc.stderr or "").strip().splitlines()
-        return None, detail[0] if detail else f"git exited {proc.returncode}"
+        first_line = next(iter((proc.stderr or "").strip().splitlines()), "")
+        if proc.returncode == _GIT_FATAL_CODE and _is_not_a_repository(first_line):
+            return None, None
+        return None, first_line or f"git exited {proc.returncode}"
     return normalize_repo_ref(proc.stdout.strip()), None
+
+
+def _is_not_a_repository(message: str) -> bool:
+    """True for git's "there is no work tree here", not for a fatal error."""
+
+    lowered = message.lower()
+    return any(marker in lowered for marker in _GIT_NOT_A_REPOSITORY)
 
 
 def current_git_remote(cwd: Path) -> str | None:

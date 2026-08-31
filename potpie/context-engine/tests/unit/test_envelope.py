@@ -356,3 +356,53 @@ class TestDuplicateEvidenceIsMerged:
         )
 
         assert envelope_to_dict(envelope)["metadata"] == {"duplicate_items_dropped": 1}
+
+    def test_text_only_records_with_distinct_keys_both_survive(self) -> None:
+        """No endpoints means nothing says these are the same record.
+
+        Merging on text alone would drop a genuinely distinct item whose only
+        discriminator is its candidate key.
+        """
+        payload = {"fact": "Same words, different records."}
+        envelope = EnvelopeBuilder().build(
+            pot_id="pot-1",
+            intent="review",
+            results=[
+                IncludeResult(
+                    include="decisions",
+                    response=_resp(
+                        family="decisions",
+                        items=[
+                            _ranked_item(key="claim:a", score=0.6, payload=payload),
+                            _ranked_item(key="claim:b", score=0.5, payload=payload),
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+            ],
+        )
+
+        assert len(envelope.items) == 2
+
+    def test_text_only_records_without_keys_still_merge(self) -> None:
+        payload = {"fact": "Same words, no way to tell them apart."}
+        envelope = EnvelopeBuilder().build(
+            pot_id="pot-1",
+            intent="review",
+            results=[
+                IncludeResult(
+                    include="decisions",
+                    response=_resp(
+                        family="decisions",
+                        items=[
+                            _ranked_item(key="", score=0.6, payload=payload),
+                            _ranked_item(key="", score=0.5, payload=payload),
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+            ],
+        )
+
+        assert len(envelope.items) == 1
+        assert envelope.metadata["duplicate_items_dropped"] == 1

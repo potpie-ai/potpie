@@ -8,6 +8,7 @@ against each other.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 import pytest
 from typer.testing import CliRunner
@@ -523,3 +524,145 @@ def test_entity_label_falls_back_to_the_key_namespace(item, key, expected) -> No
     from potpie.cli.read_presenter import _entity_label
 
     assert _entity_label(item, key) == expected
+
+
+# --- Review follow-ups: the safety edges around the fixes above -------------
+
+
+def test_pot_reset_accepts_an_id_and_a_name_for_the_same_pot(
+    repo_default_host: _Pots,
+) -> None:
+    """An id and its name select one pot; that is not a conflict."""
+    _common.set_json(True)
+
+    result = runner.invoke(pots.pot_app, ["reset", "alpha", "--pot", "pot-alpha"])
+
+    emitted = json.loads(result.output)
+    assert emitted["code"] == "destructive_confirmation_required"
+    assert "potpie pot reset pot-alpha --confirm" in emitted["recommended_next_action"]
+
+
+def test_git_probe_separates_a_fatal_error_from_a_missing_origin(
+    tmp_path: Path,
+) -> None:
+    """Exit 128 covers both "no work tree" and a fatal config error.
+
+    Only the former is a definitive "no origin"; treating the latter the same
+    way silently registers a path identity for a repo that has a remote.
+    """
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=broken, check=True)
+    (broken / ".git" / "config").write_text(
+        "[core\n\tbroken = true\n", encoding="utf-8"
+    )
+
+    remote, failure = repo_location.git_remote_or_reason(broken)
+
+    assert remote is None
+    assert failure and "fatal" in failure
+
+    # A directory that is simply not a work tree stays a definitive answer.
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert repo_location.git_remote_or_reason(plain) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("command", "is_daemon"),
+    [
+        ("/usr/bin/python3.12 -m potpie.daemon", True),
+        ("/opt/python -X dev -m potpie.daemon --flag", True),
+        ("/Users/me/.local/bin/potpie-daemon", True),
+        ("/usr/bin/potpied", True),
+        # Near matches: a substring test would authorise a kill on all of these.
+        ("/usr/bin/python -m potpie.daemon_helper", False),
+        ("grep -rn potpie.daemon /src", False),
+        ("/usr/bin/vim potpie.daemon.py", False),
+        ('python -c "import potpie.daemon"', False),
+        ("", False),
+    ],
+)
+def test_forced_stop_only_recognises_the_real_daemon_argv(command, is_daemon) -> None:
+    from potpie.daemon.lifecycle import _is_daemon_command
+
+    assert _is_daemon_command(command) is is_daemon
+
+
+def test_force_stop_reports_a_conflict_rather_than_a_false_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cleanup that could not take ownership must not be reported as stopped."""
+    from potpie.daemon.lifecycle import DaemonStopError
+
+    daemon = Daemon(home=tmp_path, in_process=False)
+    monkeypatch.setattr(
+        "potpie.daemon.lifecycle._looks_like_potpie_daemon", lambda _pid: True
+    )
+    monkeypatch.setattr(
+        "potpie.daemon.lifecycle._terminate_pid", lambda _pid: "terminated"
+    )
+    monkeypatch.setattr(daemon, "_cleanup_runtime_records", lambda **_kwargs: False)
+
+    with pytest.raises(DaemonStopError) as raised:
+        daemon._force_stop(4242)
+
+    assert raised.value.error.code == "daemon_cleanup_ownership_conflict"
+
+
+def test_unreadable_runtime_files_carry_the_recovery_classification(
+    tmp_path: Path,
+) -> None:
+    """A world-readable record fails validation before the classified handlers."""
+    record = daemon_discovery.discovery_path(tmp_path)
+    record.write_text("{}", encoding="utf-8")
+    record.chmod(0o644)
+
+    with pytest.raises(daemon_discovery.DaemonDiscoveryError) as raised:
+        daemon_discovery.read_daemon_discovery(tmp_path)
+
+    assert raised.value.code == daemon_discovery.DISCOVERY_UNREADABLE
+    assert raised.value.recommended_next_action
+
+    credential = daemon_discovery.credential_path(tmp_path)
+    credential.write_text("x" * 40, encoding="utf-8")
+    credential.chmod(0o644)
+
+    with pytest.raises(daemon_discovery.DaemonDiscoveryError) as raised:
+        daemon_discovery.read_daemon_credential(tmp_path)
+
+    assert raised.value.code == daemon_discovery.DISCOVERY_CREDENTIAL_UNAVAILABLE
+    assert raised.value.recommended_next_action
+
+
+def test_a_non_object_config_root_falls_back_to_the_default_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from potpie.runtime.composition import default_backend_profile
+
+    monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
+    monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    (tmp_path / "config.json").write_text('["not", "an", "object"]', encoding="utf-8")
+
+    assert default_backend_profile() == "falkordb_lite"
+
+
+def test_each_harness_root_keeps_its_own_skill_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two harness roots sharing one state home must not share versions."""
+    from potpie.skills.targets import ClaudeAgentTarget
+
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("POTPIE_HARNESS_HOME", str(tmp_path / "a"))
+    first = ClaudeAgentTarget(home=state_home)
+    monkeypatch.setenv("POTPIE_HARNESS_HOME", str(tmp_path / "b"))
+    second = ClaudeAgentTarget(home=state_home)
+
+    assert first._path != second._path
+
+    # The unrelocated root keeps its historical filename, so an existing
+    # install's manifest is not orphaned by this change.
+    monkeypatch.delenv("POTPIE_HARNESS_HOME")
+    assert ClaudeAgentTarget(home=state_home)._path.name == "skills_claude_global.json"

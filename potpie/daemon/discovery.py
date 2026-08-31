@@ -210,7 +210,17 @@ def read_daemon_discovery(home: Path) -> DaemonDiscovery | None:
     path = discovery_path(home)
     if not path.exists():
         return None
-    _require_private_regular_file(path)
+    try:
+        _require_private_regular_file(path)
+    except DaemonDiscoveryError as exc:
+        # A record that vanished between exists() and stat(), or that is not
+        # an owner-only regular file, is still an unreadable record — it must
+        # carry the same classification as a corrupt one.
+        raise DaemonDiscoveryError(
+            str(exc),
+            code=DISCOVERY_UNREADABLE,
+            recommended_next_action="run 'potpie daemon restart'",
+        ) from exc
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -254,7 +264,14 @@ def load_daemon_connection(home: Path) -> DaemonConnection:
 def read_daemon_credential(home: Path) -> str:
     home = Path(home).resolve()
     path = credential_path(home)
-    _require_private_regular_file(path)
+    try:
+        _require_private_regular_file(path)
+    except DaemonDiscoveryError as exc:
+        raise DaemonDiscoveryError(
+            str(exc),
+            code=DISCOVERY_CREDENTIAL_UNAVAILABLE,
+            recommended_next_action="run 'potpie daemon restart'",
+        ) from exc
     try:
         token = path.read_text(encoding="utf-8").strip()
     except OSError as exc:

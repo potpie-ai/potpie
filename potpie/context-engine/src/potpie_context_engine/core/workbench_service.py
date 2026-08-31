@@ -316,9 +316,9 @@ class GraphWorkbenchService:
                     "different pot is invisible here."
                 ),
                 recommended_next_action=(
-                    f"re-run with '--pot {pot_id}' from the directory you "
-                    "proposed in, or run graph propose again and commit the "
-                    "plan_id it returns"
+                    "re-run the commit with the pot you proposed in — "
+                    "'graph propose --json' reports it as pot_id — or run "
+                    "graph propose again here and commit the plan_id it returns"
                 ),
             )
 

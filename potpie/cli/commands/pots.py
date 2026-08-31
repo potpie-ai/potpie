@@ -477,15 +477,18 @@ def pot_reset(
 ) -> None:
     """Clear a pot's graph state. Sources and the pot itself survive."""
     with contract():
-        if ref and pot and ref != pot:
+        host = get_root_runtime()
+        # An id and a name can name the *same* pot, so compare what they
+        # resolve to rather than the strings the caller happened to type.
+        if ref and pot and resolve_pot_id(host, ref) != resolve_pot_id(host, pot):
             fail(
                 code="validation_error",
                 message=(
-                    f"conflicting pot selection: positional {ref!r} vs --pot {pot!r}"
+                    f"conflicting pot selection: positional {ref!r} and "
+                    f"--pot {pot!r} name different pots"
                 ),
                 next_action="pass the pot once, either positionally or via --pot",
             )
-        host = get_root_runtime()
         selected = ref or pot
         pot_id, resolved_via = resolve_pot_scope(host, selected)
         target = pot_scope_info(host, pot_id)

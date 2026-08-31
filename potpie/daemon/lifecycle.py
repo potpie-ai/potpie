@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import signal
 import socket
 import subprocess
@@ -64,10 +65,13 @@ class DaemonStopError(Exception):
         self.error = error
 
 
-# Command-line fragments that identify a process as one of our own daemons.
-# The recorded PID alone is not proof of identity (PIDs are reused), so a
-# forced takedown of an unauthenticatable daemon checks this first.
-_DAEMON_COMMAND_MARKERS = ("potpie.daemon", "potpie-daemon", "potpied")
+# How our daemon is actually launched: `<python> -m potpie.daemon` (see
+# ``_launch_spec``) or one of the console scripts. This gates a SIGTERM, and
+# the recorded PID alone is not proof of identity (PIDs are reused), so the
+# command line is matched as *tokens* — a substring test would also accept an
+# unrelated process such as `potpie.daemon_helper` or a grep for that string.
+_DAEMON_MODULE = "potpie.daemon"
+_DAEMON_EXECUTABLES = frozenset({"potpie-daemon", "potpied"})
 
 
 def _process_command_line(pid: int) -> str | None:
@@ -88,11 +92,28 @@ def _process_command_line(pid: int) -> str | None:
     return (proc.stdout or "").strip() or None
 
 
+def _is_daemon_command(command: str) -> bool:
+    """True only for the exact argv shapes this module launches."""
+
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        argv = command.split()
+    if not argv:
+        return False
+    if os.path.basename(argv[0]) in _DAEMON_EXECUTABLES:
+        return True
+    # `<python> [-X …] -m potpie.daemon [args]`: the module must be the token
+    # immediately after `-m`, not merely present somewhere in the line.
+    for index, token in enumerate(argv[:-1]):
+        if token == "-m":
+            return argv[index + 1] == _DAEMON_MODULE
+    return False
+
+
 def _looks_like_potpie_daemon(pid: int) -> bool:
     command = _process_command_line(pid)
-    if command is None:
-        return False
-    return any(marker in command for marker in _DAEMON_COMMAND_MARKERS)
+    return bool(command) and _is_daemon_command(command)
 
 
 def _terminate_pid(pid: int, *, grace_s: float = 10.0) -> str:
@@ -540,7 +561,12 @@ class Daemon:
                 )
             )
         mode = _terminate_pid(pid)
-        self._cleanup_runtime_records()
+        # Report success only if we actually owned the cleanup. ``expected_pid``
+        # is deliberately not passed: it is verified against the discovery
+        # record, which in this path is precisely the thing we cannot read.
+        if not self._cleanup_runtime_records():
+            self._controller = None
+            self._raise_cleanup_ownership_conflict(expected_pid=pid)
         self._controller = None
         return {
             "detail": {

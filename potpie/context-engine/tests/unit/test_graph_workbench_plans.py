@@ -990,7 +990,10 @@ def test_plan_not_found_names_the_pot_it_searched() -> None:
     assert result.status == "not_found"
     assert "pot-beta" in result.detail
     assert "pot-scoped" in result.detail
-    assert "--pot pot-beta" in result.recommended_next_action
+    # The guidance must not point back at the pot that just failed: committing
+    # again with --pot pot-beta would repeat this same not_found.
+    assert "pot-beta" not in result.recommended_next_action
+    assert "the pot you proposed in" in result.recommended_next_action
 
 
 def test_a_plan_committed_in_its_own_pot_still_succeeds() -> None:

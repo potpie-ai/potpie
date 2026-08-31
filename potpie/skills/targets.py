@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass, field
@@ -20,6 +21,17 @@ from potpie.skills.installer import (
 )
 
 
+# Where each harness installs skills when POTPIE_HARNESS_HOME is unset. Used
+# only to recognise the default root, so its manifest keeps its historical
+# filename and existing installs are not orphaned.
+_DEFAULT_SKILLS_SUBPATH: dict[str, tuple[str, ...]] = {
+    "claude": (".claude", "skills"),
+    "cursor": (".cursor", "skills"),
+    "opencode": (".config", "opencode", "skills"),
+    "codex": (".agents", "skills"),
+}
+
+
 @dataclass(slots=True)
 class FileBackedAgentTarget:
     """Install packaged Potpie skills into one harness-specific skills root."""
@@ -33,7 +45,27 @@ class FileBackedAgentTarget:
 
     @property
     def _path(self) -> Path:
-        return self.home / f"skills_{self.agent}_{self.scope}.json"
+        # The manifest records which version is installed *in this root*.
+        # Since POTPIE_HARNESS_HOME can point two roots at one state home, the
+        # root is part of the manifest's identity — otherwise installing into
+        # one root rewrites the versions reported for the other. The default
+        # root keeps the original filename so existing installs still resolve.
+        return self.home / f"skills_{self.agent}_{self.scope}{self._root_suffix()}.json"
+
+    def _root_suffix(self) -> str:
+        resolved = self.skills_root.expanduser()
+        if resolved == self._default_skills_root():
+            return ""
+        digest = hashlib.sha256(str(resolved).encode()).hexdigest()[:12]
+        return f"_{digest}"
+
+    def _default_skills_root(self) -> Path:
+        """Where this harness installs when no override is in play."""
+
+        relative = _DEFAULT_SKILLS_SUBPATH.get(self.agent)
+        if relative is None:
+            return self.skills_root.expanduser()
+        return Path.home().joinpath(*relative)
 
     def _load(self) -> dict[str, str]:
         try:

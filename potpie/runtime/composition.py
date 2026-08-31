@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -104,9 +105,15 @@ def _configured_backend_profile() -> str | None:
 
     try:
         with open(default_home() / "config.json", encoding="utf-8") as handle:
-            configured = json.load(handle).get("backend")
+            document = json.load(handle)
     except (OSError, ValueError):
         return None
+    # A hand-edited config can hold any JSON root; only an object has a
+    # backend, and anything else must fall through to the default rather
+    # than raising out of composition.
+    if not isinstance(document, Mapping):
+        return None
+    configured = document.get("backend")
     if not isinstance(configured, str):
         return None
     return configured.strip().lower() or None

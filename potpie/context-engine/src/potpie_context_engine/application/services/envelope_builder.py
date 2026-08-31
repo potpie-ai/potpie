@@ -170,15 +170,16 @@ def _dedupe_identity(item: EvidenceItem) -> tuple[str, ...] | None:
         if isinstance(value, str) and value.strip():
             text = " ".join(value.split()).casefold()
             break
-    if text:
-        return (
-            "text",
-            _payload_str(payload, _SUBJECT_KEYS),
-            _payload_str(payload, ("object_key",)),
-            _payload_str(payload, ("predicate",)),
-            text,
-        )
     key = str(item.candidate_key or "").strip()
+    if text:
+        subject = _payload_str(payload, _SUBJECT_KEYS)
+        obj = _payload_str(payload, ("object_key",))
+        predicate = _payload_str(payload, ("predicate",))
+        # With no endpoints at all there is nothing to tell two same-worded
+        # records apart, so fall back to the candidate key rather than
+        # merging records the payload gives us no reason to call identical.
+        discriminator = "" if (subject or obj or predicate) else key
+        return ("text", subject, obj, predicate, discriminator, text)
     return ("key", key) if key else None
 
 
