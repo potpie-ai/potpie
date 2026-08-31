@@ -35,7 +35,9 @@ def _caption_image(path: Path, vision_provider: str) -> str:
         return caption_image_openai(path)
     if provider in {"local", "ollama", ""}:
         return caption_image_local(path)
-    raise ValueError(f"unsupported vision provider: {vision_provider!r} (use local or openai)")
+    raise ValueError(
+        f"unsupported vision provider: {vision_provider!r} (use local or openai)"
+    )
 
 
 def parse_image(
@@ -60,7 +62,7 @@ def parse_image(
 
     content = "\n\n".join(parts)
     if len(content) > CHUNK_HARD_CAP:
-        content = content[:CHUNK_HARD_CAP - 3] + "..."
+        content = content[: CHUNK_HARD_CAP - 3] + "..."
 
     label = (caption or ocr_text or path.name)[:200]
     section = SectionManifest(

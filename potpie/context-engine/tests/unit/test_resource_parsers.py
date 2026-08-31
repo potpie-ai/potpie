@@ -32,9 +32,28 @@ def test_parse_markdown_to_staging(tmp_path: Path) -> None:
     assert (out / first.slug / "0000.txt").is_file()
 
 
-def test_parse_pdf_to_staging(tmp_path: Path) -> None:
+def test_parse_pdf_to_staging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Degraded (pypdf) path — pinned so a docling install does not reroute it."""
     pytest.importorskip("pypdf")
-    fixture = Path(__file__).resolve().parent.parent / "fixtures" / "resources" / "digital_one_page.pdf"
+    from potpie_context_engine.adapters.outbound.resources.parsers import dispatch
+
+    monkeypatch.setattr(
+        dispatch,
+        "documents_capabilities",
+        lambda: {
+            "pypdf": True,
+            "pypdfium2": False,
+            "docling": False,
+            "rapidocr": False,
+            "httpx": False,
+        },
+    )
+    fixture = (
+        Path(__file__).resolve().parent.parent
+        / "fixtures"
+        / "resources"
+        / "digital_one_page.pdf"
+    )
     assert fixture.is_file()
     out = tmp_path / "pdf-out"
     manifest = parse_file_to_staging(

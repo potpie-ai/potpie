@@ -63,4 +63,9 @@ def ollama_reachable(base_url: str | None = None, timeout: float = 3.0) -> bool:
         return False
 
 
-__all__ = ["caption_image_local", "DEFAULT_OLLAMA_HOST", "DEFAULT_VISION_MODEL", "ollama_reachable"]
+__all__ = [
+    "caption_image_local",
+    "DEFAULT_OLLAMA_HOST",
+    "DEFAULT_VISION_MODEL",
+    "ollama_reachable",
+]

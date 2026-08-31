@@ -90,7 +90,9 @@ def test_store_import_then_get_roundtrip(store_factory, tmp_path: Path) -> None:
     chunk = store.get(pot_id=POT, doc_slug="guide", section_slug="intro", seq=0)
     assert chunk.content == "Intro text about rollback runbooks."
     assert chunk.uri == "potpie://res/guide/intro/0000"
-    assert chunk.doc_slug == "guide" and chunk.section_slug == "intro" and chunk.seq == 0
+    assert (
+        chunk.doc_slug == "guide" and chunk.section_slug == "intro" and chunk.seq == 0
+    )
 
 
 def test_store_get_missing_raises_stable_code(store_factory, tmp_path: Path) -> None:
@@ -103,7 +105,9 @@ def test_store_get_missing_raises_stable_code(store_factory, tmp_path: Path) -> 
     assert err.value.code == "resource_not_found"
 
 
-def test_store_oversized_chunk_reports_stable_code(store_factory, tmp_path: Path) -> None:
+def test_store_oversized_chunk_reports_stable_code(
+    store_factory, tmp_path: Path
+) -> None:
     store = store_factory()
     report = _import(store, tmp_path, doc="big", sections={"body": ["x" * 9000]})
     codes = [e["code"] for e in report.errors]
@@ -120,7 +124,9 @@ def test_store_reimport_reports_removed_sections(store_factory, tmp_path: Path) 
     report = store.import_dir(
         pot_id=POT,
         doc_slug="guide",
-        source_dir=make_staging(tmp_path, name="stage-v2", sections={"intro": ["Intro."]}),
+        source_dir=make_staging(
+            tmp_path, name="stage-v2", sections={"intro": ["Intro."]}
+        ),
         force=True,
     )
     assert "extra" in report.sections_removed
@@ -129,7 +135,9 @@ def test_store_reimport_reports_removed_sections(store_factory, tmp_path: Path) 
 def test_store_iter_chunks_yields_every_chunk(store_factory, tmp_path: Path) -> None:
     store = store_factory()
     _import(store, tmp_path, sections={"a": ["one", "two"], "b": ["three"]})
-    got = {(c.section_slug, c.seq) for c in store.iter_chunks(pot_id=POT, doc_slug="guide")}
+    got = {
+        (c.section_slug, c.seq) for c in store.iter_chunks(pot_id=POT, doc_slug="guide")
+    }
     assert got == {("a", 0), ("a", 1), ("b", 0)}
 
 
@@ -185,7 +193,9 @@ def index_and_store(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Any
 
 def _indexed_doc(index: Any, store: Any, tmp_path: Path) -> None:
     stage = make_staging(
-        tmp_path, name="stage-idx", sections={"ops": ["Rollback steps for payments deploys."]}
+        tmp_path,
+        name="stage-idx",
+        sections={"ops": ["Rollback steps for payments deploys."]},
     )
     store.import_dir(pot_id=POT, doc_slug="runbook", source_dir=stage)
     index.index_document(
@@ -200,7 +210,11 @@ def test_index_document_then_search_hits(index_and_store, tmp_path: Path) -> Non
     _indexed_doc(index, store, tmp_path)
     hits = index.search(pot_id=POT, query="rollback payments", limit=5)
     assert hits
-    assert (hits[0].doc_slug, hits[0].section_slug, hits[0].seq) == ("runbook", "ops", 0)
+    assert (hits[0].doc_slug, hits[0].section_slug, hits[0].seq) == (
+        "runbook",
+        "ops",
+        0,
+    )
 
 
 def test_index_remove_document_clears_hits(index_and_store, tmp_path: Path) -> None:
@@ -222,7 +236,9 @@ def test_index_capabilities_and_status(index_and_store, tmp_path: Path) -> None:
 # --- contract additions: agent-driven writes, typed catalog, wiring hooks ----
 
 
-def test_store_put_document_writes_without_a_staging_tree(store_factory, tmp_path: Path) -> None:
+def test_store_put_document_writes_without_a_staging_tree(
+    store_factory, tmp_path: Path
+) -> None:
     """Agents and RPC callers hold content in memory; the port must accept it
     directly — fabricating an on-disk staging tree is not a contract."""
     from potpie_context_engine.core.ports.resource_store import ChunkWrite
@@ -249,7 +265,9 @@ def test_store_put_document_writes_without_a_staging_tree(store_factory, tmp_pat
         pot_id=POT,
         doc_slug="agent-doc",
         manifest=manifest,
-        chunks=[ChunkWrite(section_slug="notes", seq=0, content="Zebra migration notes.")],
+        chunks=[
+            ChunkWrite(section_slug="notes", seq=0, content="Zebra migration notes.")
+        ],
     )
     assert not report.errors
     assert "notes" in report.sections_added
@@ -257,7 +275,9 @@ def test_store_put_document_writes_without_a_staging_tree(store_factory, tmp_pat
     assert chunk.content == "Zebra migration notes."
 
 
-def test_store_list_documents_returns_typed_document_info(store_factory, tmp_path: Path) -> None:
+def test_store_list_documents_returns_typed_document_info(
+    store_factory, tmp_path: Path
+) -> None:
     from potpie_context_engine.core.ports.resource_store import DocumentInfo
 
     store = store_factory()
@@ -293,7 +313,9 @@ def test_store_staging_root_is_a_writable_path(store_factory, tmp_path: Path) ->
     assert (root / "probe.txt").read_text(encoding="utf-8") == "ok"
 
 
-def test_store_default_index_satisfies_the_index_port(store_factory, tmp_path: Path) -> None:
+def test_store_default_index_satisfies_the_index_port(
+    store_factory, tmp_path: Path
+) -> None:
     store = store_factory()
     index = store.default_index()
     assert index is not None
@@ -308,7 +330,9 @@ def test_sqlite_index_works_over_a_non_local_store(tmp_path: Path) -> None:
     from potpie_context_engine.testing_resources import InMemoryResourceStore
 
     store = InMemoryResourceStore()
-    stage = make_staging(tmp_path, name="stage-hybrid", sections={"ops": ["Rollback for payments."]})
+    stage = make_staging(
+        tmp_path, name="stage-hybrid", sections={"ops": ["Rollback for payments."]}
+    )
     store.import_dir(pot_id=POT, doc_slug="runbook", source_dir=stage)
 
     index = SqliteFtsResourceIndex(home=tmp_path / "index-home")

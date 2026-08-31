@@ -8,7 +8,10 @@ from potpie_context_engine.adapters.outbound.resources.parsers.pdf_docling_prove
     parse_pdf_docling_provenance,
     parse_pdf_docling_provenance_to_staging,
 )
-from potpie_context_engine.domain.resource_models import CHUNK_TARGET_DEFAULT, ResourceManifest
+from potpie_context_engine.domain.resource_models import (
+    CHUNK_TARGET_DEFAULT,
+    ResourceManifest,
+)
 
 
 def parse_pdf_docling(

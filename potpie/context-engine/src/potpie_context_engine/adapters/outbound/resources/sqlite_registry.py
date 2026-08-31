@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -303,7 +303,9 @@ class SqliteResourceRegistry:
                 )
 
             for element in elements:
-                bbox_json = json.dumps(element.get("bbox")) if element.get("bbox") else None
+                bbox_json = (
+                    json.dumps(element.get("bbox")) if element.get("bbox") else None
+                )
                 conn.execute(
                     """
                     INSERT INTO document_elements (

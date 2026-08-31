@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from potpie_context_engine.domain.resource_models import ResourceImportReport, ResourceManifest
+from potpie_context_engine.domain.resource_models import (
+    ResourceImportReport,
+    ResourceManifest,
+)
 
 
 class ResourceStorePort(Protocol):

@@ -33,7 +33,10 @@ from potpie_context_engine.domain.resource_models import (
 )
 from potpie_context_engine.core.ports.graph_service import GraphService
 from potpie_context_engine.core.ports.resource_index import ResourceIndexPort
-from potpie_context_engine.core.ports.resource_store import ResourceStoreError, ResourceStorePort
+from potpie_context_engine.core.ports.resource_store import (
+    ResourceStoreError,
+    ResourceStorePort,
+)
 
 
 @dataclass(slots=True)
@@ -61,8 +64,10 @@ class ResourceService:
         if not source.is_file():
             raise ValueError(f"source file not found: {source}")
         content_hash = file_sha256(source)
-        if pot_id and not force and self.store.is_file_imported(
-            pot_id=pot_id, content_hash=content_hash
+        if (
+            pot_id
+            and not force
+            and self.store.is_file_imported(pot_id=pot_id, content_hash=content_hash)
         ):
             raise ValueError(
                 f"file already imported (content_hash={content_hash}); use --force to re-parse"
@@ -167,13 +172,17 @@ class ResourceService:
             )
             result = self.graph.mutate(mutation)
             report.graph_written = result.ok and result.status == "applied"
-            report.missing_claim_keys = [] if report.graph_written else list(result.claim_keys)
+            report.missing_claim_keys = (
+                [] if report.graph_written else list(result.claim_keys)
+            )
             if not report.graph_written:
                 report.recommended_next_action = (
                     result.detail or "fix graph mutations and re-import"
                 )
             else:
-                report.recommended_next_action = "verify with potpie search --include docs"
+                report.recommended_next_action = (
+                    "verify with potpie search --include docs"
+                )
         return report
 
     def ingest_file(
@@ -240,9 +249,13 @@ class ResourceService:
                 ),
                 "created_by": {"surface": "cli", "harness": "resource-remove"},
             }
-            from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
+            from potpie_context_engine.core.semantic_mutations import (
+                SemanticMutationRequest,
+            )
 
-            mutation = SemanticMutationRequest.parse(payload, approved_by="resource-remove")
+            mutation = SemanticMutationRequest.parse(
+                payload, approved_by="resource-remove"
+            )
             self.graph.mutate(mutation)
 
         if self.index is not None:
@@ -252,7 +265,9 @@ class ResourceService:
         result["elements_retracted"] = element_ids
         return result
 
-    def search_chunks(self, *, pot_id: str, query: str, limit: int = 20) -> list[dict[str, Any]]:
+    def search_chunks(
+        self, *, pot_id: str, query: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
         if self.index is None:
             return []
         enriched: list[dict[str, Any]] = []

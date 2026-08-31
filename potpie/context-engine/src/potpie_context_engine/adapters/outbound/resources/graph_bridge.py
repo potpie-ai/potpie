@@ -156,7 +156,9 @@ def build_import_mutations(
         summary_bits = [label, element.text[:200] if element.text else ""]
         if element.page_number is not None:
             summary_bits.append(f"page {element.page_number}")
-        summary = " — ".join([b for b in summary_bits if b]).strip() or element.element_id
+        summary = (
+            " — ".join([b for b in summary_bits if b]).strip() or element.element_id
+        )
         evidence: list[dict[str, Any]] = []
         if manifest.source_ref:
             evidence.append({"source_ref": manifest.source_ref})

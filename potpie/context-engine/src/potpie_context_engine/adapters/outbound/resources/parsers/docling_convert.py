@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from potpie_context_engine.adapters.outbound.resources.local_chunk_store import file_sha256
+from potpie_context_engine.adapters.outbound.resources.local_chunk_store import (
+    file_sha256,
+)
 from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
     _auto_summary,
     auto_keywords,
@@ -81,10 +83,12 @@ def parse_docling_file(
     section_ocr: dict[str, list[str]] = {}
 
     try:
-        parsed_sections, elements, provenance_map, section_ocr = build_sections_from_docling(
-            document,
-            chunk_target=chunk_target,
-            artifacts_dir=artifacts_dir,
+        parsed_sections, elements, provenance_map, section_ocr = (
+            build_sections_from_docling(
+                document,
+                chunk_target=chunk_target,
+                artifacts_dir=artifacts_dir,
+            )
         )
     except Exception:
         parsed_sections = []

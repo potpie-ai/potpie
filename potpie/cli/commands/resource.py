@@ -38,11 +38,15 @@ def _resource_deprecation() -> None:
 
 @resource_app.command("import")
 def resource_import(
-    staging_dir: str = typer.Argument(..., help="Directory with meta.json + section chunks"),
+    staging_dir: str = typer.Argument(
+        ..., help="Directory with meta.json + section chunks"
+    ),
     doc: str = typer.Option(..., "--doc", help="Document slug"),
     pot: str | None = typer.Option(None, "--pot", help="Pot id or name"),
     source_ref: str | None = typer.Option(None, "--source-ref"),
-    force: bool = typer.Option(False, "--force", help="Replace existing document revision"),
+    force: bool = typer.Option(
+        False, "--force", help="Replace existing document revision"
+    ),
 ) -> None:
     with contract():
         pot_id = resolve_pot_id(get_root_runtime(), pot)
@@ -61,10 +65,14 @@ def resource_parse(
     path: str = typer.Argument(..., help="Source file to parse into staging layout"),
     out: str = typer.Option(..., "--out", help="Staging output directory"),
     pot: str | None = typer.Option(None, "--pot", help="Pot id for dedup checks"),
-    doc: str | None = typer.Option(None, "--doc", help="Document slug when chaining --import"),
+    doc: str | None = typer.Option(
+        None, "--doc", help="Document slug when chaining --import"
+    ),
     source_ref: str | None = typer.Option(None, "--source-ref"),
     chunk_size: int = typer.Option(4000, "--chunk-size"),
-    force: bool = typer.Option(False, "--force", help="Re-parse even if file hash seen"),
+    force: bool = typer.Option(
+        False, "--force", help="Re-parse even if file hash seen"
+    ),
     vision_provider: str = typer.Option(
         "local",
         "--vision-provider",
@@ -77,7 +85,9 @@ def resource_parse(
     ),
 ) -> None:
     with contract():
-        pot_id = resolve_pot_id(get_root_runtime(), pot) if pot or import_after else None
+        pot_id = (
+            resolve_pot_id(get_root_runtime(), pot) if pot or import_after else None
+        )
         if import_after and not doc:
             fail("--import requires --doc")
         service = _resource_service()

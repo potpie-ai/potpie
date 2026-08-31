@@ -17,7 +17,10 @@ pytestmark = pytest.mark.unit
 
 def test_pdf_dispatch_requires_docling_or_allow_degraded(tmp_path: Path) -> None:
     fixture = (
-        Path(__file__).resolve().parent.parent / "fixtures" / "resources" / "digital_one_page.pdf"
+        Path(__file__).resolve().parent.parent
+        / "fixtures"
+        / "resources"
+        / "digital_one_page.pdf"
     )
     out = tmp_path / "out"
     caps = {
@@ -38,7 +41,10 @@ def test_pdf_dispatch_requires_docling_or_allow_degraded(tmp_path: Path) -> None
 def test_pdf_dispatch_uses_degraded_when_allowed(tmp_path: Path) -> None:
     pytest.importorskip("pypdf")
     fixture = (
-        Path(__file__).resolve().parent.parent / "fixtures" / "resources" / "digital_one_page.pdf"
+        Path(__file__).resolve().parent.parent
+        / "fixtures"
+        / "resources"
+        / "digital_one_page.pdf"
     )
     out = tmp_path / "out"
     caps = {

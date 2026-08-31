@@ -16,7 +16,10 @@ from potpie_context_engine.testing import InMemoryGraphBackend
 pytestmark = [pytest.mark.integration, pytest.mark.documents_lite]
 
 FIXTURE_PDF = (
-    Path(__file__).resolve().parent.parent / "fixtures" / "resources" / "digital_one_page.pdf"
+    Path(__file__).resolve().parent.parent
+    / "fixtures"
+    / "resources"
+    / "digital_one_page.pdf"
 )
 
 
@@ -27,7 +30,22 @@ def digital_pdf() -> Path:
     return FIXTURE_PDF
 
 
-def test_pdf_ingest_end_to_end(tmp_path: Path, digital_pdf: Path) -> None:
+def test_pdf_ingest_end_to_end(
+    tmp_path: Path, digital_pdf: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from potpie_context_engine.adapters.outbound.resources.parsers import dispatch
+
+    monkeypatch.setattr(
+        dispatch,
+        "documents_capabilities",
+        lambda: {
+            "pypdf": True,
+            "pypdfium2": False,
+            "docling": False,
+            "rapidocr": False,
+            "httpx": False,
+        },
+    )
     home = tmp_path / "potpie-home"
     store = LocalResourceStore(home=home)
     backend = InMemoryGraphBackend()

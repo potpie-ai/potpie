@@ -176,7 +176,7 @@ def parse_chunk_uri(uri: str) -> tuple[str, str, int]:
     prefix = "potpie://res/"
     if not raw.startswith(prefix):
         raise ValueError(f"invalid chunk uri: {uri!r}")
-    rest = raw[len(prefix):]
+    rest = raw[len(prefix) :]
     parts = rest.split("/")
     if len(parts) == 3:
         doc_slug, section_slug, seq_raw = parts
