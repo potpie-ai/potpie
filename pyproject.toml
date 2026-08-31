@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.hooks.custom]
-path = "distribution_defaults_hook.py"
+path = "scripts/distribution_defaults_hook.py"
 
 [project]
 name = "potpie"
@@ -65,6 +65,7 @@ include = [
 ]
 exclude = [
     "/potpie/context-engine",
+    "/potpie/daemon/http/ui/frontend/node_modules",
     "/potpie/integrations",
     "/potpie/parsing",
     "/potpie/sandbox",
@@ -80,8 +81,8 @@ include = [
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",
-    "/build_config_values.py",
-    "/distribution_defaults_hook.py",
+    "/scripts/build_config_values.py",
+    "/scripts/distribution_defaults_hook.py",
     "/scripts/generate-potpie-ascii.mjs",
     "/scripts/context_engine_lab.py",
     "/potpie/__init__.py",
@@ -98,6 +99,7 @@ include = [
 exclude = [
     "/.gitignore",
     "/potpie/context-engine",
+    "/potpie/daemon/http/ui/frontend/node_modules",
     "/potpie/integrations",
     "/potpie/parsing",
     "/potpie/sandbox",
@@ -170,4 +172,7 @@ extend-select = ["S"]
 "potpie/cli/ui/setup_ux.py" = ["S112"]
 "tests/_auth_fakes.py" = ["S108"]
 "tests/unit/test_cli_linear.py" = ["S310"]
+"tests/unit/test_build_hook_config.py" = ["S101"]
 "tests/unit/test_nudge_adapter.py" = ["S102"]
+"tests/unit/test_validate_python_release.py" = ["S101"]
+"tests/unit/test_verify_pypi_release.py" = ["S101"]

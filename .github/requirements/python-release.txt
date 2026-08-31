@@ -1,0 +1,4 @@
+# Keep release-tool upgrades explicit and reviewable.
+build==1.6.0
+packaging==26.3
+twine==7.0.0

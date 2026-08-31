@@ -1,0 +1,550 @@
+name: Release Potpie packages to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_scope:
+        description: "Which package release path to run."
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - context-engine
+          - potpie
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  preflight:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      release_scope: ${{ steps.validate.outputs.release_scope }}
+      context_engine_version: ${{ steps.validate.outputs.context_engine_version }}
+      potpie_version: ${{ steps.validate.outputs.potpie_version }}
+      context_engine_tag: ${{ steps.validate.outputs.context_engine_tag }}
+      potpie_tag: ${{ steps.validate.outputs.potpie_tag }}
+      metadata_path: ${{ steps.validate.outputs.metadata_path }}
+      context_engine_preexisting: ${{ steps.validate.outputs.context_engine_preexisting }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pinned release tools
+        run: python -m pip install --requirement .github/requirements/python-release.txt
+
+      - name: Validate release metadata
+        id: validate
+        env:
+          RELEASE_SCOPE: ${{ inputs.release_scope }}
+          REPOSITORY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: >-
+          python scripts/validate_python_release.py
+          --release-scope "$RELEASE_SCOPE"
+
+      - name: Upload release metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-metadata
+          path: ${{ steps.validate.outputs.metadata_path }}
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: Build release distributions
+    needs: preflight
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_SCOPE: ${{ needs.preflight.outputs.release_scope }}
+      POTPIE_ENVIRONMENT: ${{ vars.POTPIE_ENVIRONMENT }}
+      POTPIE_SENTRY_DSN: ${{ vars.POTPIE_SENTRY_DSN }}
+      POTPIE_POSTHOG_API_KEY: ${{ vars.POTPIE_POSTHOG_API_KEY }}
+      POTPIE_POSTHOG_HOST: ${{ vars.POTPIE_POSTHOG_HOST }}
+      LINEAR_CLIENT_ID: ${{ vars.LINEAR_CLIENT_ID }}
+      POTPIE_GITHUB_CLIENT_ID: ${{ vars.POTPIE_GITHUB_CLIENT_ID }}
+      POTPIE_VALIDATE_DISTRIBUTION_DEFAULTS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node.js
+        if: ${{ needs.preflight.outputs.release_scope == 'all' || needs.preflight.outputs.release_scope == 'potpie' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: potpie/daemon/http/ui/frontend/package-lock.json
+
+      - name: Install pinned release tools
+        run: python -m pip install --requirement .github/requirements/python-release.txt
+
+      - name: Build selected distributions
+        run: |
+          mkdir -p dist
+
+          if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "context-engine" ]]; then
+            mkdir -p dist/context-engine
+            engine_build_dir="$(mktemp -d)"
+            python -m build --outdir "$engine_build_dir" potpie/context-engine
+            shopt -s nullglob
+            engine_wheels=("$engine_build_dir"/*.whl)
+            test "${#engine_wheels[@]}" -eq 1
+            cp "${engine_wheels[0]}" dist/context-engine/
+          fi
+
+          if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "potpie" ]]; then
+            mkdir -p dist/potpie
+            make ui-build-ci
+            python -m build --outdir dist/potpie .
+          fi
+
+          if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "context-engine" ]]; then
+            test "$(find dist/context-engine -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
+            test "$(find dist/context-engine -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 0
+          fi
+          if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "potpie" ]]; then
+            test "$(find dist/potpie -maxdepth 1 -name '*.whl' | wc -l)" -eq 1
+            test "$(find dist/potpie -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 1
+          fi
+
+          python -m twine check dist/*/*
+
+      - name: Verify root distributions contain only compiled UI assets
+        if: ${{ needs.preflight.outputs.release_scope == 'all' || needs.preflight.outputs.release_scope == 'potpie' }}
+        run: |
+          root_wheel="$(find dist/potpie -maxdepth 1 -name '*.whl' -print -quit)"
+          root_sdist="$(find dist/potpie -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          test -n "$root_wheel"
+          test -n "$root_sdist"
+          python - "$root_wheel" "$root_sdist" <<'PY'
+          import sys
+          import tarfile
+          import zipfile
+
+          expected = "potpie/daemon/http/ui/frontend/dist/index.html"
+          wheel, sdist = sys.argv[1:]
+          with zipfile.ZipFile(wheel) as archive:
+              wheel_names = set(archive.namelist())
+          if expected not in wheel_names:
+              raise SystemExit(f"{expected} is missing from {wheel}")
+          if any("/node_modules/" in name for name in wheel_names):
+              raise SystemExit(f"node_modules must not be packaged in {wheel}")
+
+          with tarfile.open(sdist) as archive:
+              sdist_names = set(archive.getnames())
+          if not any(name.endswith(f"/{expected}") for name in sdist_names):
+              raise SystemExit(f"{expected} is missing from {sdist}")
+          if any("/node_modules/" in name for name in sdist_names):
+              raise SystemExit(f"node_modules must not be packaged in {sdist}")
+          print("verified compiled UI assets and package exclusions")
+          PY
+
+      - name: Upload release distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  smoke-install:
+    name: Smoke install (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    needs:
+      - preflight
+      - build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.12", "3.13", "3.14"]
+    env:
+      RELEASE_SCOPE: ${{ needs.preflight.outputs.release_scope }}
+      CONTEXT_ENGINE_VERSION: ${{ needs.preflight.outputs.context_engine_version }}
+      POTPIE_VERSION: ${{ needs.preflight.outputs.potpie_version }}
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download release distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-distributions
+          path: dist
+
+      - name: Install and verify local artifacts
+        shell: bash
+        run: |
+          python -m venv .release-smoke
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            release_python="$PWD/.release-smoke/Scripts/python.exe"
+          else
+            release_python="$PWD/.release-smoke/bin/python"
+          fi
+
+          find_links=()
+          local_specs=()
+          install_targets=()
+
+          if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "context-engine" ]]; then
+            engine_wheel="$(find dist/context-engine -maxdepth 1 -name '*.whl' -print -quit)"
+            test -n "$engine_wheel"
+            find_links+=(--find-links dist/context-engine)
+            local_specs+=("potpie-context-engine==${CONTEXT_ENGINE_VERSION}")
+            install_targets+=("${engine_wheel}[all]")
+          fi
+
+          if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "potpie" ]]; then
+            potpie_wheel="$(find dist/potpie -maxdepth 1 -name '*.whl' -print -quit)"
+            test -n "$potpie_wheel"
+            find_links+=(--find-links dist/potpie)
+            local_specs+=("potpie==${POTPIE_VERSION}")
+            install_targets+=("$potpie_wheel")
+          fi
+
+          "$release_python" -m pip install "${find_links[@]}" "${install_targets[@]}"
+          "$release_python" -m pip install \
+            --no-index \
+            "${find_links[@]}" \
+            --no-deps \
+            --force-reinstall \
+            "${local_specs[@]}"
+          "$release_python" -m pip check
+
+          "$release_python" - <<'PY'
+          import importlib.metadata as metadata
+          import os
+
+          scope = os.environ["RELEASE_SCOPE"]
+          expected = {
+              "potpie-context-engine": os.environ["CONTEXT_ENGINE_VERSION"],
+          }
+          if scope in {"all", "potpie"}:
+              expected["potpie"] = os.environ["POTPIE_VERSION"]
+          for package, version in expected.items():
+              actual = metadata.version(package)
+              if actual != version:
+                  raise SystemExit(f"{package}: expected {version}, installed {actual}")
+              print(f"verified {package}=={actual}")
+          PY
+
+          "$release_python" -c "import potpie_context_engine"
+
+      - name: Run root CLI smoke journey
+        if: ${{ needs.preflight.outputs.release_scope == 'all' || needs.preflight.outputs.release_scope == 'potpie' }}
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            release_python="$PWD/.release-smoke/Scripts/python.exe"
+            release_bin="$PWD/.release-smoke/Scripts"
+          else
+            release_python="$PWD/.release-smoke/bin/python"
+            release_bin="$PWD/.release-smoke/bin"
+          fi
+          PATH="$release_bin:$PATH" potpie --help >/dev/null
+
+          smoke_root="$("$release_python" -c 'import tempfile; print(tempfile.mkdtemp())')"
+          git init "$smoke_root/dummy-git-repo"
+          git -C "$smoke_root/dummy-git-repo" config user.email "ci@potpie.ai"
+          git -C "$smoke_root/dummy-git-repo" config user.name "Potpie CI"
+          git -c commit.gpgsign=false -C "$smoke_root/dummy-git-repo" \
+            commit --allow-empty -m "Initial smoke commit"
+          (
+            cd "$smoke_root/dummy-git-repo"
+            PATH="$release_bin:$PATH" \
+            CONTEXT_ENGINE_HOME="$smoke_root/potpie-home" \
+            CONTEXT_ENGINE_HOST_MODE=in_process \
+            potpie setup --repo . --pot wheel-smoke --agent claude --dry-run --yes
+          )
+
+  assemble:
+    name: Assemble verified release bundle
+    needs:
+      - preflight
+      - smoke-install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release verifier
+        if: ${{ needs.preflight.outputs.context_engine_preexisting == 'true' }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        if: ${{ needs.preflight.outputs.context_engine_preexisting == 'true' }}
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Download release distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-distributions
+          path: dist
+
+      - name: Download release metadata
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-metadata
+          path: release-metadata
+
+      - name: Verify resumable Context Engine artifact
+        if: ${{ needs.preflight.outputs.context_engine_preexisting == 'true' }}
+        run: >-
+          python scripts/verify_pypi_release.py
+          --metadata release-metadata/release-metadata.json
+          --dist-dir dist
+          --package potpie-context-engine
+          --attempts 1
+
+      - name: Generate checksums
+        run: |
+          find dist -type f \( -name '*.whl' -o -name '*.tar.gz' \) -print0 \
+            | sort -z \
+            | xargs -0 -r shasum -a 256 > SHA256SUMS.txt
+          test -s SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-bundle
+          path: |
+            dist/
+            release-metadata/release-metadata.json
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  publish_context_engine:
+    name: Publish potpie-context-engine to PyPI
+    if: >-
+      ${{
+        (needs.preflight.outputs.release_scope == 'all' ||
+         needs.preflight.outputs.release_scope == 'context-engine') &&
+        needs.preflight.outputs.context_engine_preexisting != 'true'
+      }}
+    needs:
+      - preflight
+      - assemble
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/potpie-context-engine/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-bundle
+          path: release-bundle
+
+      - name: Publish potpie-context-engine
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          packages-dir: release-bundle/dist/context-engine/
+
+  publish_potpie:
+    name: Publish potpie to PyPI
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.preflight.result == 'success' &&
+        needs.assemble.result == 'success' &&
+        (needs.preflight.outputs.release_scope == 'potpie' ||
+         (needs.preflight.outputs.release_scope == 'all' &&
+          (needs.preflight.outputs.context_engine_preexisting == 'true' ||
+           needs.publish_context_engine.result == 'success')))
+      }}
+    needs:
+      - preflight
+      - assemble
+      - publish_context_engine
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/potpie/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-bundle
+          path: release-bundle
+
+      - name: Publish potpie
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          packages-dir: release-bundle/dist/potpie/
+
+  verify_pypi:
+    name: Verify published packages on PyPI
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        needs.preflight.result == 'success' &&
+        needs.assemble.result == 'success' &&
+        ((needs.preflight.outputs.release_scope == 'context-engine' &&
+          needs.publish_context_engine.result == 'success') ||
+         (needs.preflight.outputs.release_scope == 'potpie' &&
+          needs.publish_potpie.result == 'success') ||
+         (needs.preflight.outputs.release_scope == 'all' &&
+          (needs.preflight.outputs.context_engine_preexisting == 'true' ||
+           needs.publish_context_engine.result == 'success') &&
+          needs.publish_potpie.result == 'success'))
+      }}
+    needs:
+      - preflight
+      - assemble
+      - publish_context_engine
+      - publish_potpie
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_SCOPE: ${{ needs.preflight.outputs.release_scope }}
+      CONTEXT_ENGINE_VERSION: ${{ needs.preflight.outputs.context_engine_version }}
+      POTPIE_VERSION: ${{ needs.preflight.outputs.potpie_version }}
+    steps:
+      - name: Checkout verifier
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: Download verified release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-bundle
+          path: release-bundle
+
+      - name: Verify PyPI filenames and SHA256 hashes
+        run: >-
+          python scripts/verify_pypi_release.py
+          --metadata release-bundle/release-metadata/release-metadata.json
+          --dist-dir release-bundle/dist
+
+      - name: Smoke install from PyPI
+        run: |
+          python -m venv .pypi-smoke
+          pypi_python="$PWD/.pypi-smoke/bin/python"
+          pypi_bin="$PWD/.pypi-smoke/bin"
+
+          if [[ "$RELEASE_SCOPE" == "context-engine" ]]; then
+            install_spec="potpie-context-engine[all]==${CONTEXT_ENGINE_VERSION}"
+          else
+            install_spec="potpie==${POTPIE_VERSION}"
+          fi
+
+          "$pypi_python" -m pip install --no-cache-dir "$install_spec"
+          "$pypi_python" -m pip check
+          "$pypi_python" -c "import potpie_context_engine"
+          if [[ "$RELEASE_SCOPE" != "context-engine" ]]; then
+            PATH="$pypi_bin:$PATH" potpie --help >/dev/null
+          fi
+
+  create_release_tags:
+    name: Create verified release tags
+    needs:
+      - preflight
+      - verify_pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_SCOPE: ${{ needs.preflight.outputs.release_scope }}
+      RELEASE_SHA: ${{ github.sha }}
+      REPOSITORY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      CONTEXT_ENGINE_TAG: ${{ needs.preflight.outputs.context_engine_tag }}
+      POTPIE_TAG: ${{ needs.preflight.outputs.potpie_tag }}
+    steps:
+      - name: Checkout verified release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Create and push package release tags
+        shell: bash
+        run: |
+          case "$RELEASE_SCOPE" in
+            all)
+              tags=("$CONTEXT_ENGINE_TAG" "$POTPIE_TAG")
+              ;;
+            context-engine)
+              tags=("$CONTEXT_ENGINE_TAG")
+              ;;
+            potpie)
+              tags=("$POTPIE_TAG")
+              ;;
+            *)
+              echo "unsupported release scope: $RELEASE_SCOPE" >&2
+              exit 1
+              ;;
+          esac
+
+          git fetch --no-tags origin \
+            "+refs/heads/$REPOSITORY_DEFAULT_BRANCH:refs/remotes/origin/$REPOSITORY_DEFAULT_BRANCH"
+          if ! git merge-base --is-ancestor \
+            "$RELEASE_SHA" "refs/remotes/origin/$REPOSITORY_DEFAULT_BRANCH"; then
+            echo "release commit $RELEASE_SHA is no longer reachable from $REPOSITORY_DEFAULT_BRANCH" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          tag_refs=()
+          for tag in "${tags[@]}"; do
+            if git show-ref --verify --quiet "refs/tags/$tag"; then
+              existing_sha="$(git rev-parse "refs/tags/$tag^{commit}")"
+              if [[ "$existing_sha" != "$RELEASE_SHA" ]]; then
+                echo "release tag $tag already points to $existing_sha" >&2
+                exit 1
+              fi
+            else
+              git tag --annotate "$tag" "$RELEASE_SHA" --message "Release $tag"
+            fi
+            tag_refs+=("refs/tags/$tag")
+          done
+
+          git push --atomic origin "${tag_refs[@]}"
+
+          {
+            echo "### Verified release tags"
+            for tag in "${tags[@]}"; do
+              echo "- \`$tag\` at \`$RELEASE_SHA\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -189,8 +189,8 @@ def test_product_build_defaults_are_not_packaged_by_context_engine() -> None:
     ):
         assert product_field not in engine_config
 
-    assert (ROOT / "build_config_values.py").is_file()
-    assert (ROOT / "distribution_defaults_hook.py").is_file()
+    assert (ROOT / "scripts" / "build_config_values.py").is_file()
+    assert (ROOT / "scripts" / "distribution_defaults_hook.py").is_file()
 
 
 def test_root_console_script_targets_relocated_cli() -> None:
