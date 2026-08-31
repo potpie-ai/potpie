@@ -18,7 +18,6 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  queue: max
 
 env:
   PYTHONUNBUFFERED: "1"

@@ -246,8 +246,7 @@ def validate_release_source() -> None:
     )
     if result.returncode == 1:
         fail(
-            f"release commit {commit_sha} is not reachable from "
-            f"origin/{default_branch}"
+            f"release commit {commit_sha} is not reachable from origin/{default_branch}"
         )
     if result.returncode != 0:
         detail = result.stderr.strip() or f"git exited {result.returncode}"
