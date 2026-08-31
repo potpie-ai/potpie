@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from potpie_context_engine.application.services.resource_service import ResourceService
