@@ -29,30 +29,18 @@ except ImportError as exc:  # pragma: no cover - exercised in CI bootstrap failu
 
 ROOT = Path(__file__).resolve().parents[1]
 PYPI_BASE = "https://pypi.org/pypi"
-PYPI_REPOSITORY_URL = "https://upload.pypi.org/legacy/"
+CONTEXT_ENGINE_NAME = "potpie-context-engine"
 PACKAGE_SOURCES = {
     "context-engine": (
         "potpie/context-engine/pyproject.toml",
-        "potpie-context-engine",
+        CONTEXT_ENGINE_NAME,
     ),
     "potpie": ("pyproject.toml", "potpie"),
-}
-PACKAGE_ALIASES = {
-    "context-engine": "context-engine",
-    "potpie-context-engine": "context-engine",
-    "potpie": "potpie",
 }
 PACKAGE_KEYS_BY_SCOPE = {
     "all": ("context-engine", "potpie"),
     "context-engine": ("context-engine",),
     "potpie": ("potpie",),
-}
-TAG_PREFIXES = {
-    "context-engine": "potpie-context-engine",
-    "potpie": "potpie",
-}
-DEPENDENCY_KEYS = {
-    "potpie": ("context-engine",),
 }
 
 
@@ -75,18 +63,6 @@ def fail(message: str) -> None:
 
 def load_toml(path: str) -> dict:
     return tomllib.loads((ROOT / path).read_text(encoding="utf-8"))
-
-
-def normalize_scope(value: str) -> str:
-    scope = PACKAGE_ALIASES.get(value, value)
-    if scope not in PACKAGE_KEYS_BY_SCOPE:
-        allowed = ", ".join(sorted(PACKAGE_KEYS_BY_SCOPE))
-        fail(f"unsupported release scope {value!r}; allowed: {allowed}")
-    return scope
-
-
-def package_keys_for_scope(scope: str) -> tuple[str, ...]:
-    return PACKAGE_KEYS_BY_SCOPE[normalize_scope(scope)]
 
 
 def pyproject_package(key: str) -> PackageInfo:
@@ -150,22 +126,49 @@ def package_requirement(package_key: str, dependency_name: str) -> Requirement:
     fail(f"{source} must depend on {dependency_name}")
 
 
-def validate_exact_requirement(package: PackageInfo, dependency: PackageInfo) -> None:
-    requirement = package_requirement(package.key, dependency.name)
+def exact_requirement_version(package: PackageInfo, dependency_name: str) -> str:
+    requirement = package_requirement(package.key, dependency_name)
     specifiers = list(requirement.specifier)
     if (
-        len(specifiers) != 1
+        requirement.marker is not None
+        or len(specifiers) != 1
         or specifiers[0].operator != "=="
-        or specifiers[0].version != dependency.version
     ):
         fail(
-            f"{package.name} must pin {dependency.name} exactly as "
-            f"=={dependency.version}; found {requirement.specifier or '<unversioned>'}"
+            f"{package.name} must unconditionally pin {dependency_name} to exactly "
+            "one version; "
+            f"found {requirement.specifier or '<unversioned>'}"
         )
+    pinned_version = specifiers[0].version
+    try:
+        Version(pinned_version)
+    except InvalidVersion:
+        fail(
+            f"{package.name} must pin {dependency_name} to a concrete PEP 440 "
+            f"version; found =={pinned_version}"
+        )
+    return pinned_version
 
 
-def validate_dependency_chain(packages: dict[str, PackageInfo]) -> None:
-    validate_exact_requirement(packages["potpie"], packages["context-engine"])
+def resolve_context_engine_version(
+    selected_keys: set[str],
+    packages: dict[str, PackageInfo],
+) -> str:
+    if "potpie" not in selected_keys:
+        return packages["context-engine"].version
+
+    potpie = packages["potpie"]
+    pinned_version = exact_requirement_version(potpie, CONTEXT_ENGINE_NAME)
+    if "context-engine" not in selected_keys:
+        return pinned_version
+
+    engine = packages["context-engine"]
+    if pinned_version != engine.version:
+        fail(
+            f"{potpie.name} must pin {engine.name} exactly as =={engine.version} "
+            f"for a combined release; found =={pinned_version}"
+        )
+    return pinned_version
 
 
 def package_version_exists(package_name: str, version: str) -> bool:
@@ -189,75 +192,45 @@ def package_version_exists(package_name: str, version: str) -> bool:
     return False
 
 
-def validate_index_availability(
-    publish_target: str,
-    selected: list[PackageInfo],
-) -> None:
-    if publish_target == "build-only":
-        return
+def validate_index_availability(selected: list[PackageInfo]) -> None:
     for package in selected:
         if package_version_exists(package.name, package.version):
             fail(f"{package.name}=={package.version} already exists on pypi")
 
 
 def validate_external_dependencies(
-    publish_target: str,
     selected_keys: set[str],
-    packages: dict[str, PackageInfo],
+    engine_name: str,
+    engine_version: str,
 ) -> None:
-    if publish_target == "build-only":
+    if "potpie" not in selected_keys or "context-engine" in selected_keys:
         return
-    required_keys = {
-        dependency_key
-        for package_key in selected_keys
-        for dependency_key in DEPENDENCY_KEYS.get(package_key, ())
-        if dependency_key not in selected_keys
-    }
-    for dependency_key in sorted(required_keys):
-        dependency = packages[dependency_key]
-        if not package_version_exists(dependency.name, dependency.version):
-            fail(
-                f"{dependency.name}=={dependency.version} must already exist on pypi "
-                "when it is outside the selected release scope"
-            )
+    if not package_version_exists(engine_name, engine_version):
+        fail(
+            f"{engine_name}=={engine_version} must already exist on pypi "
+            "for a potpie-only release"
+        )
 
 
-def validate_publish_policy(
-    args: argparse.Namespace,
-    scope: str,
-    selected: list[PackageInfo],
-    packages: dict[str, PackageInfo],
-) -> None:
-    if args.publish_target != "pypi":
-        return
-    if args.confirm_publish != "publish":
-        fail("publish_target=pypi requires confirm_publish=publish")
-
-    if scope == "all":
-        allowed_tags = {f"python-v{packages['potpie'].version}"}
-    else:
-        package = selected[0]
-        allowed_tags = {f"{TAG_PREFIXES[package.key]}-v{package.version}"}
-
+def validate_release_source() -> None:
     ref_type = os.getenv("GITHUB_REF_TYPE", "")
     ref_name = os.getenv("GITHUB_REF_NAME", "")
-    if ref_type != "tag" or ref_name not in allowed_tags:
-        rendered = ", ".join(sorted(allowed_tags))
+    default_branch = os.getenv("REPOSITORY_DEFAULT_BRANCH", "")
+    if not default_branch:
+        fail("release validation requires REPOSITORY_DEFAULT_BRANCH")
+    if ref_type != "branch" or ref_name != default_branch:
         fail(
-            "publish_target=pypi must run from an allowed release tag "
-            f"({rendered}); got ref_type={ref_type!r}, ref_name={ref_name!r}"
+            "release workflow must run from the repository default branch "
+            f"{default_branch!r}; got ref_type={ref_type!r}, ref_name={ref_name!r}"
         )
 
     commit_sha = os.getenv("GITHUB_SHA", "")
-    default_branch = os.getenv("REPOSITORY_DEFAULT_BRANCH", "")
-    if not commit_sha or not default_branch:
-        fail(
-            "publish_target=pypi requires GITHUB_SHA and "
-            "REPOSITORY_DEFAULT_BRANCH to verify tag ancestry"
-        )
+    if not commit_sha:
+        fail("release validation requires GITHUB_SHA")
     git = shutil.which("git")
     if git is None:
-        fail("could not verify release tag ancestry: git is unavailable")
+        fail("could not verify release commit ancestry: git is unavailable")
+
     result = subprocess.run(  # noqa: S603
         [
             git,
@@ -273,12 +246,12 @@ def validate_publish_policy(
     )
     if result.returncode == 1:
         fail(
-            f"release tag commit {commit_sha} is not reachable from "
+            f"release commit {commit_sha} is not reachable from "
             f"origin/{default_branch}"
         )
     if result.returncode != 0:
         detail = result.stderr.strip() or f"git exited {result.returncode}"
-        fail(f"could not verify release tag ancestry: {detail}")
+        fail(f"could not verify release commit ancestry: {detail}")
 
 
 def github_run_url() -> str:
@@ -291,18 +264,17 @@ def github_run_url() -> str:
 
 
 def emit_metadata(
-    args: argparse.Namespace,
+    output_dir: str,
     scope: str,
     selected: list[PackageInfo],
     channel: str,
 ) -> Path:
-    output_dir = ROOT / args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "release-metadata.json"
+    output_path_dir = ROOT / output_dir
+    output_path_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_path_dir / "release-metadata.json"
     metadata = {
         "generated_at": dt.datetime.now(dt.UTC).isoformat(),
         "release_scope": scope,
-        "publish_target": args.publish_target,
         "channel": channel,
         "commit_sha": os.getenv("GITHUB_SHA", ""),
         "ref": os.getenv("GITHUB_REF", ""),
@@ -312,6 +284,9 @@ def emit_metadata(
         "run_id": os.getenv("GITHUB_RUN_ID", ""),
         "run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
         "run_url": github_run_url(),
+        "release_tags": {
+            package.name: f"{package.name}-v{package.version}" for package in selected
+        },
         "packages": {
             package.name: {
                 "version": package.version,
@@ -328,10 +303,9 @@ def emit_metadata(
 
 def emit_github_outputs(
     scope: str,
-    publish_target: str,
     packages: dict[str, PackageInfo],
+    context_engine_version: str,
     metadata_path: Path,
-    channel: str,
 ) -> None:
     github_output = os.getenv("GITHUB_OUTPUT")
     if not github_output:
@@ -342,14 +316,18 @@ def emit_github_outputs(
         metadata_output = str(metadata_path)
     lines = [
         f"release_scope={scope}",
-        f"publish_target={publish_target}",
-        f"channel={channel}",
         f"metadata_path={metadata_output}",
-        f"context_engine_version={packages['context-engine'].version}",
-        f"potpie_version={packages['potpie'].version}",
+        f"context_engine_version={context_engine_version}",
     ]
-    if publish_target != "build-only":
-        lines.append(f"repository_url={PYPI_REPOSITORY_URL}")
+    if engine := packages.get("context-engine"):
+        lines.append(f"context_engine_tag={engine.name}-v{engine.version}")
+    if potpie := packages.get("potpie"):
+        lines.extend(
+            [
+                f"potpie_version={potpie.version}",
+                f"potpie_tag={potpie.name}-v{potpie.version}",
+            ]
+        )
     with Path(github_output).open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
 
@@ -361,30 +339,32 @@ def parse_args() -> argparse.Namespace:
         required=True,
         choices=sorted(PACKAGE_KEYS_BY_SCOPE),
     )
-    parser.add_argument(
-        "--publish-target",
-        required=True,
-        choices=["build-only", "pypi"],
-    )
-    parser.add_argument("--confirm-publish", default="")
     parser.add_argument("--output-dir", default="release-metadata")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    scope = normalize_scope(args.release_scope)
-    packages = {key: pyproject_package(key) for key in PACKAGE_SOURCES}
-    selected_keys = package_keys_for_scope(scope)
+    scope = args.release_scope
+    selected_keys = PACKAGE_KEYS_BY_SCOPE[scope]
+    packages = {key: pyproject_package(key) for key in selected_keys}
     selected = [packages[key] for key in selected_keys]
+    selected_key_set = set(selected_keys)
     channel = infer_channel(selected)
+    context_engine_version = resolve_context_engine_version(
+        selected_key_set,
+        packages,
+    )
 
-    validate_dependency_chain(packages)
-    validate_publish_policy(args, scope, selected, packages)
-    validate_index_availability(args.publish_target, selected)
-    validate_external_dependencies(args.publish_target, set(selected_keys), packages)
-    metadata_path = emit_metadata(args, scope, selected, channel)
-    emit_github_outputs(scope, args.publish_target, packages, metadata_path, channel)
+    validate_release_source()
+    validate_index_availability(selected)
+    validate_external_dependencies(
+        selected_key_set,
+        CONTEXT_ENGINE_NAME,
+        context_engine_version,
+    )
+    metadata_path = emit_metadata(args.output_dir, scope, selected, channel)
+    emit_github_outputs(scope, packages, context_engine_version, metadata_path)
 
     print("release validation passed")
     print(f"- scope: {scope}")
