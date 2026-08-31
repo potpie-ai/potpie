@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
+from potpie_context_engine.adapters.outbound.local_paths import default_home
 from potpie_context_engine.adapters.outbound.resources.sqlite_registry import (
     SqliteResourceRegistry,
 )
@@ -24,7 +24,7 @@ from potpie_context_engine.domain.resource_models import (
     text_sha256,
     validate_doc_slug,
 )
-from potpie_context_core.ports.resource_store import (
+from potpie_context_engine.core.ports.resource_store import (
     RESOURCE_NOT_FOUND,
     Chunk,
     ChunkWrite,

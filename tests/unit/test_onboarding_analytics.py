@@ -21,11 +21,11 @@ from potpie.cli.telemetry.product_analytics import (
     ProductAnalyticsEvent,
     set_product_analytics_sink,
 )
+from potpie.runtime.composition import build_local_runtime
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
-from potpie_context_core.lifecycle import SetupPlan
+from potpie_context_engine.core.lifecycle import SetupPlan
 
 
 @dataclass
@@ -101,11 +101,13 @@ def test_setup_observer_emits_step_timing(
 ) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    host = build_host_shell(backend=InMemoryGraphBackend())
-    host.setup.set_observer(CliSetupAnalyticsObserver())
+    runtime = build_local_runtime(backend=InMemoryGraphBackend())
+    runtime.root.setup.set_observer(CliSetupAnalyticsObserver())
     begin_setup_run()
 
-    report = host.setup.run(SetupPlan(repo=".", agent="claude", defer_default_pot=True))
+    report = runtime.root.setup.run(
+        SetupPlan(repo=".", agent="claude", defer_default_pot=True)
+    )
 
     assert report.ok is True
     names = [event.name for event in fake_sink.events]

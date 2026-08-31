@@ -14,12 +14,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from potpie_context_core.ports.resource_index import (
+from potpie_context_engine.core.ports.resource_index import (
     ChunkHit,
     IndexCapabilities,
     ResourceIndexStatus,
 )
-from potpie_context_core.ports.resource_store import (
+from potpie_context_engine.core.ports.resource_store import (
     RESOURCE_CHUNK_TOO_LARGE,
     RESOURCE_MANIFEST_INVALID,
     RESOURCE_NOT_FOUND,
@@ -30,7 +30,7 @@ from potpie_context_core.ports.resource_store import (
     ResourceStoreStatus,
     SectionInfo,
 )
-from potpie_context_core.resource_models import (
+from potpie_context_engine.core.resource_models import (
     CHUNK_HARD_CAP,
     DocumentElementRecord,
     ResourceImportReport,

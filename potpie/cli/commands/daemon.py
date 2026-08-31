@@ -1,6 +1,8 @@
-"""Daemon admin commands -> ``HostShell.daemon`` local recovery tools."""
+"""Daemon admin commands through the Potpie-owned lifecycle service."""
 
 from __future__ import annotations
+
+from typing import Any, NoReturn
 
 import typer
 
@@ -9,19 +11,14 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
-    get_host,
 )
-from potpie.daemon.process.launcher import DaemonStartError
-from potpie.daemon.lifecycle import Daemon
+from potpie.daemon.lifecycle import Daemon, DaemonStartError, DaemonStopError
 
 daemon_app = typer.Typer(help="Local daemon lifecycle (recovery tools).")
 
 
 def _detached_daemon() -> Daemon:
-    daemon = get_host().daemon
-    if not daemon.in_process:
-        return daemon
-    return Daemon(home=daemon.home, in_process=False)
+    return Daemon(in_process=False)
 
 
 def _start(daemon: Daemon) -> dict[str, int | str]:
@@ -41,7 +38,7 @@ def _restart(daemon: Daemon) -> dict[str, int | str]:
     try:
         return daemon.restart()
     except AttributeError:
-        daemon.stop()
+        _stop(daemon)
         return _start(daemon)
     except DaemonStartError as exc:
         fail(
@@ -51,6 +48,26 @@ def _restart(daemon: Daemon) -> dict[str, int | str]:
             next_action="inspect the daemon log with 'potpie daemon logs'",
             exit_code=EXIT_UNAVAILABLE,
         )
+    except DaemonStopError as exc:
+        _fail_stop(exc)
+
+
+def _fail_stop(exc: DaemonStopError) -> NoReturn:
+    error = exc.error
+    fail(
+        code=error.code,
+        message=error.message,
+        detail=error.details or None,
+        next_action=error.recommended_next_action,
+        exit_code=EXIT_UNAVAILABLE,
+    )
+
+
+def _stop(daemon: Daemon) -> dict[str, Any]:
+    try:
+        return daemon.stop()
+    except DaemonStopError as exc:
+        _fail_stop(exc)
 
 
 @daemon_app.command("start")
@@ -85,7 +102,7 @@ def daemon_restart() -> None:
 @daemon_app.command("stop")
 def daemon_stop() -> None:
     with contract():
-        result = _detached_daemon().stop()
+        result = _stop(_detached_daemon())
         emit(result, human=result.get("detail", "stopped"))
 
 

@@ -18,14 +18,14 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     _records_from_result,
     build_falkordb_graph,
 )
-from potpie_context_core.api import (
+from potpie_context_engine.core.api import (
     DEFAULT_GRAPH_DEFINITION,
     EdgeTypeSpec,
     EntityTypeSpec,
-    GraphExtension,
     IdentityClass,
 )
-from potpie_context_core.graph_mutations import (
+from potpie_context_engine.core.definition import GraphExtension
+from potpie_context_engine.core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,

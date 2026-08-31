@@ -32,14 +32,14 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_reader import (  # n
 from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (  # noqa: E402
     FalkorDBGraphWriter,
 )
-from potpie_context_core.workbench_service import GraphWorkbenchService  # noqa: E402
-from potpie_context_core.graph_mutations import (  # noqa: E402
+from potpie_context_engine.core.workbench_service import GraphWorkbenchService  # noqa: E402
+from potpie_context_engine.core.graph_mutations import (  # noqa: E402
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,
     ProvenanceRef,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter  # noqa: E402
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter  # noqa: E402
 
 
 class _Settings:

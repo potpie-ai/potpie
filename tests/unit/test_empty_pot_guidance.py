@@ -14,12 +14,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _reset_state() -> None:
+def _reset_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
     _common.set_json(False)
-    _common.set_host(None)
+    _common.set_runtime(None)
     yield
     _common.set_json(False)
-    _common.set_host(None)
+    _common.set_runtime(None)
 
 
 class _Pot:
@@ -42,12 +43,16 @@ class _Pots:
     def __init__(self) -> None:
         self.p1 = _Pot("p1", "empty", True)
         self.p2 = _Pot("p2", "populated")
+        self.created: list[_Pot] = []
 
     def active_pot(self):
-        return self.p1
+        return next(
+            (pot for pot in [self.p1, self.p2, *self.created] if pot.active),
+            None,
+        )
 
     def list_pots(self):
-        return [self.p1, self.p2]
+        return [self.p1, self.p2, *self.created]
 
     def list_sources(self, *, pot_id: str):
         return [_Source(f"src_{pot_id}")]
@@ -60,6 +65,7 @@ class _Pots:
         if use:
             self.p1.active = False
             pot.active = True
+        self.created.append(pot)
         return pot
 
     def use_pot(self, *, ref: str):
@@ -78,6 +84,7 @@ class _Graph:
 class _Host:
     def __init__(self) -> None:
         self.pots = _Pots()
+        self.backend = SimpleNamespace(profile="embedded")
         self.graph = _Graph({"p1": {"claims": 0}, "p2": {"claims": 82}})
 
 
@@ -86,6 +93,7 @@ def test_empty_pot_guidance_suggests_populated_sibling_pot(monkeypatch) -> None:
         _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     host = _Host()
+    _common.set_runtime(host)
     warnings = _common.empty_pot_guidance(host, "p1")
     assert any("p2" in warning and "82 claims" in warning for warning in warnings)
     assert any("harness-led ingestion" in warning for warning in warnings)
@@ -96,6 +104,7 @@ def test_empty_pot_guidance_uses_explicit_repo_not_cwd(monkeypatch) -> None:
         _common, "_current_git_remote", lambda cwd: "github.com/acme/other"
     )
     host = _Host()
+    _common.set_runtime(host)
     warnings = _common.empty_pot_guidance(host, "p1")
     assert not any("p2" in warning for warning in warnings)
 
@@ -108,7 +117,7 @@ def test_source_add_uses_registered_repo_for_sibling_guidance(monkeypatch) -> No
         _common, "_current_git_remote", lambda cwd: "github.com/acme/other"
     )
     _common.set_json(True)
-    _common.set_host(_Host())
+    _common.set_runtime(_Host())
 
     result = CliRunner().invoke(
         pots.source_app,
@@ -125,7 +134,7 @@ def test_pot_create_uses_repo_option_for_sibling_guidance(monkeypatch) -> None:
         _common, "_current_git_remote", lambda cwd: "github.com/acme/other"
     )
     _common.set_json(True)
-    _common.set_host(_Host())
+    _common.set_runtime(_Host())
 
     result = CliRunner().invoke(
         pots.pot_app,
@@ -142,7 +151,7 @@ def test_source_list_emits_empty_pot_guidance_json(monkeypatch) -> None:
         _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     _common.set_json(True)
-    _common.set_host(_Host())
+    _common.set_runtime(_Host())
 
     result = CliRunner().invoke(pots.source_app, ["list"])
 
@@ -158,7 +167,7 @@ def test_pot_create_emits_empty_pot_guidance(monkeypatch) -> None:
         _common, "_current_git_remote", lambda cwd: "github.com/acme/shop"
     )
     _common.set_json(True)
-    _common.set_host(_Host())
+    _common.set_runtime(_Host())
 
     result = CliRunner().invoke(pots.pot_app, ["create", "fresh", "--use"])
 
@@ -179,6 +188,7 @@ def test_empty_pot_guidance_skips_when_graph_status_unavailable(monkeypatch) -> 
 
     host = _Host()
     host.graph = _UnavailableGraph()
+    _common.set_runtime(host)
 
     assert _common.empty_pot_guidance(host, "p1") == ()
     assert _common.empty_pot_warnings(host, "p1") == ()
@@ -190,6 +200,7 @@ def test_empty_pot_guidance_skips_when_host_has_no_graph(monkeypatch) -> None:
     )
     host = _Host()
     host.graph = None
+    _common.set_runtime(host)
 
     assert _common.empty_pot_guidance(host, "p1") == ()
     assert _common.empty_pot_warnings(host, "p1") == ()

@@ -1,0 +1,17 @@
+{
+  "name": "potpie-docs-check",
+  "private": true,
+  "type": "module",
+  "description": "Spoke-owned docs check. Hub fetch-spokes remains the publish gate.",
+  "scripts": {
+    "check": "node docs-check.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.11",
+    "yaml": "^2.8.2"
+  }
+}

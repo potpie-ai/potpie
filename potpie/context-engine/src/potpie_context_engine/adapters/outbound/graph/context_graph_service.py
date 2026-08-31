@@ -13,19 +13,19 @@ from typing import Any
 
 from potpie_context_engine.application.services.envelope_builder import envelope_to_dict
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
-from potpie_context_core.agent_envelope import AgentEnvelope
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.graph_mutations import ProvenanceContext
-from potpie_context_core.graph_query import (
+from potpie_context_engine.core.agent_envelope import AgentEnvelope
+from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.graph_query import (
     ContextGraphQuery,
     ContextGraphResult,
     ContextGraphScope,
 )
-from potpie_context_core.ports.agent_context import ResolveRequest
+from potpie_context_engine.core.ports.agent_context import ResolveRequest
 from potpie_context_engine.domain.ports.context_graph import ContextGraphPort
-from potpie_context_core.ports.graph.backend import GraphBackend
-from potpie_context_core.ports.graph_service import GraphService
-from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.ports.graph.backend import GraphBackend
+from potpie_context_engine.core.ports.graph_service import GraphService
+from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
 
 
 def _scope_to_dict(scope: ContextGraphScope) -> dict[str, Any]:

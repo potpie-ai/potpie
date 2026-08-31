@@ -13,12 +13,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE_ROOT = ROOT / "potpie" / "context-engine"
 
-EXPECTED_ENGINE_DAEMON_IMPORTERS = {
-    "src/potpie_context_engine/application/services/setup_orchestrator.py",
-    "src/potpie_context_engine/bootstrap/host_wiring.py",
-    "src/potpie_context_engine/host/__init__.py",
-    "src/potpie_context_engine/host/shell.py",
-}
+EXPECTED_ENGINE_DAEMON_IMPORTERS: set[str] = set()
 
 LEGACY_DAEMON_NAMESPACES = {
     "potpie_context_engine.adapters.inbound.daemon_http",
@@ -68,7 +63,7 @@ def test_legacy_daemon_namespaces_are_not_imported() -> None:
     assert offenders == set()
 
 
-def test_temporary_engine_to_daemon_imports_are_explicitly_bounded() -> None:
+def test_engine_does_not_import_daemon() -> None:
     importers = {
         path.relative_to(ENGINE_ROOT).as_posix()
         for path in ENGINE_ROOT.rglob("*.py")
@@ -81,7 +76,7 @@ def test_temporary_engine_to_daemon_imports_are_explicitly_bounded() -> None:
 def test_root_daemon_entrypoint_targets_relocated_package() -> None:
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert metadata["project"]["scripts"]["potpie-daemon"] == (
-        "potpie.daemon.main:main"
+        "potpie.daemon.__main__:main"
     )
 
 

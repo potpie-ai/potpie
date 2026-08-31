@@ -19,12 +19,12 @@ from potpie_context_engine.adapters.outbound.resources.local_chunk_store import 
 from potpie_context_engine.adapters.outbound.resources.sqlite_registry import (
     SqliteResourceRegistry,
 )
-from potpie_context_core.ports.resource_index import (
+from potpie_context_engine.core.ports.resource_index import (
     ChunkHit,
     IndexCapabilities,
     ResourceIndexStatus,
 )
-from potpie_context_core.ports.resource_store import Chunk
+from potpie_context_engine.core.ports.resource_store import Chunk
 
 _PROFILE = "sqlite_fts"
 

@@ -17,6 +17,11 @@ repos:
       - id: detect-private-key
       - id: debug-statements
 
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.3
     hooks:
@@ -33,6 +38,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: validate-conformance-history
+        name: validate stable conformance history
+        entry: python3 scripts/validate_conformance_history.py
+        language: system
+        files: ^spec/
+        pass_filenames: false
+
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt --manifest-path potpie/parsing/Cargo.toml -- --check

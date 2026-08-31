@@ -9,7 +9,8 @@ Thank you for your interest in contributing to Potpie! We welcome and appreciate
 3. [Getting Started](#getting-started)
 4. [Development Workflow](#development-workflow)
 5. [Submitting Pull Requests](#submitting-pull-requests)
-6. [Community and Support](#community-and-support)
+6. [Documentation](#documentation)
+7. [Community and Support](#community-and-support)
 
 ---
 
@@ -112,6 +113,9 @@ When you’re ready to submit your changes:
 4. **Respond to Feedback**:
    - Be responsive to any feedback you receive. Once changes are approved, a maintainer will merge your PR.
 
+## Documentation
+
+User-facing docs live under [`docs/`](../docs/). If your change affects a command, setup step, or integration that users see, update the matching page there.
 
 ## Community and Support
 

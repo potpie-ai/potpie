@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import httpx
 
-from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.errors import CapabilityNotImplemented
 
 CONTEXT_API_PREFIX = "/api/v2/context"
 
@@ -365,7 +365,7 @@ class PotpieContextApiClient:
             "http.context_graph_query",
             detail=(
                 "remote ContextGraphQuery is no longer a supported client "
-                "surface; use the local HostShell/GraphService path."
+                "surface; use the context-bound ContextEngine/GraphService path."
             ),
             recommended_next_action="Use context_resolve/context_search or graph read locally.",
         )
@@ -455,7 +455,7 @@ class PotpieContextApiClient:
             "http.context_graph_query_async",
             detail=(
                 "remote ContextGraphQuery is no longer a supported client "
-                "surface; use the local HostShell/GraphService path."
+                "surface; use the context-bound ContextEngine/GraphService path."
             ),
             recommended_next_action="Use context_resolve/context_search or graph read locally.",
         )

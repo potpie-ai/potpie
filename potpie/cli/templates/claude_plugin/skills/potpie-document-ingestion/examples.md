@@ -75,22 +75,8 @@ potpie document ingest ./architecture.png --doc arch-diagram --pot my-pot \
 
 ## Record ingest in graph memory (MCP)
 
-After a successful ingest, call `context_record`:
-
-```json
-{
-  "record_type": "doc_reference",
-  "summary": "Ingested python-handbook into pot python-handbook: 161 sections, parser_tier=docling, provenance_version=2",
-  "scope": { "pot_id": "pot_4ffbbfe2a637", "doc_slug": "python-handbook" },
-  "source_refs": [
-    "file:///path/to/handbook.pdf",
-    "potpie://res/python-handbook/<first-section>/0000"
-  ]
-}
-```
-
-Or via CLI episode (lighter weight):
+After a successful ingest, record a durable doc reference:
 
 ```bash
-potpie ingest "Document python-handbook ingested (Docling, provenance v2) — search with --include docs"
+potpie record --type doc_reference --summary "Ingested python-handbook: 161 sections, parser_tier=docling, provenance_version=2; search with --include docs" --pot python-handbook
 ```

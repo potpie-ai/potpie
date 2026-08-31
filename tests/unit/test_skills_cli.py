@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from potpie.cli.commands import _common, skills
-from potpie_context_engine.domain.ports.services.skill_manager import (
+from potpie.skills.contracts import (
     SkillOperationResult,
 )
 
@@ -59,7 +59,7 @@ class _Host:
 
 def test_skills_remove_all_defaults_to_global_scope() -> None:
     fake_skills = _Skills()
-    _common.set_host(_Host(skills=fake_skills))
+    _common.set_runtime(_Host(skills=fake_skills))
 
     result = CliRunner().invoke(
         skills.skills_app,
@@ -81,7 +81,7 @@ def test_skills_remove_all_defaults_to_global_scope() -> None:
 
 def test_skills_remove_all_json_output() -> None:
     fake_skills = _Skills()
-    _common.set_host(_Host(skills=fake_skills))
+    _common.set_runtime(_Host(skills=fake_skills))
     _common.set_json(True)
 
     result = CliRunner().invoke(

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from potpie_context_core.api import GraphDefinition
-from potpie_context_engine.api import Candidate
+from potpie_context_engine.api import Candidate, GraphDefinition
 
 
 def definition_metadata(definition: GraphDefinition) -> Mapping[str, object]:

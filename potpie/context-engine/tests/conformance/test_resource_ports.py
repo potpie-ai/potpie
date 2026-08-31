@@ -94,7 +94,7 @@ def test_store_import_then_get_roundtrip(store_factory, tmp_path: Path) -> None:
 
 
 def test_store_get_missing_raises_stable_code(store_factory, tmp_path: Path) -> None:
-    from potpie_context_core.ports.resource_store import ResourceStoreError
+    from potpie_context_engine.core.ports.resource_store import ResourceStoreError
 
     store = store_factory()
     _import(store, tmp_path)
@@ -134,7 +134,7 @@ def test_store_iter_chunks_yields_every_chunk(store_factory, tmp_path: Path) -> 
 
 
 def test_store_delete_removes_document(store_factory, tmp_path: Path) -> None:
-    from potpie_context_core.ports.resource_store import ResourceStoreError
+    from potpie_context_engine.core.ports.resource_store import ResourceStoreError
 
     store = store_factory()
     _import(store, tmp_path)
@@ -225,8 +225,8 @@ def test_index_capabilities_and_status(index_and_store, tmp_path: Path) -> None:
 def test_store_put_document_writes_without_a_staging_tree(store_factory, tmp_path: Path) -> None:
     """Agents and RPC callers hold content in memory; the port must accept it
     directly — fabricating an on-disk staging tree is not a contract."""
-    from potpie_context_core.ports.resource_store import ChunkWrite
-    from potpie_context_core.resource_models import ResourceManifest
+    from potpie_context_engine.core.ports.resource_store import ChunkWrite
+    from potpie_context_engine.core.resource_models import ResourceManifest
 
     store = store_factory()
     manifest = ResourceManifest.model_validate(
@@ -258,7 +258,7 @@ def test_store_put_document_writes_without_a_staging_tree(store_factory, tmp_pat
 
 
 def test_store_list_documents_returns_typed_document_info(store_factory, tmp_path: Path) -> None:
-    from potpie_context_core.ports.resource_store import DocumentInfo
+    from potpie_context_engine.core.ports.resource_store import DocumentInfo
 
     store = store_factory()
     _import(store, tmp_path)

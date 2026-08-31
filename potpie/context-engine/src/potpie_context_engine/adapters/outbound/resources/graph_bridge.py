@@ -9,7 +9,7 @@ from potpie_context_engine.domain.resource_models import (
     ResourceManifest,
     chunk_uri,
 )
-from potpie_context_core.semantic_mutations import SemanticMutationRequest
+from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 
 
 def document_entity_key(doc_slug: str) -> str:

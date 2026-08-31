@@ -1,4 +1,9 @@
-# Sandbox Integration Plan
+---
+title: Sandbox integration plan
+description: Plan to make sandbox the single library for repo materialization and command execution.
+---
+
+## Overview
 
 This document plans the next phase of `app/src/sandbox`: turning it into the
 single library that everything else in potpie uses to materialize repos and run
@@ -7,7 +12,7 @@ tools/code_changes_manager` stack.
 
 It is a plan, not a spec. Where there are real tradeoffs the doc names them
 and points at the surfaces involved, but leaves the call to the implementer.
-Read `docs/sandbox-core-setup.md` first — this builds on the model defined
+Read [Sandbox core setup](./sandbox-core-setup.md) first — this builds on the model defined
 there (`RepoCache` / `Workspace` / `Runtime`).
 
 ---

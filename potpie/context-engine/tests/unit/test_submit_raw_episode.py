@@ -9,7 +9,7 @@ from potpie_context_engine.application.use_cases.submit_raw_episode import (
     submit_raw_episode,
 )
 from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer
-from potpie_context_core.ports.pot_resolution import (
+from potpie_context_engine.core.ports.pot_resolution import (
     ResolvedPot,
     ResolvedPotRepo,
 )

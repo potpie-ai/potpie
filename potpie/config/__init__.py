@@ -1,0 +1,1 @@
+"""Potpie configuration capability."""

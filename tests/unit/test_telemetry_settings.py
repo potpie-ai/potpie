@@ -11,8 +11,8 @@ from potpie.cli.telemetry.settings import (
     load_sentry_settings as load_cli_sentry_settings,
     telemetry_environment as cli_telemetry_environment,
 )
-from potpie_context_engine.bootstrap import runtime_settings
-from potpie_context_engine.bootstrap import sentry_settings as shared_sentry_settings
+from potpie.runtime import sentry_settings as shared_sentry_settings
+from potpie.runtime import settings as runtime_settings
 
 _SENTRY_ENV_NAMES = (
     "POTPIE_ENVIRONMENT",

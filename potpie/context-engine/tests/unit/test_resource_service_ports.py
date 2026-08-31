@@ -9,8 +9,8 @@ from potpie_context_engine.testing_resources import (
     InMemoryResourceIndex,
     InMemoryResourceStore,
 )
-from potpie_context_core.ports.resource_store import ChunkWrite
-from potpie_context_core.resource_models import ResourceManifest
+from potpie_context_engine.core.ports.resource_store import ChunkWrite
+from potpie_context_engine.core.resource_models import ResourceManifest
 
 pytestmark = pytest.mark.unit
 

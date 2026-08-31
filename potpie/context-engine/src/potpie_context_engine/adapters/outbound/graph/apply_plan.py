@@ -14,22 +14,25 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
-from potpie_context_core.reconciliation_validation import (
+from potpie_context_engine.core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_core.errors import ReconciliationApplyError
-from potpie_context_core.graph_mutations import (
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
+from potpie_context_engine.core.errors import ReconciliationApplyError
+from potpie_context_engine.core.graph_mutations import (
     ProvenanceContext,
     ProvenanceRef,
 )
-from potpie_context_core.graph_plans import mutation_batch_to_dict
-from potpie_context_core.reconciliation import (
+from potpie_context_engine.core.graph_plans import mutation_batch_to_dict
+from potpie_context_engine.core.reconciliation import (
     MutationBatch,
     MutationResult,
     MutationSummary,
 )
-from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 
 
 def _stable_batch_source_id(plan: MutationBatch) -> str:

@@ -47,7 +47,7 @@ verification, or full evidence/debug payloads.
 - `potpie-source-ingestion`: harness-led ingestion from repo links, docs, PRs,
   issues, tickets, logs, runbooks, and web links.
 - `potpie-document-ingestion`: file-based PDF/MD/TXT/image ingest via
-  `potpie document ingest` (chunk store + graph search; not ledger `potpie ingest`).
+  `potpie document ingest` (chunk store + graph search; not `potpie record` notes).
 
 ## Writing
 
@@ -85,7 +85,7 @@ write the graph updates yourself with `graph propose` / `graph commit --verify`
 or `graph inbox`.
 
 For uploaded files (PDF, Markdown, images), use `potpie-document-ingestion` and
-`potpie document ingest` — not harness graph authoring or `potpie ingest`.
+`potpie document ingest` — not harness graph authoring or episodic records.
 
 ## Nudges
 

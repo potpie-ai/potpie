@@ -8,7 +8,7 @@ description: >-
   when the user uploads a file, asks to ingest/process/chunk/index a document,
   prepare docs for search, import a handbook, extract tables or figures, or
   mentions .pdf .md .txt .html .docx .pptx .xlsx .png .jpg document ingestion.
-  Not for episodic notes (use potpie ingest) or repo-wide source ingestion
+  Not for episodic notes (use `potpie record`) or repo-wide source ingestion
   (use potpie-source-ingestion).
 ---
 
@@ -22,7 +22,7 @@ this with ad-hoc Docling scripts, harness extraction scripts, or parallel DBs.
 ## Non-negotiables
 
 - **Primary path:** `potpie document ingest` (one shot). Not `resource parse` +
-  `resource import`, not custom Python chunkers, not `potpie ingest` for files.
+  `resource import`, not custom Python chunkers, not episodic ledger records for files.
 - **PDF/images:** require `potpie[documents]` (Docling + RapidOCR). Fail loud if
   missing; only use `--allow-degraded` when the user accepts text-only PDF without
   provenance.
@@ -38,7 +38,7 @@ this with ad-hoc Docling scripts, harness extraction scripts, or parallel DBs.
 | User intent | Skill / command |
 |-------------|-----------------|
 | Upload PDF/MD/image for search | **This skill** → `document ingest` |
-| "Remember this note / meeting" | `potpie ingest` (ledger episodes) |
+| "Remember this note / meeting" | `potpie record` (durable learnings) |
 | Ingest entire repo / PR / tickets into graph | `potpie-source-ingestion` |
 | Read existing project context | `potpie-agent-context` / `potpie search` |
 
@@ -52,7 +52,7 @@ Document ingest:
 - [ ] Phase 1 — Resolve files + slugs
 - [ ] Phase 2 — Ingest (document ingest)
 - [ ] Phase 3 — Verify (list, show, search)
-- [ ] Phase 4 — Report (+ optional context_record)
+- [ ] Phase 4 — Report (+ optional `potpie record`)
 ```
 
 ### Phase 0 — Preflight
@@ -167,21 +167,10 @@ Summarize:
 
 Optional durable memory:
 
-**Preferred — MCP `context_record`** (when Potpie MCP is configured):
-
-```json
-{
-  "record_type": "doc_reference",
-  "summary": "Ingested <doc_slug> into pot <pot_id>: <N> sections, parser_tier=<tier>, provenance_version=<v>",
-  "scope": { "pot_id": "<pot_id>", "doc_slug": "<doc_slug>" },
-  "source_refs": ["file://<path>", "potpie://res/<doc>/<section>/0000"]
-}
-```
-
-**Fallback — ledger episode:**
+**`potpie record`** — a durable doc reference other agents can recall:
 
 ```bash
-potpie ingest "Ingested <doc_slug> (Docling, provenance v2) — search with --include docs"
+potpie record --type doc_reference --summary "Ingested <doc_slug>: <N> sections, parser_tier=<tier>, provenance_version=<v>; search with --include docs" --pot <pot_id>
 ```
 
 See [examples.md](examples.md) for batch and Confluence exports.
@@ -222,7 +211,7 @@ Full troubleshooting: [reference.md](reference.md)
 
 - Writing `DocumentConverter` / `export_to_markdown` scripts as the **primary** ingest path
 - Using `potpie resource parse` + `import` as default UX (deprecated; use `document ingest`)
-- Using `potpie ingest` for PDFs (wrong subsystem)
+- Using episodic records for PDFs (wrong subsystem)
 - Assuming daemon-hosted ingest without checking host mode
 - Skipping verification after ingest
 - Inventing chunk URIs without `document list` / manifest section slugs

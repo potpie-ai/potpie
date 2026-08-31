@@ -62,14 +62,14 @@ pip install 'potpie[documents]'
 | Image caption missing | `--vision-provider local` needs Ollama; or `openai` + `OPENAI_API_KEY` |
 | `invalid document slug` | Lowercase alphanumeric + hyphens only (`payments-oncall`, not `Payments_OnCall`) |
 
-## Distinction: `potpie ingest` vs `potpie document ingest`
+## Distinction: `potpie record` vs `potpie document ingest`
 
 | Command | Purpose |
 |---------|---------|
-| `potpie ingest "note"` | Episodic ledger / graph notes (text episodes) |
+| `potpie record --type <type> --summary "..."` | Durable project learnings (decisions, fixes, references) |
 | `potpie document ingest file.pdf` | Structured document payload + FTS + graph sections |
 
-Do not use ledger ingest for PDFs or uploaded files.
+Do not use durable-learning records for PDFs or uploaded files.
 
 ## Deprecated CLI
 

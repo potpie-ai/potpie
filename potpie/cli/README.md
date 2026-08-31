@@ -1,8 +1,8 @@
 # Potpie CLI (`potpie`)
 
-The host-routed command-line entrypoint for the context graph. Every command
-routes `CLI → HostShell → service(s) → ports`; the in-process `HostShell` is the
-single composition root for the product command surface.
+The command-line entrypoint for the context graph. Context operations route
+through the typed engine client; product operations use explicit Potpie-owned
+services from one local runtime composition.
 
 - **Entrypoint:** `potpie/cli/main.py` (registered as the `potpie`
   console script in `pyproject.toml` → `[project.scripts]`).
@@ -42,8 +42,6 @@ The full command catalog, flags, profiles (local vs managed), and the output
 contract live in **[`docs/context-graph/cli-flow.md`](../../docs/context-graph/cli-flow.md)**.
 The end-state architecture (services, ports, composition roots) is in
 **[`docs/context-graph/architecture.md`](../../docs/context-graph/architecture.md)**.
-The in-progress Graph V1.5 handover plan is
-**[`docs/context-graph/graphv1-5-implementation-plan.md`](../../docs/context-graph/graphv1-5-implementation-plan.md)**.
 
 Run `potpie --help` (or `python -m potpie.cli.main --help`) to list
 the live commands.
@@ -64,7 +62,7 @@ editable package. Published-package users should use `uv tool install potpie` or
 ## Agent harness install
 
 `potpie skills install [<id>] --agent claude` materializes the packaged skill
-bundle into an agent harness (`commands/skills.py` → `HostShell.skills`). The
+bundle into an agent harness through the explicit root skill service. The
 default scope is global, so skills are installed once into the selected
 harness's user-level skills directory:
 

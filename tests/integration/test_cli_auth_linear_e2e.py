@@ -49,9 +49,7 @@ pytestmark = [
 ]
 
 _CONTEXT_ENGINE_ROOT = Path(__file__).resolve().parents[2]
-_E2E_KEYRING_BACKEND = (
-    "potpie_context_engine.adapters.outbound.cli_auth.e2e_keyring.E2EKeyring"
-)
+_E2E_KEYRING_BACKEND = "potpie.auth.adapters.e2e_keyring.E2EKeyring"
 
 
 def _truthy(name: str) -> bool:
@@ -86,7 +84,7 @@ def _run_potpie(
     timeout: int = 120,
 ) -> subprocess.CompletedProcess[str]:
     cmd = ["uv", "run", "potpie", *args]
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603 - test invokes the fixed local Potpie CLI.
         cmd,
         cwd=str(_CONTEXT_ENGINE_ROOT),
         env=env,
@@ -103,7 +101,7 @@ def isolated_cli_env(
 ) -> Iterator[dict[str, str]]:
     """Isolated credentials dir + dev-only repo .env merge via runtime settings."""
     _require_e2e_enabled()
-    import potpie_context_engine.bootstrap.env_bootstrap as env_bootstrap
+    import potpie.runtime.env_bootstrap as env_bootstrap
 
     saved_loaded = env_bootstrap._loaded
     saved_environ = os.environ.copy()
@@ -115,7 +113,7 @@ def isolated_cli_env(
     monkeypatch.setenv("POTPIE_E2E_KEYRING_FILE", str(keyring_file))
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", _E2E_KEYRING_BACKEND)
     env_bootstrap._loaded = False
-    from potpie_context_engine.bootstrap.runtime_settings import (
+    from potpie.runtime.settings import (
         ensure_runtime_environment_loaded,
     )
 
@@ -149,7 +147,7 @@ def test_e2e_linear_status_and_verify_with_seeded_tokens(
             "Set CLI_AUTH_E2E_LINEAR_ACCESS_TOKEN (or run interactive login test)"
         )
 
-    from potpie_context_engine.adapters.outbound.cli_auth.credentials_store import (
+    from potpie.auth.adapters.credentials_store import (
         save_integration_tokens,
     )
 

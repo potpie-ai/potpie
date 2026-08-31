@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -73,7 +75,7 @@ jobs:
         working-directory: potpie/parsing
         run: test ! -d tests || uv run --project . pytest tests
 
-  potpie-context-core:
+  potpie-context-package:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -97,9 +99,22 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --all-packages --no-cache
 
-      - name: Run context-core package tests
-        working-directory: potpie/context-core
-        run: uv run --project . pytest tests
+      - name: Build root and Context Engine distributions
+        run: |
+          uv build --out-dir dist/root
+          uv build --project potpie/context-engine --out-dir dist/context-engine
+
+      - name: Verify isolated Context Engine installation
+        run: |
+          uv venv .context-engine-package
+          uv pip install --python .context-engine-package/bin/python dist/context-engine/*.whl
+          .context-engine-package/bin/python scripts/verify_context_package_isolation.py
+
+      - name: Verify isolated root installation
+        run: |
+          uv venv .root-package
+          uv pip install --python .root-package/bin/python dist/context-engine/*.whl dist/root/*.whl
+          .root-package/bin/python scripts/verify_context_package_isolation.py --expect-root
 
   potpie-root:
     runs-on: ubuntu-latest

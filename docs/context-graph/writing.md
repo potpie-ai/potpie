@@ -1,4 +1,9 @@
-# Writing the Context Graph
+---
+title: Writing the Context Graph
+description: "Semantic mutations, propose and commit, inbox, and quality checks."
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 

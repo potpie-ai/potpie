@@ -1,16 +1,16 @@
 """Integration-auth command surface: provider logins + Potpie account auth.
 
-This registrar bolts the credential-acquisition surface onto the host-routed
-root app:
+This registrar bolts the credential-acquisition surface onto the root app:
 
 - ``potpie github|linear|jira|confluence …`` — integration OAuth/API-token flows;
 - ``potpie auth status [--verify]`` — local integration auth status;
 - top-level ``potpie login`` / ``potpie logout`` — Potpie account (Firebase/API key);
 - ``potpie auth …`` — deprecated aliases for the provider commands above.
 
-These flows are inbound-adapter credential acquisition (OAuth/device-flow/local files),
-so they do NOT route through ``HostShell``; they read the shared ``--json`` /
-``--verbose`` state from ``commands/_common`` like every other command.
+These flows are inbound-adapter credential acquisition (OAuth/device-flow/local
+files), so they do not cross the context-engine boundary; they read the shared
+``--json`` / ``--verbose`` state from ``commands/_common`` like every other
+command.
 """
 
 from __future__ import annotations

@@ -1,13 +1,9 @@
-"""Potpie Context Engine — the extensible project-context graph runtime.
+"""Potpie Context Engine — the context-bound project-memory library.
 
 Supported imports live in two places:
 
-- ``potpie_context_engine`` (this module) — the graph definition/runtime
-  surface. The definition and runtime-factory exports
-  (``GraphDefinition``, ``GraphExtension``, ``GraphRuntime``,
-  ``build_graph_runtime``, ``DEFAULT_GRAPH_DEFINITION``) land with the
-  definition-injection and runtime-factory milestones of the
-  modularization plan.
+- ``potpie_context_engine`` (this module) — the context-bound engine factory,
+  lifecycle, outcomes, and non-extensible default graph definition.
 - ``potpie_context_engine.api`` — stable contract DTOs and ports for
   consumers composing their own runtime (``GraphBackend``,
   ``GraphPlanStorePort``, ``GraphInboxStorePort``, ``GraphService``).
@@ -23,17 +19,42 @@ SQLAlchemy, Hatchet, OpenTelemetry, Sentry) at module import time.
 
 from __future__ import annotations
 
-from potpie_context_core.definition import (
+from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
-    GraphExtension,
 )
-from potpie_context_core.runtime import GraphRuntime, build_graph_runtime
+from potpie_context_engine.context_engine import (
+    ContextEngine,
+    ContextIdentity,
+    EngineConfig,
+    EngineDependencies,
+    EngineResource,
+    create_engine,
+)
+from potpie_context_engine.outcomes import (
+    DependencyError,
+    DomainError,
+    EngineError,
+    EngineLifecycleError,
+    Failure,
+    Outcome,
+    Success,
+)
 
 __all__ = [
     "DEFAULT_GRAPH_DEFINITION",
+    "ContextEngine",
+    "ContextIdentity",
+    "DependencyError",
+    "DomainError",
+    "EngineConfig",
+    "EngineDependencies",
+    "EngineError",
+    "EngineLifecycleError",
+    "EngineResource",
+    "Failure",
     "GraphDefinition",
-    "GraphExtension",
-    "GraphRuntime",
-    "build_graph_runtime",
+    "Outcome",
+    "Success",
+    "create_engine",
 ]

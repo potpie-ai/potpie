@@ -11,7 +11,7 @@ from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
 )
 from potpie_context_engine.application.readers._common import ReadRequest
 from potpie_context_engine.application.readers.docs import DocsReader
-from potpie_context_core.ports.claim_query import ClaimRow
+from potpie_context_engine.core.ports.claim_query import ClaimRow
 from potpie_context_engine.domain.ranking import RankingService
 
 pytestmark = pytest.mark.unit

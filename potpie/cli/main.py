@@ -1,10 +1,10 @@
-"""Host-routed ``potpie`` CLI — the architecture's single spine.
+"""Typed-client ``potpie`` CLI — the architecture's product entrypoint.
 
 Assembles the per-group command sub-apps (``commands/``) into one Typer app and
-binds them to a ``HostShell``. Every command routes
-``CLI -> HostShell -> service(s) -> ports``. This is the ``potpie`` console
-entrypoint (see ``[project.scripts]``); the in-process ``HostShell`` is the only
-composition root for the agent surface.
+routes context operations through ``EngineClient`` and Potpie-owned operations
+through finite root services. This is the ``potpie`` console entrypoint (see
+``[project.scripts]``). ``CONTEXT_ENGINE_HOST_MODE`` selects the local or
+canonical daemon ``EngineClient`` without changing command contracts.
 
     Run: ``potpie --help`` (or ``python -m potpie.cli.main --help``)
 """
@@ -15,6 +15,7 @@ import platform
 import sys
 from importlib import metadata
 
+import click
 import typer
 
 from potpie.cli.commands import auth as auth_cmds
@@ -60,7 +61,7 @@ def _version_callback(value: bool) -> None:
 
 
 _ROOT_HELP = """\
-Potpie context graph CLI (host-routed: CLI → HostShell → services → ports).
+Potpie context graph CLI (typed context clients and Potpie-owned services).
 
 First run:
   potpie setup --repo . --agent <harness>
@@ -100,7 +101,7 @@ def build_app() -> typer.Typer:
             configure_cli_logging,
             configure_error_output,
         )
-        from potpie_context_engine.bootstrap.runtime_settings import (
+        from potpie.runtime.settings import (
             ensure_runtime_environment_loaded,
         )
         from potpie_context_engine.bootstrap import sentry_metrics_runtime
@@ -156,11 +157,22 @@ def _click_error_message(exc: Exception) -> str:
     return str(exc)
 
 
+def _is_click_exception(exc: Exception) -> bool:
+    """Recognize public Click errors and Typer's vendored Click errors."""
+    typer_exception = getattr(typer, "TyperException", None)
+    is_typer_exception = isinstance(typer_exception, type) and isinstance(
+        exc, typer_exception
+    )
+    is_legacy_typer_click = exc.__class__.__module__ == "typer._click.exceptions"
+    return (
+        isinstance(exc, click.ClickException)
+        or is_typer_exception
+        or is_legacy_typer_click
+    ) and callable(getattr(exc, "show", None))
+
+
 def run_cli(argv: list[str] | None = None) -> None:
     """Invoke the Typer app with the documented parse-error contract."""
-    import click
-    from typer._click.exceptions import Abort, ClickException
-
     from potpie.cli.ui.output import (
         configure_cli_logging,
         configure_error_output,
@@ -174,9 +186,11 @@ def run_cli(argv: list[str] | None = None) -> None:
 
     try:
         exit_code = app(args, standalone_mode=False)
-    except (Abort, click.Abort):
+    except (typer.Abort, click.Abort):
         raise typer.Exit(code=1) from None
-    except ClickException as exc:
+    except Exception as exc:
+        if not _is_click_exception(exc):
+            raise
         if is_json():
             fail(
                 code="usage_error",

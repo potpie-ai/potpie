@@ -14,29 +14,29 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
     InMemoryGraphBackend,
 )
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
-from potpie_context_core.graph_contract import (
+from potpie_context_engine.core.graph_contract import (
     GRAPH_CONTRACT_VERSION,
     ONTOLOGY_VERSION,
 )
-from potpie_context_core.graph_mutations import ProvenanceContext
-from potpie_context_core.ports.agent_context import RecordRequest
-from potpie_context_core.ports.claim_query import ClaimRow
-from potpie_context_core.ports.graph_service import (
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.ports.agent_context import RecordRequest
+from potpie_context_engine.core.ports.claim_query import ClaimRow
+from potpie_context_engine.core.ports.graph_service import (
     GraphCatalogRequest,
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
-from potpie_context_core.graph_views import UnknownGraphViewError
-from potpie_context_core.reconciliation import (
+from potpie_context_engine.core.graph_views import UnknownGraphViewError
+from potpie_context_engine.core.reconciliation import (
     MutationBatch,
     MutationResult,
     MutationSummary,
 )
-from potpie_context_core.reconciliation_config import (
+from potpie_context_engine.core.reconciliation_config import (
     ReconciliationConfig,
     current_reconciliation_config,
 )
-from potpie_context_core.semantic_mutations import SemanticMutationRequest
+from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 
 pytestmark = pytest.mark.unit
 
@@ -713,7 +713,7 @@ def test_read_missing_required_scope_is_validation_failure(service) -> None:
 def test_describe_routes_through_service(service) -> None:
     # `graph describe` must answer from the service (daemon-side ontology),
     # not a CLI-local contract lookup — same routing as every graph command.
-    from potpie_context_core.ports.graph_service import (
+    from potpie_context_engine.core.ports.graph_service import (
         GraphDescribeRequest,
     )
 

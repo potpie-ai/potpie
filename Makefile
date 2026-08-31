@@ -12,7 +12,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 .DEFAULT_GOAL := help
-.PHONY: help ui-build cli-install cli-update cli-uninstall cli-status
+.PHONY: help ui-build ui-build-ci cli-install cli-update cli-uninstall cli-status
 
 ##@ Help
 
@@ -39,6 +39,10 @@ CLI_PYTHON ?= >=3.12,<3.14
 ui-build: ## Build the graph-explorer SPA (npm install + vite) into frontend/dist
 	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not installed — see https://nodejs.org/"; exit 1; }
 	cd $(UI_FRONTEND_DIR) && npm install && npm run build
+
+ui-build-ci: ## Reproducibly build the graph-explorer SPA from package-lock.json
+	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not installed — see https://nodejs.org/"; exit 1; }
+	cd $(UI_FRONTEND_DIR) && npm ci && npm run build
 
 cli-install: ui-build ## Install potpie + potpie-daemon globally from the root package. Re-run after dep/entrypoint changes.
 	@command -v uv >/dev/null 2>&1 || { echo "❌ uv not installed — see https://docs.astral.sh/uv/"; exit 1; }

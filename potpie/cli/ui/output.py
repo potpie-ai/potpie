@@ -99,7 +99,7 @@ def emit_error(
 ) -> None:
     """Emit a structured error.
 
-    JSON mode mirrors the host-routed error contract (``commands/_common.fail``):
+    JSON mode mirrors the shared CLI error contract (``commands/_common.fail``):
     ``{code, message, detail, recommended_next_action}`` — one schema across the
     whole CLI. Human mode keeps the rich title/message/hint rendering used by the
     interactive auth flows.

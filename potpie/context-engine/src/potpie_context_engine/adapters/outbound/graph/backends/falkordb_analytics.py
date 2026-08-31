@@ -20,7 +20,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytic
     ClaimQueryAnalytics,
 )
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import parse_dt
-from potpie_context_core.ports.graph.analytics import RepairReport
+from potpie_context_engine.core.ports.graph.analytics import RepairReport
 
 logger = logging.getLogger(__name__)
 

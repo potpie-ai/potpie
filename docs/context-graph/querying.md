@@ -1,4 +1,9 @@
-# Querying / Reading the Context Graph
+---
+title: Querying the Context Graph
+description: How agents and humans read ranked evidence from project memory.
+---
+
+## Overview
 
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 
@@ -376,7 +381,7 @@ Full flag lists live in [`cli-flow.md`](./cli-flow.md); this is the read-side or
 |---|---|
 | `graph status` | data-plane status for the active pot |
 | `graph catalog [--subgraph] [--profile full\|read]` | **contract discovery** — returns `GraphCatalogResult`: versions, commands, truth classes, mutation ops (+ empty review/deferred), source authorities, `match_mode`, views, public entity types & predicates. Derived entirely from the ontology + view map + constants ("no docs needed"). `--task` is **accepted but ignored in V1.5**. |
-| `graph describe [subgraph] [--view] [--examples]` | in-process `describe_contract()` (not a host call); returns a subgraph and optionally one view. |
+| `graph describe [subgraph] [--view] [--examples]` | Context-free typed metadata operation with identical daemon and in-process semantics; returns a subgraph and optionally one view without selecting a pot or acquiring an engine lease. |
 | `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--query-threshold` (default `0.70`; lower is looser), `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. `--detail` and `--relations` affect **both** `--json` and default human output. `--format table` renders markdown pipe tables in human mode; timeline views default to `--format events` (bullets). |
 | `timeline recent` | sugar for `graph read --subgraph recent_changes --view timeline`. |
 | `graph search-entities` | **Filter** axis (§7); structured typed lookup for identity resolution. |

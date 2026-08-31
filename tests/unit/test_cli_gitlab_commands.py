@@ -15,17 +15,17 @@ from potpie.cli import main as cli_main
 from potpie.cli.auth import gitlab_auth as gl_auth
 from potpie.cli.auth import gitlab_commands as gl_cmds
 from potpie.cli.auth import gitlab_read as gl_read
-from potpie_context_engine.adapters.outbound.cli_auth import credentials_store as cs
-from potpie_context_engine.adapters.outbound.cli_auth.gitlab_client import (
+from potpie.auth.adapters import credentials_store as cs
+from potpie.auth.adapters.gitlab_client import (
     GitLabAuthErrorKind,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.gitlab_read_client import (
+from potpie.auth.adapters.gitlab_read_client import (
     GitLabReadError,
     fetch_gitlab_issues,
     fetch_gitlab_merge_requests,
     fetch_gitlab_projects,
 )
-from potpie_context_engine.adapters.outbound.cli_auth.http import AuthHttpError
+from potpie.auth.adapters.http import AuthHttpError
 from tests._auth_fakes import FakeAuthHttpClient
 
 pytestmark = pytest.mark.unit
@@ -58,7 +58,7 @@ def _save_gitlab(*, host: str = "gitlab.com", token: str | None = None) -> None:
 def _patch_read_http(
     monkeypatch: pytest.MonkeyPatch, responses: list[httpx.Response]
 ) -> None:
-    from potpie_context_engine.adapters.outbound.cli_auth import (
+    from potpie.auth.adapters import (
         gitlab_read_client as gl_read_client,
     )
 
@@ -350,7 +350,7 @@ def test_fetch_gitlab_issues_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_get_json_error_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    from potpie_context_engine.adapters.outbound.cli_auth import (
+    from potpie.auth.adapters import (
         gitlab_read_client as gl_read_client,
     )
 

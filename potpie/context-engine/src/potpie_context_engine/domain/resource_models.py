@@ -1,13 +1,13 @@
 """Resource contracts moved to potpie-context-core; this shim keeps imports stable.
 
 The models are the wire contract between stores, indexes, the daemon RPC
-surface, and the CLI, so they live in ``potpie_context_core.resource_models``
+surface, and the CLI, so they live in ``potpie_context_engine.core.resource_models``
 next to the ports that speak them. Import from there in new code.
 """
 
 from __future__ import annotations
 
-from potpie_context_core.resource_models import (
+from potpie_context_engine.core.resource_models import (
     CHUNK_HARD_CAP,
     CHUNK_TARGET_DEFAULT,
     LABEL_MAX,

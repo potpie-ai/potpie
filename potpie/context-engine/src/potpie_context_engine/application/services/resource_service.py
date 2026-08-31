@@ -31,9 +31,9 @@ from potpie_context_engine.domain.resource_models import (
     parse_chunk_uri,
     validate_doc_slug,
 )
-from potpie_context_core.ports.graph_service import GraphService
-from potpie_context_core.ports.resource_index import ResourceIndexPort
-from potpie_context_core.ports.resource_store import ResourceStoreError, ResourceStorePort
+from potpie_context_engine.core.ports.graph_service import GraphService
+from potpie_context_engine.core.ports.resource_index import ResourceIndexPort
+from potpie_context_engine.core.ports.resource_store import ResourceStoreError, ResourceStorePort
 
 
 @dataclass(slots=True)
@@ -240,7 +240,7 @@ class ResourceService:
                 ),
                 "created_by": {"surface": "cli", "harness": "resource-remove"},
             }
-            from potpie_context_core.semantic_mutations import SemanticMutationRequest
+            from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 
             mutation = SemanticMutationRequest.parse(payload, approved_by="resource-remove")
             self.graph.mutate(mutation)

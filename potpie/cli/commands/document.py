@@ -1,4 +1,4 @@
-"""Document ingestion commands → ``HostShell.resources``."""
+"""Document ingestion commands → the runtime's engine resources service."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from potpie.cli.commands._common import (
     contract,
     emit,
     fail,
-    get_host,
+    get_root_runtime,
+    get_runtime,
     resolve_pot_id,
 )
-from potpie_context_engine.bootstrap.host_wiring import build_host_shell
 from potpie_context_engine.application.services.resource_service import ResourceService
 
 document_app = typer.Typer(
@@ -23,13 +23,11 @@ document_app = typer.Typer(
 
 
 def _resource_service() -> ResourceService:
-    host = get_host()
-    if getattr(host, "resources", None) is not None:
-        return host.resources
-    in_process = build_host_shell()
-    if in_process.resources is None:
+    runtime = get_runtime()
+    resources = getattr(getattr(runtime, "engine", None), "resources", None)
+    if resources is None:
         fail("document service is not available on this host")
-    return in_process.resources
+    return resources
 
 
 @document_app.command("ingest")
@@ -52,7 +50,7 @@ def document_ingest(
     ),
 ) -> None:
     with contract():
-        pot_id = resolve_pot_id(get_host(), pot)
+        pot_id = resolve_pot_id(get_root_runtime(), pot)
         report = _resource_service().ingest_file(
             pot_id=pot_id,
             doc_slug=doc,
@@ -73,7 +71,7 @@ def document_show(
     with_neighbors: bool = typer.Option(False, "--with-neighbors"),
 ) -> None:
     with contract():
-        pot_id = resolve_pot_id(get_host(), pot)
+        pot_id = resolve_pot_id(get_root_runtime(), pot)
         payload = _resource_service().get_chunk(
             pot_id=pot_id,
             uri=uri,
@@ -88,7 +86,7 @@ def document_list(
     doc: str | None = typer.Option(None, "--doc", help="Filter by document slug"),
 ) -> None:
     with contract():
-        pot_id = resolve_pot_id(get_host(), pot)
+        pot_id = resolve_pot_id(get_root_runtime(), pot)
         docs = _resource_service().list_documents(pot_id=pot_id)
         if doc:
             docs = [row for row in docs if row.get("doc_slug") == doc]
@@ -104,7 +102,7 @@ def document_rm(
     with contract():
         if not confirm:
             fail("pass --confirm to remove document chunks and registry rows")
-        pot_id = resolve_pot_id(get_host(), pot)
+        pot_id = resolve_pot_id(get_root_runtime(), pot)
         result = _resource_service().remove_document(pot_id=pot_id, doc_slug=doc)
         emit(result, human=f"removed document {doc}")
 
