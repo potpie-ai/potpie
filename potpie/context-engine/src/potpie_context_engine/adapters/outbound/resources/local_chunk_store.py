@@ -24,6 +24,12 @@ from potpie_context_engine.domain.resource_models import (
     text_sha256,
     validate_doc_slug,
 )
+from potpie_context_core.ports.resource_store import (
+    RESOURCE_NOT_FOUND,
+    Chunk,
+    ResourceStoreError,
+    ResourceStoreStatus,
+)
 
 
 def file_sha256(path: Path) -> str:
@@ -216,21 +222,7 @@ class LocalResourceStore:
             for chunk_ref in section.chunks:
                 chunk_path = section_dir / f"{chunk_ref.seq:04d}.txt"
                 content = chunk_path.read_text(encoding="utf-8")
-                ocr_path = section_dir / f"{chunk_ref.seq:04d}.ocr.txt"
-                ocr_text = (
-                    ocr_path.read_text(encoding="utf-8").strip()
-                    if ocr_path.is_file()
-                    else ""
-                )
                 chunk_id = f"chk_{uuid.uuid4().hex[:12]}"
-                registry.upsert_chunk_text(
-                    pot_id=pot_id,
-                    doc_slug=doc_slug,
-                    section_slug=section.slug,
-                    seq=chunk_ref.seq,
-                    content=content,
-                    ocr_text=ocr_text,
-                )
                 chunk_rows.append(
                     {
                         "seq": chunk_ref.seq,
@@ -259,7 +251,8 @@ class LocalResourceStore:
                         rows=[row.model_dump() for row in sidecar.provenance],
                     )
 
-        registry.rebuild_fts_for_document(pot_id, doc_slug)
+        # The index plane (chunk_text + FTS) is owned by the ResourceIndexPort
+        # adapter; the service feeds it iter_chunks() after a clean import.
 
         return ResourceImportReport(
             pot_id=pot_id,
@@ -281,7 +274,7 @@ class LocalResourceStore:
             ),
         )
 
-    def get_chunk_text(
+    def get(
         self,
         *,
         pot_id: str,
@@ -289,43 +282,35 @@ class LocalResourceStore:
         section_slug: str,
         seq: int,
         with_neighbors: bool = False,
-    ) -> dict[str, Any]:
+    ) -> Chunk:
         doc_slug = validate_doc_slug(doc_slug)
         chunk_path = self.doc_root(pot_id, doc_slug) / section_slug / f"{seq:04d}.txt"
         if not chunk_path.is_file():
-            raise ValueError(f"chunk not found: {chunk_uri(doc_slug, section_slug, seq)}")
+            raise ResourceStoreError(
+                RESOURCE_NOT_FOUND,
+                f"chunk not found: {chunk_uri(doc_slug, section_slug, seq)}",
+            )
         text = chunk_path.read_text(encoding="utf-8")
         ocr_path = chunk_path.parent / f"{seq:04d}.ocr.txt"
         ocr_text = ocr_path.read_text(encoding="utf-8").strip() if ocr_path.is_file() else ""
-        result: dict[str, Any] = {
-            "uri": chunk_uri(doc_slug, section_slug, seq),
-            "pot_id": pot_id,
-            "doc_slug": doc_slug,
-            "section_slug": section_slug,
-            "seq": seq,
-            "content": text,
-        }
-        if ocr_text:
-            result["ocr_text"] = ocr_text
         provenance = self.registry(pot_id).get_chunk_provenance(
             pot_id=pot_id,
             doc_slug=doc_slug,
             section_slug=section_slug,
             seq=seq,
         )
-        if provenance:
-            result["provenance"] = provenance
-        else:
+        if not provenance:
             prov_path = chunk_path.parent / f"{seq:04d}.prov.json"
             if prov_path.is_file():
                 sidecar = ChunkProvenanceSidecar.model_validate(
                     json.loads(prov_path.read_text(encoding="utf-8"))
                 )
-                result["provenance"] = [row.model_dump() for row in sidecar.provenance]
+                provenance = [row.model_dump() for row in sidecar.provenance]
             else:
-                result["provenance"] = None
+                provenance = None
+        neighbors: list[dict[str, Any]] | None = None
         if with_neighbors:
-            neighbors: list[dict[str, Any]] = []
+            neighbors = []
             for neighbor_seq in (seq - 1, seq + 1):
                 if neighbor_seq < 0:
                     continue
@@ -340,8 +325,92 @@ class LocalResourceStore:
                             "content": neighbor_path.read_text(encoding="utf-8"),
                         }
                     )
-            result["neighbors"] = neighbors
-        return result
+        return Chunk(
+            uri=chunk_uri(doc_slug, section_slug, seq),
+            pot_id=pot_id,
+            doc_slug=doc_slug,
+            section_slug=section_slug,
+            seq=seq,
+            content=text,
+            ocr_text=ocr_text,
+            provenance=provenance,
+            neighbors=neighbors,
+        )
+
+    def get_chunk_text(
+        self,
+        *,
+        pot_id: str,
+        doc_slug: str,
+        section_slug: str,
+        seq: int,
+        with_neighbors: bool = False,
+    ) -> dict[str, Any]:
+        return self.get(
+            pot_id=pot_id,
+            doc_slug=doc_slug,
+            section_slug=section_slug,
+            seq=seq,
+            with_neighbors=with_neighbors,
+        ).to_payload()
+
+    def import_dir(
+        self,
+        *,
+        pot_id: str,
+        doc_slug: str,
+        source_dir: Path,
+        manifest: ResourceManifest | None = None,
+        force: bool = False,
+    ) -> ResourceImportReport:
+        return self.import_manifest(
+            pot_id=pot_id,
+            doc_slug=doc_slug,
+            staging_dir=source_dir,
+            manifest=manifest,
+            force=force,
+        )
+
+    def iter_chunks(self, *, pot_id: str, doc_slug: str) -> list[Chunk]:
+        doc_slug = validate_doc_slug(doc_slug)
+        root = self.doc_root(pot_id, doc_slug)
+        meta_path = root / "meta.json"
+        if not meta_path.is_file():
+            return []
+        manifest = ResourceManifest.model_validate(
+            json.loads(meta_path.read_text(encoding="utf-8"))
+        )
+        chunks: list[Chunk] = []
+        for section in manifest.sections:
+            for chunk_ref in section.chunks:
+                try:
+                    chunks.append(
+                        self.get(
+                            pot_id=pot_id,
+                            doc_slug=doc_slug,
+                            section_slug=section.slug,
+                            seq=chunk_ref.seq,
+                        )
+                    )
+                except ResourceStoreError:
+                    continue
+        return chunks
+
+    def delete(self, *, pot_id: str, doc_slug: str) -> dict[str, Any]:
+        return self.remove_document(pot_id=pot_id, doc_slug=doc_slug)
+
+    def purge_pot(self, pot_id: str) -> bool:
+        root = self.pot_resources_root(pot_id)
+        if root.exists():
+            shutil.rmtree(root, ignore_errors=True)
+        return True
+
+    def status(self, pot_id: str | None = None) -> ResourceStoreStatus:
+        return ResourceStoreStatus(
+            ready=True,
+            backend="local_fs",
+            location=str(self.home / "resources"),
+        )
 
     def list_documents(self, *, pot_id: str) -> list[dict[str, Any]]:
         return self.registry(pot_id).list_documents(pot_id)
