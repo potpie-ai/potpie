@@ -1801,22 +1801,62 @@ def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
     )
 
 
-def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["read", "--view", "debugging.prior_occurrences"],
+        ["read", "debugging.prior_occurrences"],
+        # Redundant but unambiguous: the qualifier agrees with --subgraph.
+        ["read", "--subgraph", "debugging", "--view", "debugging.prior_occurrences"],
+    ],
+)
+def test_graph_read_accepts_the_qualified_view_name_catalog_prints(argv) -> None:
+    """`graph catalog` advertises `<subgraph>.<view>`; that string must work."""
+    _common.set_json(True)
+    graph_service = _Graph(read_result=_timeline_env())
+    _common.set_runtime(_Host(graph_service))
+
+    result = CliRunner().invoke(graph.graph_app, argv)
+
+    assert result.exit_code == 0, result.output
+    assert graph_service.read_called is True
+    assert graph_service.read_request.subgraph == "debugging"
+    assert graph_service.read_request.view == "prior_occurrences"
+
+
+def test_graph_read_rejects_a_qualifier_that_contradicts_subgraph() -> None:
     _common.set_json(True)
     graph_service = _Graph()
     _common.set_runtime(_Host(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
-        ["read", "--subgraph", "debugging", "--view", "debugging.prior_occurrences"],
+        ["read", "--subgraph", "knowledge", "--view", "debugging.prior_occurrences"],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == _common.EXIT_VALIDATION
     assert graph_service.read_called is False
     emitted = json.loads(result.output)
     _assert_graph_envelope(emitted, "graph.read", ok=False)
     assert emitted["error"]["code"] == "validation_error"
-    assert "--subgraph <name> --view <view>" in emitted["error"]["message"]
+    assert "conflicts with" in emitted["error"]["message"]
+
+
+def test_graph_read_names_the_missing_subgraph_for_an_unqualified_view() -> None:
+    _common.set_json(True)
+    graph_service = _Graph()
+    _common.set_runtime(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app, ["read", "--view", "prior_occurrences"]
+    )
+
+    assert result.exit_code == _common.EXIT_VALIDATION
+    assert graph_service.read_called is False
+    emitted = json.loads(result.output)
+    message = emitted["error"]["message"]
+    assert "--subgraph is required for view 'prior_occurrences'" in message
+    assert "graph catalog" in message
 
 
 def _timeline_env() -> GraphReadResult:

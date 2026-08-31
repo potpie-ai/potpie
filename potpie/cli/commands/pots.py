@@ -65,15 +65,39 @@ def pot_list(
                 detail="managed pot listing is not implemented",
                 recommended_next_action="run 'potpie login'; managed routing lands in HU3",
             )
-        pots = get_pot_service().list_pots()
+        host = get_root_runtime()
+        pots = get_pot_service(host).list_pots()
+        routing = repo_effective_pot_info(host)
+        effective = routing.get("effective_pot") or {}
+        effective_id = effective.get("id")
+        repo = routing.get("repo")
         payload: dict[str, object] = {
             "pots": [
-                {"id": p.pot_id, "name": p.name, "active": p.active, "origin": "local"}
+                {
+                    "id": p.pot_id,
+                    "name": p.name,
+                    "active": p.active,
+                    "origin": "local",
+                    # '*' alone hid the split the destructive ops actually use:
+                    # mark the pot this working directory resolves to as well.
+                    "effective_for_current_repo": bool(
+                        effective_id and p.pot_id == effective_id
+                    ),
+                }
                 for p in pots
             ],
+            "current_repo": routing,
         }
-        pot_rows = [f"{'*' if p.active else ' '} {p.name} ({p.pot_id})" for p in pots]
+        pot_rows = [
+            f"{'*' if p.active else ' '}{'>' if p.pot_id == effective_id else ' '} "
+            f"{p.name} ({p.pot_id})"
+            for p in pots
+        ]
         human_lines = ["Local", *(pot_rows or ["(no pots)"])]
+        if effective_id:
+            human_lines.append(
+                f"  (* = active pot; > = pot commands use in {repo or 'this directory'})"
+            )
         if all_:
             payload["managed_pending"] = True
             human_lines.append("  (managed pots require 'potpie login' — HU3)")
@@ -81,7 +105,11 @@ def pot_list(
 
 
 @pot_app.command("info")
-def pot_info() -> None:
+def pot_info(
+    pot: str = typer.Option(
+        None, "--pot", help="Report this pot instead of the resolved one."
+    ),
+) -> None:
     with contract():
         host = get_root_runtime()
         active = get_pot_service(host).active_pot()
@@ -89,16 +117,26 @@ def pot_info() -> None:
         active_payload = (
             {"id": active.pot_id, "name": active.name} if active is not None else None
         )
+        pot_id, resolved_via = resolve_pot_scope(host, pot)
+        selected = pot_scope_info(host, pot_id)
+        repo = current_repo_identity_for_cli()
         lines = [
+            f"pot: {selected['name']} ({pot_id}) "
+            f"{pot_scope_resolution_human(resolved_via, repo=repo)}",
+            f"  sources={selected.get('source_count', 0)} counts={selected.get('counts')}",
             f"active: {active.name} ({active.pot_id})"
             if active is not None
-            else "(no active pot)"
+            else "active: (no active pot)",
         ]
         routing_line = repo_effective_pot_human(routing)
         if routing_line:
             lines.append(routing_line)
         emit(
-            {"active_pot": active_payload, "current_repo": routing},
+            {
+                "pot": {**selected, "resolved_via": resolved_via},
+                "active_pot": active_payload,
+                "current_repo": routing,
+            },
             human="\n".join(lines),
         )
 
@@ -177,8 +215,17 @@ def register_repo_source(
         resolved_location=resolved_location,
         repo_key=repo_key,
     )
+    reused = existing is not None
+    stored_location = resolved_location
     if existing is not None:
+        # Re-registration keeps the original row. Say so, and report the
+        # location actually on record rather than the one just computed —
+        # otherwise `source add` and `source list` disagree about where the
+        # repo lives, and a passed --name looks applied when it was not.
         src = existing
+        stored_location = (
+            str(getattr(existing, "location", "") or "") or resolved_location
+        )
     else:
         src = get_pot_service(host).add_source(
             pot_id=pot_id,
@@ -199,11 +246,14 @@ def register_repo_source(
         "source_id": src.source_id,
         "kind": src.kind,
         "name": src.name,
-        "location": resolved_location,
+        "location": stored_location,
+        "resolved_location": resolved_location,
         "pot_id": pot_id,
         "repo_default_set": repo_default_set,
         "repo_key": repo_key,
         "registration_only": True,
+        "reused_existing": reused,
+        "requested_name_ignored": bool(reused and name and name != src.name),
     }
 
 
@@ -420,18 +470,45 @@ def pot_rename(ref: str, new_name: str) -> None:
 @pot_app.command("reset")
 def pot_reset(
     ref: str = typer.Argument(None),
+    pot: str = typer.Option(
+        None, "--pot", help="Pot id/name to reset (same as the positional ref)."
+    ),
     confirm: bool = typer.Option(False, "--confirm"),
 ) -> None:
+    """Clear a pot's graph state. Sources and the pot itself survive."""
     with contract():
+        if ref and pot and ref != pot:
+            fail(
+                code="validation_error",
+                message=(
+                    f"conflicting pot selection: positional {ref!r} vs --pot {pot!r}"
+                ),
+                next_action="pass the pot once, either positionally or via --pot",
+            )
         host = get_root_runtime()
-        pot_id = resolve_pot_id(host, ref)
-        pot = next(
-            item for item in get_pot_service(host).list_pots() if item.pot_id == pot_id
+        selected = ref or pot
+        pot_id, resolved_via = resolve_pot_scope(host, selected)
+        target = pot_scope_info(host, pot_id)
+        active = get_pot_service(host).active_pot()
+        active_id = getattr(active, "pot_id", None) if active is not None else None
+        repo = current_repo_identity_for_cli()
+        # The most destructive pot operation must state exactly which pot it
+        # found and how, and must not let the active-pot pointer imply a
+        # different target than the one about to be cleared.
+        scope_line = (
+            f"'{target['name']}' ({pot_id}) "
+            f"{pot_scope_resolution_human(resolved_via, repo=repo)}"
+        )
+        mismatch = (
+            f"\nThe active pot is a different pot: {active.name} ({active_id})."
+            if active_id and active_id != pot_id
+            else ""
         )
         confirmation = confirm_destructive_operation(
             confirmed_by_flag=confirm,
-            prompt=f"Reset all graph state for '{pot.name}' ({pot_id})?",
+            prompt=f"Reset all graph state for {scope_line}?{mismatch}",
             rerun_command=f"potpie pot reset {pot_id} --confirm",
+            target=f"{scope_line}{mismatch}".replace("\n", " "),
         )
         result = run_engine_operation(
             get_engine_client(pot_id).reset_context(
@@ -440,8 +517,15 @@ def pot_reset(
             )
         )
         emit(
-            {"id": result.context_id, "reset": result.reset},
-            human=f"reset graph state for '{pot.name}'",
+            {
+                "id": result.context_id,
+                "reset": result.reset,
+                "pot_id": pot_id,
+                "pot_name": target["name"],
+                "resolved_via": resolved_via,
+                "active_pot_id": active_id,
+            },
+            human=f"reset graph state for {scope_line}",
         )
 
 
@@ -530,13 +614,25 @@ def source_add(
         )
         resolved_location = payload.get("location", location)
         repo_default_set = bool(payload.get("repo_default_set"))
+        verb = (
+            "reused existing source"
+            if payload.get("reused_existing")
+            else ("registered source")
+        )
+        notes = ""
+        if payload.get("requested_name_ignored"):
+            notes += (
+                f"kept the existing name '{payload['name']}' "
+                f"(--name is only applied at first registration)\n"
+            )
         payload, human = enrich_with_pot_guidance(
             host,
             pot_id,
             dict(payload),
             human=(
-                f"registered source {payload['kind']}:{payload['name']} "
+                f"{verb} {payload['kind']}:{payload['name']} "
                 f"({payload['source_id']}) at {resolved_location} in pot {pot_id}\n"
+                + notes
                 + (f"set repo default -> {pot_id}\n" if repo_default_set else "")
                 + "no ingestion or scan started"
             ),

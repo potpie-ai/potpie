@@ -1,5 +1,39 @@
 """Domain-level errors; translate to HTTP/CLI at adapter boundaries."""
 
+# Wire field -> the CLI flag that sets it. A required-field error naming only
+# the wire field ("claimed_by is required") points at nothing the user can
+# type, because the flag is `--by`. Boundaries that reject a missing field
+# render the hint through :func:`missing_field_message`.
+CLI_FLAG_FOR_FIELD: dict[str, str] = {
+    "action": "--action",
+    "artifact_id": "--artifact-id",
+    "artifact_type": "--artifact-type",
+    "claimed_by": "--by",
+    "closed_by": "--by",
+    "destination": "--destination",
+    "event_id": "--event-id",
+    "event_type": "--event-type",
+    "item_id": "the ITEM_ID argument",
+    "plan_id": "the PLAN_ID argument",
+    "query": "--query",
+    "record_type": "--type",
+    "rejection_reason": "--reason",
+    "report": "the REPORT argument",
+    "source": "--source",
+    "source_id": "--source-id",
+    "source_system": "--source-system",
+    "subgraph": "--subgraph",
+    "summary": "--summary",
+    "view": "--view",
+}
+
+
+def missing_field_message(field: str) -> str:
+    """``"<field> is required"``, naming the flag that supplies it."""
+
+    flag = CLI_FLAG_FOR_FIELD.get(field)
+    return f"{field} is required (pass {flag})" if flag else f"{field} is required"
+
 
 class ContextEngineError(Exception):
     """Base for all context-engine domain errors."""

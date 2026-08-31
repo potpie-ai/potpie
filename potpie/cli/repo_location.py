@@ -6,18 +6,35 @@ import subprocess
 from pathlib import Path
 
 
+class RepoLocationError(ValueError):
+    """Raised when a repo's durable identity cannot be determined."""
+
+
 def resolve_repo_location(location: str) -> str:
     """Resolve repo-source shorthand to a durable, matchable location.
 
     ``.`` / ``current`` and relative paths registered verbatim are hard to match
     back to a working tree. Prefer the current repo's normalized remote when
     available, otherwise store an absolute path.
+
+    Determinism matters here: the stored location *is* the repo's identity, and
+    silently substituting an absolute path when a ``git`` probe happened to be
+    slow made two identical invocations register two different identities. A
+    repo with no ``origin`` deterministically gets its absolute path; a probe
+    that *fails* raises instead of guessing.
     """
 
     raw = (location or "").strip()
     if raw.lower() in (".", "current"):
         cwd = Path.cwd().resolve()
-        remote = current_git_remote(cwd)
+        remote, failure = git_remote_or_reason(cwd)
+        if failure is not None:
+            raise RepoLocationError(
+                f"could not determine this repo's git remote ({failure}); "
+                "refusing to register it under a different identity — "
+                "pass the location explicitly, e.g. "
+                "'potpie source add repo <owner>/<repo>'"
+            )
         return remote or str(cwd)
     if raw.startswith((".", "~")):
         return str(Path(raw).expanduser().resolve(strict=False))
@@ -49,20 +66,49 @@ def current_repo_identity(cwd: Path) -> str | None:
         return str(cwd)
 
 
-def current_git_remote(cwd: Path) -> str | None:
+# `git remote get-url` exits 2 when the remote is not configured, and 128
+# when the directory is not a work tree. Both are definitive answers ("no
+# origin"), unlike a timeout or a missing git binary.
+_GIT_DEFINITIVE_NO_REMOTE_CODES = frozenset({2, 128})
+
+
+def git_remote_or_reason(cwd: Path) -> tuple[str | None, str | None]:
+    """Return ``(remote, failure_reason)`` for the current work tree.
+
+    ``(remote, None)`` when origin resolved, ``(None, None)`` when the repo
+    definitively has no origin, and ``(None, reason)`` when the probe itself
+    could not answer — the case callers must not paper over.
+    """
     try:
         proc = subprocess.run(
             ["git", "-C", str(cwd), "remote", "get-url", "origin"],
             check=False,
             capture_output=True,
             text=True,
-            timeout=2,
+            timeout=10,
         )
-    except Exception:
-        return None
+    except FileNotFoundError:
+        return None, "git is not installed"
+    except subprocess.TimeoutExpired:
+        return None, "git did not respond within 10s"
+    except OSError as exc:
+        return None, f"git could not be run: {exc}"
+    if proc.returncode in _GIT_DEFINITIVE_NO_REMOTE_CODES:
+        return None, None
     if proc.returncode != 0:
-        return None
-    return normalize_repo_ref(proc.stdout.strip())
+        detail = (proc.stderr or "").strip().splitlines()
+        return None, detail[0] if detail else f"git exited {proc.returncode}"
+    return normalize_repo_ref(proc.stdout.strip()), None
+
+
+def current_git_remote(cwd: Path) -> str | None:
+    """Lenient probe for identity *lookups*, where a miss is recoverable.
+
+    Registration uses :func:`git_remote_or_reason` instead, because there a
+    silent miss writes the wrong identity.
+    """
+    remote, _failure = git_remote_or_reason(cwd)
+    return remote
 
 
 def normalize_repo_ref(value: str) -> str | None:
@@ -91,8 +137,10 @@ def normalize_repo_ref(value: str) -> str | None:
 
 
 __all__ = [
+    "RepoLocationError",
     "current_git_remote",
     "current_repo_identity",
+    "git_remote_or_reason",
     "normalize_repo_ref",
     "repo_identity_key",
     "resolve_repo_location",

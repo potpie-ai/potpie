@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
-from potpie.config.local_paths import default_home
+from potpie.config.local_paths import default_home, harness_home
 from potpie.skills.catalog import (
     RECOMMENDED_SKILL_IDS,
 )
@@ -58,6 +58,9 @@ class FileBackedAgentTarget:
             if self._skill_file(sid).exists():
                 installed[sid] = manifest.get(sid, "unknown")
         return installed
+
+    def unmanaged(self) -> tuple[str, ...]:
+        return _unmanaged_skill_ids(self.skills_root)
 
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path).expanduser() if path else self.skills_root
@@ -117,6 +120,10 @@ class ProjectAgentTarget:
                 installed[sid] = manifest.get(sid, "unknown")
         return installed
 
+    def unmanaged(self) -> tuple[str, ...]:
+        sample = project_skill_path(self.path, agent=self.agent, skill_id="__probe__")
+        return _unmanaged_skill_ids(sample.parent.parent)
+
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path) if path else self.path
         install_agent_bundle(root, agent=self.agent, skill_ids=(skill_id,), force=True)
@@ -139,12 +146,35 @@ class ProjectAgentTarget:
         self._save(data)
 
 
+# Skill directories we own are named `potpie-*`; anything matching that shape
+# but absent from this build's catalog is an orphan the harness still loads.
+_POTPIE_SKILL_PREFIX = "potpie-"
+
+
+def _unmanaged_skill_ids(skills_root: Path | None) -> tuple[str, ...]:
+    if skills_root is None:
+        return ()
+    root = Path(skills_root).expanduser()
+    try:
+        entries = sorted(entry.name for entry in root.iterdir() if entry.is_dir())
+    except OSError:
+        return ()
+    known = set(RECOMMENDED_SKILL_IDS)
+    return tuple(
+        name
+        for name in entries
+        if name.startswith(_POTPIE_SKILL_PREFIX)
+        and name not in known
+        and (root / name / "SKILL.md").exists()
+    )
+
+
 class CursorAgentTarget(FileBackedAgentTarget):
     def __init__(self, *, home: Path | None = None) -> None:
         kwargs = {"home": home} if home is not None else {}
         super().__init__(
             agent="cursor",
-            skills_root=Path.home() / ".cursor" / "skills",
+            skills_root=harness_home() / ".cursor" / "skills",
             **kwargs,
         )
 
@@ -154,8 +184,8 @@ class ClaudeAgentTarget(FileBackedAgentTarget):
         kwargs = {"home": home} if home is not None else {}
         super().__init__(
             agent="claude",
-            skills_root=Path.home() / ".claude" / "skills",
-            instructions_root=Path.home() / ".claude",
+            skills_root=harness_home() / ".claude" / "skills",
+            instructions_root=harness_home() / ".claude",
             instructions_agent="claude",
             **kwargs,
         )
@@ -166,7 +196,7 @@ class OpenCodeAgentTarget(FileBackedAgentTarget):
         kwargs = {"home": home} if home is not None else {}
         super().__init__(
             agent="opencode",
-            skills_root=Path.home() / ".config" / "opencode" / "skills",
+            skills_root=harness_home() / ".config" / "opencode" / "skills",
             **kwargs,
         )
 
@@ -176,8 +206,8 @@ class CodexAgentTarget(FileBackedAgentTarget):
         kwargs = {"home": home} if home is not None else {}
         super().__init__(
             agent="codex",
-            skills_root=Path.home() / ".agents" / "skills",
-            instructions_root=Path.home() / ".codex",
+            skills_root=harness_home() / ".agents" / "skills",
+            instructions_root=harness_home() / ".codex",
             instructions_agent="codex",
             **kwargs,
         )

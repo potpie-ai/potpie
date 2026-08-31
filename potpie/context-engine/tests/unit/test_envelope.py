@@ -203,3 +203,156 @@ class TestAgentContractGenerator:
         emit(buf_a)
         emit(buf_b)
         assert buf_a.getvalue() == buf_b.getvalue()
+
+
+class TestDuplicateEvidenceIsMerged:
+    """Release finding m5: one fact occupied the top four ranked slots.
+
+    Readers dedupe inside their own family, but the builder concatenated
+    families without a cross-family pass, so the same evidence could repeat.
+    """
+
+    def _payload(self, *, subject: str, fact: str, obj: str = "service:api") -> dict:
+        return {
+            "subject_key": subject,
+            "object_key": obj,
+            "predicate": "DECIDED",
+            "fact": fact,
+        }
+
+    def test_the_same_evidence_from_two_families_collapses_to_one(self) -> None:
+        payload = self._payload(subject="decision:retry", fact="Retries cap at 3.")
+        envelope = EnvelopeBuilder().build(
+            pot_id="pot-1",
+            intent="review",
+            results=[
+                IncludeResult(
+                    include="decisions",
+                    response=_resp(
+                        family="decisions",
+                        items=[
+                            _ranked_item(key="claim:a", score=0.58, payload=payload)
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+                IncludeResult(
+                    include="timeline",
+                    response=_resp(
+                        family="timeline",
+                        items=[
+                            _ranked_item(key="claim:b", score=0.51, payload=payload)
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+            ],
+        )
+
+        assert len(envelope.items) == 1
+        # The best-ranked copy survives.
+        assert envelope.items[0].score == 0.58
+        assert envelope.metadata["duplicate_items_dropped"] == 1
+
+    def test_identical_wording_about_different_subjects_both_survive(self) -> None:
+        """Two records worded the same are still two records, not a repeat."""
+        envelope = EnvelopeBuilder().build(
+            pot_id="pot-1",
+            intent="review",
+            results=[
+                IncludeResult(
+                    include="decisions",
+                    response=_resp(
+                        family="decisions",
+                        items=[
+                            _ranked_item(
+                                key="claim:a",
+                                score=0.58,
+                                payload=self._payload(
+                                    subject="decision:one", fact="Same words."
+                                ),
+                            ),
+                            _ranked_item(
+                                key="claim:b",
+                                score=0.57,
+                                payload=self._payload(
+                                    subject="decision:two", fact="Same words."
+                                ),
+                            ),
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+            ],
+        )
+
+        assert len(envelope.items) == 2
+        assert "duplicate_items_dropped" not in envelope.metadata
+
+    def test_repeats_merge_even_when_the_candidate_key_is_missing(self) -> None:
+        """The reported case: candidate_key was None, so nothing keyed on it."""
+        payload = self._payload(subject="activity:deploy", fact="Deployed api v9.")
+        envelope = EnvelopeBuilder().build(
+            pot_id="pot-1",
+            intent="operations",
+            results=[
+                IncludeResult(
+                    include="timeline",
+                    response=_resp(
+                        family="timeline",
+                        items=[
+                            _ranked_item(key="", score=0.582, payload=payload),
+                            _ranked_item(key="", score=0.581, payload=payload),
+                            _ranked_item(key="", score=0.576, payload=payload),
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+            ],
+        )
+
+        assert len(envelope.items) == 1
+        assert envelope.metadata["duplicate_items_dropped"] == 2
+
+    def test_items_without_text_or_key_are_never_merged(self) -> None:
+        envelope = EnvelopeBuilder().build(
+            pot_id="pot-1",
+            intent="review",
+            results=[
+                IncludeResult(
+                    include="decisions",
+                    response=_resp(
+                        family="decisions",
+                        items=[
+                            _ranked_item(key="", score=0.4, payload={"a": 1}),
+                            _ranked_item(key="", score=0.3, payload={"a": 1}),
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+            ],
+        )
+
+        assert len(envelope.items) == 2
+
+    def test_serialised_envelope_carries_the_merge_count(self) -> None:
+        payload = self._payload(subject="decision:x", fact="One fact.")
+        envelope = EnvelopeBuilder().build(
+            pot_id="pot-1",
+            intent="review",
+            results=[
+                IncludeResult(
+                    include="decisions",
+                    response=_resp(
+                        family="decisions",
+                        items=[
+                            _ranked_item(key="claim:a", score=0.6, payload=payload),
+                            _ranked_item(key="claim:a", score=0.5, payload=payload),
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+            ],
+        )
+
+        assert envelope_to_dict(envelope)["metadata"] == {"duplicate_items_dropped": 1}

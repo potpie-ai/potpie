@@ -107,6 +107,11 @@ class EnvelopeBuilder:
             )
 
         items.sort(key=lambda i: i.score, reverse=True)
+        items, duplicates_dropped = _dedupe_items(items)
+
+        envelope_metadata = dict(metadata or {})
+        if duplicates_dropped:
+            envelope_metadata["duplicate_items_dropped"] = duplicates_dropped
 
         return AgentEnvelope(
             pot_id=pot_id,
@@ -116,8 +121,73 @@ class EnvelopeBuilder:
             unsupported_includes=tuple(unsupported_raw),
             overall_confidence=derive_overall_confidence(coverage=coverage),
             as_of=as_of,
-            metadata=dict(metadata or {}),
+            metadata=envelope_metadata,
         )
+
+
+# Payload keys carrying the item's visible text, in the order the surfaces
+# render them. Two items that show the reader the same sentence about the same
+# subject are one piece of evidence, however many claims produced it.
+_TEXT_KEYS: tuple[str, ...] = ("fact", "summary", "description", "text")
+_SUBJECT_KEYS: tuple[str, ...] = ("subject_key", "entity_key", "anchor_entity_key")
+
+
+def _dedupe_items(items: list[EvidenceItem]) -> tuple[list[EvidenceItem], int]:
+    """Drop cross-include repeats, keeping the highest-scoring occurrence.
+
+    Readers dedupe within their own family, but the same claim can surface
+    through several include families; concatenating them put four copies of one
+    sentence in the top four slots. ``items`` must already be score-sorted so
+    the survivor is the best-ranked copy.
+    """
+    seen: set[tuple[str, ...]] = set()
+    kept: list[EvidenceItem] = []
+    dropped = 0
+    for item in items:
+        identity = _dedupe_identity(item)
+        if identity is None:
+            kept.append(item)
+            continue
+        if identity in seen:
+            dropped += 1
+            continue
+        seen.add(identity)
+        kept.append(item)
+    return kept, dropped
+
+
+def _dedupe_identity(item: EvidenceItem) -> tuple[str, ...] | None:
+    """A stable identity for one piece of evidence, or ``None`` to never merge.
+
+    Endpoints and predicate are part of the identity, so two *different*
+    relationships that happen to be worded the same both survive; only rows a
+    reader cannot tell apart are folded together.
+    """
+    payload = item.payload
+    text = ""
+    for text_key in _TEXT_KEYS:
+        value = payload.get(text_key)
+        if isinstance(value, str) and value.strip():
+            text = " ".join(value.split()).casefold()
+            break
+    if text:
+        return (
+            "text",
+            _payload_str(payload, _SUBJECT_KEYS),
+            _payload_str(payload, ("object_key",)),
+            _payload_str(payload, ("predicate",)),
+            text,
+        )
+    key = str(item.candidate_key or "").strip()
+    return ("key", key) if key else None
+
+
+def _payload_str(payload: Mapping[str, object], keys: Sequence[str]) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def envelope_to_dict(envelope: AgentEnvelope) -> dict[str, object]:

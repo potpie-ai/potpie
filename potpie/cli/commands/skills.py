@@ -95,7 +95,10 @@ def skills_install(
                 "metadata": dict(res.metadata),
             },
             human=_format_skill_operation(
-                verb="installed", agent=res.agent, changed=res.changed
+                verb="installed",
+                agent=res.agent,
+                changed=res.changed,
+                target_root=dict(res.metadata).get("target_root"),
             ),
         )
 
@@ -120,7 +123,10 @@ def skills_update(
                 "metadata": dict(res.metadata),
             },
             human=_format_skill_operation(
-                verb="updated", agent=res.agent, changed=res.changed
+                verb="updated",
+                agent=res.agent,
+                changed=res.changed,
+                target_root=dict(res.metadata).get("target_root"),
             ),
         )
 
@@ -166,6 +172,19 @@ def skills_status(
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
         st = get_skill_service().status(agent=agent, path=path, scope=effective_scope)
+        unmanaged = list(getattr(st, "unmanaged", ()) or ())
+        human = (
+            f"agent={st.agent} installed={len(st.installed)} "
+            f"missing={[s.id for s in st.missing]} "
+            f"outdated={[s.id for s in st.outdated]}"
+        )
+        if unmanaged:
+            # These are loaded by the harness but not in this build's catalog,
+            # so this CLI cannot update or service them.
+            human += (
+                f"\n  unmanaged potpie skills this build does not ship: {unmanaged}"
+                "\n  remove them, or upgrade potpie to a build that ships them"
+            )
         emit(
             {
                 "agent": st.agent,
@@ -173,11 +192,9 @@ def skills_status(
                 "installed": [s.id for s in st.installed],
                 "missing": [s.id for s in st.missing],
                 "outdated": [s.id for s in st.outdated],
+                "unmanaged": unmanaged,
             },
-            human=(
-                f"agent={st.agent} installed={len(st.installed)} "
-                f"missing={[s.id for s in st.missing]} outdated={[s.id for s in st.outdated]}"
-            ),
+            human=human,
         )
 
 
@@ -188,12 +205,22 @@ def skills_add(source: str) -> None:
         emit({"detail": res.detail}, human=res.detail or "added")
 
 
-def _format_skill_operation(*, verb: str, agent: str, changed: tuple[str, ...]) -> str:
+def _format_skill_operation(
+    *,
+    verb: str,
+    agent: str,
+    changed: tuple[str, ...],
+    target_root: str | None = None,
+) -> str:
     if changed:
-        return f"{verb} Potpie skills for {agent}: {', '.join(changed)}"
-    if verb == "installed":
-        return f"Potpie skills for {agent} are already installed"
-    return f"Potpie skills for {agent} are already up to date"
+        line = f"{verb} Potpie skills for {agent}: {', '.join(changed)}"
+    elif verb == "installed":
+        line = f"Potpie skills for {agent} are already installed"
+    else:
+        line = f"Potpie skills for {agent} are already up to date"
+    # Skills land in the harness's own tree, not under CONTEXT_ENGINE_HOME.
+    # Name the directory so the write target is never a surprise.
+    return f"{line}\n  into: {target_root}" if target_root else line
 
 
 def _format_skill_remove(*, agent: str, removed: tuple[str, ...]) -> str:

@@ -108,12 +108,19 @@ class LocalPotManagementService:
         target_id = pot_id or (active.pot_id if active else None)
         sources = tuple(self.list_sources(pot_id=target_id)) if target_id else ()
         ready = bool(target_id) and self.backend.mutation.readiness(target_id).ready
+        target = None
+        if target_id:
+            target = next(
+                (pot for pot in self.list_pots() if pot.pot_id == target_id),
+                None,
+            )
         return PotAggregateStatus(
             active_pot=active,
             pot_count=len(self.store.list_pots()),
             sources=sources,
             backend_ready=ready,
             detail=None if target_id else "no active pot — run 'potpie setup'",
+            target_pot=target,
         )
 
 

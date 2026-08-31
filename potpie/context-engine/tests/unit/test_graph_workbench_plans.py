@@ -972,3 +972,29 @@ def _record_in_window(
             continue
         return True
     return False
+
+
+def test_plan_not_found_names_the_pot_it_searched() -> None:
+    """m4: plans are pot-scoped, but the failure never said which pot.
+
+    Proposing in one directory and committing in another resolves to a
+    different pot, and the old message ("… for this pot") gave the caller
+    nothing to compare against.
+    """
+    workbench, _backend, _store = _service()
+    proposal = workbench.propose(_link_payload(), pot_id="pot-alpha")
+
+    result = workbench.commit(proposal.plan_id, pot_id="pot-beta")
+
+    assert result.ok is False
+    assert result.status == "not_found"
+    assert "pot-beta" in result.detail
+    assert "pot-scoped" in result.detail
+    assert "--pot pot-beta" in result.recommended_next_action
+
+
+def test_a_plan_committed_in_its_own_pot_still_succeeds() -> None:
+    workbench, _backend, _store = _service()
+    proposal = workbench.propose(_link_payload(), pot_id="pot-alpha")
+
+    assert workbench.commit(proposal.plan_id, pot_id="pot-alpha").ok is True

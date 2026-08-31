@@ -20,7 +20,10 @@ from potpie_context_engine.core.semantic_mutation_lowering import lower_semantic
 from potpie_context_engine.core.semantic_mutation_validator import (
     validate_semantic_request,
 )
-from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.errors import (
+    CapabilityNotImplemented,
+    missing_field_message,
+)
 from potpie_context_engine.core.graph_contract import (
     GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
 )
@@ -307,8 +310,16 @@ class GraphWorkbenchService:
                 status="not_found",
                 risk=MutationRisk.low.value,
                 pot_id=pot_id,
-                detail=f"mutation plan {plan_id!r} was not found for this pot",
-                recommended_next_action="Run graph propose and commit the returned plan_id.",
+                detail=(
+                    f"mutation plan {plan_id!r} was not found in pot {pot_id}. "
+                    "Plans are pot-scoped, so a plan proposed against a "
+                    "different pot is invisible here."
+                ),
+                recommended_next_action=(
+                    f"re-run with '--pot {pot_id}' from the directory you "
+                    "proposed in, or run graph propose again and commit the "
+                    "plan_id it returns"
+                ),
             )
 
         if record.status == GraphMutationPlanStatus.committed.value:
@@ -3285,7 +3296,7 @@ def _clean_str(value: str | None) -> str | None:
 def _required_clean(value: str | None, field: str) -> str:
     clean = _clean_str(value)
     if not clean:
-        raise ValueError(f"{field} is required")
+        raise ValueError(missing_field_message(field))
     return clean
 
 
@@ -3329,8 +3340,11 @@ def _inbox_missing_result(
         ok=False,
         pot_id=pot_id,
         action=action,
-        detail=f"inbox item {item_id!r} was not found for this pot",
-        recommended_next_action="Run graph inbox list --json and use an item_id from the result.",
+        detail=f"inbox item {item_id!r} was not found in pot {pot_id}",
+        recommended_next_action=(
+            f"run 'graph inbox list --pot {pot_id} --json' and use an item_id "
+            "from the result"
+        ),
     )
 
 

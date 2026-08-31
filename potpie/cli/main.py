@@ -43,16 +43,19 @@ from potpie.cli.commands._common import (
 from potpie.cli.telemetry.context import bind_telemetry_context
 
 
-def _package_version() -> str:
+def _package_version(name: str = "potpie-context-engine") -> str:
     try:
-        return metadata.version("potpie-context-engine")
+        return metadata.version(name)
     except metadata.PackageNotFoundError:
-        return "0.1.0"
+        return "unknown"
 
 
 def _version_callback(value: bool) -> None:
     if not value:
         return
+    # The product's own version comes first: a user who installs `potpie`
+    # must be able to learn which potpie they have from `potpie --version`.
+    typer.echo(f"potpie {_package_version('potpie')}")
     typer.echo(f"potpie-context-engine {_package_version()}")
     typer.echo(f"python {platform.python_version()} ({sys.executable})")
     raise typer.Exit()
