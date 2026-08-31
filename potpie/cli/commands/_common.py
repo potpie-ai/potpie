@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import time
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Final, Iterator, Mapping, NoReturn, Sequence
@@ -271,11 +272,17 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
         try:
             connection = load_daemon_connection(home)
         except DaemonDiscoveryError as exc:
+            # Say *why* discovery failed and point at a recovery that can
+            # actually run: "start" when there is no record at all, "restart"
+            # when a pre-upgrade daemon left one this build cannot read.
             raise EngineClientError(
                 ProtocolTransportError(
-                    code="daemon_discovery_unavailable",
-                    message="canonical daemon discovery is unavailable",
-                    recommended_next_action="run 'potpie daemon restart'",
+                    code=getattr(exc, "code", "daemon_discovery_unavailable"),
+                    message=f"cannot reach the potpie daemon: {exc}",
+                    recommended_next_action=(
+                        getattr(exc, "recommended_next_action", None)
+                        or "run 'potpie daemon restart'"
+                    ),
                     retry_posture="safe",
                 )
             ) from exc
@@ -351,8 +358,14 @@ def confirm_destructive_operation(
     confirmed_by_flag: bool,
     prompt: str,
     rerun_command: str,
+    target: str | None = None,
 ):
-    """Bind explicit confirmation before dispatching a destructive operation."""
+    """Bind explicit confirmation before dispatching a destructive operation.
+
+    ``target`` names what is about to be destroyed. It rides on the
+    non-interactive refusal too, so a scripted or ``--json`` caller sees the
+    resolved target rather than only a rerun command.
+    """
 
     from potpie.runtime import DestructiveConfirmation
 
@@ -361,7 +374,11 @@ def confirm_destructive_operation(
     if is_json() or not sys.stdin.isatty():
         fail(
             code="destructive_confirmation_required",
-            message="Destructive operation requires explicit confirmation.",
+            message=(
+                "Destructive operation requires explicit confirmation."
+                + (f" Target: {target}" if target else "")
+            ),
+            detail={"target": target} if target else None,
             next_action=f"review the target, then rerun '{rerun_command}'",
             exit_code=EXIT_VALIDATION,
         )
@@ -612,9 +629,24 @@ def contract() -> Iterator[None]:
             error_code="unexpected_cli_error",
             error_kind="unexpected",
         )
+        # `--verbose` promises verbose tracebacks on errors; the catch-all used
+        # to swallow the only case where one is genuinely needed. The default
+        # message stays generic on purpose — exception text can carry local
+        # paths — so detail is disclosed only when the user asks for it.
+        verbose = is_verbose()
+        if verbose:
+            traceback.print_exception(exc, file=sys.stderr)
         fail(
             code="unexpected_cli_error",
-            message="Unexpected internal error.",
+            message=(
+                f"Unexpected internal error: {type(exc).__name__}: {exc}"
+                if verbose
+                else "Unexpected internal error."
+            ),
+            detail=(
+                {"traceback": traceback.format_exception(exc)} if verbose else None
+            ),
+            next_action=(None if verbose else "re-run with --verbose for a traceback"),
             exit_code=EXIT_VALIDATION,
         )
     finally:

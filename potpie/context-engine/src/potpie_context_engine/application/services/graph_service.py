@@ -1025,12 +1025,44 @@ def _missing_required_read_scope(
     )
 
 
+# Scope keys that are set by their own flag rather than by ``--scope k:v``.
+_SCOPE_KEY_FLAGS: dict[str, str] = {
+    "query": "--query <text>",
+    "environment": "--environment <name>",
+    "source_ref": "--source-ref <ref>",
+    "repo": "--repo <owner/repo>",
+    # ``scope`` means "any scope entry at all", not a key literally named scope.
+    "scope": "--scope <key>:<value>",
+}
+
+
+def _scope_key_flag(key: str) -> str:
+    return _SCOPE_KEY_FLAGS.get(key, f"--scope {key}:<value>")
+
+
 def _missing_required_scope_message(contract: ViewContract) -> str:
+    """Name what to type, not just which wire keys are missing.
+
+    ``requires one of service, anchor_entity_key`` pointed at names that are
+    not flags anywhere on ``graph read``, leaving a reachable view unreachable
+    without guessing. The concrete form is appended for each key.
+    """
     requirements: list[str] = []
     if contract.required_scope:
-        requirements.append("all of " + ", ".join(contract.required_scope))
+        requirements.append(
+            "all of "
+            + ", ".join(contract.required_scope)
+            + " ("
+            + ", ".join(_scope_key_flag(key) for key in contract.required_scope)
+            + ")"
+        )
     if contract.required_any_scope:
-        requirements.append("one of " + ", ".join(contract.required_any_scope))
+        requirements.append(
+            "one of "
+            + ", ".join(contract.required_any_scope)
+            + " — pass "
+            + " or ".join(_scope_key_flag(key) for key in contract.required_any_scope)
+        )
     required = "; ".join(requirements) or "a required scope"
     return f"graph read view {contract.name!r} requires {required}"
 

@@ -27,7 +27,52 @@ _CONSERVATIVE_UDS_PATH_LIMIT = 90
 
 
 class DaemonDiscoveryError(RuntimeError):
-    """A canonical discovery or credential record is missing or invalid."""
+    """A canonical discovery or credential record is missing or invalid.
+
+    ``code`` classifies *why* so callers can tell an absent record (first run)
+    from one this build cannot read (an upgrade left an older daemon's record
+    behind). The wedge in the 2.0.1 report came from collapsing both into one
+    opaque "unavailable", which routed users to a recovery that could not run.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "daemon_discovery_unavailable",
+        recommended_next_action: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.recommended_next_action = recommended_next_action
+
+    @property
+    def message(self) -> str:
+        return str(self)
+
+    @property
+    def recoverable_by_replacement(self) -> bool:
+        """True when replacing the daemon process is the documented recovery."""
+
+        return self.code in _REPLACEABLE_DISCOVERY_CODES
+
+
+DISCOVERY_ABSENT = "daemon_discovery_absent"
+DISCOVERY_UNREADABLE = "daemon_discovery_unreadable"
+DISCOVERY_SCHEMA_UNSUPPORTED = "daemon_discovery_schema_unsupported"
+DISCOVERY_CREDENTIAL_UNAVAILABLE = "daemon_credential_unavailable"
+
+_REPLACEABLE_DISCOVERY_CODES = frozenset(
+    {
+        DISCOVERY_UNREADABLE,
+        DISCOVERY_SCHEMA_UNSUPPORTED,
+        DISCOVERY_CREDENTIAL_UNAVAILABLE,
+    }
+)
+
+# Keys written by pre-2.0.1 daemons. Recognising them lets the CLI say
+# "written by an older potpie" instead of "invalid".
+_LEGACY_DISCOVERY_KEYS = frozenset({"base_url", "token", "transport"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,19 +210,53 @@ def read_daemon_discovery(home: Path) -> DaemonDiscovery | None:
     path = discovery_path(home)
     if not path.exists():
         return None
-    _require_private_regular_file(path)
+    try:
+        _require_private_regular_file(path)
+    except DaemonDiscoveryError as exc:
+        # A record that vanished between exists() and stat(), or that is not
+        # an owner-only regular file, is still an unreadable record — it must
+        # carry the same classification as a corrupt one.
+        raise DaemonDiscoveryError(
+            str(exc),
+            code=DISCOVERY_UNREADABLE,
+            recommended_next_action="run 'potpie daemon restart'",
+        ) from exc
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DaemonDiscoveryError(
+            "the daemon runtime record could not be read",
+            code=DISCOVERY_UNREADABLE,
+            recommended_next_action="run 'potpie daemon restart'",
+        ) from exc
+    if _looks_like_legacy_document(document):
+        raise DaemonDiscoveryError(
+            "the daemon runtime record was written by an older potpie and this "
+            "build cannot authenticate that daemon",
+            code=DISCOVERY_SCHEMA_UNSUPPORTED,
+            recommended_next_action=(
+                "run 'potpie daemon restart' to replace the pre-upgrade daemon"
+            ),
+        )
+    try:
         return _decode_discovery(document, home=home)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise DaemonDiscoveryError("canonical daemon discovery is invalid") from exc
+    except (TypeError, ValueError) as exc:
+        raise DaemonDiscoveryError(
+            f"the daemon runtime record is not valid for this build: {exc}",
+            code=DISCOVERY_SCHEMA_UNSUPPORTED,
+            recommended_next_action="run 'potpie daemon restart'",
+        ) from exc
 
 
 def load_daemon_connection(home: Path) -> DaemonConnection:
     home = Path(home).resolve()
     discovery = read_daemon_discovery(home)
     if discovery is None:
-        raise DaemonDiscoveryError("daemon discovery is unavailable")
+        raise DaemonDiscoveryError(
+            "no daemon runtime record was found",
+            code=DISCOVERY_ABSENT,
+            recommended_next_action="run 'potpie daemon start'",
+        )
     token = read_daemon_credential(home)
     return DaemonConnection(discovery=discovery, bearer_token=token)
 
@@ -185,14 +264,39 @@ def load_daemon_connection(home: Path) -> DaemonConnection:
 def read_daemon_credential(home: Path) -> str:
     home = Path(home).resolve()
     path = credential_path(home)
-    _require_private_regular_file(path)
+    try:
+        _require_private_regular_file(path)
+    except DaemonDiscoveryError as exc:
+        raise DaemonDiscoveryError(
+            str(exc),
+            code=DISCOVERY_CREDENTIAL_UNAVAILABLE,
+            recommended_next_action="run 'potpie daemon restart'",
+        ) from exc
     try:
         token = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
-        raise DaemonDiscoveryError("daemon credential is unavailable") from exc
+        raise DaemonDiscoveryError(
+            "the daemon credential could not be read",
+            code=DISCOVERY_CREDENTIAL_UNAVAILABLE,
+            recommended_next_action="run 'potpie daemon restart'",
+        ) from exc
     if len(token.encode()) < 32:
-        raise DaemonDiscoveryError("daemon credential is invalid")
+        raise DaemonDiscoveryError(
+            "the daemon credential is not valid for this build",
+            code=DISCOVERY_CREDENTIAL_UNAVAILABLE,
+            recommended_next_action="run 'potpie daemon restart'",
+        )
     return token
+
+
+def _looks_like_legacy_document(document: object) -> bool:
+    """Recognise a pre-2.0.1 discovery record by its distinctive flat shape."""
+
+    if not isinstance(document, Mapping):
+        return False
+    if "schema_version" in document:
+        return False
+    return bool(_LEGACY_DISCOVERY_KEYS & set(document))
 
 
 def remove_daemon_runtime_records(
@@ -401,8 +505,12 @@ def canonical_discovery(
 __all__ = [
     "AUTHENTICATION_SCHEME",
     "CREDENTIAL_FILENAME",
+    "DISCOVERY_ABSENT",
+    "DISCOVERY_CREDENTIAL_UNAVAILABLE",
     "DISCOVERY_FILENAME",
+    "DISCOVERY_SCHEMA_UNSUPPORTED",
     "DISCOVERY_SCHEMA_VERSION",
+    "DISCOVERY_UNREADABLE",
     "PID_FILENAME",
     "DaemonConnection",
     "DaemonDiscovery",

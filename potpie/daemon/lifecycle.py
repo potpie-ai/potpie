@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import signal
 import socket
+import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,7 @@ from uuid import uuid4
 from potpie.daemon.discovery import (
     DaemonDiscoveryError,
     canonical_discovery,
+    discovery_path,
     load_daemon_connection,
     read_daemon_pid,
     read_daemon_discovery,
@@ -41,9 +45,16 @@ from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan, StepR
 class DaemonStartError(Exception):
     """Raised when the canonical local daemon cannot become ready."""
 
-    def __init__(self, message: str, *, log_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_path: Path | None = None,
+        recommended_next_action: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.log_path = log_path
+        self.recommended_next_action = recommended_next_action
 
 
 class DaemonStopError(Exception):
@@ -52,6 +63,88 @@ class DaemonStopError(Exception):
     def __init__(self, error: ResourceLifecycleError) -> None:
         super().__init__(error.message)
         self.error = error
+
+
+# How our daemon is actually launched: `<python> -m potpie.daemon` (see
+# ``_launch_spec``) or one of the console scripts. This gates a SIGTERM, and
+# the recorded PID alone is not proof of identity (PIDs are reused), so the
+# command line is matched as *tokens* — a substring test would also accept an
+# unrelated process such as `potpie.daemon_helper` or a grep for that string.
+_DAEMON_MODULE = "potpie.daemon"
+_DAEMON_EXECUTABLES = frozenset({"potpie-daemon", "potpied"})
+
+
+def _process_command_line(pid: int) -> str | None:
+    """Best-effort command line for ``pid``; ``None`` when it cannot be read."""
+
+    try:
+        proc = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return (proc.stdout or "").strip() or None
+
+
+def _is_daemon_command(command: str) -> bool:
+    """True only for the exact argv shapes this module launches."""
+
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        argv = command.split()
+    if not argv:
+        return False
+    if os.path.basename(argv[0]) in _DAEMON_EXECUTABLES:
+        return True
+    # `<python> [-X …] -m potpie.daemon [args]`: the module must be the token
+    # immediately after `-m`, not merely present somewhere in the line.
+    for index, token in enumerate(argv[:-1]):
+        if token == "-m":
+            return argv[index + 1] == _DAEMON_MODULE
+    return False
+
+
+def _looks_like_potpie_daemon(pid: int) -> bool:
+    command = _process_command_line(pid)
+    return bool(command) and _is_daemon_command(command)
+
+
+def _terminate_pid(pid: int, *, grace_s: float = 10.0) -> str:
+    """SIGTERM then SIGKILL the recorded process; return how it ended."""
+
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return "already_stopped"
+    except OSError as exc:
+        raise DaemonStopError(
+            ResourceLifecycleError(
+                code="daemon_signal_failed",
+                message=f"could not signal the recorded daemon process: {exc}",
+                details={"pid": pid},
+                recommended_next_action=f"stop it manually with 'kill {pid}'",
+                retry_posture="safe",
+            )
+        ) from exc
+    deadline = time.monotonic() + grace_s
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            return "terminated"
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return "terminated"
+    except OSError:
+        return "terminated"
+    return "killed"
 
 
 def _pid_alive(pid: int) -> bool:
@@ -158,11 +251,30 @@ class Daemon:
             else "detached daemon not running",
         }
         if not up or pid is None:
+            result["identity"] = "absent"
             return result
         connection = self._connection_for_pid(pid)
         if connection is None:
-            result["detail"] = "detached daemon running without canonical discovery"
+            reason = self._discovery_failure()
+            result["identity"] = "unauthenticated"
+            result["detail"] = (
+                "detached daemon running, but its runtime record cannot be "
+                f"authenticated by this build ({reason.message})"
+                if reason is not None
+                else (
+                    "detached daemon running, but its runtime record does not "
+                    "match the recorded process"
+                )
+            )
+            result["identity_reason"] = (
+                reason.code if reason is not None else "daemon_discovery_mismatch"
+            )
+            result["recovery"] = (
+                "run 'potpie daemon restart' to replace it "
+                f"(manual escape hatch: kill {pid})"
+            )
             return result
+        result["identity"] = "ok"
         discovery, observer = connection
         existing_controller = self._controller
         controller = self._controller_for_existing(pid, observer=observer)
@@ -230,6 +342,17 @@ class Daemon:
     def start(self, *, backend: str | None = None) -> dict[str, Any]:
         pid = self._recorded_pid()
         if pid is not None and _pid_alive(pid):
+            # "already running" is unhelpful when that daemon is the reason
+            # every command is failing; name the operation that replaces it.
+            if self._connection_for_pid(pid) is None:
+                raise DaemonStartError(
+                    f"daemon already running (pid={pid}), but its runtime record "
+                    "cannot be authenticated by this build",
+                    recommended_next_action=(
+                        "run 'potpie daemon restart' to replace it "
+                        f"(manual escape hatch: kill {pid})"
+                    ),
+                )
             raise DaemonStartError(f"daemon already running (pid={pid})")
         if not self._cleanup_runtime_records():
             raise DaemonStartError("another daemon boot owns the runtime scope")
@@ -269,7 +392,7 @@ class Daemon:
             "url": status.get("url", ""),
         }
 
-    def stop(self) -> dict[str, Any]:
+    def stop(self, *, force: bool = False) -> dict[str, Any]:
         controller = self._controller
         pid = controller.pid if controller is not None else self._recorded_pid()
         if pid is None:
@@ -286,21 +409,9 @@ class Daemon:
         if controller is None:
             connection = self._connection_for_pid(pid)
             if connection is None:
-                raise DaemonStopError(
-                    ResourceLifecycleError(
-                        code="daemon_attached_identity_unavailable",
-                        message=(
-                            "refusing to signal the recorded process because its "
-                            "daemon identity could not be authenticated"
-                        ),
-                        details={"pid": pid},
-                        recommended_next_action=(
-                            "inspect daemon status and runtime records before "
-                            "manual recovery"
-                        ),
-                        retry_posture="safe",
-                    )
-                )
+                if force:
+                    return self._force_stop(pid)
+                raise DaemonStopError(self._unauthenticated_identity_error(pid))
             discovery, observer = connection
             expected_instance_id = discovery.instance_id
             controller = self._controller_for_existing(pid, observer=observer)
@@ -324,12 +435,36 @@ class Daemon:
     def restart(self) -> dict[str, Any]:
         current_status = self.status()
         current_backend = current_status.get("backend")
-        if current_status.get("up") and not isinstance(current_backend, str):
-            raise RuntimeError(
-                "cannot determine running daemon backend; "
-                "refusing restart to avoid backend drift"
+        unauthenticated = current_status.get("identity") == "unauthenticated"
+        if (
+            current_status.get("up")
+            and not isinstance(current_backend, str)
+            and not unauthenticated
+        ):
+            raise DaemonStopError(
+                ResourceLifecycleError(
+                    code="daemon_backend_undetermined",
+                    message=(
+                        "cannot determine the running daemon's backend; refusing "
+                        "restart to avoid backend drift"
+                    ),
+                    details={"pid": current_status.get("pid")},
+                    recommended_next_action=(
+                        "check 'potpie daemon status', then stop it with "
+                        "'potpie daemon stop' and start it again"
+                    ),
+                    retry_posture="safe",
+                )
             )
-        self.stop()
+        # An unauthenticatable record (a pre-upgrade daemon, a truncated or
+        # legacy discovery file) has no readable backend and no typed shutdown
+        # path. Restart is exactly the operation that replaces that process, so
+        # take it down by signal rather than dead-ending the only recovery the
+        # CLI recommends.
+        if unauthenticated:
+            self.stop(force=True)
+        else:
+            self.stop()
         info = self.start(
             backend=current_backend if isinstance(current_backend, str) else None
         )
@@ -367,6 +502,81 @@ class Daemon:
         )
         self._controller = controller
         return controller
+
+    def _discovery_failure(self) -> DaemonDiscoveryError | None:
+        """Return why the runtime record is unusable, if that is the reason."""
+
+        try:
+            read_daemon_discovery(self.home)
+        except DaemonDiscoveryError as exc:
+            return exc
+        return None
+
+    def _unauthenticated_identity_error(self, pid: int) -> ResourceLifecycleError:
+        reason = self._discovery_failure()
+        detail = f" ({reason.message})" if reason is not None else ""
+        return ResourceLifecycleError(
+            code="daemon_attached_identity_unavailable",
+            message=(
+                "refusing to signal the recorded process because its daemon "
+                f"identity could not be authenticated{detail}"
+            ),
+            details={
+                "pid": pid,
+                "discovery_record": str(discovery_path(self.home)),
+                **({"reason": reason.code} if reason is not None else {}),
+            },
+            recommended_next_action=(
+                "run 'potpie daemon restart' to replace it, or "
+                f"'potpie daemon stop --force'; manual escape hatch: kill {pid}"
+            ),
+            retry_posture="safe",
+        )
+
+    def _force_stop(self, pid: int) -> dict[str, Any]:
+        """Replace a daemon whose runtime record cannot be authenticated.
+
+        The recorded PID alone is not proof of identity, so verify the process
+        still looks like one of our daemons before signalling it.
+        """
+
+        if not _looks_like_potpie_daemon(pid):
+            raise DaemonStopError(
+                ResourceLifecycleError(
+                    code="daemon_recorded_pid_not_a_daemon",
+                    message=(
+                        f"the recorded process (pid={pid}) is not a potpie daemon; "
+                        "refusing to signal it"
+                    ),
+                    details={
+                        "pid": pid,
+                        "discovery_record": str(discovery_path(self.home)),
+                        "command": _process_command_line(pid),
+                    },
+                    recommended_next_action=(
+                        "the runtime record is stale — remove "
+                        f"{self.home} runtime files or stop pid {pid} yourself"
+                    ),
+                    retry_posture="safe",
+                )
+            )
+        mode = _terminate_pid(pid)
+        # Report success only if we actually owned the cleanup. ``expected_pid``
+        # is deliberately not passed: it is verified against the discovery
+        # record, which in this path is precisely the thing we cannot read.
+        if not self._cleanup_runtime_records():
+            self._controller = None
+            self._raise_cleanup_ownership_conflict(expected_pid=pid)
+        self._controller = None
+        return {
+            "detail": {
+                "already_stopped": "daemon not running",
+                "terminated": "daemon stopped (forced: identity unauthenticated)",
+                "killed": "daemon killed (forced after timeout)",
+            }[mode],
+            "forced": True,
+            "pid": pid,
+        }
 
     def _connection_for_pid(self, pid: int):
         try:

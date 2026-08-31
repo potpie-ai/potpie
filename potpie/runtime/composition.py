@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -84,11 +86,37 @@ class LocalRuntimeComposition:
 
 
 def default_backend_profile() -> str:
+    """Env override, else the backend persisted at setup, else the OSS default.
+
+    Reading ``config.json`` matters: without it a plain ``potpie daemon start``
+    silently ran on ``falkordb_lite`` for a user whose setup had configured a
+    different backend, and their graph looked empty rather than unreachable.
+    """
     for env_name in ("CONTEXT_ENGINE_BACKEND", "GRAPH_DB_BACKEND"):
         profile = (os.getenv(env_name) or "").strip().lower()
         if profile:
             return profile
-    return "falkordb_lite"
+    return _configured_backend_profile() or "falkordb_lite"
+
+
+def _configured_backend_profile() -> str | None:
+    """Backend recorded in ``<home>/config.json`` by ``potpie setup``."""
+    from potpie.config.local_paths import default_home
+
+    try:
+        with open(default_home() / "config.json", encoding="utf-8") as handle:
+            document = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    # A hand-edited config can hold any JSON root; only an object has a
+    # backend, and anything else must fall through to the default rather
+    # than raising out of composition.
+    if not isinstance(document, Mapping):
+        return None
+    configured = document.get("backend")
+    if not isinstance(configured, str):
+        return None
+    return configured.strip().lower() or None
 
 
 def default_host_mode() -> str:

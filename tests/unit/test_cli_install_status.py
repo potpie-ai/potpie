@@ -211,7 +211,7 @@ def test_sibling_editable_dependency_does_not_mark_tool_editable(
     assert status["editable"] is False
     assert status["hint"] is not None
     assert "make cli-install" not in status["hint"]
-    assert "uv tool install potpie" in status["hint"]
+    assert "uv tool install --force potpie" in status["hint"]
 
 
 def test_published_uv_tool_hint_omits_make_cli_install(
@@ -243,18 +243,21 @@ def test_published_uv_tool_hint_omits_make_cli_install(
     assert status["install_method"] == "uv_tool"
     assert status["editable"] is False
     assert status["hint"] is not None
-    assert "uv tool install potpie" in status["hint"]
+    assert "uv tool install --force potpie" in status["hint"]
     assert "make cli-install" not in status["hint"]
+    # A published install must not be told to run repo-only `make` targets.
+    assert "make" not in " ".join(status["diagnostic_commands"])
     human = cis.cli_install_human(status)
     assert "via=uv_tool" in human
-    assert "published: uv tool install potpie" in human
-    assert "local reinstall: make cli-install" not in human
+    assert "uv tool install --force potpie" in human
+    assert "make cli-install" not in human
 
 
-def test_cli_install_human_when_missing_from_path() -> None:
+def test_cli_install_human_when_entry_point_unresolvable() -> None:
     human = cis.cli_install_human({"on_path": False})
-    assert "NOT on PATH" in human
-    assert "make cli-install" in human
+    assert "not resolvable" in human
+    # No `make` target: the wheel ships no Makefile.
+    assert "make" not in human
 
 
 def test_python_from_script_ignores_binary_executable(tmp_path) -> None:
@@ -304,9 +307,8 @@ def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
     result = runner.invoke(cli_main.app, ["doctor"])
     assert result.exit_code == 0, result.stdout
     human = " ".join(result.stdout.split())
-    assert "cli: potpie-context-engine 0.1.0" in human
+    assert "potpie-context-engine 0.1.0" in human
     assert "via=uv_tool" in human
-    assert "make cli-status" in human
     assert "make cli-install" in human
 
 
@@ -314,6 +316,7 @@ def test_cli_install_human_uv_tool_includes_reinstall_hint() -> None:
     human = cis.cli_install_human(
         {
             "on_path": True,
+            "running_on_path": True,
             "package_name": "potpie-context-engine",
             "package_version": "0.1.0",
             "primary_path": "/Users/me/.local/bin/potpie",
@@ -323,7 +326,6 @@ def test_cli_install_human_uv_tool_includes_reinstall_hint() -> None:
         }
     )
     assert "via=uv_tool" in human
-    assert "make cli-status" in human
     assert "make cli-install" in human
 
 
@@ -338,4 +340,54 @@ def test_collect_cli_install_status_omits_hint_without_uv_tool(
 
     assert status["uv_tool_installed"] is False
     assert status["hint"] is None
-    assert "make cli-install" in status["diagnostic_commands"]
+    # Not an editable repo install, so no `make` targets are advertised.
+    assert "make cli-install" not in status["diagnostic_commands"]
+    assert "potpie doctor" in status["diagnostic_commands"]
+
+
+def test_running_cli_wins_over_a_different_potpie_first_on_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """doctor must describe the binary that is running, not $PATH's first hit."""
+    other = tmp_path / "other" / "potpie"
+    other.parent.mkdir(parents=True)
+    other.write_text("#!/bin/sh\nexec echo other\n", encoding="utf-8")
+    other.chmod(0o755)
+    running = tmp_path / "running" / "potpie"
+    running.parent.mkdir(parents=True)
+    running.write_text("#!/usr/bin/python3\n", encoding="utf-8")
+    running.chmod(0o755)
+
+    monkeypatch.setattr(cis.sys, "argv", [str(running), "doctor"])
+    monkeypatch.setattr(cis, "_potpie_paths_on_path", lambda: [str(other)])
+    monkeypatch.setattr(cis.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(cis, "_installed_package_version", lambda: "2.0.1")
+
+    status = cis.collect_cli_install_status()
+
+    assert status["primary_path"] == str(running)
+    assert status["running_path"] == str(running)
+    assert status["other_paths"] == [str(other)]
+    # The running process answers for its own interpreter.
+    assert status["python_version"] == status["runtime_python_version"]
+    assert status["running_on_path"] is False
+    assert "not the one on $PATH" in cis.cli_install_human(status)
+
+
+def test_shell_wrapper_shebang_is_not_reported_as_a_python_version(
+    tmp_path: Path,
+) -> None:
+    """A `#!/bin/sh` entry point must not yield bash's version as python."""
+    script = tmp_path / "potpie"
+    script.write_text("#!/bin/sh\nexec echo hi\n", encoding="utf-8")
+    script.chmod(0o755)
+
+    assert cis._python_from_script(str(script)) is None
+    assert cis._python_version("/bin/sh") is None
+
+
+def test_python_version_reads_env_shebangs(tmp_path: Path) -> None:
+    script = tmp_path / "potpie"
+    script.write_text("#!/usr/bin/env python3.12\n", encoding="utf-8")
+    interpreter = cis._python_from_script(str(script))
+    assert interpreter == "python3.12"

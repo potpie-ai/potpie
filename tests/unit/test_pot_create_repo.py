@@ -87,7 +87,9 @@ class _Host:
 
 def test_pot_create_repo_dot_uses_source_add_normalization(monkeypatch) -> None:
     monkeypatch.setattr(
-        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
+        repo_location,
+        "git_remote_or_reason",
+        lambda cwd: ("github.com/acme/shop", None),
     )
     fake_pots = _Pots()
     _common.set_runtime(_Host(pots=fake_pots))
@@ -120,7 +122,9 @@ def test_pot_create_repo_dot_uses_source_add_normalization(monkeypatch) -> None:
 
 def test_pot_create_repo_is_idempotent_when_pot_and_source_exist(monkeypatch) -> None:
     monkeypatch.setattr(
-        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
+        repo_location,
+        "git_remote_or_reason",
+        lambda cwd: ("github.com/acme/shop", None),
     )
     fake_pots = _Pots()
     _common.set_runtime(_Host(pots=fake_pots))
@@ -148,7 +152,9 @@ def test_pot_create_repo_is_idempotent_when_pot_and_source_exist(monkeypatch) ->
 
 def test_register_repo_source_skips_duplicate_matching_identity(monkeypatch) -> None:
     monkeypatch.setattr(
-        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
+        repo_location,
+        "git_remote_or_reason",
+        lambda cwd: ("github.com/acme/shop", None),
     )
     fake_pots = _Pots()
     host = _Host(pots=fake_pots)
@@ -167,7 +173,9 @@ def test_register_repo_source_skips_duplicate_matching_identity(monkeypatch) -> 
 
 def test_pot_create_repo_no_default_skips_repo_default(monkeypatch) -> None:
     monkeypatch.setattr(
-        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
+        repo_location,
+        "git_remote_or_reason",
+        lambda cwd: ("github.com/acme/shop", None),
     )
     fake_pots = _Pots()
     _common.set_runtime(_Host(pots=fake_pots))
