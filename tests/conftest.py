@@ -85,6 +85,22 @@ def _isolated_home(
 
 
 @pytest.fixture(autouse=True)
+def _isolated_config_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Never let a test read or write the *developer's* ``~/.config/potpie``.
+
+    The telemetry identity file lives there, and since it now also remembers
+    which once-only activation events went out, a suite that touched the live
+    file would both mutate it and — on the second run — see the marker already
+    set and stop emitting the events the tests assert. Per test, not per
+    session: each test starts from a fresh install identity. A sibling of
+    ``tmp_path`` rather than inside it, since tests list their own ``tmp_path``.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg-config")))
+
+
+@pytest.fixture(autouse=True)
 def _isolated_harness_home(
     monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
@@ -148,6 +164,37 @@ def _reset_cli_state():
         logging.getLogger(__name__).debug(
             "failed to reset CLI test state", exc_info=True
         )
+
+
+@pytest.fixture(autouse=True)
+def _reset_sentry_runtime_state():
+    """Leave no Sentry client behind a test.
+
+    The metrics runtime is process-global and configures once. A test that runs
+    the CLI in-process with a DSN set therefore left a *real* client — with a
+    real transport pointed at ``example.invalid`` — for every later test in the
+    session, and those tests' command metrics queued in it. The CLI no longer
+    flushes inside each command, so the queue used to drain at interpreter exit,
+    after pytest had closed the capture streams: six "Logging error" blocks of
+    urllib3 retry noise per run. Close any real client without waiting and
+    reset the runtime so each test starts unconfigured.
+    """
+    yield
+    import types
+
+    from potpie.cli.telemetry import sentry_runtime as cli_sentry_runtime
+    from potpie_context_engine.bootstrap import sentry_metrics_runtime
+
+    sdk = sentry_metrics_runtime._sentry_sdk
+    if isinstance(sdk, types.ModuleType) and hasattr(sdk, "get_client"):
+        try:
+            sdk.get_client().close(timeout=0)
+        except Exception:  # noqa: BLE001 - teardown must not fail the test
+            pass
+    sentry_metrics_runtime._configured = False
+    sentry_metrics_runtime._enabled = False
+    sentry_metrics_runtime._sentry_sdk = None
+    cli_sentry_runtime.disable_cli_sentry()
 
 
 @pytest.fixture(autouse=True)

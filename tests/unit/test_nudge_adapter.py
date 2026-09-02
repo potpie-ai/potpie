@@ -316,6 +316,32 @@ def test_hook_event_name_authoritative_then_fallback() -> None:
     assert adapter.hook_event_name_of({}, "test_failed") == "PostToolUse"
 
 
+# --- subprocess environment --------------------------------------------------
+
+
+def test_hook_env_opts_the_child_out_of_telemetry() -> None:
+    """A hook fire is not a user command; its child must not pay for telemetry.
+
+    Measured: with the repo ``.env`` loaded, every Edit/Stop fire spent ~1.9 s
+    on Sentry/PostHog setup and flush for 2–10 ms of daemon work.
+    """
+    mod = _load_adapter()
+
+    env = mod.hook_env({"PATH": "/usr/bin", "CLAUDE_SESSION_ID": "s1"})
+
+    assert env["POTPIE_TELEMETRY_DISABLED"] == "1"
+    assert env["PATH"] == "/usr/bin"
+    assert env["CLAUDE_SESSION_ID"] == "s1"
+
+
+def test_hook_env_respects_an_operator_override() -> None:
+    mod = _load_adapter()
+
+    env = mod.hook_env({"POTPIE_TELEMETRY_DISABLED": "0"})
+
+    assert env["POTPIE_TELEMETRY_DISABLED"] == "0"
+
+
 # --- end-to-end subprocess fail-safety --------------------------------------
 
 

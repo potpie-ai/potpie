@@ -92,17 +92,21 @@ def test_configure_cli_sentry_delegates_to_neutral_runtime(monkeypatch) -> None:
         release="potpie-cli@test",
         dist="cli-dist",
     )
-    configured: list[SentrySettings] = []
+    configured: list[tuple[SentrySettings, bool]] = []
 
-    def configure(settings_arg: SentrySettings) -> None:
-        configured.append(settings_arg)
+    def configure(
+        settings_arg: SentrySettings, *, short_lived_process: bool = False
+    ) -> None:
+        configured.append((settings_arg, short_lived_process))
 
     monkeypatch.setattr(sentry_runtime, "configure_metrics", configure)
     monkeypatch.setattr(sentry_runtime, "metrics_configured", lambda: True)
 
     configure_cli_sentry(settings)
 
-    assert configured == [settings]
+    # The CLI is the short-lived profile: no auto-enabling integration probes,
+    # bounded exit flush. The daemon and workers keep the SDK defaults.
+    assert configured == [(settings, True)]
     assert sentry_runtime._configured is True
 
 

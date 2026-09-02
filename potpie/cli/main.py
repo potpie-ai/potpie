@@ -215,7 +215,9 @@ def build_app() -> typer.Typer:
         bind_telemetry_context(ctx, json_output=is_json())
         sentry_settings = settings.load_sentry_settings()
         sentry_runtime.configure_cli_sentry(sentry_settings)
-        sentry_metrics_runtime.configure_metrics(sentry_settings)
+        sentry_metrics_runtime.configure_metrics(
+            sentry_settings, short_lived_process=True
+        )
         configure_product_analytics(settings.load_product_analytics_settings())
 
         # Last, so the refusal it can raise lands on a configured error channel

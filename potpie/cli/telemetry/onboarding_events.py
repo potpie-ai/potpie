@@ -8,7 +8,11 @@ from typing import Iterator
 
 from potpie_context_core.lifecycle import FAILED, SetupPlan, StepResult
 
+from .identity_store import mark_activation_sent
 from .product_analytics import AnalyticsValue, capture_event
+
+FIRST_USE_EVENT = "cli_onboarding_first_use_command_succeeded"
+FIRST_CONTEXT_RESULT_EVENT = "cli_onboarding_first_context_result_returned"
 
 _CURRENT_SETUP_RUN_ID: ContextVar[str | None] = ContextVar(
     "potpie_cli_setup_run_id",
@@ -205,22 +209,23 @@ def capture_github_auth_event(
 def capture_activation_succeeded(
     *, command: str, result_kind: str, item_count: int | None = None
 ) -> None:
+    """The two "first" events, each sent once per install.
+
+    Both are activation milestones, so a second send carries no information —
+    and each one used to cost a full analytics POST on every ``status``,
+    ``search`` and ``resolve`` for the life of the install. The marker is
+    checked per event: an install whose first success was not a context result
+    still gets ``first_context_result_returned`` when one arrives later.
+    """
     props: dict[str, AnalyticsValue] = {"command": command, "result_kind": result_kind}
     if item_count is not None:
         props["item_count"] = item_count
-    _capture(
-        "cli_onboarding_first_use_command_succeeded",
-        "activation",
-        "direct_command",
-        props,
-    )
-    if result_kind == "context_result":
-        _capture(
-            "cli_onboarding_first_context_result_returned",
-            "activation",
-            "direct_command",
-            props,
-        )
+    if mark_activation_sent(FIRST_USE_EVENT):
+        _capture(FIRST_USE_EVENT, "activation", "direct_command", props)
+    if result_kind == "context_result" and mark_activation_sent(
+        FIRST_CONTEXT_RESULT_EVENT
+    ):
+        _capture(FIRST_CONTEXT_RESULT_EVENT, "activation", "direct_command", props)
 
 
 def sanitized_failure_kind(exc: BaseException) -> str:

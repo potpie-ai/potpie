@@ -27,23 +27,65 @@ class TelemetryIdentity:
     last_seen_at: str
 
 
+_ACTIVATION_SENT_KEY = "activation_sent"
+
+
 def identity_path() -> Path:
     return config_dir() / "telemetry" / "identity.json"
 
 
 def load_or_create_identity() -> TelemetryIdentity:
     path = identity_path()
-    now = datetime.now(timezone.utc).isoformat()
     payload = _read_payload(path)
+    identity = _identity_from_payload(payload)
+    _write_payload(path, identity, activation_sent=_activation_sent(payload))
+    return identity
+
+
+def activation_sent(name: str) -> bool:
+    """Whether the once-only activation event ``name`` already went out."""
+    return name in _activation_sent(_read_payload(identity_path()))
+
+
+def mark_activation_sent(name: str) -> bool:
+    """Record that once-only event ``name`` is being sent; ``True`` the first time.
+
+    The "first use" onboarding events were firing on every ``status``,
+    ``search`` and ``resolve`` because nothing remembered that they had already
+    gone out — one or two extra analytics POSTs on every command, forever. The
+    marker lives next to the install id because it describes the same install.
+    A write that fails leaves the event unmarked, so the worst case is the old
+    behaviour (sent again next time), never a lost first-use signal.
+    """
+    path = identity_path()
+    payload = _read_payload(path)
+    sent = _activation_sent(payload)
+    if name in sent:
+        return False
+    _write_payload(path, _identity_from_payload(payload), activation_sent=(*sent, name))
+    return True
+
+
+def _identity_from_payload(payload: dict[str, object]) -> TelemetryIdentity:
+    now = datetime.now(timezone.utc).isoformat()
     install_id = _string_value(payload, "anonymous_install_id")
     created_at = _string_value(payload, "created_at")
-    identity = TelemetryIdentity(
+    return TelemetryIdentity(
         anonymous_install_id=install_id or f"install_{uuid.uuid4().hex}",
         created_at=created_at or now,
         last_seen_at=now,
     )
-    _write_payload(path, identity)
-    return identity
+
+
+def _activation_sent(payload: dict[str, object]) -> tuple[str, ...]:
+    value = payload.get(_ACTIVATION_SENT_KEY)
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            item.strip() for item in value if isinstance(item, str) and item.strip()
+        )
+    )
 
 
 def _read_payload(path: Path) -> dict[str, object]:
@@ -65,7 +107,12 @@ def _string_value(payload: dict[str, object], key: str) -> str | None:
     return stripped or None
 
 
-def _write_payload(path: Path, identity: TelemetryIdentity) -> None:
+def _write_payload(
+    path: Path,
+    identity: TelemetryIdentity,
+    *,
+    activation_sent: tuple[str, ...] = (),
+) -> None:
     tmp: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,6 +132,7 @@ def _write_payload(path: Path, identity: TelemetryIdentity) -> None:
                         "anonymous_install_id": identity.anonymous_install_id,
                         "created_at": identity.created_at,
                         "last_seen_at": identity.last_seen_at,
+                        _ACTIVATION_SENT_KEY: list(activation_sent),
                     },
                     indent=2,
                     sort_keys=True,

@@ -30,7 +30,7 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Mapping
 
 # Nudge events understood by `potpie graph nudge` (must match potpie_context_engine.domain.nudge.NudgeEvent).
 NUDGE_EVENTS = frozenset(
@@ -394,6 +394,20 @@ def build_argv(
     return argv
 
 
+def hook_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Environment for the ``potpie`` subprocess a hook fire launches.
+
+    A hook fire is not a user command: nobody is waiting on its telemetry, but
+    the editor is waiting on the hook. With telemetry on, each fire paid ~1.9 s
+    for 2–10 ms of daemon work, all of it Sentry/PostHog setup and flush in the
+    child process. Opt the child out unless the operator set the flag
+    themselves.
+    """
+    env = dict(os.environ if base is None else base)
+    env.setdefault("POTPIE_TELEMETRY_DISABLED", "1")
+    return env
+
+
 def render_output(claude_event: str, nudge_result: Any) -> tuple[str, int]:
     """Shape a nudge result into harness hook output. Always exit 0 (never block)."""
     if not isinstance(nudge_result, dict):
@@ -491,9 +505,14 @@ def main(argv: list[str] | None = None) -> int:
             timeout=float(os.environ.get("POTPIE_HOOK_TIMEOUT", "15")),
             check=False,
             stdin=subprocess.DEVNULL,
+            env=hook_env(),
             # The hook runs under an editor with no console of its own; without
             # this every nudge flashes a cmd window on Windows.
-            **({"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)} if os.name == "nt" else {}),
+            **(
+                {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+                if os.name == "nt"
+                else {}
+            ),
         )
         if proc.returncode != 0:
             _debug(f"nudge exited {proc.returncode}: {proc.stderr.strip()[:200]}")

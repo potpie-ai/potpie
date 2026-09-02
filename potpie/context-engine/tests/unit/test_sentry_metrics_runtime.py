@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib import import_module
 import sys
+import types
 from types import ModuleType
 from typing import Optional, Union
 
@@ -174,6 +175,53 @@ def test_configure_metrics_initializes_sentry_once_with_privacy_options(
     assert fake.metrics.count_calls == [
         _MetricCall("ce.init", 1, None, {"result": "ok"}),
     ]
+
+
+def test_short_lived_profile_skips_auto_integrations_and_bounds_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI profile: no integration probes, bounded flush, quiet atexit.
+
+    The SDK default probes forty auto-enabling integrations by importing
+    their packages — ~1,250 modules and close to half a second per command on a
+    full install — and its atexit callback prints a "Sentry is attempting to
+    send N pending events" notice to stderr whenever an envelope is pending,
+    which for a CLI that flushes only at exit is every command.
+    """
+    fake = _FakeSentry()
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+    atexit_calls: list[object] = []
+
+    class _AtexitIntegration:
+        def __init__(self, callback: object = None) -> None:
+            atexit_calls.append(callback)
+
+    fake_atexit = types.ModuleType("sentry_sdk.integrations.atexit")
+    fake_atexit.AtexitIntegration = _AtexitIntegration  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sentry_sdk.integrations.atexit", fake_atexit)
+
+    configure_metrics(_settings(enabled=True), short_lived_process=True)
+
+    call = fake.init_calls[0]
+    assert call["auto_enabling_integrations"] is False
+    assert call["shutdown_timeout"] == 1.0
+    assert "default_integrations" not in call
+    assert len(call["integrations"]) == 1
+    assert len(atexit_calls) == 1
+    # The quiet callback swallows the SDK's arguments without printing.
+    assert atexit_calls[0](3, 1.0) is None
+
+
+def test_service_profile_keeps_sdk_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeSentry()
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+
+    configure_metrics(_settings(enabled=True))
+
+    call = fake.init_calls[0]
+    assert "auto_enabling_integrations" not in call
+    assert "shutdown_timeout" not in call
+    assert "integrations" not in call
 
 
 def test_count_distribution_and_gauge_emit_metrics(

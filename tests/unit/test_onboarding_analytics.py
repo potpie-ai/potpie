@@ -17,6 +17,7 @@ from potpie.cli.telemetry.onboarding_events import (
     onboarding_entrypoint,
     repo_location_kind,
 )
+from potpie.cli.telemetry.identity_store import load_or_create_identity
 from potpie.cli.telemetry.product_analytics import (
     ProductAnalyticsEvent,
     set_product_analytics_sink,
@@ -164,6 +165,32 @@ def test_activation_event_marks_context_results(fake_sink: _FakeSink) -> None:
     ]
     assert fake_sink.events[0].properties["command"] == "resolve"
     assert fake_sink.events[1].properties["item_count"] == 3
+
+
+def test_activation_events_are_sent_once_per_install(fake_sink: _FakeSink) -> None:
+    """A second success sends nothing; the marker survives the identity rewrite.
+
+    Every ``status``/``search``/``resolve`` used to re-send both "first" events
+    — one or two analytics POSTs per command for the life of the install.
+    """
+    capture_activation_succeeded(command="status", result_kind="host_status")
+    # What every CLI invocation does at startup; must not drop the marker.
+    load_or_create_identity()
+    capture_activation_succeeded(command="status", result_kind="host_status")
+    capture_activation_succeeded(
+        command="search", result_kind="context_result", item_count=2
+    )
+    capture_activation_succeeded(
+        command="resolve", result_kind="context_result", item_count=5
+    )
+
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_first_use_command_succeeded",
+        "cli_onboarding_first_context_result_returned",
+    ]
+    # The context-result milestone is its own marker: it still fires the first
+    # time a context result arrives, even after first use was a plain status.
+    assert fake_sink.events[1].properties["command"] == "search"
 
 
 def test_direct_linear_login_records_integration_funnel(

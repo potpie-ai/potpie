@@ -82,3 +82,49 @@ def test_identity_store_repairs_partial_json(monkeypatch, tmp_path) -> None:
     assert identity.anonymous_install_id == "install_existing"
     assert payload["created_at"]
     assert payload["last_seen_at"]
+
+
+def test_identity_store_marks_activation_once(monkeypatch, tmp_path) -> None:
+    from potpie.cli.telemetry.identity_store import (
+        activation_sent,
+        mark_activation_sent,
+    )
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    assert activation_sent("first_use") is False
+    assert mark_activation_sent("first_use") is True
+    assert mark_activation_sent("first_use") is False
+    assert activation_sent("first_use") is True
+    # Independent markers: the second milestone is untouched by the first.
+    assert activation_sent("first_context") is False
+
+
+def test_identity_rewrite_preserves_activation_markers(monkeypatch, tmp_path) -> None:
+    from potpie.cli.telemetry.identity_store import (
+        activation_sent,
+        mark_activation_sent,
+    )
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    first = load_or_create_identity()
+    assert mark_activation_sent("first_use") is True
+
+    second = load_or_create_identity()
+
+    assert second.anonymous_install_id == first.anonymous_install_id
+    assert activation_sent("first_use") is True
+
+
+def test_activation_marker_survives_unwritable_identity_dir(
+    monkeypatch, tmp_path
+) -> None:
+    """A marker that cannot be persisted reports "send it" rather than crash."""
+    from potpie.cli.telemetry.identity_store import mark_activation_sent
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(blocker))
+
+    assert mark_activation_sent("first_use") is True
+    assert mark_activation_sent("first_use") is True

@@ -289,7 +289,6 @@ def _record_graph_command_telemetry(
             unit="millisecond",
             attributes=metric_attrs,
         )
-        sentry_metrics_runtime.flush(timeout=2.0)
     except Exception:  # noqa: BLE001 - Sentry metrics must never fail a command
         pass
 
@@ -3599,7 +3598,9 @@ def _current_repo_remote_for_scope() -> str | None:
 
     from potpie_context_engine.domain.git_probe import run_git_probe
 
-    raw = run_git_probe(["config", "--get", "remote.origin.url"], cwd=Path.cwd(), timeout=1)
+    raw = run_git_probe(
+        ["config", "--get", "remote.origin.url"], cwd=Path.cwd(), timeout=1
+    )
     if not raw:
         return None
     return _normalize_repo_for_scope(raw)

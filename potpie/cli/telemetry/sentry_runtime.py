@@ -31,7 +31,7 @@ def configure_cli_sentry(settings: SentrySettings) -> None:
         return
     if _configured:
         return
-    configure_metrics(settings)
+    configure_metrics(settings, short_lived_process=True)
     _configured = metrics_configured()
 
 

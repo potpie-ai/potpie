@@ -512,13 +512,12 @@ def _record_cli_contract_metrics(
             unit="millisecond",
             attributes=attributes,
         )
+    # No flush here. The SDK's atexit hook sends everything this process
+    # recorded in one envelope; a synchronous ``flush(2.0)`` on every command
+    # waited on a full HTTPS round trip to Sentry inside the command's own
+    # wall time, and graph commands paid it twice.
     except Exception:  # noqa: BLE001
         pass
-    finally:
-        try:
-            sentry_metrics_runtime.flush(timeout=2.0)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def _cli_metric_attributes(
