@@ -549,3 +549,172 @@ def test_a_record_the_store_refuses_is_not_reported_as_a_write(
     assert payload["status"] == "rejected"
     assert payload["mutations_applied"] == 0
     assert "refused" in (payload["detail"] or "")
+
+
+# --- the human rendering carries the triple, the cut, and the source --------
+
+
+def _claim(
+    include: str,
+    *,
+    key: str,
+    subject: str = "service:inventory-svc",
+    predicate: str = "USES",
+    obj: str = "database:postgres",
+    fact: str | None = "inventory keeps its counts in postgres",
+    score: float = 0.82,
+) -> EvidenceItem:
+    return EvidenceItem(
+        include=include,
+        candidate_key=key,
+        score=score,
+        payload={
+            "claim_key": key,
+            "subject_key": subject,
+            "predicate": predicate,
+            "object_key": obj,
+            "truth": "agent_claim",
+            "fact": fact,
+        },
+        coverage_status="complete",
+    )
+
+
+def _envelope(*items: EvidenceItem, **metadata) -> AgentEnvelope:
+    return AgentEnvelope(
+        pot_id="p",
+        intent="debugging",
+        items=tuple(items),
+        coverage=(),
+        overall_confidence="medium",
+        metadata=metadata,
+    )
+
+
+def test_resolve_leaves_the_intent_unset_by_default():
+    """Unset, so the service infers it from the task and says so. The old
+    ``feature`` default hid ``prior_bugs`` and ``timeline`` from every
+    why-question that did not also spell out ``--intent``."""
+    host = _host()
+
+    result = CliRunner().invoke(_app(), ["resolve", "why is stock stale"])
+
+    assert result.exit_code == 0, result.stdout
+    assert host.agent_context.requests[0].intent is None
+
+
+def test_resolve_help_says_the_intent_is_inferred():
+    result = CliRunner().invoke(_app(), ["resolve", "--help"])
+
+    assert "inferred" in " ".join(result.stdout.split())
+
+
+def test_a_claim_line_carries_the_triple_and_the_fact():
+    text = query._envelope_human(_envelope(_claim("infra_topology", key="claim:1")))
+
+    assert text.splitlines()[1] == (
+        "  • [infra_topology] service:inventory-svc USES database:postgres"
+        " · inventory keeps its counts in postgres (agent_claim, 0.82)"
+    )
+
+
+def test_every_claim_line_states_a_triple():
+    """The acceptance line for B1: no claim row without subject, predicate
+    and object. The old rendering printed the evidence note alone, which for
+    most claims is a file path or a quoted README line."""
+    env = _envelope(
+        *[_claim("prior_bugs", key=f"claim:{n}", fact=None) for n in range(4)]
+    )
+
+    lines = query._envelope_human(env).splitlines()[1:]
+    assert len(lines) == 4
+    for line in lines:
+        assert " USES " in line, line
+
+
+def test_a_claim_two_families_found_is_one_line_naming_both():
+    env = _envelope(
+        _claim("prior_bugs", key="claim:same"),
+        _claim("timeline", key="claim:same", score=0.4),
+    )
+
+    lines = query._envelope_human(env).splitlines()
+    assert lines[0].endswith("items=2")
+    assert len(lines) == 2
+    assert lines[1].startswith("  • [prior_bugs, timeline] ")
+
+
+def test_the_cut_is_announced_not_silent():
+    env = _envelope(*[_claim("decisions", key=f"claim:{n}") for n in range(13)])
+
+    lines = query._envelope_human(env).splitlines()
+    assert len([line for line in lines if line.startswith("  • ")]) == 10
+    assert lines[-1] == "  … +3 more (use --json)"
+
+
+def test_a_resource_row_names_the_chunk_to_fetch():
+    item = EvidenceItem(
+        include="resources",
+        candidate_key="potpie://res/acme-runbook/rollback/0000",
+        score=0.52,
+        payload={
+            "kind": "resource_chunk",
+            "resource_id": "potpie://res/acme-runbook/rollback/0000",
+            "doc": "acme-runbook",
+            "section": "rollback",
+            "label": "Preconditions and freeze checklist",
+        },
+        coverage_status="complete",
+    )
+
+    text = query._envelope_human(_envelope(item))
+
+    assert text.splitlines()[1] == (
+        "  • [resources] acme-runbook/rollback potpie://res/acme-runbook/rollback/0000"
+        " — Preconditions and freeze checklist (0.52)"
+    )
+
+
+def test_an_inferred_intent_is_marked_in_the_header():
+    text = query._envelope_human(_envelope(intent_source="inferred"))
+
+    assert text.startswith("pot=p intent=debugging (inferred) ")
+
+
+def test_an_explicit_intent_is_not_marked():
+    text = query._envelope_human(_envelope(intent_source="explicit"))
+
+    assert text.startswith("pot=p intent=debugging confidence=")
+
+
+def test_a_repeated_bug_summary_prints_once():
+    """The record bridge joins summary and symptom with " • "; a bug recorded
+    with the same text for both printed it twice."""
+    env = _envelope(
+        _claim(
+            "prior_bugs",
+            key="claim:bug",
+            subject="bug_pattern:stale-stock",
+            predicate="REPRODUCES",
+            obj="service:inventory-svc",
+            fact="stock counts stale after deploy • stock counts stale after deploy",
+        )
+    )
+
+    line = query._envelope_human(env).splitlines()[1]
+    assert line.count("stock counts stale after deploy") == 1
+
+
+def test_an_item_with_nothing_to_say_is_neither_printed_nor_counted():
+    empty = EvidenceItem(
+        include="owners",
+        candidate_key="",
+        score=0.1,
+        payload={},
+        coverage_status="sparse",
+    )
+    env = _envelope(_claim("decisions", key="claim:1"), empty)
+
+    lines = query._envelope_human(env).splitlines()
+    assert len(lines) == 2
+    assert "more" not in lines[-1]

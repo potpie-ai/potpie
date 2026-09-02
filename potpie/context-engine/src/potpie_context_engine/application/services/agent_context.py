@@ -11,10 +11,14 @@ while it migrates onto the host shell; it must not define new agent tools.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from potpie_context_core.agent_context_port import normalize_context_intent
+from potpie_context_core.agent_context_port import (
+    infer_context_intent,
+    normalize_context_intent,
+)
 from potpie_context_core.agent_envelope import AgentEnvelope
 from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.ports.agent_context import (
@@ -52,7 +56,7 @@ class AgentContextService:
     the quality command asks."""
 
     def resolve(self, request: ResolveRequest) -> AgentEnvelope:
-        return self.graph.resolve(request)
+        return self.graph.resolve(_with_effective_intent(request))
 
     def search(self, request: SearchRequest) -> AgentEnvelope:
         return self.graph.search(request)
@@ -85,6 +89,33 @@ class AgentContextService:
             ),
             metadata={"intent": normalize_context_intent(request.intent)},
         )
+
+
+def _with_effective_intent(request: ResolveRequest) -> ResolveRequest:
+    """Fill an unset intent from the task text, and say which happened.
+
+    The CLI used to default ``--intent`` to ``feature`` on the caller's behalf,
+    so the service never saw "no intent" and never had the chance to read the
+    task. Now an unset intent reaches here and is inferred from the task
+    (``infer_context_intent``); an explicit one is passed through untouched.
+    Either way the envelope's metadata carries ``intent_source`` — an agent
+    that sees ``inferred`` next to a surprising intent knows to name one.
+
+    Lives on the agent-facing door rather than in ``GraphService.resolve`` on
+    purpose: the internal callers of the graph service (graph reads, the
+    reconciliation tools) pick their own includes and must not have their
+    family set moved by a heuristic over the query text.
+    """
+    explicit = (request.intent or "").strip()
+    if explicit:
+        intent, source = explicit, "explicit"
+    else:
+        intent, source = infer_context_intent(request.task), "inferred"
+    return dataclasses.replace(
+        request,
+        intent=intent,
+        metadata={**dict(request.metadata), "intent_source": source},
+    )
 
 
 def _data_plane_dict(dp, *, quality: Mapping[str, Any] | None = None) -> dict:

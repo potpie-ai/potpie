@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from potpie_context_core.ontology import (
@@ -200,6 +201,119 @@ CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {
 def normalize_context_intent(intent: str | None) -> str:
     value = (intent or "unknown").strip().lower()
     return value if value in CONTEXT_INTENTS else "unknown"
+
+
+# Task-text signals that pick an intent when the caller did not name one.
+# Ordered by precedence: the first family with a hit wins, so a task that
+# says "why did checkout break after the deploy changed" is ``debugging``,
+# not ``operations`` — the symptom words are the stronger evidence of what
+# the agent is about to do. Every signal is matched as a whole word (or a
+# whole phrase), case-insensitively, so "error" does not fire on "terror"
+# and "when" does not fire on "whenever". Both inflections that matter are
+# listed rather than stemmed, which keeps the table readable as a contract.
+INTENT_SIGNALS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "debugging",
+        (
+            "why",
+            "broken",
+            "broke",
+            "breaks",
+            "stale",
+            "failing",
+            "fails",
+            "failed",
+            "failure",
+            "error",
+            "errors",
+            "exception",
+            "500",
+            "regress",
+            "regressed",
+            "regression",
+            "incident",
+            "outage",
+            "crash",
+            "crashes",
+            "crashed",
+            "bug",
+            "flaky",
+            "timeout",
+            "timeouts",
+            "not working",
+            "doesn't work",
+            "does not work",
+        ),
+    ),
+    (
+        "operations",
+        (
+            "when",
+            "changed",
+            "recent",
+            "recently",
+            "since",
+            "history",
+            "who changed",
+            "what changed",
+            "last week",
+            "yesterday",
+        ),
+    ),
+    (
+        "docs",
+        (
+            "how do i",
+            "how do we",
+            "how to",
+            "where is",
+            "documented",
+            "documentation",
+            "docs",
+            "runbook",
+            "guide",
+            "spec",
+        ),
+    ),
+)
+
+_INTENT_SIGNAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (
+        intent,
+        re.compile(
+            r"(?<![a-z0-9])(?:"
+            + "|".join(re.escape(signal) for signal in signals)
+            + r")(?![a-z0-9])"
+        ),
+    )
+    for intent, signals in INTENT_SIGNALS
+)
+
+
+def infer_context_intent(task: str | None) -> str:
+    """The intent a task string implies, when the caller did not name one.
+
+    ``resolve`` used to default to ``feature``, whose families
+    (``coding_preferences``, ``features``, ``infra_topology``, ``decisions``,
+    ``owners``, ``docs``) contain neither ``prior_bugs`` nor ``timeline`` — so
+    "why is stock stale" came back with nothing about the incident that
+    answered it, and the agent paid for a second call with ``--intent
+    debugging`` to learn what the first call could have said. The task text
+    was the tell all along.
+
+    Returns ``unknown`` — the broadest family set — for an empty task, since
+    there is nothing to infer from and narrowing on no evidence would be
+    worse than the old default. A task with no recognised signal is
+    ``feature``, the intent most work is. An explicit intent always wins;
+    this is only consulted when none was given.
+    """
+    text = (task or "").strip().lower()
+    if not text:
+        return "unknown"
+    for intent, pattern in _INTENT_SIGNAL_PATTERNS:
+        if pattern.search(text):
+            return intent
+    return "feature"
 
 
 def normalize_context_values(values: list[str] | tuple[str, ...] | None) -> list[str]:

@@ -152,3 +152,63 @@ def test_infra_topology_excludes_feature_predicates() -> None:
 
     assert [item.include for item in env.items] == ["infra_topology"]
     assert env.items[0].payload["predicate"] == "DEFINED_IN"
+
+
+# --- D10: the timeline family answers a task string ------------------------
+
+
+def _store_with_activities() -> InMemoryClaimQueryStore:
+    store = InMemoryClaimQueryStore()
+    store.add(
+        ClaimRow(
+            pot_id="p1",
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:42",
+            object_key="service:inventory",
+            evidence_strength="deterministic",
+            fact="PR #42 fix stale stock counts after deploy",
+            properties={"verb_class": "change"},
+        )
+    )
+    store.add(
+        ClaimRow(
+            pot_id="p1",
+            predicate="TOUCHED",
+            subject_key="activity:github:pr:40",
+            object_key="service:checkout",
+            evidence_strength="deterministic",
+            fact="PR #40 add coupon codes",
+            properties={"verb_class": "change"},
+        )
+    )
+    return store
+
+
+def _timeline_coverage(env):
+    return next(c for c in env.coverage if c.include == "timeline")
+
+
+def test_timeline_answers_a_task_string_through_resolve() -> None:
+    """The family was ``candidate_pool 0`` for every task through resolve.
+
+    Two gates a task sentence never cleared: the absolute 0.70 similarity
+    threshold no measured score reaches, and a lexical match that wanted
+    every token of the sentence in the row. The reader now floors on the
+    pool's own best match, the way ``docs`` does.
+    """
+    orch = ReadOrchestrator(claim_query=_store_with_activities())
+
+    env = orch.resolve(pot_id="p1", intent="debugging", query="why is stock stale")
+
+    keys = [i.candidate_key for i in env.items if i.include == "timeline"]
+    assert keys == ["activity:github:pr:42"]
+    assert _timeline_coverage(env).candidate_pool == 1
+
+
+def test_timeline_still_answers_nothing_for_a_task_nothing_matches() -> None:
+    orch = ReadOrchestrator(claim_query=_store_with_activities())
+
+    env = orch.resolve(pot_id="p1", intent="debugging", query="does-not-exist-12345")
+
+    assert [i for i in env.items if i.include == "timeline"] == []
+    assert _timeline_coverage(env).candidate_pool == 0

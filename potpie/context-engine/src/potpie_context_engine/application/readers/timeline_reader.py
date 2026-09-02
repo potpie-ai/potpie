@@ -30,6 +30,7 @@ from potpie_context_engine.application.readers._common import (
     dedupe_claim_rows,
     graph_read_scope,
     rank_candidates,
+    relative_relevance_floor,
     row_in_anchor_set,
     row_matches_query,
     scope_ref_matches,
@@ -182,8 +183,15 @@ class TimelineReader:
             window_before=window_before,
         )
         if req.query:
+            # Pool-relative, not ``req.query_threshold``. That flag defaults to
+            # an absolute 0.70 that no measured similarity in a real pot
+            # reaches (see ``relative_relevance_floor``), and a task sentence
+            # never clears the lexical path either — every token has to be in
+            # the row. So through ``resolve`` / ``search``, where the query is
+            # the task text, this family answered ``candidate_pool 0`` for
+            # every pot that had activities. ``docs`` made the same call.
             rows = _filter_query_activity_groups(
-                rows, query=req.query, threshold=req.query_threshold
+                rows, query=req.query, threshold=relative_relevance_floor(rows)
             )
         if scope_filters:
             rows = _filter_activity_groups(rows, scope_filters=scope_filters)

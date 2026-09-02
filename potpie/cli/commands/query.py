@@ -44,6 +44,9 @@ _INCLUDE_HELP = "Comma-separated include families: " + ", ".join(
     sorted(READER_BACKED_INCLUDES - {"raw_graph"})
 )
 _INTENT_HELP = "One of: " + ", ".join(sorted(CONTEXT_INTENTS))
+_RESOLVE_INTENT_HELP = (
+    "Task intent; inferred from the task text when omitted. " + _INTENT_HELP
+)
 _MODE_HELP = "Retrieval depth. One of: " + ", ".join(sorted(RESOLVE_MODES))
 _DETAIL_HELP = (
     "Structured field for --type, as key=value (repeatable; repeat a key to "
@@ -129,7 +132,7 @@ def register(root: typer.Typer) -> None:
     @root.command()
     def resolve(
         task: str = typer.Argument(..., help="The task to pull context for."),
-        intent: str = typer.Option("feature", "--intent", help=_INTENT_HELP),
+        intent: str = typer.Option(None, "--intent", help=_RESOLVE_INTENT_HELP),
         include: str = typer.Option(None, "--include", help=_INCLUDE_HELP),
         mode: str = typer.Option("fast", "--mode", help=_MODE_HELP),
         pot: str = typer.Option(None, "--pot"),
@@ -141,12 +144,17 @@ def register(root: typer.Typer) -> None:
                 argument="task",
                 example="potpie resolve 'add rate limiting to the API'",
             )
-            intent = _require_choice(
-                intent,
-                argument="--intent",
-                allowed=CONTEXT_INTENTS,
-                example="--intent debugging",
-            )
+            # Unset stays unset: the service infers the intent from the task
+            # text and reports ``intent_source`` in the envelope. Defaulting to
+            # ``feature`` here hid ``prior_bugs`` and ``timeline`` from every
+            # "why is X broken" that did not also spell out ``--intent``.
+            if intent is not None:
+                intent = _require_choice(
+                    intent,
+                    argument="--intent",
+                    allowed=CONTEXT_INTENTS,
+                    example="--intent debugging",
+                )
             mode = _require_choice(
                 mode,
                 argument="--mode",
@@ -295,16 +303,115 @@ def _record_human(receipt) -> str:
 # evidence item from a new one. Serialisation belongs to the shape, once.
 
 
+# Human lines shown before the ``+N more`` footer takes over.
+_HUMAN_ITEM_LIMIT = 10
+
+
 def _envelope_human(env) -> str:
+    """The envelope as lines an agent can act on without ``--json``.
+
+    Each claim line carries the triple — ``subject PREDICATE object`` — and
+    then the fact. The previous rendering printed ``payload.fact`` alone, which
+    for most claims is the *evidence note* ("README: 'a Postgres catalog'",
+    "src/acme/checkout.py") rather than anything the claim says, so half the
+    lines stated no fact at all and the agent re-ran with ``--json`` to learn
+    the keys the JSON had carried all along.
+
+    Two more things the old form hid: the ``[:10]`` cut was silent, so a
+    21-item envelope looked like a 10-item one; and the same claim reached by
+    two families printed twice. Now the cut is announced and a claim is one
+    line naming every family that found it.
+    """
+    intent = env.intent
+    if dict(env.metadata or {}).get("intent_source") == "inferred":
+        intent = f"{intent} (inferred)"
     lines = [
-        f"pot={env.pot_id} intent={env.intent} confidence={env.overall_confidence} items={len(env.items)}"
+        f"pot={env.pot_id} intent={intent} confidence={env.overall_confidence} items={len(env.items)}"
     ]
-    for item in env.items[:10]:
-        fact = dict(item.payload).get("fact") or dict(item.payload).get("summary") or ""
-        lines.append(f"  • [{item.include}] {fact}")
+    rows = _dedupe_items(env.items)
+    shown = 0
+    hidden = 0
+    for includes, item in rows:
+        body = _item_body(item)
+        if body is None:
+            continue
+        if shown >= _HUMAN_ITEM_LIMIT:
+            hidden += 1
+            continue
+        lines.append(f"  • [{', '.join(includes)}] {body}")
+        shown += 1
+    if hidden:
+        lines.append(f"  … +{hidden} more (use --json)")
     for unsup in env.unsupported_includes:
         lines.append(f"  ! {unsup.name}: {unsup.reason}")
     return "\n".join(lines)
+
+
+def _dedupe_items(items) -> list[tuple[list[str], object]]:
+    """Items in envelope order, one entry per claim, with every include that
+    reached it. Keyed on ``claim_key`` (falling back to ``candidate_key``),
+    which is what an agent dedupes on across calls too."""
+    seen: dict[str, int] = {}
+    out: list[tuple[list[str], object]] = []
+    for item in items:
+        payload = dict(item.payload)
+        key = str(payload.get("claim_key") or item.candidate_key or "")
+        if key and key in seen:
+            includes = out[seen[key]][0]
+            if item.include not in includes:
+                includes.append(item.include)
+            continue
+        if key:
+            seen[key] = len(out)
+        out.append(([item.include], item))
+    return out
+
+
+def _item_body(item) -> str | None:
+    """One line of substance for an item, or ``None`` when it has none."""
+    payload = dict(item.payload)
+    score = f"{float(item.score):.2f}"
+    if payload.get("kind") == "resource_chunk":
+        where = "/".join(p for p in (payload.get("doc"), payload.get("section")) if p)
+        label = payload.get("label") or payload.get("section_title") or ""
+        head = " ".join(p for p in (where, payload.get("resource_id")) if p)
+        if not head and not label:
+            return None
+        return f"{head} — {label} ({score})" if label else f"{head} ({score})"
+    triple = _triple(payload)
+    fact = _collapse_repeats(
+        payload.get("fact") or payload.get("description") or payload.get("summary")
+    )
+    if not triple and not fact:
+        return None
+    truth = payload.get("truth")
+    tail = f"({truth}, {score})" if truth else f"({score})"
+    if triple and fact:
+        return f"{triple} · {fact} {tail}"
+    return f"{triple or fact} {tail}"
+
+
+def _triple(payload: dict) -> str | None:
+    subject = payload.get("subject_key")
+    predicate = payload.get("predicate")
+    obj = payload.get("object_key")
+    if not (subject and predicate and obj):
+        return None
+    return f"{subject} {predicate} {obj}"
+
+
+def _collapse_repeats(text) -> str | None:
+    """``"X • X"`` → ``"X"``. The record bridge builds a description from the
+    summary and the symptom, and a bug pattern recorded with the same text for
+    both printed it twice."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    parts = [p.strip() for p in text.split(" • ")]
+    kept: list[str] = []
+    for part in parts:
+        if part and part not in kept:
+            kept.append(part)
+    return " • ".join(kept)
 
 
 __all__ = ["register"]
