@@ -15,6 +15,7 @@ from potpie.cli.commands._common import (
     fail,
     get_host,
     get_host_for,
+    invalidate_host_snapshot,
     pot_graph_counts,
     pot_scope_info,
     pot_scope_resolution_human,
@@ -346,6 +347,7 @@ def register_repo_source(
             location=resolved_location,
             name=name,
         )
+        invalidate_host_snapshot()
     if make_default:
         try:
             repo_default_setter(repo=repo_key, pot_id=pot_id)
@@ -358,6 +360,7 @@ def register_repo_source(
                 host, pot_id=pot_id, source=src, created=existing is None
             )
             raise
+        invalidate_host_snapshot()
         repo_default_set = True
     payload: dict[str, object] = {
         "source_id": src.source_id,
@@ -415,6 +418,7 @@ def pot_create(
     with contract():
         host = get_host()
         pot = host.pots.create_pot(name=name, use=use)
+        invalidate_host_snapshot()
         # ``create`` is idempotent so ``setup`` can re-run, but saying "created"
         # for a pot that already held a project's memory reads as a fresh empty
         # pot, which is the opposite of what was returned. A host that does not
@@ -582,6 +586,7 @@ def pot_default_set(ref: str, repo: str = typer.Option("current", "--repo")) -> 
         pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
         repo_key = _repo_key_from_option(repo)
         host.pots.set_repo_default(repo=repo_key, pot_id=pot_id)
+        invalidate_host_snapshot()
         info = pot_scope_info(host, pot_id)
         emit(
             {"repo": repo_key, "default_pot": info},
@@ -595,6 +600,7 @@ def pot_default_clear(repo: str = typer.Option("current", "--repo")) -> None:
         host = get_host()
         repo_key = _repo_key_from_option(repo)
         cleared = host.pots.clear_repo_default(repo=repo_key)
+        invalidate_host_snapshot()
         emit(
             {"repo": repo_key, "cleared": cleared},
             human=(
@@ -706,6 +712,7 @@ def pot_rename(ref: str, new_name: str) -> None:
         host = get_host()
         pot_id, _ = _destructive_target(host, ref)
         pot = host.pots.rename_pot(ref=pot_id, new_name=new_name)
+        invalidate_host_snapshot()
         emit({"id": pot.pot_id, "name": pot.name}, human=f"renamed → {pot.name}")
 
 
@@ -796,6 +803,7 @@ def pot_reset(
         pot, purged, reported = _teardown(
             host.pots.reset_pot(ref=target, confirm=confirm)
         )
+        invalidate_host_snapshot()
         if not reported:
             human = f"reset '{pot.name}' — {_TEARDOWN_UNREPORTED}"
         elif purged:
@@ -835,6 +843,7 @@ def pot_archive(
                 next_action=f"re-run with 'potpie pot archive {target} --confirm'",
             )
         pot, purged, reported = _teardown(host.pots.archive_pot(ref=target))
+        invalidate_host_snapshot()
         if not reported:
             # Deliberately does not say "graph cleared". On a host that predates
             # the teardown contract, archive can be a flag and nothing more —
@@ -1018,6 +1027,7 @@ def source_add(
                     location=location,
                     name=name,
                 )
+                invalidate_host_snapshot()
                 payload = {
                     "source_id": src.source_id,
                     "kind": src.kind,
@@ -1274,6 +1284,7 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         removed = host.pots.remove_source(pot_id=pot_id, source_id=source_id)
+        invalidate_host_snapshot()
         # Only an explicit ``False`` is a miss — a host that answers nothing is
         # on an older contract and cannot be accused of having removed nothing.
         # Reporting "removed source <id>" for an id this pot never held is the
@@ -1333,6 +1344,7 @@ def pot_grant(
         _managed_only("grant")
         host = get_host()
         granted = host.pots.grant_pot(ref=ref, actor_id=actor_id, role=role)
+        invalidate_host_snapshot()
         emit(
             dict(granted),
             human=f"{granted['actor_id']} → {granted['role']} on '{ref}'",
@@ -1349,6 +1361,7 @@ def pot_revoke(
         _managed_only("revoke")
         host = get_host()
         revoked = bool(host.pots.revoke_pot(ref=ref, actor_id=actor_id))
+        invalidate_host_snapshot()
         emit(
             {"pot": ref, "actor_id": actor_id, "revoked": revoked},
             # "no grant to remove" rather than "revoked", because reporting a

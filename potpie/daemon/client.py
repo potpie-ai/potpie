@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Final
 
 import httpx
 
+from potpie.cli.host_snapshot import invalidate_host_snapshot
+from potpie.daemon.surfaces import is_read_only
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 from potpie_context_core.errors import (
     CapabilityNotImplemented,
@@ -80,30 +84,59 @@ class DaemonRpcClient:
     perfectly healthy. Callers that are not the local daemon pass their own
     label so the message names what actually failed.
     """
+    _session: httpx.Client | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """The keep-alive connection every call after the first rides on.
+
+    Opened lazily, once. The module-level ``httpx.post`` this replaced opened a
+    new TCP connection — and, to a managed host, a new TLS handshake — for every
+    RPC, which was ~235 ms of each ~540 ms request; a command that makes six
+    calls paid five handshakes for nothing.
+    """
+    _endpoint: dict[str, str] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """Discovery (``base_url``, ``token``), read once per process.
+
+    Dropped together with the session on a connection error, so a daemon that
+    restarted mid-process — and so may have changed its port — is found again
+    on the next call rather than answered with the address it used to have.
+    """
 
     def call(self, surface: str, method: str, *args: Any, **kwargs: Any) -> Any:
-        discovery = self._rpc_discovery()
-        url = f"{discovery['base_url'].rstrip('/')}/rpc"
-        payload = {
-            "surface": surface,
-            "method": method,
-            "args": encode(args),
-            "kwargs": encode(kwargs),
-        }
-        # The deadline rides on the surface rather than on a keyword argument
-        # because ``**kwargs`` is forwarded verbatim to the remote method — any
-        # control parameter added here would collide with a service parameter of
-        # the same name the first time one is introduced.
-        return self._result(
-            self._post(
+        try:
+            discovery = self._rpc_discovery()
+            url = f"{discovery['base_url'].rstrip('/')}/rpc"
+            payload = {
+                "surface": surface,
+                "method": method,
+                "args": encode(args),
+                "kwargs": encode(kwargs),
+            }
+            # The deadline rides on the surface rather than on a keyword argument
+            # because ``**kwargs`` is forwarded verbatim to the remote method — any
+            # control parameter added here would collide with a service parameter of
+            # the same name the first time one is introduced.
+            return self._result(
+                self._post(
+                    url,
+                    payload,
+                    token=discovery["token"],
+                    timeout=self._deadline_for(surface),
+                ),
                 url,
-                payload,
-                token=discovery["token"],
-                timeout=self._deadline_for(surface),
-            ),
-            url,
-            surface=surface,
-        )
+                surface=surface,
+            )
+        finally:
+            # The CLI memoizes the host's read-only answers for the process
+            # (:mod:`potpie.cli.host_snapshot`). Anything the daemon does not
+            # declare read-only may have changed them — even when it answered
+            # with an error, since a write can land before the failure — so the
+            # memo goes either way. The daemon's own declaration decides; a
+            # method it has not classified counts as a write, as it does there.
+            if not is_read_only(surface, method):
+                invalidate_host_snapshot()
 
     def attr(self, surface: str, name: str) -> Any:
         discovery = self._rpc_discovery()
@@ -139,7 +172,7 @@ class DaemonRpcClient:
         # loudly rather than silently inherit either interpretation.
         deadline = timeout
         try:
-            return httpx.post(
+            return self._session_or_open().post(
                 url,
                 json=payload,
                 headers={"Authorization": f"Bearer {token}"},
@@ -159,7 +192,25 @@ class DaemonRpcClient:
             # Nothing answered, so there is no status to carry: this is the one
             # failure that really is "unreachable", and it is what every other
             # failure here used to be reported as.
+            self._forget_endpoint()
             raise ContextEngineDisabled(f"{self.label} is unavailable: {exc}") from exc
+
+    def _session_or_open(self) -> httpx.Client:
+        if self._session is None:
+            self._session = _open_session()
+        return self._session
+
+    def _forget_endpoint(self) -> None:
+        """Drop the connection and the cached address; the next call starts over."""
+        session, self._session = self._session, None
+        self._endpoint = None
+        if session is not None:
+            # Closing a connection that already failed may not itself raise.
+            with contextlib.suppress(Exception):
+                session.close()
+
+    def close(self) -> None:
+        self._forget_endpoint()
 
     def _result(self, response: httpx.Response, url: str, *, surface: str) -> Any:
         """The decoded result, or the error the response carries.
@@ -212,6 +263,8 @@ class DaemonRpcClient:
         return negotiation.serves(base_url, token, surface)
 
     def _rpc_discovery(self) -> dict[str, str]:
+        if self._endpoint is not None:
+            return self._endpoint
         discovery = self.daemon.discovery()
         if discovery is None:
             raise ContextEngineDisabled(
@@ -222,7 +275,19 @@ class DaemonRpcClient:
                 f"{self.label} is running but does not expose the CLI RPC surface. "
                 "Run 'potpie daemon restart'."
             )
+        self._endpoint = discovery
         return discovery
+
+
+def _open_session() -> httpx.Client:
+    """A keep-alive HTTP session, closed when the interpreter exits.
+
+    The seam tests stand a fake at (``tests/_rpc_fakes.py``): everything above
+    it — the envelope, the error decode, the host facade — is the shipped code.
+    """
+    session = httpx.Client()
+    atexit.register(session.close)
+    return session
 
 
 class RemoteSurface:

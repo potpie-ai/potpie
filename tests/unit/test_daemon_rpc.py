@@ -31,6 +31,7 @@ from potpie_context_core.errors import (
 )
 from potpie_context_core.lifecycle import SetupPlan
 from potpie.daemon.rpc import TYPE_KEY, decode, encode
+from tests._rpc_fakes import install_rpc_session
 
 
 def test_daemon_rpc_roundtrips_domain_dataclasses() -> None:
@@ -367,8 +368,9 @@ def test_a_daemon_fault_still_arrives_without_a_repair_to_offer() -> None:
 # reading sends you to restart a service and check a network, the other to fix a
 # token, and the status code was the only thing that ever knew which.
 #
-# No socket is opened here: `httpx.post` is the seam, and a `httpx.Response`
-# built by hand is exactly what the client would have been handed.
+# No socket is opened here: the client's keep-alive session is the seam
+# (`tests/_rpc_fakes.py`), and a `httpx.Response` built by hand is exactly
+# what the client would have been handed.
 
 _MANAGED_URL = "https://graph.example.com"
 _MANAGED_LABEL = "Managed (graph.example.com)"
@@ -402,8 +404,8 @@ def _managed_client() -> DaemonRpcClient:
 
 @pytest.mark.parametrize("status_code", [401, 403])
 def test_a_host_that_refuses_the_key_says_so(monkeypatch, status_code: int) -> None:
-    monkeypatch.setattr(
-        httpx, "post", _answering(status_code, body={"detail": "invalid daemon token"})
+    install_rpc_session(
+        monkeypatch, _answering(status_code, body={"detail": "invalid daemon token"})
     )
 
     with pytest.raises(ContextEngineDisabled) as raised:
@@ -431,7 +433,7 @@ def test_a_host_that_never_answered_remains_a_different_failure(monkeypatch) -> 
             "Connection refused", request=httpx.Request("POST", url)
         )
 
-    monkeypatch.setattr(httpx, "post", _refuse_connection)
+    install_rpc_session(monkeypatch, _refuse_connection)
 
     with pytest.raises(ContextEngineDisabled) as raised:
         _managed_client().call("pots", "list_pots")
@@ -447,9 +449,8 @@ def test_a_proxy_error_page_does_not_bury_the_refusal(monkeypatch) -> None:
     """A managed host behind a gateway answers 401 with HTML. Parsing the body
     first turned that into "returned a non-JSON response", which describes the
     shape of the answer and drops what it said."""
-    monkeypatch.setattr(
-        httpx,
-        "post",
+    install_rpc_session(
+        monkeypatch,
         _answering(
             401, text="<html><head><title>401 Unauthorized</title></head></html>"
         ),
@@ -469,7 +470,7 @@ def test_a_proxy_error_page_does_not_bury_the_refusal(monkeypatch) -> None:
 def test_the_attr_surface_reports_a_refusal_the_same_way(monkeypatch) -> None:
     """``attr`` is the other door into the same endpoint and had its own copy of
     the error handling."""
-    monkeypatch.setattr(httpx, "post", _answering(401, body={"detail": "nope"}))
+    install_rpc_session(monkeypatch, _answering(401, body={"detail": "nope"}))
 
     with pytest.raises(ContextEngineDisabled) as raised:
         _managed_client().attr("backend", "profile")
@@ -498,9 +499,8 @@ def test_the_status_code_reaches_the_error_builder() -> None:
 def test_a_body_shaped_error_still_wins_over_the_status(monkeypatch) -> None:
     """A 4xx that carries this daemon's own envelope keeps its own classification
     — the status only decides the cases the envelope never covered."""
-    monkeypatch.setattr(
-        httpx,
-        "post",
+    install_rpc_session(
+        monkeypatch,
         _answering(
             400,
             body={

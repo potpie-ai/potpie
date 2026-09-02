@@ -25,6 +25,7 @@ from typing import Any, Callable, Final, Iterator, NoReturn, Sequence
 import click
 import typer
 
+from potpie.cli.host_snapshot import invalidate_host_snapshot, memoized
 from potpie.cli.repo_location import (
     REPO_MATCH_CONTAINED,
     classify_repo_source_match,
@@ -203,9 +204,19 @@ class _ActiveHost:
     __slots__ = ()
 
     def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve_current_host(), name)
+
+    def _resolve_current_host(self) -> Any:
+        """The host this proxy forwards to right now.
+
+        A method rather than an attribute so the memo in
+        :mod:`potpie.cli.host_snapshot` can key its answers on the real host:
+        the proxy is a fresh object per ``get_host()`` call, while the host it
+        stands for is built once per origin.
+        """
         from potpie.cli import hosts
 
-        return getattr(hosts.build_host(hosts.current_origin()), name)
+        return hosts.build_host(hosts.current_origin())
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostics only
         from potpie.cli import hosts
@@ -246,6 +257,7 @@ def set_host(host: Any) -> None:
     that no longer applies.
     """
     _state["host"] = host
+    invalidate_host_snapshot()
     from potpie.cli import hosts
 
     hosts.set_current_origin(None)
@@ -747,7 +759,7 @@ def _find_pot_in(
             next_action=unreachable_hint,
         )
     try:
-        pots = host.pots.list_pots()
+        pots = _list_pots(host)
     except Exception as exc:  # noqa: BLE001 - see docstring: degrade or refuse
         if unreachable_hint is None:
             return None
@@ -863,14 +875,13 @@ def resolve_pot_scope(
     if explicit:
         # Selects the origin as well as the pot; see _resolve_explicit_pot.
         return _resolve_explicit_pot(explicit), "explicit"
-    pots = host.pots
     repo_identity = _current_repo_identity() if infer_from_repo else None
     default_pot = _repo_default_pot_id(host, repo_identity)
     if default_pot:
         return default_pot, "repo_default"
     selves, contained = _current_repo_matches(host) if infer_from_repo else ([], [])
     matches = selves + contained
-    active = pots.active_pot()
+    active = _active_pot(host)
     if len(matches) == 1:
         # Which relation matched is part of the answer. Scoping to a project
         # that happens to live *inside* the cwd used to be reported as
@@ -934,7 +945,7 @@ def repo_pot_candidates(
         else _pots_matching_repo_identity(host, repo_identity)
     )
     default_pot_id = _repo_default_pot_id(host, repo_identity)
-    active = _safe_call(lambda: host.pots.active_pot(), None)
+    active = _safe_call(lambda: _active_pot(host), None)
     rows: list[dict[str, Any]] = []
     for pot_id, name in matches:
         row = {
@@ -964,7 +975,7 @@ def repo_effective_pot_info(host: Any, repo: str | None = None) -> dict[str, Any
         else _pots_matching_repo_identity(host, repo_identity)
     )
     default_pot_id = _repo_default_pot_id(host, repo_identity)
-    active = _safe_call(lambda: host.pots.active_pot(), None)
+    active = _safe_call(lambda: _active_pot(host), None)
     active_id = getattr(active, "pot_id", None) if active is not None else None
     match_ids = {pot_id for pot_id, _ in matches}
 
@@ -1073,14 +1084,25 @@ def pot_scope_human(
     resolved_via: str | None = None,
     repo: str | None = None,
 ) -> str:
-    info = pot_scope_info(host, pot_id)
-    counts = info.get("counts") or {}
-    claims = counts.get("claims", 0)
-    entities = counts.get("entities", 0)
-    scope = (
-        f"pot={info.get('name')} ({pot_id}) "
-        f"sources={info.get('source_count', 0)} claims={claims} entities={entities}"
-    )
+    """The one-line pot header every read prints.
+
+    Name and id only. The ``sources= claims= entities=`` triple cost two extra
+    host calls per command — a source listing and the data-plane status — for
+    a decoration nobody acted on, and on a managed host those two were a
+    second of wall time on every read. They are still printed under
+    ``--verbose``; ``potpie status`` and ``pot info`` keep them unconditionally
+    because there the counts are the answer.
+    """
+    pot = _pot_for_id(host, pot_id)
+    name = getattr(pot, "name", pot_id) if pot is not None else pot_id
+    scope = f"pot={name} ({pot_id})"
+    if is_verbose():
+        info = pot_scope_info(host, pot_id)
+        counts = info.get("counts") or {}
+        scope += (
+            f" sources={info.get('source_count', 0)} "
+            f"claims={counts.get('claims', 0)} entities={counts.get('entities', 0)}"
+        )
     if resolved_via:
         scope += f" {pot_scope_resolution_human(resolved_via, repo=repo)}"
     return scope
@@ -1377,6 +1399,7 @@ def use_pot_selection(
     ref, origin, move_pointer = _select_origin_for_use(ref, origin)
 
     pot = host.pots.use_pot(ref=ref)
+    invalidate_host_snapshot()
     # Persist only after the host accepted the ref, so a failed selection never
     # strands the CLI pointing at a host the user did not choose.
     if move_pointer:
@@ -1386,6 +1409,7 @@ def use_pot_selection(
     repo_default_set = False
     if repo_key:
         host.pots.set_repo_default(repo=repo_key, pot_id=pot.pot_id)
+        invalidate_host_snapshot()
         repo_default_set = True
 
     routing = repo_effective_pot_info(host)
@@ -1418,10 +1442,9 @@ def use_pot_selection(
 
 
 def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
-    graph = getattr(host, "graph", None)
-    if graph is None:
+    if getattr(host, "graph", None) is None:
         return {}
-    status = _safe_call(lambda: graph.data_plane_status(pot_id), None)
+    status = _safe_call(lambda: pot_data_plane_status(host, pot_id), None)
     if status is None:
         return {}
     counts = getattr(status, "counts", {}) or {}
@@ -1435,7 +1458,7 @@ def pot_graph_counts(host: Any, pot_id: str) -> dict[str, int]:
 
 
 def pot_source_count(host: Any, pot_id: str) -> int:
-    return len(_safe_call(lambda: host.pots.list_sources(pot_id=pot_id), []) or [])
+    return len(_safe_call(lambda: _list_sources(host, pot_id), []) or [])
 
 
 def _repo_identity_from_option(repo: str | None) -> str | None:
@@ -1553,7 +1576,7 @@ def _repo_source_index(host: Any) -> list[tuple[str, str, tuple[str, ...]]]:
     command that resolves a pot from the cwd — scale with the caller's pot
     count.
     """
-    index = _safe_call(lambda: list(host.pots.list_repo_sources()), None)
+    index = _safe_call(lambda: _list_repo_sources(host), None)
     if index is None:
         return _repo_source_index_per_pot(host)
     return [
@@ -1568,7 +1591,7 @@ def _repo_source_index(host: Any) -> list[tuple[str, str, tuple[str, ...]]]:
 
 def _repo_source_index_per_pot(host: Any) -> list[tuple[str, str, tuple[str, ...]]]:
     try:
-        pots = list(host.pots.list_pots())
+        pots = _list_pots(host)
     except Exception:  # noqa: BLE001 - pot resolution should not mask commands
         return []
     rows: list[tuple[str, str, tuple[str, ...]]] = []
@@ -1578,7 +1601,7 @@ def _repo_source_index_per_pot(host: Any) -> list[tuple[str, str, tuple[str, ...
         if getattr(pot, "archived", False):
             continue
         try:
-            sources = host.pots.list_sources(pot_id=pot.pot_id)
+            sources = _list_sources(host, pot.pot_id)
         except Exception:  # noqa: BLE001
             continue
         rows.extend(
@@ -1612,7 +1635,15 @@ def repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
     getter = getattr(host.pots, "repo_default", None)
     if not callable(getter):
         return None
-    pot_id = _safe_call(lambda: getter(repo=repo_identity), None)
+    pot_id = _safe_call(
+        lambda: memoized(
+            _snapshot_host(host),
+            "pots.repo_default",
+            (repo_identity,),
+            lambda: getter(repo=repo_identity),
+        ),
+        None,
+    )
     if not pot_id:
         return None
     pot_id = str(pot_id)
@@ -1637,10 +1668,63 @@ def _repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
 
 
 def _pot_for_id(host: Any, pot_id: str):
-    for pot in _safe_call(lambda: host.pots.list_pots(), []) or []:
+    for pot in _safe_call(lambda: _list_pots(host), []) or []:
         if getattr(pot, "pot_id", None) == pot_id:
             return pot
     return None
+
+
+# --- the memoized host reads ---------------------------------------------------
+#
+# The six calls below are the ones pot resolution, the pot header, and the
+# empty-pot guidance kept re-asking. Each goes through the process-wide memo in
+# :mod:`potpie.cli.host_snapshot`; see that module for the invalidation rules.
+# Listings are materialised so a lazy answer is consumed exactly once.
+
+
+def _snapshot_host(host: Any) -> Any:
+    """The object the memo keys on: the real host behind an ``_ActiveHost``."""
+    if isinstance(host, _ActiveHost):
+        return host._resolve_current_host()
+    return host
+
+
+def _list_pots(host: Any) -> list[Any]:
+    return memoized(
+        _snapshot_host(host), "pots.list_pots", (), lambda: list(host.pots.list_pots())
+    )
+
+
+def _active_pot(host: Any) -> Any:
+    return memoized(_snapshot_host(host), "pots.active_pot", (), host.pots.active_pot)
+
+
+def _list_repo_sources(host: Any) -> list[Any]:
+    return memoized(
+        _snapshot_host(host),
+        "pots.list_repo_sources",
+        (),
+        lambda: list(host.pots.list_repo_sources()),
+    )
+
+
+def _list_sources(host: Any, pot_id: str) -> list[Any]:
+    return memoized(
+        _snapshot_host(host),
+        "pots.list_sources",
+        (pot_id,),
+        lambda: list(host.pots.list_sources(pot_id=pot_id)),
+    )
+
+
+def pot_data_plane_status(host: Any, pot_id: str) -> Any:
+    """``graph.data_plane_status(pot_id)``, asked once per process."""
+    return memoized(
+        _snapshot_host(host),
+        "graph.data_plane_status",
+        (pot_id,),
+        lambda: host.graph.data_plane_status(pot_id),
+    )
 
 
 def _safe_call(fn, default):
@@ -1696,6 +1780,8 @@ __all__ = [
     "pot_scope_info",
     "pot_scope_resolution_human",
     "pot_source_count",
+    "invalidate_host_snapshot",
+    "pot_data_plane_status",
     "repo_default_matches",
     "repo_default_mismatch_warning",
     "repo_default_pot_id",

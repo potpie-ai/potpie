@@ -28,6 +28,7 @@ from potpie.cli.commands._common import (
     fail,
     get_host,
     get_host_for,
+    invalidate_host_snapshot,
     is_json,
     origin_from_use_flags,
     repo_default_pot_id,
@@ -609,6 +610,9 @@ def register(root: typer.Typer) -> None:
                 )
             else:
                 report = host.setup.run(plan)
+            # Setup creates the pot and registers the repo; anything resolved
+            # from the host before this point is stale now.
+            invalidate_host_snapshot()
             capture_setup_completed(
                 plan=plan,
                 ok=report.ok,

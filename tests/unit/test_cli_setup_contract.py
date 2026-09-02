@@ -25,7 +25,6 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -40,6 +39,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 from potpie_context_engine.adapters.outbound.skills.agent_installer import AGENT_TYPES
 from potpie_context_engine.application.services import setup_orchestrator
 from potpie_context_engine.bootstrap.host_wiring import build_host_shell
+from tests._rpc_fakes import install_rpc_session
 
 runner = CliRunner()
 
@@ -298,7 +298,7 @@ def test_json_setup_runs_in_process_and_never_crosses_the_daemon_rpc(
     def _forbidden(*_args, **_kwargs):
         raise AssertionError("setup crossed the daemon RPC")
 
-    monkeypatch.setattr(httpx, "post", _forbidden)
+    install_rpc_session(monkeypatch, _forbidden)
 
     result = runner.invoke(
         cli_main.app,

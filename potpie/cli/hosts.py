@@ -947,9 +947,11 @@ def origin_label(origin: str) -> str:
 
 
 def reset_for_tests() -> None:
+    from potpie.cli.host_snapshot import invalidate_host_snapshot
     from potpie.daemon.negotiation import reset as reset_negotiation
 
     _built.clear()
+    invalidate_host_snapshot()
     reset_negotiation()
     _current["origin"] = None
 

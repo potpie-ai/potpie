@@ -9,6 +9,7 @@ from typing import Any
 import click
 
 from potpie.cli.commands._common import get_store
+from potpie.cli.host_snapshot import invalidate_host_snapshot
 from potpie.cli.repo_location import resolve_repo_location
 from potpie.cli.telemetry.onboarding_events import (
     capture_github_prompt_outcome,
@@ -855,6 +856,7 @@ def _maybe_prompt_first_pot(
     repo_str = str(repo.resolve()) if repo is not None else None
     name_source = "default" if name == default_pot_name else "custom"
     pot = get_host().pots.create_pot(name=name, use=True)
+    invalidate_host_snapshot()
     capture_project_binding_event(
         "cli_onboarding_first_pot_created",
         entrypoint="post_setup_first_pot",

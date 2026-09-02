@@ -50,6 +50,7 @@ from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 from potpie_context_core.ports.graph.mutation import BackendReadiness
 from potpie_context_core.ports.resource_store import ResourceStoreStatus
+from tests._rpc_fakes import install_rpc_session
 
 runner = CliRunner()
 
@@ -348,9 +349,10 @@ def test_a_host_with_no_transport_is_never_probed(monkeypatch) -> None:
 class _Dispatcher:
     """A managed host that answers per ``{surface, method}``, refusing the rest.
 
-    Sits at ``httpx.post`` — the same seam ``tests/unit/test_daemon_rpc.py``
-    uses — so every layer under it is the shipped one: the RPC envelope, the
-    error decode, the host facade, the command.
+    Sits at the client's session (``tests/_rpc_fakes.py``) — the same seam
+    ``tests/unit/test_daemon_rpc.py`` uses — so every layer under it is the
+    shipped one: the RPC envelope, the error decode, the host facade, the
+    command.
     """
 
     def __init__(
@@ -448,7 +450,7 @@ def managed_cli(monkeypatch, tmp_path):
 
 
 def _run_doctor(monkeypatch, dispatcher: _Dispatcher) -> dict[str, Any]:
-    monkeypatch.setattr(httpx, "post", dispatcher)
+    install_rpc_session(monkeypatch, dispatcher)
     result = runner.invoke(cli_main.app, ["--json", "--host", "managed", "doctor"])
     assert result.exit_code == 0, result.stdout
     return json.loads(result.stdout)
@@ -545,7 +547,7 @@ def test_doctor_still_answers_when_the_local_daemon_is_not_running(
             "connection refused", request=httpx.Request("POST", url)
         )
 
-    monkeypatch.setattr(httpx, "post", _refuse)
+    install_rpc_session(monkeypatch, _refuse)
 
     result = runner.invoke(cli_main.app, ["--json", "doctor"])
 
@@ -595,8 +597,8 @@ def test_doctor_reports_missing_surfaces_only_when_the_host_says(managed_cli) ->
 def test_doctor_human_output_names_the_degraded_sections(managed_cli) -> None:
     """Human mode is never a subset of ``--json``: an operator who did not pass
     ``--json`` must still learn that two sections are missing."""
-    managed_cli.setattr(
-        httpx, "post", _Dispatcher(HEALTHY_ANSWERS, refused=frozenset({"resources"}))
+    install_rpc_session(
+        managed_cli, _Dispatcher(HEALTHY_ANSWERS, refused=frozenset({"resources"}))
     )
 
     result = runner.invoke(cli_main.app, ["--host", "managed", "doctor"])
@@ -660,8 +662,8 @@ def test_resource_commands_refuse_with_a_capability_answer(
     feature is not there. Today it said "invalid RPC surface: resources" at exit
     1 with no next action.
     """
-    managed_cli.setattr(
-        httpx, "post", _Dispatcher(HEALTHY_ANSWERS, refused=frozenset({"resources"}))
+    install_rpc_session(
+        managed_cli, _Dispatcher(HEALTHY_ANSWERS, refused=frozenset({"resources"}))
     )
 
     result = runner.invoke(cli_main.app, ["--json", "--host", "managed", *argv])

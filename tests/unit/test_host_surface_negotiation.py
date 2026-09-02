@@ -39,6 +39,7 @@ from potpie.cli import hosts
 from potpie.cli import main as cli_main
 from potpie.daemon import negotiation, surfaces
 from potpie_context_core.errors import CapabilityNotImplemented
+from tests._rpc_fakes import install_rpc_session
 
 runner = CliRunner()
 
@@ -155,7 +156,7 @@ def managed(monkeypatch, tmp_path):
 
 def _install(monkeypatch, host: _Host) -> Any:
     monkeypatch.setattr(httpx, "get", host.get)
-    monkeypatch.setattr(httpx, "post", host.post)
+    install_rpc_session(monkeypatch, host.post)
     return hosts.build_managed_host(MANAGED_URL, MANAGED_TOKEN)
 
 

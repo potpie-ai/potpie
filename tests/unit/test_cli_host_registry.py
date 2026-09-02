@@ -20,8 +20,8 @@ from typer.testing import CliRunner
 from potpie.cli import hosts
 from potpie.cli.commands import _common
 from potpie.cli.main import app
-from potpie.daemon import client
 from potpie_context_core.errors import ContextEngineDisabled
+from tests._rpc_fakes import install_rpc_session
 
 _STORED_URL = "http://127.0.0.1:8090"
 _STORED_TOKEN = "s3secrettoken"
@@ -246,7 +246,7 @@ def test_a_service_with_auth_disabled_is_set_up_by_omitting_the_token(
         sent.append(dict(kwargs.get("headers") or {}))
         return _Resp()
 
-    monkeypatch.setattr(client.httpx, "post", _post)
+    install_rpc_session(monkeypatch, _post)
 
     result = _run("--json", "host", "set", "http://svc.example:8090")
 
@@ -395,7 +395,7 @@ def test_a_whitespace_only_token_is_probed_as_the_credential_it_becomes(
         sent.append((kwargs.get("headers") or {}).get("Authorization"))
         return _Resp()
 
-    monkeypatch.setattr(client.httpx, "post", _post)
+    install_rpc_session(monkeypatch, _post)
 
     result = _run("--json", "host", "set", _STORED_URL, "--token", "   ")
 

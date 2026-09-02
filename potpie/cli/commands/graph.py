@@ -38,6 +38,7 @@ from potpie.cli.commands._common import (
     is_json,
     json_error_formatter,
     parse_scope_pairs,
+    pot_data_plane_status,
     pot_scope_human,
     pot_scope_info,
     resolve_pot_id,
@@ -688,7 +689,7 @@ def graph_read(
             dedupe=dedupe,
             event_limit=limit,
             human_prefix=pot_scope_human(host, pot_id),
-            warnings=empty_pot_warnings(host, pot_id),
+            warnings=_empty_read_warnings(host, pot_id, result),
         )
 
 
@@ -771,7 +772,7 @@ def timeline_recent(
             dedupe="source_ref",
             event_limit=limit,
             human_prefix=pot_scope_human(host, pot_id),
-            warnings=empty_pot_warnings(host, pot_id),
+            warnings=_empty_read_warnings(host, pot_id, result),
         )
 
 
@@ -848,7 +849,7 @@ def graph_search_entities(
             )
             or "(no matching entities)"
         )
-        warnings = empty_pot_warnings(host, pot_id)
+        warnings = empty_pot_warnings(host, pot_id) if not payload["entities"] else ()
         _emit_graph_result(
             ctx,
             payload,
@@ -1373,7 +1374,7 @@ def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        dp = host.graph.data_plane_status(pot_id)
+        dp = pot_data_plane_status(host, pot_id)
         versions = {"_global": int(dict(dp.counts).get("claims", 0))}
         ctx.set_subgraph_versions(versions)
         payload = _graph_status_payload(host, pot_id, dp)
@@ -3184,6 +3185,18 @@ def _emit_read(
             warnings=warnings,
         ),
     )
+
+
+def _empty_read_warnings(host: Any, pot_id: str, result: Any) -> tuple[str, ...]:
+    """Empty-pot guidance, asked for only when the read came back empty.
+
+    A populated answer needs no guidance, and asking costs the data-plane
+    status plus, on an empty pot, the sibling-pot lookup — one to four host
+    calls that every read used to pay before printing rows it already had.
+    """
+    if getattr(result, "items", ()):
+        return ()
+    return empty_pot_warnings(host, pot_id)
 
 
 def _with_read_context(
