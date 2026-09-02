@@ -226,6 +226,10 @@ def test_daemon_start_exits_nonzero_when_the_daemon_dies_on_its_bind(
     # The bind error itself, not "the daemon did not become ready".
     assert "address already in use" in payload["message"]
     assert payload["detail"].endswith("logs/potpied.log")
+    # The CLI reads `DaemonStartError.recommended_next_action` to decide this;
+    # a launcher that stops defining the attribute turns every failed start
+    # into `unexpected_cli_error` with no log path (swid @ 3ef25f82 did).
+    assert payload["recommended_next_action"] == "inspect the daemon log with 'potpie daemon logs'"
 
 
 def test_daemon_restart_exits_nonzero_when_the_daemon_dies_on_its_bind(
