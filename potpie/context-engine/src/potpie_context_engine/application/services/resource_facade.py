@@ -27,6 +27,7 @@ from potpie_context_core.ports.resource_store import (
     RESOURCE_NOT_FOUND,
     Chunk,
     DocumentManifest,
+    ImportFiles,
     ResourceStoreError,
     ResourceStorePort,
     ResourceStoreStatus,
@@ -85,7 +86,8 @@ class ResourceFacade:
         *,
         pot_id: str,
         slug: str,
-        source_dir: Path,
+        source_dir: Path | None = None,
+        files: ImportFiles | None = None,
         source_ref: str | None = None,
         source_kind: str | None = None,
     ) -> ResourceImportResult:
@@ -102,6 +104,7 @@ class ResourceFacade:
             pot_id=pot_id,
             slug=slug,
             source_dir=source_dir,
+            files=files,
             source_ref=source_ref,
             source_kind=source_kind,
         )

@@ -36,6 +36,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from potpie_context_core.ports.resource_store import (
+    ImportFiles,
+    import_source,
     RECOMMENDED_MAX_SECTION_CHUNKS,
     RESOURCE_CHUNK_MAX_CHARS,
     RESOURCE_CHUNK_TOO_LARGE,
@@ -363,14 +365,18 @@ class LocalResourceStore:
         *,
         pot_id: str,
         slug: str,
-        source_dir: Path,
+        source_dir: Path | None = None,
+        files: ImportFiles | None = None,
         source_ref: str | None = None,
         source_kind: str | None = None,
     ) -> DocumentManifest:
         doc = require_resource_slug(slug, kind="document")
         # Everything that can fail, fails before the first rename: a rejected
-        # import must leave the prior revision exactly as it was.
-        source = read_source_document(Path(source_dir))
+        # import must leave the prior revision exactly as it was. The texts are
+        # read into memory here, so a scratch directory behind ``files`` is gone
+        # before the store touches its own state.
+        with import_source(source_dir, files) as root:
+            source = read_source_document(root)
         pot_root = self._pot_root(pot_id)
         final = pot_root / doc
         pot_root.mkdir(parents=True, exist_ok=True)

@@ -18,9 +18,12 @@ See ``docs/context-graph/resources.md``.
 
 from __future__ import annotations
 
+import shutil
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Iterator, Mapping, Protocol
 
 from potpie_context_core.identity import is_valid_slug_body
 
@@ -63,6 +66,13 @@ RESOURCE_NOT_FOUND = "resource_not_found"
 RESOURCE_MANIFEST_INVALID = "resource_manifest_invalid"
 RESOURCE_SECTION_MISSING_CHUNK = "resource_section_missing_chunk"
 RESOURCE_TEXT_TOO_LARGE = "resource_text_too_large"
+RESOURCE_IMPORT_INVALID = "resource_import_invalid"
+
+#: Ceiling on the bytes one ``import`` may carry over the wire. Far above any
+#: real document (a chunk is capped at 8,000 chars and a section holds 1-5 of
+#: them) and low enough that ``resource import .`` in the wrong directory is
+#: refused before it is serialised.
+RESOURCE_IMPORT_MAX_BYTES = 64 * 1024 * 1024
 
 
 class ResourceStoreError(ValueError):
@@ -293,6 +303,144 @@ def parse_resource_id(resource_id: str) -> ResourceId:
     return ResourceId(doc=doc, section=section, seq=seq)
 
 
+# --- Import transport ---------------------------------------------------------
+#
+# An import is a directory on the *caller's* machine. The store may run inside
+# a daemon on that machine or on a managed host that cannot see its filesystem,
+# so the port takes the directory either as a path it can read (``source_dir``)
+# or as the directory's contents (``files``). ``files`` is what crosses the
+# wire; a store materialises it into a scratch directory and validates it
+# exactly as it would a path, so the two forms cannot drift apart.
+
+ImportFiles = Mapping[str, str]
+
+
+def read_import_files(root: Path) -> dict[str, str]:
+    """The directory an extraction script produced, as ``files`` for ``import_dir``.
+
+    Every regular file under ``root``, keyed by its POSIX-relative path and
+    decoded as UTF-8. Hidden entries (``.DS_Store``, editor swap files) are
+    skipped: nothing an extraction script emits starts with a dot, and a host
+    should not receive bytes the import will never read. Refused, in the
+    store's own error shape: a directory that is not there or is empty, a file
+    that is not UTF-8 text, and a tree over ``RESOURCE_IMPORT_MAX_BYTES``. The
+    first two carry ``resource_manifest_invalid`` like a missing ``meta.json``;
+    the rest are ``resource_import_invalid``, a transport fault.
+    """
+    base = Path(root)
+    # A directory that is not there, or holds nothing, is the same mistake the
+    # store reports for a missing ``meta.json`` — keep its code, so the repair
+    # an agent learned for one applies to the other.
+    if not base.is_dir():
+        raise ResourceStoreError(
+            RESOURCE_MANIFEST_INVALID,
+            f"import directory not found: {base}",
+            recommended_next_action=(
+                "Point 'resource import' at the directory the extraction script "
+                "wrote: meta.json plus <section>/<seq>.txt."
+            ),
+        )
+    files: dict[str, str] = {}
+    total = 0
+    for path in sorted(base.rglob("*")):
+        relative = path.relative_to(base)
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        if not path.is_file():
+            continue
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ResourceStoreError(
+                RESOURCE_IMPORT_INVALID, f"cannot read {path}: {exc}"
+            ) from exc
+        total += len(data)
+        if total > RESOURCE_IMPORT_MAX_BYTES:
+            raise ResourceStoreError(
+                RESOURCE_IMPORT_INVALID,
+                f"import directory exceeds {RESOURCE_IMPORT_MAX_BYTES} bytes: {base}",
+                recommended_next_action=(
+                    "Import one document per directory; split a very large "
+                    "document into several documents."
+                ),
+            )
+        try:
+            files[relative.as_posix()] = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ResourceStoreError(
+                RESOURCE_IMPORT_INVALID,
+                f"{relative.as_posix()} is not UTF-8 text",
+                detail=str(path),
+                recommended_next_action=(
+                    "Chunk files must be UTF-8 text; fix the extraction "
+                    "script's encoding and re-run it."
+                ),
+            ) from exc
+    if not files:
+        raise ResourceStoreError(
+            RESOURCE_MANIFEST_INVALID,
+            f"import directory is empty: {base}",
+            recommended_next_action=(
+                "Run the extraction script first; it writes the meta.json and "
+                "chunk files 'resource import' absorbs."
+            ),
+        )
+    return files
+
+
+def _safe_relative_path(name: str) -> Path:
+    """``name`` as a path that stays inside the scratch directory, or a refusal.
+
+    The mapping came over the wire, so a key is untrusted: an absolute path or
+    a ``..`` segment would write outside the scratch tree, and a backslash is
+    ambiguous across platforms.
+    """
+    if not name or name != name.strip() or "\\" in name:
+        raise ResourceStoreError(
+            RESOURCE_IMPORT_INVALID, f"invalid file name in import: {name!r}"
+        )
+    path = Path(name)
+    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
+        raise ResourceStoreError(
+            RESOURCE_IMPORT_INVALID, f"invalid file name in import: {name!r}"
+        )
+    return path
+
+
+@contextmanager
+def import_source(source_dir: Path | None, files: ImportFiles | None) -> Iterator[Path]:
+    """The directory an import should read, whichever form it arrived in.
+
+    Exactly one of ``source_dir`` / ``files`` must be given. ``files`` is
+    written to a scratch directory that lives only for the block, so a store
+    hands either form to the same directory validator and reads the texts into
+    memory before the block ends.
+    """
+    if (source_dir is None) == (files is None):
+        raise ResourceStoreError(
+            RESOURCE_IMPORT_INVALID,
+            "import_dir takes exactly one of source_dir or files",
+        )
+    if files is None:
+        assert source_dir is not None
+        yield Path(source_dir)
+        return
+    scratch = Path(tempfile.mkdtemp(prefix="potpie-import-"))
+    try:
+        for name, text in files.items():
+            if not isinstance(text, str):
+                raise ResourceStoreError(
+                    RESOURCE_IMPORT_INVALID,
+                    f"import file {name!r} must be text, got {type(text).__name__}",
+                )
+            target = scratch / _safe_relative_path(name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+        yield scratch
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 # --- Port -------------------------------------------------------------------
 
 
@@ -304,11 +452,20 @@ class ResourceStorePort(Protocol):
         *,
         pot_id: str,
         slug: str,
-        source_dir: Path,
+        source_dir: Path | None = None,
+        files: ImportFiles | None = None,
         source_ref: str | None = None,
         source_kind: str | None = None,
     ) -> DocumentManifest:
         """Absorb a validated chunk directory as document ``slug``.
+
+        The directory arrives in one of two forms, exactly one of them:
+        ``source_dir``, a path this store can read itself, or ``files``, its
+        contents keyed by POSIX-relative path (see :func:`read_import_files`).
+        The CLI always sends ``files`` — the store may live in a daemon with
+        another working directory, or on a managed host with no view of the
+        caller's machine at all — and a job running beside the store may pass
+        ``source_dir``. Both go through the same validation.
 
         Atomic: a directory that fails validation leaves any prior revision of
         the document exactly as it was. Re-importing the same slug replaces the
@@ -357,11 +514,14 @@ __all__ = [
     "ChunkRef",
     "DEFAULT_SECTION_SLUG",
     "DocumentManifest",
+    "ImportFiles",
     "RECOMMENDED_MAX_SECTION_CHUNKS",
     "RESOURCE_CHUNK_MAX_CHARS",
     "RESOURCE_CHUNK_TARGET_CHARS",
     "RESOURCE_CHUNK_TOO_LARGE",
     "RESOURCE_ID_INVALID",
+    "RESOURCE_IMPORT_INVALID",
+    "RESOURCE_IMPORT_MAX_BYTES",
     "RESOURCE_LABEL_MAX_CHARS",
     "RESOURCE_MANIFEST_INVALID",
     "RESOURCE_NOT_FOUND",
@@ -377,6 +537,8 @@ __all__ = [
     "ResourceStoreStatus",
     "SectionManifest",
     "format_resource_id",
+    "import_source",
     "parse_resource_id",
+    "read_import_files",
     "require_resource_slug",
 ]

@@ -33,6 +33,7 @@ from potpie_context_core.ports.resource_store import (
     Chunk,
     SectionManifest,
     format_resource_id,
+    read_import_files,
 )
 from potpie_context_core.resource_to_semantic import ResourceImportResult
 
@@ -123,18 +124,44 @@ def resource_import(
     with _resource_contract():
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        result = host.resources.import_dir(
-            pot_id=pot_id,
-            slug=doc,
-            # The daemon runs with its own working directory, so a relative
-            # path has to be resolved on this side of the hop or it lands
-            # somewhere else entirely.
-            source_dir=Path(directory).expanduser().resolve(),
-            source_ref=source_ref,
-            source_kind=source_kind,
-        )
+        # The bytes travel with the call. The store may sit in a daemon with a
+        # different working directory, or on a managed host with no view of
+        # this machine at all, so a path would land somewhere else entirely —
+        # or nowhere. Read the directory here and ship its contents; every
+        # host then imports the same way.
+        files = read_import_files(Path(directory).expanduser())
+        try:
+            result = host.resources.import_dir(
+                pot_id=pot_id,
+                slug=doc,
+                files=files,
+                source_ref=source_ref,
+                source_kind=source_kind,
+            )
+        except Exception as exc:
+            if not _host_predates_inline_import(exc):
+                raise
+            # A host built before ``files`` existed refuses the keyword itself.
+            # That arrives as the daemon's generic error, which the contract
+            # renders as "run potpie doctor"; the real repair is a host upgrade.
+            raise CapabilityNotImplemented(
+                "resource_import.inline_files",
+                detail=(
+                    "this host only imports from a directory it can read itself; "
+                    "it predates inline import"
+                ),
+                recommended_next_action=(
+                    "upgrade the host, or run the import against the local host: "
+                    "'potpie --host local resource import ...'"
+                ),
+            ) from exc
         payload = _import_payload(result)
         emit(payload, human=_import_human(payload))
+
+
+def _host_predates_inline_import(exc: BaseException) -> bool:
+    """Did the host refuse the ``files`` keyword rather than the import?"""
+    return "unexpected keyword argument 'files'" in str(exc)
 
 
 @resource_app.command("get")

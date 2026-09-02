@@ -21,6 +21,8 @@ from potpie_context_core.api import (
     SectionManifest,
     build_graph_runtime,
     parse_resource_id,
+    ImportFiles,
+    import_source,
     require_resource_slug,
 )
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
@@ -212,12 +214,14 @@ class InMemoryResourceStore:
         *,
         pot_id: str,
         slug: str,
-        source_dir: Path,
+        source_dir: Path | None = None,
+        files: ImportFiles | None = None,
         source_ref: str | None = None,
         source_kind: str | None = None,
     ) -> DocumentManifest:
         doc = require_resource_slug(slug, kind="document")
-        source = read_source_document(Path(source_dir))
+        with import_source(source_dir, files) as root:
+            source = read_source_document(root)
         with self._lock:
             stored = self._documents.get((pot_id, doc))
             manifest = build_import_manifest(

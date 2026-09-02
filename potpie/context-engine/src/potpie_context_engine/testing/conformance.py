@@ -25,6 +25,7 @@ from potpie_context_core.api import (
     SectionManifest,
     format_resource_id,
     parse_resource_id,
+    read_import_files,
 )
 from potpie_context_core.ports.resource_index import SNIPPET_TARGET_CHARS
 
@@ -227,6 +228,20 @@ def run_resource_store_conformance(store_factory: Callable[[], object]) -> None:
         }
         if labels != {"opening", "closing", "limits"}:
             raise AssertionError("list did not return every chunk label")
+
+        # The same directory shipped as its contents — what the CLI sends,
+        # because a host may not be able to read the caller's filesystem —
+        # must import identically. A third pot keeps it a first import.
+        pot_c = "conformance:pot-c"
+        shipped = store.import_dir(
+            pot_id=pot_c, slug=doc, files=read_import_files(first)
+        )
+        if shipped.revision != 1 or shipped.sections != manifest.sections:
+            raise AssertionError("an import from files must match the directory import")
+        if store.get(pot_id=pot_c, resource_id=limits).text != "beta":
+            raise AssertionError("an import from files did not store the chunk text")
+        if store.get(pot_id=pot_c, resource_id=limits).page != 3:
+            raise AssertionError("an import from files dropped chunk metadata")
 
         # A refused import must leave the stored revision exactly as it was.
         oversized = write_import_directory(

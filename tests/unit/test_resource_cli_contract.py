@@ -71,11 +71,11 @@ class _CountingStore:
     def __init__(self) -> None:
         self.inner = InMemoryResourceStore()
         self.calls: list[str] = []
-        self.import_dirs: list[Path] = []
+        self.import_kwargs: list[dict] = []
 
     def import_dir(self, **kwargs):
         self.calls.append("import_dir")
-        self.import_dirs.append(kwargs["source_dir"])
+        self.import_kwargs.append(dict(kwargs))
         return self.inner.import_dir(**kwargs)
 
     def get_many(self, **kwargs):
@@ -448,9 +448,7 @@ def test_import_flags_sections_that_still_need_a_summary(tmp_path):
     assert "body" in payload["recommended_next_action"]
 
 
-def test_import_resolves_a_relative_directory_before_the_daemon_hop(
-    tmp_path, monkeypatch
-):
+def test_import_ships_the_directory_contents_not_a_path(tmp_path, monkeypatch):
     host = _host()
     _import_dir(tmp_path / "in")
     monkeypatch.chdir(tmp_path)
@@ -458,8 +456,49 @@ def test_import_resolves_a_relative_directory_before_the_daemon_hop(
     result = _run(["import", "in", "--doc", DOC])
 
     assert result.exit_code == 0, result.stdout
-    # The daemon has its own working directory; a relative path must not reach it.
-    assert host.store.import_dirs[0].is_absolute()
+    # The host may be a daemon with its own working directory or a managed
+    # service on another machine: it never receives a path, only the files.
+    sent = host.store.import_kwargs[0]
+    assert sent.get("source_dir") is None
+    assert set(sent["files"]) == {
+        "meta.json",
+        "body/0000.txt",
+        "body/0001.txt",
+        "body/0002.txt",
+    }
+    assert sent["files"]["body/0000.txt"] == "alpha"
+
+
+def test_import_refuses_a_directory_it_cannot_read(tmp_path):
+    _host()
+
+    result = _run(["import", str(tmp_path / "nowhere"), "--doc", DOC])
+
+    assert result.exit_code == 1, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "resource_manifest_invalid"
+    assert "not found" in payload["message"]
+
+
+def test_import_names_a_host_that_predates_inline_import(tmp_path):
+    host = _host()
+
+    class _OldHostStore(_CountingStore):
+        def import_dir(self, **kwargs):
+            if "files" in kwargs:
+                raise TypeError(
+                    "ResourceFacade.import_dir() got an unexpected keyword argument 'files'"
+                )
+            return super().import_dir(**kwargs)
+
+    host.resources.store = _OldHostStore()
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    assert result.exit_code == 2, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "not_implemented"
+    assert "upgrade the host" in payload["recommended_next_action"]
 
 
 def test_reimport_separates_kept_changed_added_and_removed(tmp_path):
