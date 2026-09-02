@@ -127,7 +127,7 @@ def test_in_process_cli_invocations_share_install_and_daemon_session_ids(
     assert not (tmp_path / "context-home" / "telemetry" / "identity.json").exists()
 
 
-def test_cli_root_configures_sentry_errors_and_metrics_with_one_settings_load(
+def test_cli_root_configures_sentry_with_one_settings_load_and_no_eager_init(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -165,7 +165,9 @@ def test_cli_root_configures_sentry_errors_and_metrics_with_one_settings_load(
     assert result.exit_code == _common.EXIT_UNAVAILABLE, result.output
     assert loaded == [None]
     assert error_settings == [settings]
-    assert metric_settings == [(settings, True)]
+    # The SDK is not initialised on the way in any more: metrics go to the
+    # spool, and only an unexpected error initialises it — lazily, elsewhere.
+    assert metric_settings == []
 
 
 def test_expected_contract_error_does_not_capture_sentry(

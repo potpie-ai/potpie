@@ -56,23 +56,71 @@ class _FakeSentry(ModuleType):
 @pytest.fixture(autouse=True)
 def reset_sentry_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sentry_runtime, "_configured", False)
+    monkeypatch.setattr(sentry_runtime, "_settings", None)
     monkeypatch.setattr(sentry_metrics_runtime, "_configured", False)
     monkeypatch.setattr(sentry_metrics_runtime, "_enabled", False)
     monkeypatch.setattr(sentry_metrics_runtime, "_sentry_sdk", None)
+    sentry_metrics_runtime.set_metric_recorder(None)
 
 
-def test_configure_cli_sentry_uses_privacy_hooks(monkeypatch) -> None:
-    fake = _FakeSentry()
-    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
-    settings = SentrySettings(
-        enabled=True,
+def _settings(*, enabled: bool = True) -> SentrySettings:
+    return SentrySettings(
+        enabled=enabled,
         dsn="https://public@example.invalid/1",
         environment="staging",
         release="potpie-cli@test",
         dist="cli-dist",
     )
 
-    configure_cli_sentry(settings)
+
+def test_configure_cli_sentry_initialises_nothing_and_routes_metrics_to_the_spool(
+    monkeypatch,
+) -> None:
+    """The SDK used to be initialised on every command right here; that init
+    (forty integration probes) and its envelope at exit were most of what
+    telemetry cost. Now configuring arms crash capture and installs the spool
+    recorder, and ``sentry_sdk`` stays unimported until an error needs it."""
+    fake = _FakeSentry()
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+    spooled: list[dict[str, object]] = []
+    monkeypatch.setattr("potpie.cli.telemetry.spool.append", spooled.append)
+
+    configure_cli_sentry(_settings())
+    sentry_metrics_runtime.count(
+        "ce.cli.invocations_total", attributes={"result": "ok", "path": "/etc/x"}
+    )
+
+    assert fake.init_calls == []
+    assert sentry_metrics_runtime.metrics_configured() is False
+    assert sentry_runtime._configured is True
+    assert sentry_metrics_runtime.metric_recorder() is sentry_runtime.spool_metric
+    assert spooled == [
+        {
+            "kind": "metric",
+            "type": "count",
+            "name": "ce.cli.invocations_total",
+            "value": 1,
+            "unit": None,
+            # The allowlist ran before the sink saw the attributes.
+            "attributes": {"result": "ok"},
+        }
+    ]
+
+
+def test_first_unexpected_error_initialises_the_sdk_with_privacy_hooks(
+    monkeypatch,
+) -> None:
+    fake = _FakeSentry()
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+    configure_cli_sentry(_settings())
+    exc = RuntimeError("boom")
+
+    capture_unexpected_cli_error(
+        exc, error_code="unexpected_cli_error", error_kind="unexpected"
+    )
+    capture_unexpected_cli_error(
+        exc, error_code="unexpected_cli_error", error_kind="unexpected"
+    )
 
     assert len(fake.init_calls) == 1
     call = fake.init_calls[0]
@@ -82,32 +130,10 @@ def test_configure_cli_sentry_uses_privacy_hooks(monkeypatch) -> None:
     assert call["max_request_body_size"] == "never"
     assert callable(call["before_send"])
     assert callable(call["before_breadcrumb"])
-
-
-def test_configure_cli_sentry_delegates_to_neutral_runtime(monkeypatch) -> None:
-    settings = SentrySettings(
-        enabled=True,
-        dsn="https://public@example.invalid/1",
-        environment="staging",
-        release="potpie-cli@test",
-        dist="cli-dist",
-    )
-    configured: list[tuple[SentrySettings, bool]] = []
-
-    def configure(
-        settings_arg: SentrySettings, *, short_lived_process: bool = False
-    ) -> None:
-        configured.append((settings_arg, short_lived_process))
-
-    monkeypatch.setattr(sentry_runtime, "configure_metrics", configure)
-    monkeypatch.setattr(sentry_runtime, "metrics_configured", lambda: True)
-
-    configure_cli_sentry(settings)
-
-    # The CLI is the short-lived profile: no auto-enabling integration probes,
-    # bounded exit flush. The daemon and workers keep the SDK defaults.
-    assert configured == [(settings, True)]
-    assert sentry_runtime._configured is True
+    # The CLI profile, since this process is about to exit.
+    assert call["auto_enabling_integrations"] is False
+    assert call["shutdown_timeout"] == 1.0
+    assert fake.captured == [exc, exc]
 
 
 def test_configure_cli_sentry_disabled_does_not_import(monkeypatch) -> None:
@@ -125,28 +151,14 @@ def test_configure_cli_sentry_disabled_does_not_import(monkeypatch) -> None:
     assert "sentry_sdk" not in sys.modules
 
 
-def test_configure_cli_sentry_disabled_only_resets_cli_capture_runtime(
+def test_configure_cli_sentry_disabled_disarms_capture_and_removes_the_recorder(
     monkeypatch,
 ) -> None:
     fake = _FakeSentry()
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
-    enabled = SentrySettings(
-        enabled=True,
-        dsn="https://public@example.invalid/1",
-        environment="staging",
-        release="potpie-cli@test",
-        dist=None,
-    )
-    disabled = SentrySettings(
-        enabled=False,
-        dsn="https://public@example.invalid/1",
-        environment="staging",
-        release="potpie-cli@test",
-        dist=None,
-    )
 
-    configure_cli_sentry(enabled)
-    configure_cli_sentry(disabled)
+    configure_cli_sentry(_settings(enabled=True))
+    configure_cli_sentry(_settings(enabled=False))
     capture_unexpected_cli_error(
         RuntimeError("boom"),
         error_code="unexpected_cli_error",
@@ -154,14 +166,15 @@ def test_configure_cli_sentry_disabled_only_resets_cli_capture_runtime(
     )
 
     assert sentry_runtime._configured is False
-    assert sentry_metrics_runtime.metrics_configured() is True
+    assert sentry_metrics_runtime.metric_recorder() is None
+    assert fake.init_calls == []
     assert fake.captured == []
 
 
 def test_capture_unexpected_cli_error_sets_allowlisted_scope(monkeypatch) -> None:
     fake = _FakeSentry()
     monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
-    monkeypatch.setattr(sentry_runtime, "_configured", True)
+    configure_cli_sentry(_settings())
     telemetry = TelemetryContext(
         anonymous_install_id="install_123",
         invocation_id="invoke_456",

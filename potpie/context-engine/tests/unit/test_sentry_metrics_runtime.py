@@ -21,6 +21,7 @@ count = getattr(sentry_metrics_runtime, "count")
 distribution = getattr(sentry_metrics_runtime, "distribution")
 gauge = getattr(sentry_metrics_runtime, "gauge")
 flush = getattr(sentry_metrics_runtime, "flush")
+set_metric_recorder = getattr(sentry_metrics_runtime, "set_metric_recorder")
 
 
 @dataclass(frozen=True)
@@ -210,6 +211,50 @@ def test_short_lived_profile_skips_auto_integrations_and_bounds_exit(
     assert len(atexit_calls) == 1
     # The quiet callback swallows the SDK's arguments without printing.
     assert atexit_calls[0](3, 1.0) is None
+
+
+def test_an_installed_recorder_takes_every_metric_and_the_sdk_sees_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI's spool recorder. Attributes reach it already allowlisted, so
+    a recorder can never receive what the SDK path would have dropped."""
+    fake = _FakeSentry()
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+    configure_metrics(_settings(enabled=True))
+    taken: list[tuple[object, ...]] = []
+
+    set_metric_recorder(
+        lambda kind, name, value, unit, attributes: taken.append(
+            (kind, name, value, unit, attributes)
+        )
+    )
+    try:
+        count("ce.a", attributes={"result": "ok", "path": "/etc/passwd"})
+        distribution("ce.b", 2.5, unit="millisecond")
+        gauge("ce.c", 3, attributes={"unknown_key": "x"})
+    finally:
+        set_metric_recorder(None)
+
+    assert taken == [
+        ("count", "ce.a", 1, None, {"result": "ok"}),
+        ("distribution", "ce.b", 2.5, "millisecond", None),
+        ("gauge", "ce.c", 3, None, None),
+    ]
+    assert fake.metrics.count_calls == []
+    assert fake.metrics.distribution_calls == []
+
+
+def test_a_failing_recorder_never_reaches_the_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _broken(*args: object) -> None:
+        raise RuntimeError("recorder down")
+
+    set_metric_recorder(_broken)
+    try:
+        count("ce.a")
+    finally:
+        set_metric_recorder(None)
 
 
 def test_service_profile_keeps_sdk_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

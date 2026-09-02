@@ -235,18 +235,10 @@ def test_configure_product_analytics_uses_noop_when_disabled(monkeypatch) -> Non
 
 
 def test_posthog_sink_payload_excludes_secrets(monkeypatch) -> None:
-    @dataclass
-    class _SendCall:
-        url: str
-        api_key: str
-        payload: dict[str, object]
-
-    calls: list[_SendCall] = []
-
-    def _send(url: str, *, api_key: str, payload: dict[str, object]) -> None:
-        calls.append(_SendCall(url=url, api_key=api_key, payload=payload))
-
-    monkeypatch.setattr(product_analytics, "_send_product_analytics_event", _send)
+    spooled: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        product_analytics, "_spool_product_analytics_event", spooled.append
+    )
     sink = PostHogSink(
         ProductAnalyticsSettings(
             enabled=True,
@@ -263,10 +255,9 @@ def test_posthog_sink_payload_excludes_secrets(monkeypatch) -> None:
         )
     )
 
-    # One batch endpoint per host; the key rides on the batch, not the event.
-    assert calls[0].url == "https://us.i.posthog.com/batch/"
-    assert calls[0].api_key == "phc_test"
-    payload = calls[0].payload
+    # The key never leaves settings: the flusher adds it per batch from the
+    # same settings, so it is neither in the event nor on disk.
+    payload = spooled[0]
     assert "api_key" not in payload
     assert payload["event"] == "cli_onboarding_setup_started"
     assert payload["distinct_id"] == "install_123"
@@ -275,102 +266,16 @@ def test_posthog_sink_payload_excludes_secrets(monkeypatch) -> None:
     assert properties == {"repo_location_kind": "explicit_path"}
 
 
-def test_product_analytics_dispatcher_batches_queued_events(monkeypatch) -> None:
-    """Every event a process captured leaves in one POST on one daemon thread.
-
-    The per-event shape this replaced opened a fresh TLS connection for each
-    event and held the interpreter open (non-daemon worker) until the last one
-    was answered — ``search`` paid ~2.4 s for three events after it had already
-    printed its result.
-    """
-    posts: list[tuple[str, dict[str, object]]] = []
-    thread_names: list[str] = []
-    daemon_flags: list[bool] = []
-    release_worker = product_analytics.threading.Event()
-
-    def _post(*, url: str, payload: dict[str, object]) -> None:
-        worker_thread = product_analytics.threading.current_thread()
-        thread_names.append(worker_thread.name)
-        daemon_flags.append(worker_thread.daemon)
-        posts.append((url, payload))
-
-    monkeypatch.setattr(product_analytics, "_post_product_analytics_batch", _post)
-    dispatcher = product_analytics._ProductAnalyticsDispatcher()
-    # Hold the worker until both events are queued so the batch is deterministic.
-    original_run = dispatcher._run
-
-    def _gated_run() -> None:
-        release_worker.wait(timeout=1.0)
-        original_run()
-
-    monkeypatch.setattr(dispatcher, "_run", _gated_run)
-
-    dispatcher.dispatch(
-        url="https://us.i.posthog.com/batch/",
-        api_key="phc_test",
-        payload={
-            "event": "cli_onboarding_setup_completed",
-            "distinct_id": "install_123",
-            "properties": {"repo_location_kind": "explicit_path"},
-        },
-    )
-    dispatcher.dispatch(
-        url="https://us.i.posthog.com/batch/",
-        api_key="phc_test",
-        payload={
-            "event": "cli_onboarding_integration_auth_failed",
-            "distinct_id": "install_123",
-            "properties": {"provider": "github"},
-        },
-    )
-    release_worker.set()
-
-    dispatcher.flush()
-
-    assert len(posts) == 1
-    url, payload = posts[0]
-    assert url == "https://us.i.posthog.com/batch/"
-    assert payload["api_key"] == "phc_test"
-    assert [event["event"] for event in payload["batch"]] == [
-        "cli_onboarding_setup_completed",
-        "cli_onboarding_integration_auth_failed",
-    ]
-    assert thread_names == ["potpie-product-analytics"]
-    assert daemon_flags == [True]
-
-
-def test_product_analytics_batches_split_by_destination(monkeypatch) -> None:
-    posts: list[tuple[str, dict[str, object]]] = []
+def test_posthog_sink_spools_nothing_when_disabled(monkeypatch) -> None:
+    spooled: list[dict[str, object]] = []
     monkeypatch.setattr(
-        product_analytics,
-        "_post_product_analytics_batch",
-        lambda *, url, payload: posts.append((url, payload)),
+        product_analytics, "_spool_product_analytics_event", spooled.append
     )
-    dispatcher = product_analytics._ProductAnalyticsDispatcher()
-    release_worker = product_analytics.threading.Event()
-    original_run = dispatcher._run
-    monkeypatch.setattr(
-        dispatcher, "_run", lambda: (release_worker.wait(timeout=1.0), original_run())
-    )
-    dispatcher.dispatch(
-        url="https://us.i.posthog.com/batch/",
-        api_key="phc_a",
-        payload={"event": "one", "distinct_id": "i", "properties": {}},
-    )
-    dispatcher.dispatch(
-        url="https://eu.i.posthog.com/batch/",
-        api_key="phc_b",
-        payload={"event": "two", "distinct_id": "i", "properties": {}},
-    )
-    release_worker.set()
+    sink = PostHogSink(ProductAnalyticsSettings(enabled=False, api_key=None, host="h"))
 
-    dispatcher.flush()
+    sink.capture(ProductAnalyticsEvent(name="e", distinct_id="i", properties={}))
 
-    assert sorted(url for url, _ in posts) == [
-        "https://eu.i.posthog.com/batch/",
-        "https://us.i.posthog.com/batch/",
-    ]
-    assert {payload["api_key"] for _, payload in posts} == {"phc_a", "phc_b"}
+    assert spooled == []
 
 
 def test_product_analytics_posts_reuse_one_http_client(monkeypatch) -> None:
@@ -400,26 +305,3 @@ def test_product_analytics_posts_reuse_one_http_client(monkeypatch) -> None:
 
     assert len(created) == 1
     assert product_analytics._http_client is None
-
-
-def test_product_analytics_dispatcher_flush_uses_bounded_drain(monkeypatch) -> None:
-    dispatcher = product_analytics._ProductAnalyticsDispatcher()
-    dispatcher._queue.put_nowait(
-        product_analytics._QueuedProductAnalyticsEvent(
-            url="https://us.i.posthog.com/batch/",
-            api_key="phc_test",
-            payload={
-                "event": "cli_onboarding_setup_completed",
-                "distinct_id": "install_123",
-                "properties": {},
-            },
-        )
-    )
-    monkeypatch.setattr(
-        dispatcher._queue,
-        "join",
-        lambda: (_ for _ in ()).throw(AssertionError("unbounded queue.join()")),
-    )
-    monkeypatch.setattr(product_analytics, "_DISPATCH_WORKER_JOIN_TIMEOUT_SECONDS", 0.0)
-
-    dispatcher.flush()

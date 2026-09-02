@@ -206,11 +206,35 @@ def _reset_product_analytics_state():
 
 
 def _reset_product_analytics_globals() -> None:
-    from potpie.cli.telemetry import product_analytics
+    from potpie.cli.telemetry import product_analytics, spool
+    from potpie_context_engine.bootstrap import sentry_metrics_runtime
 
-    product_analytics._flush_product_analytics_dispatcher()
-    product_analytics._dispatcher = product_analytics._ProductAnalyticsDispatcher()
     product_analytics._sink = product_analytics.NoOpProductAnalyticsSink()
+    sentry_metrics_runtime.set_metric_recorder(None)
+    spool._appended = False
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _never_launch_a_real_flusher():
+    """A test's interpreter exit must not fork a telemetry flusher.
+
+    The spool registers an atexit spawn the first time a process appends;
+    in-process CLI tests append into their per-test ``XDG_CONFIG_HOME``, and
+    by the time atexit runs that env is restored — so the spawn would look at
+    the developer's real spool. Off for the whole session; per-test fixtures
+    stub the launch itself when they need to observe it.
+    """
+    from potpie.cli.telemetry import spool
+
+    spool.exit_spawn_enabled = False
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _stub_flusher_launch(monkeypatch: pytest.MonkeyPatch):
+    from potpie.cli.telemetry import spool
+
+    monkeypatch.setattr(spool, "_launch", lambda: None)
 
 
 @pytest.fixture(autouse=True)

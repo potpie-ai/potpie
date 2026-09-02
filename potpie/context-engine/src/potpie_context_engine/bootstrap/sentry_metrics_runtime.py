@@ -44,6 +44,25 @@ _configured = False
 _enabled = False
 _sentry_sdk: ModuleType | None = None
 
+
+#: Where a metric goes instead of the SDK, when a process installs a recorder.
+#: Called as ``recorder(kind, name, value, unit, attributes)`` with attributes
+#: that have already been through the allowlist. The CLI installs one that
+#: appends to a spool file shipped later by a detached process; the daemon and
+#: workers install none and emit through the SDK in-process.
+_MetricRecorder = Callable[..., None]
+_recorder: Optional[_MetricRecorder] = None
+
+
+def set_metric_recorder(recorder: Optional[_MetricRecorder]) -> None:
+    global _recorder
+    _recorder = recorder
+
+
+def metric_recorder() -> Optional[_MetricRecorder]:
+    return _recorder
+
+
 #: How long a short-lived process may wait at exit for its one metrics
 #: envelope. The SDK default is 2 s and it is paid on every command that had
 #: something to send; a CLI that runs for 0.3 s cannot spend that on telemetry.
@@ -123,6 +142,8 @@ def count(
     unit: Optional[str] = None,
     attributes: Optional[_MetricAttributes] = None,
 ) -> None:
+    if _route_to_recorder("count", name, value, unit=unit, attributes=attributes):
+        return
     if not _enabled or _sentry_sdk is None:
         return
     safe_attributes = _safe_attributes(attributes)
@@ -142,6 +163,10 @@ def distribution(
     unit: Optional[str] = None,
     attributes: Optional[_MetricAttributes] = None,
 ) -> None:
+    if _route_to_recorder(
+        "distribution", name, value, unit=unit, attributes=attributes
+    ):
+        return
     if not _enabled or _sentry_sdk is None:
         return
     safe_attributes = _safe_attributes(attributes)
@@ -161,6 +186,8 @@ def gauge(
     unit: Optional[str] = None,
     attributes: Optional[_MetricAttributes] = None,
 ) -> None:
+    if _route_to_recorder("gauge", name, value, unit=unit, attributes=attributes):
+        return
     if not _enabled or _sentry_sdk is None:
         return
     safe_attributes = _safe_attributes(attributes)
@@ -171,6 +198,26 @@ def gauge(
     # Sentry SDK failures must never affect context-engine control flow.
     except Exception:  # noqa: BLE001
         return
+
+
+def _route_to_recorder(
+    kind: str,
+    name: str,
+    value: _MetricValue,
+    *,
+    unit: Optional[str],
+    attributes: Optional[_MetricAttributes],
+) -> bool:
+    """``True`` when an installed recorder took the metric (or failed trying)."""
+    recorder = _recorder
+    if recorder is None:
+        return False
+    try:
+        recorder(kind, name, value, unit, _safe_attributes(attributes))
+    # A recorder failure is a telemetry failure; the caller's work goes on.
+    except Exception:  # noqa: BLE001
+        pass
+    return True
 
 
 def flush(timeout: float = 2.0) -> None:

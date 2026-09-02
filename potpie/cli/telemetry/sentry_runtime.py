@@ -6,7 +6,9 @@ from typing import Protocol
 
 from potpie_context_engine.bootstrap.sentry_metrics_runtime import (
     configure_metrics,
+    flush,
     metrics_configured,
+    set_metric_recorder,
 )
 
 from .context import (
@@ -16,6 +18,33 @@ from .context import (
 from .settings import SentrySettings
 
 _configured = False
+_settings: SentrySettings | None = None
+
+
+def spool_metric(
+    kind: str,
+    name: str,
+    value: int | float,
+    unit: str | None,
+    attributes: dict[str, str | int | float | bool] | None,
+) -> None:
+    """The CLI's metric recorder: to the spool, shipped later by the flusher.
+
+    Installing this is what keeps ``sentry_sdk`` out of the command's own
+    process on the happy path: no import, no ``init``, no envelope at exit.
+    """
+    from . import spool
+
+    spool.append(
+        {
+            "kind": "metric",
+            "type": kind,
+            "name": name,
+            "value": value,
+            "unit": unit,
+            "attributes": dict(attributes or {}),
+        }
+    )
 
 
 class _SentryScope(Protocol):
@@ -25,19 +54,29 @@ class _SentryScope(Protocol):
 
 
 def configure_cli_sentry(settings: SentrySettings) -> None:
-    global _configured
+    """Arm crash reports and route metrics to the spool. Initialises nothing.
+
+    The SDK used to be initialised here on every command, which is where the
+    integration probes, the ``init`` work and the envelope at exit came from.
+    Now the command's process never touches ``sentry_sdk`` unless it has an
+    unexpected error to report: metrics go to the spool through
+    :func:`spool_metric`, and :func:`capture_unexpected_cli_error`
+    initialises the SDK on demand with the short-lived profile.
+    """
+    global _configured, _settings
     if not settings.enabled:
         disable_cli_sentry()
         return
-    if _configured:
-        return
-    configure_metrics(settings, short_lived_process=True)
-    _configured = metrics_configured()
+    _settings = settings
+    set_metric_recorder(spool_metric)
+    _configured = True
 
 
 def disable_cli_sentry() -> None:
-    global _configured
+    global _configured, _settings
     _configured = False
+    _settings = None
+    set_metric_recorder(None)
 
 
 def capture_unexpected_cli_error(
@@ -49,6 +88,12 @@ def capture_unexpected_cli_error(
     if not _configured:
         return
     try:
+        if not metrics_configured():
+            if _settings is None:
+                return
+            configure_metrics(_settings, short_lived_process=True)
+            if not metrics_configured():
+                return
         sentry_sdk = _load_sentry_sdk()
         telemetry = current_telemetry_context()
         with sentry_sdk.new_scope() as scope:
@@ -56,6 +101,9 @@ def capture_unexpected_cli_error(
             if telemetry is not None:
                 _bind_telemetry(scope, telemetry)
             sentry_sdk.capture_exception(exc)
+        # The one path where the process waits on the network: an unexpected
+        # error is rare and worth a bounded second to report.
+        flush(timeout=1.0)
     except Exception:  # noqa: BLE001
         return
 

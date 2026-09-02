@@ -198,7 +198,6 @@ def build_app() -> typer.Typer:
         from potpie_context_engine.bootstrap.runtime_settings import (
             ensure_runtime_environment_loaded,
         )
-        from potpie_context_engine.bootstrap import sentry_metrics_runtime
 
         # `or argv_requested_*`: Click runs this group callback *before* it
         # parses the subcommand's own arguments, so a trailing `potpie pot list
@@ -214,10 +213,9 @@ def build_app() -> typer.Typer:
 
         bind_telemetry_context(ctx, json_output=is_json())
         sentry_settings = settings.load_sentry_settings()
+        # Arms crash capture and routes metrics to the spool; the SDK itself
+        # is initialised only if an unexpected error needs reporting.
         sentry_runtime.configure_cli_sentry(sentry_settings)
-        sentry_metrics_runtime.configure_metrics(
-            sentry_settings, short_lived_process=True
-        )
         configure_product_analytics(settings.load_product_analytics_settings())
 
         # Last, so the refusal it can raise lands on a configured error channel
