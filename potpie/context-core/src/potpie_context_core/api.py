@@ -43,12 +43,14 @@ from potpie_context_core.identity import (
 
 # --- Context records: the typed durable-memory vocabulary.
 from potpie_context_core.context_records import (
+    REQUIRED_DETAIL_KEYS,
     BugPatternRecord,
     ContextRecordValidationError,
     DecisionRecord,
     FixRecord,
     FreeFormRecord,
     PreferenceRecord,
+    required_detail_keys,
 )
 
 # --- Semantic mutations: how records become graph writes.
@@ -274,6 +276,7 @@ __all__ = [
     "IdentityError",
     "IdentitySpec",
     "mint_entity_key",
+    "required_detail_keys",
     "validate_entity_key",
     # records
     "BugPatternRecord",
@@ -282,6 +285,7 @@ __all__ = [
     "FixRecord",
     "FreeFormRecord",
     "PreferenceRecord",
+    "REQUIRED_DETAIL_KEYS",
     # mutations + transforms
     "SemanticMutation",
     "MutationBatch",

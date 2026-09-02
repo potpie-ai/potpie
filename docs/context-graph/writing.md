@@ -94,8 +94,10 @@ fictional (it survives only as a stale comment in `domain/reconciliation.py`).
 > are **both empty tuples**. Review/blocking is decided **at runtime** by `MutationRisk`
 > (low/medium/high) — see §3 — not by which op you used. Old docs that called `supersede_claim`
 > or `merge_duplicate_entities` "usually review-required" are wrong: they auto-apply when
-> `--allow-review-required` and `--approved-by` are supplied, otherwise they return
-> `review_required` because of their runtime risk.
+> `graph propose --approved-by <user-ref>` pre-approves the plan (the legacy `graph mutate`
+> spells it `--allow-review-required --approved-by`), otherwise they return `review_required`
+> because of their runtime risk and `graph commit <plan_id> --approved-by <user-ref> --verify`
+> applies them.
 
 ### 2.2 Op fields are FLAT
 

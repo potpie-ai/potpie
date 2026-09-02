@@ -21,6 +21,7 @@ from typing import Any, Mapping
 
 from potpie_context_core.graph_contract import (
     GRAPH_CONTRACT_VERSION,
+    normalize_contract_version,
     ONTOLOGY_VERSION,
 )
 
@@ -295,8 +296,9 @@ class SemanticMutationRequest:
         return cls(
             pot_id=resolved_pot,
             operations=operations,
-            graph_contract_version=_opt_str(payload.get("graph_contract_version"))
-            or GRAPH_CONTRACT_VERSION,
+            graph_contract_version=normalize_contract_version(
+                _opt_str(payload.get("graph_contract_version"))
+            ),
             idempotency_key=_opt_str(payload.get("idempotency_key")),
             created_by=MutationActor.parse(payload.get("created_by")),
             dry_run=dry_run,

@@ -46,6 +46,7 @@ from potpie_context_core.agent_envelope import (
     CoverageReport,
     EvidenceItem,
 )
+from potpie_context_core.context_records import REQUIRED_DETAIL_KEYS
 from potpie_context_core.ports.claim_query import ClaimQueryFilter
 from potpie_context_core.reconciliation import MutationResult, MutationSummary
 from potpie_context_core.source_references import RESOLVE_MODES
@@ -718,3 +719,14 @@ def test_an_item_with_nothing_to_say_is_neither_printed_nor_counted():
     lines = query._envelope_human(env).splitlines()
     assert len(lines) == 2
     assert "more" not in lines[-1]
+
+
+def test_record_help_names_the_required_detail_per_type():
+    """``--type decision`` was refused for want of ``rationale`` that the help
+    never named; the table the validator is held to is now printed there."""
+    result = CliRunner().invoke(_app(), ["record", "--help"])
+
+    assert result.exit_code == 0
+    text = " ".join(result.stdout.split())
+    for record_type, keys in REQUIRED_DETAIL_KEYS.items():
+        assert f"{record_type}: {', '.join(keys) or 'none'}" in text

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from potpie_context_core.context_records import (
+    REQUIRED_DETAIL_KEYS,
     BugPatternRecord,
     ContextRecordValidationError,
     DecisionRecord,
@@ -15,6 +16,7 @@ from potpie_context_core.context_records import (
     has_structured_schema,
     has_structured_details,
     record_to_dict,
+    required_detail_keys,
     structured_detail_keys,
     validate_record_payload,
 )
@@ -223,3 +225,39 @@ class TestSerialisation:
         out = record_to_dict(rec)
         assert out["symptom_signature"] == "sig"
         assert out["fix_steps"] == ("step1",)
+
+
+class TestRequiredDetailKeys:
+    """``record --type``'s help prints this table; the builders enforce it in
+    code, so the two are held together here rather than trusted apart."""
+
+    _VALID = {
+        "fix": {},
+        "bug_pattern": {"kind": "timeout"},
+        "preference": {"policy_kind": "logging"},
+        "policy": {"policy_kind": "logging"},
+        "decision": {"rationale": "already deployed"},
+        "verification": {"target_ref": "fix:1", "outcome": "worked"},
+    }
+
+    def test_every_structured_type_declares_its_required_keys(self) -> None:
+        from potpie_context_core import context_records
+
+        assert set(REQUIRED_DETAIL_KEYS) == set(context_records._RECORD_TYPE_TO_BUILDER)
+        assert set(REQUIRED_DETAIL_KEYS) == set(self._VALID)
+
+    @pytest.mark.parametrize("record_type", sorted(REQUIRED_DETAIL_KEYS))
+    def test_the_listed_keys_are_genuinely_required(self, record_type: str) -> None:
+        details = self._VALID[record_type]
+        validate_record_payload(record_type=record_type, summary="s", details=details)
+
+        for key in required_detail_keys(record_type):
+            without = {k: v for k, v in details.items() if k != key}
+            with pytest.raises(ContextRecordValidationError) as exc:
+                validate_record_payload(
+                    record_type=record_type, summary="s", details=without
+                )
+            assert key in str(exc.value)
+
+    def test_an_unknown_type_requires_nothing(self) -> None:
+        assert required_detail_keys("note") == ()

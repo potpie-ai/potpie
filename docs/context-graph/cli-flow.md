@@ -549,7 +549,7 @@ The **canonical write door is `graph propose` → `graph commit --verify`** (Spi
 that internally calls propose+commit.
 
 ```bash
-potpie graph propose [--file <path> | (stdin)] [--ttl 1h] [--pot <ref>]
+potpie graph propose [--file <path> | (stdin)] [--ttl 1h] [--approved-by <who>] [--pot <ref>]
 potpie graph commit  <plan_id> [--approved-by <who>] [--verify] [--pot <ref>]
 
 potpie graph mutate  [--file <path> | (stdin)] [--dry-run] [--allow-review-required] [--approved-by <who>] [--pot <ref>]
@@ -574,8 +574,10 @@ potpie graph nudge --event <e> --session <id> [--path <p>] [--scope <k:v>] [--qu
   `{"event":{…}}`/`{"claim":{…}}` shapes will not parse. The DSL, validation/risk, and
   the diff shape are owned by [writing.md](./writing.md).
 - **`graph commit <plan_id>`** applies a stored plan by id; the agent does **not**
-  resend mutations. `--verify` reads the committed claims back and downgrades on
-  missing readback / quality regressions. Medium/high-risk plans need `--approved-by`.
+  resend mutations. `--verify` reads the committed claims back; a claim that does not
+  read back exits 1, a quality regression is reported in `verification.status` and as a
+  warning at exit 0. Medium/high-risk plans need `--approved-by` here, unless
+  `propose --approved-by <who>` pre-approved the plan.
 - **`graph mutate`** — legacy wrapper (emits a warning steering to propose/commit).
   `--dry-run` previews; `--allow-review-required` + `--approved-by` auto-applies
   medium/high-risk ops.

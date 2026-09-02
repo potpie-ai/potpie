@@ -497,6 +497,9 @@ def _import_payload(result: ResourceImportResult) -> dict[str, Any]:
     index = _index_payload(result)
     warnings.extend(index["warnings"])
     return {
+        # Every other write envelope carries `ok`; a consumer branching on the
+        # same key it uses for the error shape had nothing to read here.
+        "ok": True,
         "doc": manifest.doc,
         "revision": manifest.revision,
         "source_ref": manifest.source_ref,

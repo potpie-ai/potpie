@@ -184,6 +184,7 @@ def test_import_reports_the_document_and_its_sections(tmp_path):
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
+    assert payload["ok"] is True
     assert payload["doc"] == DOC
     assert payload["revision"] == 1
     assert payload["source_ref"] == "file:///q3.pdf"

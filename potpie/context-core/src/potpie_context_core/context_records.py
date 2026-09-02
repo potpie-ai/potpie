@@ -17,6 +17,7 @@ downstream consumers can read it without re-parsing free text.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 
@@ -167,6 +168,30 @@ _RECORD_TYPE_TO_CLASS: dict[str, type[Any]] = {
     "decision": DecisionRecord,
     "verification": VerificationRecord,
 }
+
+
+#: The ``--detail`` keys each builder below refuses to go without. A table
+#: rather than something read off the builders, because the builders express
+#: the requirement in code (``_require_non_empty_string``) and ``--type``'s
+#: help has to print it before any payload exists; the test suite holds the
+#: two together by proving every listed key is genuinely refused when absent.
+#: ``fix`` requires nothing: its signature falls back to the summary and
+#: ``fix_steps`` may be absent (only an explicitly empty list is refused).
+REQUIRED_DETAIL_KEYS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "fix": (),
+        "bug_pattern": ("kind",),
+        "preference": ("policy_kind",),
+        "policy": ("policy_kind",),
+        "decision": ("rationale",),
+        "verification": ("target_ref", "outcome"),
+    }
+)
+
+
+def required_detail_keys(record_type: str) -> tuple[str, ...]:
+    """``--detail`` keys ``record_type`` cannot be written without."""
+    return REQUIRED_DETAIL_KEYS.get(record_type, ())
 
 
 def has_structured_schema(record_type: str) -> bool:

@@ -760,3 +760,55 @@ def test_lowering_merge_duplicate_entities_writes_merge_record() -> None:
     assert edge.properties["merge_external_ids"]["losing"]["source"].endswith("v1.yaml")
     assert plan.batch.invalidations == []
     assert plan.accepted_ops[0].claim_keys
+
+
+# --- contract-version alias + the approval warning's flag ---------------------
+
+
+def test_the_workbench_contract_version_is_accepted_as_an_alias() -> None:
+    """``graph catalog`` and ``graph status`` print ``v2``; a payload that
+    copied that value was refused with ``unsupported_contract_version``."""
+    req = SemanticMutationRequest.parse(
+        {"pot_id": "p", "graph_contract_version": "v2", "operations": [_link()]}
+    )
+
+    assert req.graph_contract_version == GRAPH_CONTRACT_VERSION
+    plan = validate_semantic_request(req)
+    assert plan.ok
+    assert plan.decision == "apply"
+
+
+def test_an_unsupported_contract_version_names_what_is_accepted() -> None:
+    req = SemanticMutationRequest.parse(
+        {"pot_id": "p", "graph_contract_version": "v9", "operations": [_link()]}
+    )
+
+    plan = validate_semantic_request(req)
+
+    issue = next(i for i in plan.errors if i.code == "unsupported_contract_version")
+    assert "'v9'" in issue.message
+    assert "v1.5" in issue.message
+    assert "v2" in issue.message
+    assert "omit the field" in issue.message
+
+
+def test_the_approval_warning_names_the_flag_commit_actually_takes() -> None:
+    """``--allow-review-required`` exists only on the legacy ``graph mutate``;
+    following the old warning cost a guaranteed failed ``graph commit``."""
+    op = {
+        "op": "patch_entity",
+        "subject": {"key": "service:payments-api", "type": "Service"},
+        "patch": {"summary": "Payments API service"},
+        "expected_entity_version": "entity-version:1",
+        "reason": "tighten display metadata",
+    }
+
+    plan = validate_semantic_request(_req(op))
+
+    warning = next(i for i in plan.issues if i.code == "approval_required")
+    assert (
+        "potpie graph commit <plan_id> --approved-by <user-ref> --verify"
+        in warning.message
+    )
+    assert "--allow-review-required" not in warning.message
+    assert "propose" in warning.message

@@ -34,6 +34,7 @@ from potpie_context_core.graph_contract import (
     entity_key_prefix,
     is_known_op,
     is_source_authority,
+    accepted_contract_versions,
     is_supported_contract_version,
     is_truth_class,
     normalize_entity_key,
@@ -114,7 +115,8 @@ def _validate_semantic_request(
                 code="unsupported_contract_version",
                 message=(
                     f"graph_contract_version {request.graph_contract_version!r} "
-                    f"is not supported by this build"
+                    "is not supported by this build; accepted: "
+                    f"{', '.join(accepted_contract_versions())}, or omit the field"
                 ),
             )
         )
@@ -157,8 +159,9 @@ def _validate_semantic_request(
             SemanticMutationValidationIssue(
                 code="approval_required",
                 message=(
-                    "batch contains medium- or high-risk operations; re-submit with "
-                    "--allow-review-required --approved-by <user-ref> to apply"
+                    "batch contains medium- or high-risk operations; commit it with "
+                    "`potpie graph commit <plan_id> --approved-by <user-ref> --verify`, "
+                    "or re-run propose with `--approved-by <user-ref>` to pre-approve"
                 ),
                 severity="warning",
             )

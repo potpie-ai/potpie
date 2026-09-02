@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 import uuid
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -167,10 +167,19 @@ class GraphWorkbenchService:
         *,
         pot_id: str,
         ttl_seconds: int | None = None,
+        approved_by: str | None = None,
     ) -> GraphMutationProposal:
-        """Validate, lower, diff, and persist a mutation plan without writing."""
+        """Validate, lower, diff, and persist a mutation plan without writing.
+
+        ``approved_by`` pre-approves the plan: a medium-risk batch validates as
+        ``validated`` rather than ``review_required`` and the approval is stored
+        on the record, so the commit that follows needs no approval of its own.
+        Without it every medium-risk write was three calls — propose, a commit
+        refused for want of approval, and the commit again with the flag.
+        """
         now = datetime.now(timezone.utc)
         plan_id = f"mutation-plan:{uuid.uuid4().hex[:12]}"
+        approver = (approved_by or "").strip() or None
         current_versions = _subgraph_versions(self.backend, pot_id)
         expected_versions = _expected_versions(payload, current_versions)
         conflict = _version_conflict(expected_versions, current_versions)
@@ -181,7 +190,12 @@ class GraphWorkbenchService:
         payload_with_pot["pot_id"] = pot_id
 
         try:
-            request = SemanticMutationRequest.parse(payload, pot_id=pot_id)
+            request = SemanticMutationRequest.parse(
+                payload,
+                pot_id=pot_id,
+                allow_review_required=approver is not None,
+                approved_by=approver,
+            )
         except SemanticMutationParseError as exc:
             issue = {
                 "code": "invalid_mutation_payload",
@@ -235,18 +249,32 @@ class GraphWorkbenchService:
         warnings = tuple(
             issue.message for issue in semantic_plan.issues if not issue.is_error
         ) + tuple(semantic_plan.warnings)
+        approval = (
+            GraphMutationApproval(approved_by=approver, approved_at=now)
+            if approver is not None
+            and status
+            in {
+                GraphMutationPlanStatus.validated.value,
+                GraphMutationPlanStatus.review_required.value,
+            }
+            else None
+        )
         detail = None
         recommended = None
         if conflict:
             detail = _conflict_message(conflict)
-            recommended = "Reread the affected graph views and propose a new plan."
+            recommended = _CONFLICT_NEXT_ACTION
         elif status == GraphMutationPlanStatus.invalid.value:
             detail = "; ".join(i.message for i in semantic_plan.errors) or None
             recommended = "Fix the validation errors and run graph propose again."
         elif status == GraphMutationPlanStatus.review_required.value:
-            recommended = "Review the persisted plan, then commit with --approved-by when policy allows."
+            recommended = (
+                "Review the plan; it holds operations this host cannot apply yet."
+                if semantic_plan.review_required_ops
+                else _commit_next_action(plan_id, approved=approval is not None)
+            )
         elif status == GraphMutationPlanStatus.validated.value:
-            recommended = f"Commit with `potpie graph commit {plan_id} --json`."
+            recommended = _commit_next_action(plan_id, approved=True)
 
         record = GraphMutationPlanRecord(
             plan_id=plan_id,
@@ -271,6 +299,7 @@ class GraphWorkbenchService:
             current_subgraph_versions=current_versions,
             diff=diff,
             warnings=warnings,
+            approval=approval,
             detail=detail,
         )
         self.plan_store.save(record)
@@ -396,11 +425,19 @@ class GraphWorkbenchService:
             current_versions,
         )
         if conflict:
+            landed, landed_count = _commits_landed_since(
+                self.plan_store,
+                pot_id=pot_id,
+                since=record.created_at,
+                exclude_plan_id=record.plan_id,
+            )
             conflicted = replace(
                 record,
                 status=GraphMutationPlanStatus.conflict.value,
                 current_subgraph_versions=current_versions,
-                detail=_conflict_message(conflict),
+                detail=_conflict_message(
+                    conflict, landed=landed, landed_count=landed_count
+                ),
             )
             if not self.plan_store.compare_and_set(
                 expected=record,
@@ -420,7 +457,7 @@ class GraphWorkbenchService:
                 diff=conflicted.diff,
                 claim_keys=_claim_keys_from_record(conflicted),
                 detail=conflicted.detail,
-                recommended_next_action="Reread current graph state and propose a new plan.",
+                recommended_next_action=_CONFLICT_NEXT_ACTION,
             )
 
         approval = record.approval
@@ -442,10 +479,7 @@ class GraphWorkbenchService:
                 claim_keys=_claim_keys_from_record(record),
                 approval=approval,
                 detail=approval_error,
-                recommended_next_action=(
-                    f"Review the plan, then run `potpie graph commit {plan_id} "
-                    "--approved-by <user-ref> --json` when policy allows."
-                ),
+                recommended_next_action=_commit_next_action(plan_id, approved=False),
             )
         if approved_by and approval is None:
             approval = GraphMutationApproval(
@@ -1465,11 +1499,89 @@ def _version_conflict(
     return None
 
 
-def _conflict_message(conflict: Mapping[str, Any]) -> str:
+_CONFLICT_NEXT_ACTION = (
+    "Re-run `potpie graph propose --file <the same file>` and commit the new "
+    "plan_id; nothing from this plan was applied."
+)
+
+#: How many intervening plan ids a conflict message spells out.
+_CONFLICT_LANDED_SHOWN = 5
+
+
+def _conflict_message(
+    conflict: Mapping[str, Any],
+    *,
+    landed: Sequence[str] = (),
+    landed_count: int | None = None,
+) -> str:
+    """Say what moved the pinned version and, when known, what moved it.
+
+    "changed after the plan was proposed (expected 17, actual 28)" told the
+    caller nothing about *why*: a plan pins the whole pot's version, so a
+    ``record``, a resource import, or a hook's nudge landing in between is
+    enough. Naming the commits and the rule turns a retry-and-hope into a
+    one-line repair.
+    """
+    message = (
+        f"{conflict.get('subgraph')} moved from {conflict.get('expected_version')} "
+        f"to {conflict.get('actual_version')} after this plan was proposed"
+    )
+    if landed:
+        count = landed_count if landed_count is not None else len(landed)
+        shown = ", ".join(landed)
+        more = f" (+{count - len(landed)} more)" if count > len(landed) else ""
+        message += f"; {count} commit(s) landed in between: {shown}{more}"
     return (
-        f"{conflict.get('subgraph')} changed after the plan was proposed "
-        f"(expected {conflict.get('expected_version')}, "
-        f"actual {conflict.get('actual_version')})"
+        f"{message}. Plans pin the whole pot's version, so any commit in between "
+        "— another plan, a `potpie record`, a resource import — conflicts; "
+        "nothing from this plan was applied."
+    )
+
+
+def _commits_landed_since(
+    plan_store: GraphPlanStorePort,
+    *,
+    pot_id: str,
+    since: datetime,
+    exclude_plan_id: str,
+    limit: int = _CONFLICT_LANDED_SHOWN,
+) -> tuple[tuple[str, ...], int]:
+    """Plan ids committed to ``pot_id`` at or after ``since``, oldest first.
+
+    Best effort: the conflict is already decided and this only makes its
+    message specific, so a store that cannot list answers "unknown" rather
+    than failing the commit.
+    """
+    try:
+        records = plan_store.list(pot_id=pot_id)
+        landed = sorted(
+            (
+                record
+                for record in records
+                if record.plan_id != exclude_plan_id
+                and record.status == GraphMutationPlanStatus.committed.value
+                and record.committed_at is not None
+                and record.committed_at >= since
+            ),
+            key=lambda record: record.committed_at or since,
+        )
+    except Exception:  # noqa: BLE001 - diagnostics must not fail the commit
+        return (), 0
+    return tuple(record.plan_id for record in landed[:limit]), len(landed)
+
+
+def _commit_next_action(plan_id: str, *, approved: bool) -> str:
+    """The commit command that will actually go through for this plan.
+
+    Names ``--approved-by`` (the flag ``graph commit`` has) rather than
+    ``--allow-review-required`` (a flag only the legacy ``graph mutate``
+    takes), and includes ``--verify`` so the write is read back.
+    """
+    if approved:
+        return f"Commit with `potpie graph commit {plan_id} --verify`."
+    return (
+        f"Review the plan, then run `potpie graph commit {plan_id} "
+        "--approved-by <user-ref> --verify`."
     )
 
 
@@ -1525,6 +1637,7 @@ def _proposal_from_record(
         status=record.status,
         risk=record.risk,
         pot_id=record.pot_id,
+        approval=record.approval,
         auto_applicable=(
             record.status == GraphMutationPlanStatus.validated.value
             and record.risk == MutationRisk.low.value

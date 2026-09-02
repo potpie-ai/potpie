@@ -1522,6 +1522,15 @@ def graph_propose(
         None, "--file", help="mutation JSON path; omit to read stdin"
     ),
     ttl: str = typer.Option("1h", "--ttl", help="plan expiry such as 30m, 1h, 2d"),
+    approved_by: str = typer.Option(
+        None,
+        "--approved-by",
+        help=(
+            "user-ref that pre-approves medium-risk operations; the plan then "
+            "commits with `graph commit <plan_id> --verify` and no second "
+            "--approved-by"
+        ),
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.propose") as ctx:
@@ -1529,10 +1538,12 @@ def graph_propose(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         payload = _load_json(file)
-        result = host.graph_workbench.propose(
+        result = _propose(
+            host,
             payload,
             pot_id=pot_id,
             ttl_seconds=_parse_ttl_seconds(ttl),
+            approved_by=approved_by,
         )
         _emit_graph_result(
             ctx,
@@ -1541,6 +1552,42 @@ def graph_propose(
         )
         if not result.ok:
             raise typer.Exit(code=EXIT_VALIDATION)
+
+
+def _propose(host, payload, *, pot_id: str, ttl_seconds: int, approved_by: str | None):
+    """Propose, sending ``approved_by`` only when the caller gave one.
+
+    A host built before propose learned the keyword refuses it as a
+    ``TypeError`` on the far side of the RPC, which the contract would render
+    as "run potpie doctor". The repair is a host upgrade — or the flag on
+    ``commit``, which every host has — so name that instead. Callers without
+    the flag never send the keyword and keep working against any host.
+    """
+    if not approved_by:
+        return host.graph_workbench.propose(
+            payload, pot_id=pot_id, ttl_seconds=ttl_seconds
+        )
+    try:
+        return host.graph_workbench.propose(
+            payload,
+            pot_id=pot_id,
+            ttl_seconds=ttl_seconds,
+            approved_by=approved_by,
+        )
+    except Exception as exc:
+        if "unexpected keyword argument 'approved_by'" not in str(exc):
+            raise
+        raise CapabilityNotImplemented(
+            "graph_propose.approved_by",
+            detail=(
+                "this host does not pre-approve plans at propose time; it "
+                "predates --approved-by on propose"
+            ),
+            recommended_next_action=(
+                "upgrade the host, or propose without the flag and run "
+                "`potpie graph commit <plan_id> --approved-by <user-ref> --verify`"
+            ),
+        ) from exc
 
 
 @graph_app.command("commit")
@@ -1552,7 +1599,11 @@ def graph_commit(
     verify: bool = typer.Option(
         False,
         "--verify",
-        help="read back committed claim keys and run post-commit quality checks",
+        help=(
+            "read back committed claim keys and run post-commit quality checks; "
+            "exits 1 only when a committed claim does not read back — a quality "
+            "regression is reported in verification.status and as a warning"
+        ),
     ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
@@ -1572,11 +1623,31 @@ def graph_commit(
             ctx,
             result.to_dict(),
             human=_commit_human(result),
+            warnings=_verification_warnings(result),
         )
         if not result.ok:
             raise typer.Exit(code=EXIT_VALIDATION)
-        if verify and result.verification is not None and not result.verification.ok:
+        # The commit landed (`ok: true`); the only verification outcome that
+        # contradicts that is a claim the plan asserted which no read can see.
+        # A quality regression or an unsupported readback used to exit 1 as
+        # well, so a script treated a successful write as a failure and an
+        # agent retried a commit that had already gone through.
+        if verify and _verification_lost_claims(result):
             raise typer.Exit(code=EXIT_VALIDATION)
+
+
+def _verification_lost_claims(result) -> bool:
+    verification = getattr(result, "verification", None)
+    return bool(verification is not None and verification.missing_claim_keys)
+
+
+def _verification_warnings(result) -> tuple[str, ...]:
+    """The verification outcome as a warning, when it is not the exit code."""
+    verification = getattr(result, "verification", None)
+    if verification is None or verification.ok or verification.missing_claim_keys:
+        return ()
+    head = f"post-commit verification {verification.status}"
+    return (f"{head}: {verification.detail}" if verification.detail else head,)
 
 
 @bulk_app.command("apply")

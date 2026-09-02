@@ -308,13 +308,15 @@ class _Workbench:
         self.inbox_result = inbox_result
         self.quality_result = quality_result
         self.propose_calls = []
+        self.propose_approvals = []
         self.commit_calls = []
         self.history_calls = []
         self.inbox_calls = []
         self.quality_calls = []
 
-    def propose(self, payload, *, pot_id, ttl_seconds=None):
+    def propose(self, payload, *, pot_id, ttl_seconds=None, approved_by=None):
         self.propose_calls.append((payload, pot_id, ttl_seconds))
+        self.propose_approvals.append(approved_by)
         if self.proposal is None:
             raise AssertionError("propose should not be called")
         return self.proposal
@@ -2554,3 +2556,112 @@ def test_timeline_recent_table_format() -> None:
     output = _plain_cli_output(result.output)
     assert "occurred_at |" in output
     assert "--- | ---" in output
+
+
+# --- propose --approved-by, commit --verify exit semantics ---------------------
+
+
+class _WorkbenchBeforePreApproval(_Workbench):
+    """A host whose propose predates ``approved_by``: Python refuses the keyword."""
+
+    def propose(self, payload, *, pot_id, ttl_seconds=None):
+        return super().propose(payload, pot_id=pot_id, ttl_seconds=ttl_seconds)
+
+
+def _write_payload(tmp_path) -> str:
+    payload_file = tmp_path / "mutation.json"
+    payload_file.write_text(json.dumps(_valid_mutation_payload()), encoding="utf-8")
+    return str(payload_file)
+
+
+def test_graph_propose_passes_approved_by_through(tmp_path) -> None:
+    _common.set_json(True)
+    workbench = _Workbench(proposal=_proposal(status="validated", risk="medium"))
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["propose", "--file", _write_payload(tmp_path), "--approved-by", "user:alice"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert workbench.propose_approvals == ["user:alice"]
+
+
+def test_graph_propose_without_the_flag_never_sends_the_keyword(tmp_path) -> None:
+    """Callers who do not use the flag keep working against an older host."""
+    _common.set_json(True)
+    workbench = _WorkbenchBeforePreApproval(proposal=_proposal())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app, ["propose", "--file", _write_payload(tmp_path)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert workbench.propose_approvals == [None]
+
+
+def test_graph_propose_names_a_host_that_predates_pre_approval(tmp_path) -> None:
+    _common.set_json(True)
+    workbench = _WorkbenchBeforePreApproval(proposal=_proposal())
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["propose", "--file", _write_payload(tmp_path), "--approved-by", "user:alice"],
+    )
+
+    assert result.exit_code == 2, result.output
+    emitted = json.loads(result.output)
+    assert emitted["error"]["code"] == "not_implemented"
+    assert "upgrade the host" in emitted["recommended_next_action"]
+    assert "graph commit <plan_id> --approved-by" in emitted["recommended_next_action"]
+
+
+def test_graph_commit_verify_exits_zero_when_only_quality_regressed() -> None:
+    """The commit landed (`ok: true`); a quality regression is a warning, not a
+    failed write. Exit 1 made scripts treat a success as a failure and agents
+    retry a commit that had already gone through."""
+    _common.set_json(True)
+    verification = GraphIngestionVerificationResult(
+        ok=False,
+        status="degraded",
+        plan_id="mutation-plan:test",
+        pot_id="p",
+        claim_keys=("claim:test",),
+        readback_claim_keys=("claim:test",),
+        readback_count=1,
+        quality_status="watch",
+        quality_regressions={"conflicting_claims": {"before": 0, "after": 1}},
+        detail="quality findings increased after commit",
+        recommended_next_action="Run the affected graph quality reports.",
+    )
+    workbench = _Workbench(commit_result=_commit_result(verification=verification))
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["commit", "mutation-plan:test", "--verify"],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.commit")
+    assert body["status"] == "committed"
+    assert body["verification"]["status"] == "degraded"
+    assert body["verification"]["ok"] is False
+    assert any(
+        "post-commit verification degraded: quality findings increased" in warning
+        for warning in emitted["warnings"]
+    )
+
+
+def test_graph_commit_verify_help_says_what_exits_nonzero() -> None:
+    result = CliRunner().invoke(graph.graph_app, ["commit", "--help"])
+
+    assert result.exit_code == 0
+    # Rich wraps option help inside a bordered panel, so the border glyphs
+    # land mid-sentence; drop them before looking for the phrase.
+    text = " ".join(re.sub(r"[│╭╮╰╯─]", " ", _plain_cli_output(result.output)).split())
+    assert "exits 1 only when a committed claim does not read back" in text

@@ -420,8 +420,20 @@ class GraphRuntime:
         )
         return result
 
-    def propose(self, payload, *, pot_id: str, ttl_seconds: int | None = None):
-        result = self.workbench.propose(payload, pot_id=pot_id, ttl_seconds=ttl_seconds)
+    def propose(
+        self,
+        payload,
+        *,
+        pot_id: str,
+        ttl_seconds: int | None = None,
+        approved_by: str | None = None,
+    ):
+        result = self.workbench.propose(
+            payload,
+            pot_id=pot_id,
+            ttl_seconds=ttl_seconds,
+            approved_by=approved_by,
+        )
         self._notify(
             "graph.propose",
             {
@@ -535,7 +547,12 @@ class GraphRuntime:
         return result
 
     async def propose_async(
-        self, payload, *, pot_id: str, ttl_seconds: int | None = None
+        self,
+        payload,
+        *,
+        pot_id: str,
+        ttl_seconds: int | None = None,
+        approved_by: str | None = None,
     ):
         result = await _async_call(
             self.workbench,
@@ -543,6 +560,7 @@ class GraphRuntime:
             payload,
             pot_id=pot_id,
             ttl_seconds=ttl_seconds,
+            approved_by=approved_by,
         )
         self._notify(
             "graph.propose",

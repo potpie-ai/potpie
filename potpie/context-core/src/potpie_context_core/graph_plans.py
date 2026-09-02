@@ -268,6 +268,8 @@ class GraphMutationProposal:
     detail: str | None = None
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
     ontology_version: str = ONTOLOGY_VERSION
+    approval: GraphMutationApproval | None = None
+    """Recorded when ``propose`` was given ``approved_by``; commit then needs none."""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -290,6 +292,7 @@ class GraphMutationProposal:
             "claim_keys": list(self.claim_keys),
             "graph_contract_version": self.graph_contract_version,
             "ontology_version": self.ontology_version,
+            "approval": self.approval.to_dict() if self.approval is not None else None,
         }
         if self.recommended_next_action:
             out["recommended_next_action"] = self.recommended_next_action

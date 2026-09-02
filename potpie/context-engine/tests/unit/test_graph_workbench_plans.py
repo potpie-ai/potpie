@@ -1068,3 +1068,87 @@ def _record_in_window(
             continue
         return True
     return False
+
+
+# --- pre-approval on propose, conflict diagnostics, next actions --------------
+
+
+def test_propose_with_approved_by_pre_approves_a_medium_risk_plan() -> None:
+    """Two calls for a medium-risk write, not three: the approval rides on the
+    plan, so the commit that follows needs no ``--approved-by`` of its own."""
+    workbench, _backend, _store = _service()
+
+    proposal = workbench.propose(
+        _end_relation_payload(), pot_id=POT, approved_by="user:alice"
+    )
+
+    assert proposal.ok is True
+    assert proposal.status == "validated"
+    assert proposal.approval is not None
+    assert proposal.approval.approved_by == "user:alice"
+    assert proposal.to_dict()["approval"]["approved_by"] == "user:alice"
+    assert proposal.recommended_next_action == (
+        f"Commit with `potpie graph commit {proposal.plan_id} --verify`."
+    )
+
+    committed = workbench.commit(proposal.plan_id, pot_id=POT)
+
+    assert committed.ok is True
+    assert committed.status == "committed"
+    assert committed.approval is not None
+    assert committed.approval.approved_by == "user:alice"
+
+
+def test_propose_without_approval_says_which_commit_will_go_through() -> None:
+    workbench, _backend, _store = _service()
+
+    proposal = workbench.propose(_end_relation_payload(), pot_id=POT)
+
+    assert proposal.status == "review_required"
+    assert proposal.approval is None
+    assert proposal.to_dict()["approval"] is None
+    assert proposal.recommended_next_action == (
+        f"Review the plan, then run `potpie graph commit {proposal.plan_id} "
+        "--approved-by <user-ref> --verify`."
+    )
+    assert "--allow-review-required" not in " ".join(proposal.warnings)
+
+    blocked = workbench.commit(proposal.plan_id, pot_id=POT)
+
+    assert blocked.status == "review_required"
+    assert blocked.recommended_next_action == proposal.recommended_next_action
+
+
+def test_a_validated_plan_recommends_a_verified_commit() -> None:
+    workbench, _backend, _store = _service()
+
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+
+    assert proposal.status == "validated"
+    assert proposal.recommended_next_action == (
+        f"Commit with `potpie graph commit {proposal.plan_id} --verify`."
+    )
+
+
+def test_a_conflict_names_the_commits_that_landed_in_between() -> None:
+    workbench, _backend, _store = _service()
+    stale = workbench.propose(_link_payload(), pot_id=POT)
+    fresh = workbench.propose(
+        _link_payload(subject="service:api", object_="service:db"),
+        pot_id=POT,
+    )
+    assert workbench.commit(fresh.plan_id, pot_id=POT).ok is True
+
+    result = workbench.commit(stale.plan_id, pot_id=POT)
+
+    assert result.ok is False
+    assert result.status == "conflict"
+    assert result.detail is not None
+    assert "_global moved from 0 to 1 after this plan was proposed" in result.detail
+    assert f"1 commit(s) landed in between: {fresh.plan_id}" in result.detail
+    assert "Plans pin the whole pot's version" in result.detail
+    assert "nothing from this plan was applied" in result.detail
+    assert result.recommended_next_action == (
+        "Re-run `potpie graph propose --file <the same file>` and commit the new "
+        "plan_id; nothing from this plan was applied."
+    )

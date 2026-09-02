@@ -29,6 +29,7 @@ from potpie_context_core.agent_context_port import (
     CONTEXT_INTENTS,
     READER_BACKED_INCLUDES,
 )
+from potpie_context_core.context_records import REQUIRED_DETAIL_KEYS
 from potpie_context_core.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
@@ -48,11 +49,20 @@ _RESOLVE_INTENT_HELP = (
     "Task intent; inferred from the task text when omitted. " + _INTENT_HELP
 )
 _MODE_HELP = "Retrieval depth. One of: " + ", ".join(sorted(RESOLVE_MODES))
+# Derived from the same table the validator is held to, so the help cannot
+# promise a type that then refuses for want of a field it never named.
+_REQUIRED_DETAILS_HELP = "; ".join(
+    f"{record_type}: {', '.join(keys) or 'none'}"
+    for record_type, keys in REQUIRED_DETAIL_KEYS.items()
+)
+_TYPE_HELP = (
+    "Record type (fix, decision, preference, …). Required --detail per type — "
+    f"{_REQUIRED_DETAILS_HELP}."
+)
 _DETAIL_HELP = (
     "Structured field for --type, as key=value (repeatable; repeat a key to "
-    "build a list). Some record types require one, e.g. "
-    "`--type decision --detail rationale=...`, "
-    "`--type preference --detail policy_kind=...`."
+    f"build a list). Required per type — {_REQUIRED_DETAILS_HELP}; e.g. "
+    "`--type decision --detail rationale=...`."
 )
 
 
@@ -217,9 +227,7 @@ def register(root: typer.Typer) -> None:
 
     @root.command()
     def record(
-        type: str = typer.Option(
-            ..., "--type", help="Record type (fix, decision, preference, …)."
-        ),
+        type: str = typer.Option(..., "--type", help=_TYPE_HELP),
         summary: str = typer.Option(..., "--summary"),
         detail: list[str] = typer.Option(None, "--detail", help=_DETAIL_HELP),
         scope: str = typer.Option(
