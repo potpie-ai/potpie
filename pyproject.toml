@@ -37,7 +37,7 @@ dependencies = [
     "potpie-context-engine==0.1.0",
     "pydantic-settings>=2.14.2",
     "rich>=13.0",
-    "typer>=0.15.0",
+    "typer>=0.15.0,<0.27",
 ]
 
 [project.optional-dependencies]
