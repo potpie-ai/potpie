@@ -12,30 +12,38 @@ for you.
 ## Quick Start
 
 ```bash
-potpie doctor
-potpie pot list
-potpie graph status
-potpie graph catalog --task "<task>"
+potpie status
+potpie resolve "<task>"
 ```
+
+`potpie status` is the one health check (daemon, pot, counts, open findings);
+every read header repeats the pot. Once a header has named it, pass
+`--pot local:<name>` on later calls.
 
 ## Surfaces
 
 Prefer the graph CLI when shell is available:
 
 ```bash
-potpie graph status
-potpie graph catalog --task "<task>" --profile read
-potpie graph describe <subgraph> --view <view> --examples
+potpie resolve "<task>"
+potpie search "<known phrase>"
+potpie record --type <fix|decision|preference> --summary "<…>" --detail <key>=<value> --scope service:<name>
 potpie graph read --subgraph <subgraph> --view <view> [--query "..."] [--scope key:value] [--limit N]
-potpie graph search-entities "text" [--type Service] [--predicate DEPENDS_ON] [--environment prod] [--limit N]
+potpie graph search-entities "text" [--limit N]
+potpie graph mutation-template --kind <kind>
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 ```
 
-Use text output for routine orientation and context reads. Add `--json` when a
-workflow needs exact machine parsing, mutation plans, commits, history
-verification, or full evidence/debug payloads.
+`resolve` is the first read (intent inferred, triples across families);
+`record` the first write (one fix, decision or preference, no JSON file).
+Text output for reads; `--json` for `propose`, `commit`, `resource import` and
+anything parsed. `potpie graph status` repeats the counts `potpie status`
+prints; `potpie graph catalog` (text) is for an unknown-view error or a
+rejected op, not a preamble; `graph describe --examples` has no mutation
+example — the payload shape is `mutation-template`. `commit --verify` prints
+the plan id, readback and quality status; `graph history --plan <plan_id>` is
+for later inspection.
 
 Express reads through `graph read --subgraph <subgraph> --view <view>`.
 
@@ -43,13 +51,14 @@ Express reads through `graph read --subgraph <subgraph> --view <view>`.
 
 | View | Use it for |
 |---|---|
-| `decisions.preferences_for_scope` | project/repo/path preferences for code work |
+| `decisions.preferences_for_scope` | project/repo/path preferences for code work — by scope (`--repo current`), no `--query` |
 | `infra_topology.service_neighborhood` | env-qualified dependencies and blast radius |
 | `recent_changes.timeline` | project-wide PRs, tickets, docs, incidents, deployments |
 | `debugging.prior_occurrences` | prior symptoms, fixes, failed attempts |
 | `decisions.active_decisions` | active architectural/product decisions |
 | `code_topology.ownership_by_path` | owners for a scope |
 | `knowledge.document_context` | docs, runbooks, and ingested document sections (hits carry chunk ids) |
+| `knowledge.document_passages` | chunk ids whose text matches, from the resource index rather than the summaries |
 | `admin.inspection_slice` | raw canonical graph for debugging |
 
 ## Report Back
@@ -59,8 +68,9 @@ When an answer used Potpie, two things travel with it.
 **The commands.** Show the `potpie` commands you ran, verbatim, not paraphrased.
 "I checked the graph" tells the reader nothing they can act on; the command
 itself is one they can re-run, widen, or correct — and it is how they notice you
-read `staging` when they meant `prod`. Include the reads that came back empty: an
-empty result is usually why an answer is thin, and it is invisible otherwise.
+read `staging` when they meant `prod`. Reads that came back empty get one
+summary line: an empty result is usually why an answer is thin, and it is
+invisible otherwise.
 
 **A mermaid diagram, when the answer is a shape.** Structure lands faster drawn
 than described. Emit it as a fenced ` ```mermaid ` block — never ASCII art, and
@@ -91,8 +101,9 @@ rather than read. Never add an edge to make the picture connected.
 
 Two rules carry most of the value:
 
-1. Resolve identity first with `graph search-entities` before linking to an
-   existing service, repo, bug, decision, person, or document.
+1. Reuse the keys your reads returned; resolve identity with
+   `graph search-entities` (untyped) before linking to a service, repo, bug,
+   decision, person, or document no read has shown you.
 2. Write retrieval-grade descriptions. Include the symptom text, synonyms, scope,
    environment, service, files, commands, and source refs a future searcher would
    type.
@@ -102,20 +113,20 @@ review-required, and deferred operation partitions. Never hard-delete a claim; e
 its validity, retract it, supersede it, or merge duplicates according to catalog
 policy.
 
-Create and review a plan before committing:
+One fix, decision or preference is `potpie record`. A batch is a plan you
+create and review before committing:
 
 ```bash
+potpie graph mutation-template --kind <kind>
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 ```
 
 Example infra write:
 
 ```json
 {
-  "graph_contract_version": "v1.5",
-  "pot_id": "local/default",
+  "pot_id": "<pot-id>",
   "idempotency_key": "mutation:infra:payments-ledger-prod",
   "created_by": {"surface": "cli", "harness": "codex"},
   "operations": [
@@ -150,8 +161,8 @@ alone.
 
 For explicit repository ingestion, use a todo-driven workflow:
 
-1. Run pot/source/graph preflight (`pot info`, `source list`, `graph status`,
-   `graph catalog --task`, and relevant `graph describe ... --examples`).
+1. Run `potpie status` and register the source with `source add repo .`; take
+   the write shapes from `graph mutation-template --kind <kind>`.
 2. Create discovery todos for docs/product, local repo map, runtime/deploy,
    API/data/integrations, GitHub history, preferences/workflows, synthesis,
    write, and verification.
@@ -159,7 +170,8 @@ For explicit repository ingestion, use a todo-driven workflow:
    Subagents return candidate facts, evidence, confidence, and uncertainty; they
    do not write graph mutations.
 4. Build an evidence matrix, resolve identities, then write through
-   `graph propose` / `graph commit --verify` / `graph history`.
+   `graph propose` / `graph commit --verify`; `graph history --plan` is for
+   later inspection.
 5. Treat `graph commit --verify` as the post-write gate. If it warns or fails,
    drill down with affected reads and quality reports such as duplicate,
    low-confidence, and conflicting-claim checks.
@@ -181,9 +193,9 @@ A hook may inject context or instructions from `potpie graph nudge`.
 
 - `inject_context` - use the injected facts for the current task.
 - `instruction` - a prompt to decide whether something durable was learned. If it
-  was, resolve identity, propose a graph plan, commit it with `--verify` when
-  policy allows, then inspect history. If nothing durable was learned, do
-  nothing.
+  was, reuse the keys your reads returned, then `potpie record` it (one fix,
+  decision or preference) or propose a graph plan and commit it with
+  `--verify`. If nothing durable was learned, do nothing.
 
 ## Skills
 

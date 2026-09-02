@@ -1,6 +1,6 @@
 ---
 name: potpie-source-ingestion
-version: "2"
+version: "3"
 description: "Use when the user explicitly asks to ingest, refresh, or deeply understand a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness performs todo-driven discovery, uses local/GitHub/integration tools and read-only subagents when available, builds evidence-backed semantic mutations, and writes through graph propose/verified commit. Document payloads (PDF, spreadsheet, markdown/HTML) route through the per-format potpie-resource-* skills and `potpie resource import`."
 ---
 
@@ -31,14 +31,16 @@ does not decide what source material means.
 
 1. Define source kind, pot/project, repo/path/URL, time window, and target memory
    shape: baseline, history, docs, infra, debug memory, preferences, or all.
-2. Verify Potpie scope and graph availability:
+2. Verify Potpie scope and graph availability with one call:
 
 ```bash
-potpie --json pot info
-potpie --json source list
-potpie --json graph status
-potpie --json graph catalog --task "harness-led source ingestion"
+potpie status
 ```
+
+It names the pot a read will hit, its claim and entity counts, and open quality
+findings; every later read repeats the pot in its header, so do not pre-read
+`pot info`, `source list` or `graph status`. Pass `--pot local:<name>` on later
+calls once the pot is known.
 
 3. If the repo is not registered, register metadata only. Use explicit `--pot`
    when pot scope is ambiguous:
@@ -47,14 +49,17 @@ potpie --json graph catalog --task "harness-led source ingestion"
 potpie source add repo . --pot <pot-id-or-name>
 ```
 
-4. Describe the views you expect to write/read before authoring mutations:
+4. Take the write shapes from the templates for the families you expect to
+   write. `graph describe --examples` carries read examples only (and only
+   with `--json`); the payload shape, keys, predicates and required
+   properties are in the template:
 
 ```bash
-potpie --json graph describe features --view feature_context --examples
-potpie --json graph describe infra_topology --view service_neighborhood --examples
-potpie --json graph describe recent_changes --view timeline --examples
-potpie --json graph describe decisions --view preferences_for_scope --examples
-potpie --json graph describe debugging --view prior_occurrences --examples
+potpie graph mutation-template --kind repo-baseline
+potpie graph mutation-template --kind infra-snapshot
+potpie graph mutation-template --kind timeline-change
+potpie graph mutation-template --kind preference-policy
+potpie graph mutation-template --kind bug-fix
 ```
 
 5. If the CLI is unavailable or broken, continue discovery, build the proposed
@@ -166,11 +171,12 @@ Guidelines:
 
 ## Phase 6: Identity Resolution
 
-Resolve before linking. Use specific filters when known:
+Resolve before linking — one untyped search per entity you intend to link and
+have not already seen in a read (a wrong `--type` guess returns nothing);
+narrow by `--source-ref` for tickets and PRs:
 
 ```bash
 potpie graph search-entities "<repo service feature dependency>" --limit 10
-potpie graph search-entities "<service>" --type Service --environment prod --limit 10
 potpie graph search-entities "<github-or-ticket-id>" --source-ref <github-or-ticket-ref> --limit 10
 ```
 
@@ -179,9 +185,11 @@ review-required correction flow; do not create near-duplicate entities.
 
 ## Phase 7: Write
 
-Author semantic mutation JSON from the live `graph catalog` and `graph describe`
-examples. `graph mutation-template` is only a skeleton helper, not the source of
-truth.
+Author semantic mutation JSON from the `graph mutation-template` skeletons
+printed in Phase 0; `propose` validates against the live contract and names
+every rejected operation by index. Omit `graph_contract_version` from the
+payload. Run the text `potpie graph catalog` only when an operation you
+believed the contract allowed is rejected.
 
 ```bash
 potpie --json graph propose --file mutation.json
@@ -192,14 +200,17 @@ review flags:
 
 - `invalid` or rejected operations: fix the mutation or skip the weak fact.
 - `conflict` or duplicate risk: resolve identity or use inbox.
-- `review_required`: ask for approval or commit only with the required
-  `--approved-by` value when policy allows.
+- `review_required`: ask for approval, then re-run
+  `potpie --json graph propose --file mutation.json --approved-by <user-ref>`
+  and commit with `--verify`; `commit` alone answers `review_required` again.
 - `validated` / low-risk: commit with `--verify`.
 
 ```bash
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 ```
+
+`commit --verify` prints the plan id, readback and quality status;
+`graph history --plan <plan_id>` is for later inspection.
 
 For large batches of agent-authored mutations, use `graph bulk apply` with
 dry-run, chunking, manifest, and verify. Bulk apply must only apply facts the

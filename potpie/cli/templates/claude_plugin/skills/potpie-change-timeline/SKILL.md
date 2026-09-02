@@ -1,5 +1,6 @@
 ---
 name: potpie-change-timeline
+version: "2"
 description: "Use when an agent needs recent or historical change context: what changed recently, regressions, merged PRs, tickets, docs, incidents, deployments, releases, and source-history ingestion."
 ---
 
@@ -11,42 +12,39 @@ deployment records.
 
 ## Fast Path
 
-Read the project timeline first. A pot is the project boundary and can contain
-multiple repos, so do not narrow to the current repo unless the user asks.
+A pot is the project boundary and can contain multiple repos, so do not narrow
+to the current repo unless the user asks. Take the window from the question and
+read once; do not start at seven days and widen.
 
 ```bash
-potpie graph read \
-  --subgraph recent_changes \
-  --view timeline \
-  --format table \
-  --time-window 7d \
-  --limit 20
+potpie resolve "<the question, e.g. what changed in checkout in the last month>"
+```
+
+`resolve` infers the `operations` intent from words like *changed / recent /
+since / when* and returns timeline rows as `activity TOUCHED service · fact`.
+For the full ordered list, one bounded read with the window the question
+implies — no hint means 30 days. `--detail full` keeps each fact whole;
+compact rows cut it at about 120 characters, where the root cause usually sits:
+
+```bash
+potpie graph read --subgraph recent_changes --view timeline --format table --detail full --time-window 30d --limit 50
 ```
 
 Use the user's exact dates when provided:
 
 ```bash
-potpie graph read \
-  --subgraph recent_changes \
-  --view timeline \
-  --format table \
-  --since 2026-06-01 \
-  --until 2026-06-15 \
-  --limit 50
+potpie graph read --subgraph recent_changes --view timeline --format table --detail full --since 2026-06-01 --until 2026-06-15 --limit 50
 ```
 
-Only narrow when the user gives a service, environment, or topic:
+Only narrow when the user gives a service, environment, or topic. A `--query`
+re-ranks the rows inside the window and never empties it (`--query-threshold`
+does nothing here), so read the scores:
 
 ```bash
-potpie graph read \
-  --subgraph recent_changes \
-  --view timeline \
-  --format table \
-  --scope service:<service-name> \
-  --query "<symptom feature deployment>" \
-  --time-window 14d \
-  --limit 20
+potpie graph read --subgraph recent_changes --view timeline --format table --detail full --scope service:<service-name> --query "<symptom feature deployment>" --time-window 30d --limit 50
 ```
+
+Pass `--pot local:<name>` once the first read has named the pot.
 
 ## Apply Results
 
@@ -58,7 +56,7 @@ Timeline reads do not include uncommitted local work unless it was recorded.
 
 Show the `graph read` you ran with its window and `--limit`. A timeline is only
 as complete as its bounds, and "nothing changed since March" reads very
-differently once the reader can see you asked for twenty rows in a 7-day window.
+differently once the reader can see you asked for fifty rows in a 30-day window.
 
 When the answer is a sequence — a regression window, a release train, an
 incident and the deploys around it — draw it:
@@ -82,15 +80,19 @@ For GitHub, Linear, Jira, docs, and similar sources, hydrate records with the
 agent's integration tools/connectors first. Do not use Potpie CLI queue
 ingestion as the source-history path.
 
-Use the workbench write flow after reading the source:
+Timeline events are not a `potpie record` type; write them as a plan after
+reading the source:
 
 ```bash
-potpie --json graph catalog --task "record timeline change"
-potpie --json graph describe recent_changes --view timeline --examples
+potpie graph mutation-template --kind timeline-change
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 ```
+
+The template carries the operation shape and required properties; `propose`
+validates and names any rejected op by index. Omit `graph_contract_version`
+from the payload. `commit --verify` prints the plan id, readback and quality
+status, so `graph history --plan <plan_id>` is only for later inspection.
 
 Use the source event time for `occurred_at`, not ingestion time. Add fixes,
 decisions, bug patterns, or infra links only when the source explicitly supports

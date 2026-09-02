@@ -1,5 +1,6 @@
 ---
 name: potpie-repo-baseline
+version: "2"
 description: "Use when establishing, refreshing, or deeply understanding a repository's baseline memory in Potpie: purpose, application type, features, services/modules, environments, deploy shape, dependencies, API contracts, datastores, integrations, ownership, and explicit preferences. The harness reads authored and code-adjacent sources, then writes graph workbench mutations."
 ---
 
@@ -10,25 +11,32 @@ understand what a repository is and how it works.
 
 ## Procedure
 
-1. Resolve the pot and source:
+1. Check the pot and register the source:
 
 ```bash
-potpie --json pot info
-potpie --json source list
-potpie source add repo . --pot <pot-id-or-name>
+potpie status
+potpie source add repo .
 ```
 
-Source registration records metadata only. It does not ingest or scan.
+`potpie status` names the pot a read will hit, its claim and entity counts and
+open quality findings. `source add repo .` records metadata only — it does not
+ingest or scan — and sets the repo-local default pot; add
+`--pot <pot-id-or-name>` only when the repo must land in a non-default pot.
+Every later read repeats the pot in its header, so do not pre-read `pot info`,
+`source list` or `graph status`.
 
-2. Discover the live graph contract:
+2. Take the write shapes from the templates, not from contract discovery:
 
 ```bash
-potpie --json graph status
-potpie --json graph catalog --task "deep repo baseline"
-potpie --json graph describe features --view feature_context --examples
-potpie --json graph describe infra_topology --view service_neighborhood --examples
-potpie --json graph describe decisions --view preferences_for_scope --examples
+potpie graph mutation-template --kind repo-baseline
+potpie graph mutation-template --kind feature
+potpie graph mutation-template --kind infra-snapshot
 ```
+
+The templates carry the entity keys, predicates and required properties;
+`propose` validates the rest and names any rejected op by index. Run the text
+`potpie graph catalog` only if `propose` rejects an operation you believed the
+contract allowed. `graph describe --examples` has no mutation example.
 
 3. Create todos for the baseline lanes: docs/product, repo map,
    runtime/deploy, API/data/integrations, preferences/workflows, synthesis,
@@ -36,11 +44,12 @@ potpie --json graph describe decisions --view preferences_for_scope --examples
 4. Read authored sources first, then inspect source files that are authoritative
    for durable facts: routes, service clients, adapters, deployment targets,
    API contracts, model/datastore usage, and test/workflow commands.
-5. Resolve identity before writing:
+5. Resolve identity before writing — one untyped search per entity you intend
+   to link and have not already seen in a read (a wrong `--type` guess returns
+   nothing):
 
 ```bash
 potpie graph search-entities "<repo service feature>" --limit 10
-potpie graph search-entities "<service>" --type Service --environment prod --limit 10
 ```
 
 6. Write one or more semantic mutation batches:
@@ -48,11 +57,12 @@ potpie graph search-entities "<service>" --type Service --environment prod --lim
 ```bash
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 ```
 
-`graph mutation-template --kind repo-baseline` is an optional skeleton helper;
-trust `graph catalog` and `graph describe ... --examples` for the live contract.
+Omit `graph_contract_version` from the payload; `pot_id` is overridden by the
+CLI's resolved pot. `commit --verify` reads the claims back and runs the
+quality checks, printing the `plan_id`, readback and quality status, so
+`graph history --plan <plan_id>` is only for later inspection.
 
 ## Deep Baseline Mode
 
@@ -156,14 +166,14 @@ Before proposing:
 - Keep one mutation file to one coherent family or source slice when possible.
 - Put low-confidence but useful findings into `graph inbox add`.
 
-After committing:
+After committing, `commit --verify` is the gate. Only when it warns or fails,
+drill down with the affected read and the quality report it named:
 
 ```bash
 potpie graph read --subgraph features --view feature_context --scope anchor_entity_key:<repo-key> --limit 50
 potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:<service> --depth 2 --direction both --limit 50
 potpie --json graph quality duplicate-candidates --limit 20
 potpie --json graph quality low-confidence --limit 20
-potpie --json graph quality conflicting-claims --limit 20
 ```
 
 ## Boundaries

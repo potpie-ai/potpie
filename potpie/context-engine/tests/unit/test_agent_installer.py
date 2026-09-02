@@ -116,7 +116,8 @@ def test_install_global_agent_instructions_merges_compact_agents_md(
     assert result.updated == ["AGENTS.md"]
     assert "# Personal defaults" in text
     assert "Potpie is durable project memory" in text
-    assert "potpie --json source list" in text
+    # The health check the block prescribes is the one-call `potpie status`.
+    assert "potpie status" in text
     # A budget, not a line count. This block is prepended to the global
     # instructions of every agent on the machine, so what it costs is context
     # every single turn pays for -- and the person paying it never chose it.

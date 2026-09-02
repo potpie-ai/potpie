@@ -1,6 +1,6 @@
 ---
 name: potpie-resource-pdf
-version: "2"
+version: "3"
 description: "Use when the user asks to ingest a PDF (report, contract, paper, manual, slide export) into Potpie so agents can search and cite it. Teaches the extraction-script flow: resolve the document's identity, split on the PDF's own structure into sections and ~4k-char chunks, import with `potpie resource import`, write retrieval-grade section summaries, and link the document with DOCUMENTS claims. Chunk text never passes through the agent's own output."
 ---
 
@@ -215,27 +215,29 @@ covers the entity.
 ## Step 6 — Verify retrieval, the way a future agent will
 
 ```bash
-potpie search "headroom target prod"
-potpie graph read --subgraph knowledge --view document_context --scope service:payments-api --limit 20
+potpie graph read --subgraph knowledge --view document_context --query "headroom target prod" --limit 5
 potpie resource get potpie://res/q3-capacity-review/capacity-planning/0000 --with-neighbors
 ```
 
-A section hit already carries its chunk ids, so text is two calls away:
-search, then one batched `resource get` (several ids in one call;
-`--with-neighbors` covers a fact that spans a chunk boundary). Bare `search`
-already includes document sections, and mixes them with project memory the way
-a future agent will see them.
+A section hit already carries its chunk ids, so text is two calls away: one
+`document_context` read with the *question* a future agent would ask, then one
+batched `resource get` (several ids in one call; `--with-neighbors` covers a
+fact that spans a chunk boundary). `potpie resolve` and bare `potpie search`
+mix document sections with project memory the way a future agent will see them.
 
-If a phrase you know is in the document does not surface a section, re-run the
-search with `--include docs` — that narrows the envelope to documents alone and
-splits the two causes apart. A hit there but not in the bare search means the
-summary works and was simply outranked; nothing there means the summary is weak
-— rewrite it and re-import.
+If a phrase you know is in the document does not surface a section, run
+`potpie search "<phrase>" --include docs` — that narrows the envelope to
+documents alone and splits the two causes apart. A hit there but not in the
+bare search means the summary works and was simply outranked; nothing there
+means the summary is weak — rewrite it and re-import. To separate "the summary
+never named it" from "the text was never stored", `potpie graph read
+--subgraph knowledge --view document_passages --query "<phrase>"` matches the
+chunk text itself and returns the chunk ids.
 
 ## Report back
 
 Report the ingest as commands and counts: the `resource import` you ran, the
-`sections_created` / `sections_changed` / `chunks` it reported, the `plan_id`
+`sections_added` / `sections_changed` / `chunk_count` it reported, the `plan_id`
 from the DOCUMENTS link, and the retrieval check from step 6 with the query you
 used. That is the whole audit trail, and it is checkable — a sentence saying "the
 PDF is ingested" is not.

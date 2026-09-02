@@ -31,6 +31,7 @@ from potpie.cli.commands._common import (
     invalidate_host_snapshot,
     is_json,
     origin_from_use_flags,
+    pot_name_for_id,
     repo_default_pot_id,
     repo_effective_pot_info,
     require_text,
@@ -698,10 +699,13 @@ def register(root: typer.Typer) -> None:
                 StatusRequest(pot_id=pot_id, intent=intent, harness=harness)
             )
             _capture_host_status_activation()
+            pot_name = pot_name_for_id(shell, pot_id) if pot_id else None
             emit(
                 {
                     "profile": report.profile,
                     "daemon_up": report.daemon_up,
+                    "pot_id": pot_id or report.pot_id or None,
+                    "pot": pot_name,
                     "active_pot": report.active_pot,
                     "backend_ready": report.backend_ready,
                     "data_plane": dict(report.data_plane),
@@ -709,7 +713,7 @@ def register(root: typer.Typer) -> None:
                     "skills": _nudge_dict(report.skills),
                     "recommended_next_action": report.recommended_next_action,
                 },
-                human=_status_human(report),
+                human=_status_human(report, pot_name=pot_name),
             )
 
     @root.command()
@@ -1179,11 +1183,36 @@ def _setup_human(report, *, include_steps: bool = True) -> str:
     return "\n".join(lines)
 
 
-def _status_human(report) -> str:
-    lines = [
+def _status_human(report, *, pot_name: str | None = None) -> str:
+    """The human status line names the pot the counts describe.
+
+    ``status`` reports on the pot the repo resolves to, which outranks the
+    active pot, while the engine's report only names the *active* pot. Printed
+    as-is, a checkout registered to an empty pot read ``pot=demo-store`` over
+    ``claims: 0`` — the counts of a pot the line never mentioned — and an agent
+    told to stop on an empty pot stopped. The header names the reported pot;
+    when the active pot differs it is named too, with the flag that targets it.
+    """
+    pot_id = getattr(report, "pot_id", None) or ""
+    reported = pot_name or report.active_pot or pot_id or None
+    head = (
         f"profile={report.profile} daemon={'up' if report.daemon_up else 'down'} "
-        f"pot={report.active_pot} backend_ready={report.backend_ready}",
-    ]
+        f"pot={reported}"
+    )
+    if pot_name and pot_id and pot_id != pot_name:
+        head += f" ({pot_id})"
+    active = report.active_pot
+    differs = bool(pot_name and active and active != pot_name)
+    if differs:
+        head += f" active_pot={active}"
+    head += f" backend_ready={report.backend_ready}"
+    lines = [head]
+    if differs:
+        origin = "managed" if report.profile == "managed" else "local"
+        lines.append(
+            f"  note: this directory resolves to pot '{pot_name}', so the counts "
+            f"below are its; pass --pot {origin}:{active} to report on the active pot"
+        )
     data_plane = dict(report.data_plane)
     counts = data_plane.get("counts") or {}
     if counts:

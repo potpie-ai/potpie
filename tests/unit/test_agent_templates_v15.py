@@ -103,7 +103,7 @@ def test_agents_md_advertises_graph_surface() -> None:
     text = _read("agent_bundle/AGENTS.md")
     for verb in (
         "graph status",
-        "graph catalog --task",
+        "graph catalog",
         "graph describe",
         "graph read --subgraph",
         "graph search-entities",
@@ -207,7 +207,7 @@ def test_recommended_skills_teach_v2_workflow() -> None:
     text = _read("potpie-graph/SKILL.md")
     for token in (
         "graph status",
-        "graph catalog --task",
+        "graph catalog",
         "--profile read",
         "graph describe",
         "graph search-entities",
@@ -260,6 +260,111 @@ def test_agent_instructions_use_the_cli_graph_surface() -> None:
     )
     for path in plugin_instructions:
         assert "potpie graph read" in _read(path), path
+
+
+# Tranche 2 of the 2026-09-02 friction audit: the skills stop prescribing
+# contract discovery before reads and writes, teach the one-call verbs, and
+# state the read shapes that were measured to be right.
+_USE_CASE_SKILLS = (
+    "potpie-project-preferences",
+    "potpie-infra-architecture",
+    "potpie-change-timeline",
+    "potpie-debug-memory",
+)
+
+
+def _bash_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for block in _BASH_BLOCK_RE.findall(text):
+        lines.extend(
+            line.strip()
+            for line in block.splitlines()
+            if line.strip().startswith("potpie")
+        )
+    return lines
+
+
+def test_templates_do_not_prescribe_contract_discovery_before_work() -> None:
+    """`describe --examples` has no mutation example and `catalog --task` is a
+    no-op; neither belongs in a prescribed command block. The health quintet
+    (`pot info`, `source list`, `graph status`) is one `potpie status`."""
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        assert "graph catalog --task" not in text, (
+            f"{rel} still passes the ignored --task"
+        )
+        # potpie-cli is the command reference: it lists `pot info` and
+        # `source list` as commands, not as a health check to run first.
+        reference_skill = rel.parent.name == "potpie-cli"
+        for line in _bash_lines(text):
+            assert "--examples" not in line, (
+                f"{rel} prescribes describe --examples: {line}"
+            )
+            if reference_skill:
+                continue
+            assert "pot info" not in line, f"{rel} prescribes pot info: {line}"
+            assert "potpie --json source list" not in line, (
+                f"{rel} prescribes source list as a health check: {line}"
+            )
+
+
+def test_use_case_skills_teach_resolve_first_and_record_for_one_learning() -> None:
+    for skill_id in _USE_CASE_SKILLS:
+        text = _read(f"{skill_id}/SKILL.md")
+        assert "potpie resolve" in text, f"{skill_id} never mentions potpie resolve"
+        assert "mutation-template" in text, (
+            f"{skill_id} never names the payload template"
+        )
+    for fragment in (
+        "potpie-project-preferences/SKILL.md",
+        "potpie-debug-memory/SKILL.md",
+        "potpie-graph/SKILL.md",
+        "commands/potpie-record.md",
+        "potpie-cli/SKILL.md",
+    ):
+        assert "potpie record" in _read(fragment), (
+            f"{fragment} never mentions potpie record"
+        )
+    assert "potpie resolve" in _read("commands/potpie-feature.md")
+    assert "document_passages" in _read("potpie-graph/SKILL.md")
+
+
+def test_templates_state_the_measured_read_shapes() -> None:
+    """Preferences are read by scope (a task-shaped --query drops them);
+    a neighborhood --environment filter must keep the unqualified edges;
+    decisions anchor on services; the repo key has one spelling."""
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        for line in _bash_lines(text):
+            if "preferences_for_scope" in line:
+                assert "--query" not in line, (
+                    f"{rel} passes --query to preferences: {line}"
+                )
+            if "service_neighborhood" in line and "--environment" in line:
+                assert "include_unqualified_environment:true" in line, (
+                    f"{rel} filters by environment without keeping unqualified edges: {line}"
+                )
+            if "active_decisions" in line and "--scope" in line:
+                assert "--scope service:" in line, (
+                    f"{rel} scopes decisions by repo: {line}"
+                )
+        for stale in ("repo:<owner-repo>", "repo:<owner/repo>", "repo:acme/x"):
+            assert stale not in text, f"{rel} spells the repo key as {stale}"
+
+
+def test_templates_do_not_carry_the_audited_wrong_lines() -> None:
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        assert "potpie login <api-key>" not in text, f"{rel}: login takes --api-key"
+        assert "sections_created" not in text, (
+            f"{rel}: the import report key is sections_added"
+        )
+        assert '"graph_contract_version"' not in text, (
+            f"{rel}: payload examples must omit graph_contract_version"
+        )
 
 
 # The Stage 6 core skills: every one must carry the harness-led boundary in
@@ -500,12 +605,59 @@ def test_resource_skills_teach_the_retrieval_quality_rules(skill_id: str) -> Non
 
 
 def test_spreadsheet_skill_requires_derived_fact_claims() -> None:
-    collapsed = " ".join(
-        _read("potpie-resource-spreadsheet/SKILL.md").lower().split()
-    )
+    collapsed = " ".join(_read("potpie-resource-spreadsheet/SKILL.md").lower().split())
     # Structured sources retrieve badly as text: the claims must carry the
     # derived facts, with chunk ids as evidence.
     assert "chunked rows" in collapsed
     assert "derive" in collapsed
     assert "potpie://res/" in collapsed
     assert "evidence" in collapsed
+
+
+def test_templates_do_not_prescribe_a_threshold_the_views_ignore() -> None:
+    """``--query-threshold`` is an absolute floor only ``preferences_for_scope``
+    applies; ``prior_occurrences`` ignores it and ``document_context`` /
+    ``timeline`` use a pool-relative floor instead (measured 2026-09-02: a
+    nonsense query at ``--query-threshold 0.9`` still returned five rows). A
+    skill that passes the flag on those views teaches a no-op, and one that
+    says "the default 0.7 rejects long queries" teaches a filter that is not
+    there — the agent then trusts a full list as evidence.
+    """
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES).as_posix()
+        text = path.read_text(encoding="utf-8")
+        assert "default 0.7 rejects" not in text, rel
+        for line in _bash_lines(text):
+            if "--query-threshold" in line:
+                assert "preferences_for_scope" in line, (
+                    f"{rel} passes --query-threshold to a view that ignores it: {line}"
+                )
+    graph = _read("potpie-graph/SKILL.md")
+    assert "honoured only by `preferences_for_scope`" in graph
+    assert "--direction out|in|both" in graph
+    assert "graph neighborhood --entity" in graph
+    for rel in ("potpie-debug-memory/SKILL.md", "potpie-change-timeline/SKILL.md"):
+        flat = " ".join(_read(rel).split())
+        assert "`--query-threshold` does nothing here" in flat, rel
+
+
+def test_templates_state_pot_resolution_and_score_semantics() -> None:
+    """A no-``--pot`` command resolves the pot from the repo registration, and
+    the ``*`` in ``pot list`` loses to it; the resolve header's ``confidence``
+    is a coverage band, not a verdict. Both were misread in testing — an agent
+    in an unregistered checkout saw ``items=0`` on the wrong pot and every
+    correct answer on a small pot arrived under ``confidence=low``.
+    """
+    graph = _read("potpie-graph/SKILL.md")
+    assert "resolves the pot from the repo you are in" in graph
+    assert "not a verdict" in graph
+    cli = (TEMPLATES / "agent_bundle/.agents/skills/potpie-cli/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "not a verdict" in cli
+    assert "--include docs" in cli
+    # Timeline reads keep the fact whole: compact rows cut it at ~120 chars.
+    timeline = _read("potpie-change-timeline/SKILL.md")
+    for line in _bash_lines(timeline):
+        if "--view timeline" in line:
+            assert "--detail full" in line, line

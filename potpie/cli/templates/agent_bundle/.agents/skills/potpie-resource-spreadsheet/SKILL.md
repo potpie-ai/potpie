@@ -1,6 +1,6 @@
 ---
 name: potpie-resource-spreadsheet
-version: "2"
+version: "3"
 description: "Use when the user asks to ingest a spreadsheet or CSV (cost report, inventory, tracker, export) into Potpie so agents can search and cite it. Teaches the extraction-script flow: one section per sheet, header-repeated row chunks, `potpie resource import`, summaries that carry the key figures, and — critically — deriving the durable facts as graph claims with chunk-id evidence, because chunked rows retrieve badly as text. Chunk text never passes through the agent's own output."
 ---
 
@@ -193,8 +193,9 @@ it:
 Decide which facts in the data are durable project memory — a cost that
 constrains a decision, an ownership mapping, an inventory fact, a dated event
 — and write them as ordinary graph claims exactly as the `potpie-graph` skill
-teaches: check `graph catalog`, resolve entities with `graph search-entities`,
-author operations, then propose and commit. The one non-negotiable is
+teaches: reuse the entity keys your reads returned (`graph search-entities`
+only for one you have not seen), author `assert_claim` operations, then
+propose and commit. The one non-negotiable is
 **evidence**: every derived fact cites the chunk ids it came from, so the
 claim stays auditable after the sheet changes:
 
@@ -230,27 +231,29 @@ semantic luck alone.
 ## Step 6 — Verify retrieval, the way a future agent will
 
 ```bash
-potpie search "datadog renewal cost"
-potpie graph read --subgraph knowledge --view document_context --scope service:payments-api --limit 20
+potpie graph read --subgraph knowledge --view document_context --query "how much do we pay Datadog" --limit 5
 potpie resource get potpie://res/vendor-costs-2026/saas-vendors/0000 --with-neighbors
 ```
 
-A section hit already carries its chunk ids, so text is two calls away:
-search, then one batched `resource get`. Bare `search` already includes
-document sections, and mixes them with project memory the way a future agent
-will see them. Test with the *question* a user would ask ("how much do we pay
-Datadog"), not with the sheet's own column words — if it does not surface, the
-summary or the derived claims are too thin.
+A section hit already carries its chunk ids, so text is two calls away: one
+`document_context` read, then one batched `resource get`. `potpie resolve`
+and bare `potpie search` mix document sections with project memory the way a
+future agent will see them. Test with the *question* a user would ask ("how
+much do we pay Datadog"), not with the sheet's own column words — if it does
+not surface, the summary or the derived claims are too thin.
 
-`--include docs` narrows the envelope to documents alone, which splits the two
-causes apart: a hit there but not in the bare search means the index works and
-was simply outranked; nothing there means the summary and claims need the
-rewrite.
+`potpie search "<phrase>" --include docs` narrows the envelope to documents
+alone, which splits the two causes apart: a hit there but not in the bare
+search means the index works and was simply outranked; nothing there means the
+summary and claims need the rewrite. `potpie graph read --subgraph knowledge
+--view document_passages --query "<phrase>"` matches the chunk text itself and
+returns chunk ids, which separates a weak summary from text that was never
+stored.
 
 ## Report back
 
 Report the ingest as commands and counts: the `resource import` you ran, the
-`sections_created` / `sections_changed` / `chunks` it reported, the `plan_id`
+`sections_added` / `sections_changed` / `chunk_count` it reported, the `plan_id`
 from the derived claims and the DOCUMENTS link, and the retrieval check from
 step 6 with the query you used. The derived facts are the deliverable here, so
 name them and the chunk ids they cite — that pairing is what a reader has to be

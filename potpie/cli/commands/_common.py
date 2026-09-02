@@ -1674,6 +1674,19 @@ def _pot_for_id(host: Any, pot_id: str):
     return None
 
 
+def pot_name_for_id(host: Any, pot_id: str) -> str | None:
+    """The pot's display name from the memoized listing, or ``None``.
+
+    ``status`` reports on the pot ``resolve_pot_id`` picked — the repo's
+    registration outranks the active pot — and the header has to name *that*
+    pot, not the active one, or the counts belong to a pot the line never
+    mentions. The listing is the memoized one pot resolution already read.
+    """
+    pot = _pot_for_id(host, pot_id)
+    name = getattr(pot, "name", None) if pot is not None else None
+    return name if isinstance(name, str) and name else None
+
+
 # --- the memoized host reads ---------------------------------------------------
 #
 # The six calls below are the ones pot resolution, the pot header, and the

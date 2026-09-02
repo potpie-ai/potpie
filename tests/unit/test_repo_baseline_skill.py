@@ -80,10 +80,10 @@ def test_required_sections_present() -> None:
 def test_procedure_covers_plan_steps() -> None:
     _, body = _frontmatter_and_body(AGENT_SKILL)
     for marker in (
-        "pot info",
+        "potpie status",
         "source add repo",
+        "mutation-template",
         "graph catalog",
-        "graph describe",
         "graph search-entities",
         "graph propose",
         "plan_id",

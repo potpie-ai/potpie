@@ -188,6 +188,49 @@ def test_status_human_output_omits_the_quality_line_when_there_is_none(
     assert "quality" not in result.stdout
 
 
+def test_status_names_the_reported_pot_and_the_active_pot_when_they_differ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``status`` reports on the pot the repo resolves to, which outranks the
+    active pot, but the engine's report only names the *active* pot. Printed
+    as-is, a checkout registered to an empty pot read ``pot=demo-store`` over
+    ``claims: 0`` — the counts of a pot the line never mentioned — and an
+    agent told to stop on an empty pot stopped. The header must name the pot
+    the counts describe, and say how to target the active one.
+    """
+    report = StatusReport(
+        pot_id="pot_default",
+        profile="local",
+        daemon_up=True,
+        active_pot="demo-store",
+        backend_ready=True,
+        data_plane={"counts": {"claims": 0}},
+    )
+    mock_host = MagicMock()
+    mock_host.agent_context.status.return_value = report
+    monkeypatch.setattr(bootstrap, "get_host", lambda: mock_host)
+    monkeypatch.setattr(bootstrap, "resolve_pot_id", lambda _host, pot: "pot_default")
+    monkeypatch.setattr(
+        bootstrap,
+        "pot_name_for_id",
+        lambda _host, pot_id: {"pot_default": "default"}.get(pot_id),
+    )
+
+    result = runner.invoke(cli_main.app, ["status"])
+
+    assert result.exit_code == 0, result.stdout
+    flat = " ".join(result.stdout.split())
+    assert "pot=default (pot_default) active_pot=demo-store" in flat
+    assert "--pot local:demo-store" in flat
+
+    result = runner.invoke(cli_main.app, ["--json", "status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert '"pot_id": "pot_default"' in result.stdout
+    assert '"pot": "default"' in result.stdout
+    assert '"active_pot": "demo-store"' in result.stdout
+
+
 def test_status_declares_no_host_option_of_its_own() -> None:
     """The boolean no-op that used to sit here shadowed the root ``--host``.
 

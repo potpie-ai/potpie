@@ -1,5 +1,6 @@
 ---
 name: potpie-infra-architecture
+version: "2"
 description: "Use for project infra and architecture context: environments, adapters, runtime configuration, deployments, service dependencies, datastores, API contracts, ownership, incidents, and dependency blast radius."
 ---
 
@@ -12,28 +13,43 @@ changes.
 ## Fast Path
 
 Start from the service, environment, adapter, or dependency named by the task.
-Resolve identity before assuming keys:
+One call returns the topology as environment-qualified triples
+(`service USES datastore`, `DEPLOYED_TO`, `OWNED_BY`, `DEFINED_IN`):
+
+```bash
+potpie resolve "<the task, naming the service>"
+```
+
+Then the neighborhood read, with the obvious key and **no `--environment`**:
+
+```bash
+potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:<service-name> --depth 2 --direction both --limit 20
+```
+
+The environment filter defaults to `qualified_only`: `--environment prod`
+alone drops every unqualified edge — `USES`, `DEFINED_IN`, `OWNED_BY` — and
+answers "talks to nothing". To exclude other environments, keep them explicitly:
+
+```bash
+potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:<service-name>,include_unqualified_environment:true --environment <env> --depth 2 --direction both --limit 20
+```
+
+The read header says `items=0` when the key is wrong; only then search:
 
 ```bash
 potpie graph search-entities "<service env adapter dependency>" --limit 10
 ```
 
-Read the service neighborhood with the graph workbench:
+The read shape is always `--depth 2 --direction both`; `--direction` is
+`out`, `in` or `both`, and any other spelling returns no rows instead of an
+error. For everything the graph holds about one service — decisions,
+preferences, timeline and features beside the topology — one flat list:
 
 ```bash
-potpie graph read \
-  --subgraph infra_topology \
-  --view service_neighborhood \
-  --scope service:<service-name> \
-  --environment <dev|staging|prod|preview> \
-  --depth 2 \
-  --direction both \
-  --limit 20
+potpie graph neighborhood --entity service:<service-name> --detail summary --limit 20
 ```
 
-Omit `--environment` only when the task is environment-agnostic. For broad
-architecture work, run `potpie --json graph describe infra_topology --view
-service_neighborhood --examples` before choosing the read shape.
+Pass `--pot local:<name>` once a header has named the pot.
 
 ## Apply Results
 
@@ -46,11 +62,11 @@ Look for explicit topology facts: `DEFINED_IN`, `DEPLOYED_TO`, `DEPENDS_ON`,
 
 ## Report Back
 
-Show the `search-entities` and `graph read` you ran, including the
-`--environment`, `--depth`, and `--limit` you chose. A neighborhood is only
-interpretable next to its bounds: "nothing depends on it" means one thing at
-`--depth 2` and another at `--depth 1`, and the reader cannot tell which you
-meant unless the command is on the page.
+Show the `graph read` you ran, including the `--depth`, `--limit`, and any
+`--environment` you chose. A neighborhood is only interpretable next to its
+bounds: "nothing depends on it" means one thing at `--depth 2` and another at
+`--depth 1`, and the reader cannot tell which you meant unless the command is on
+the page.
 
 A neighborhood is the case a diagram was made for — draw it:
 
@@ -73,15 +89,23 @@ Record only source-backed topology or carefully labeled agent inferences. Use
 deployment config, service manifest, infra doc, ADR, or user statement. Use
 `agent_claim` for lower-authority interpretation.
 
-Use the workbench write flow:
+Topology edges are not a `potpie record` type; write them as a plan:
 
 ```bash
-potpie --json graph catalog --task "record infra architecture"
-potpie graph search-entities "<service>" --type Service --limit 10
-potpie --json graph describe infra_topology --view service_neighborhood --examples
+potpie graph mutation-template --kind infra-snapshot
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
+```
+
+Reuse the keys your reads returned. Omit `graph_contract_version` from the
+payload. If `propose` answers `review_required`, re-run it with
+`--approved-by <user-ref>` and commit as above; `commit --verify` prints the
+plan id, readback and quality status.
+
+A decision *about* the architecture is one call:
+
+```bash
+potpie record --type decision --summary "<the decision>" --detail rationale="<why>" --scope service:<service-name>
 ```
 
 Every durable infra fact needs an environment when the fact differs by

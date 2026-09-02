@@ -1,6 +1,6 @@
 ---
 name: potpie-cli
-version: "5"
+version: "6"
 description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, resource (document payload) commands, and pot scope behavior."
 ---
 
@@ -11,7 +11,9 @@ ordinary project-memory context, prefer the relevant use-case skill first.
 
 ## Setup And Scope
 
-For **repo-local** CLI install/reinstall from this checkout, use:
+Install the **published** package with `uv tool install 'potpie[all]'` or
+`pip install 'potpie[all]'`. Only inside the potpie source checkout — the repo
+whose `Makefile` has a `cli-install` target — reinstall from source with:
 
 ```bash
 make cli-install    # UI build + stop old daemon + editable install
@@ -19,9 +21,10 @@ make cli-status
 potpie doctor
 ```
 
-Do not use raw `uv tool install --editable …` or `pip install` for day-to-day
-local reinstalls. Reserve `uv tool install 'potpie[all]'` /
-`pip install 'potpie[all]'` for the **published** package.
+Anywhere else there is no Makefile and `make cli-status` is a dead call; the
+install facts come from `uv tool list` and `which -a potpie`. Do not use raw
+`uv tool install --editable …` or `pip install` for day-to-day reinstalls of
+the checkout.
 
 The extras are not optional decoration. Bare `potpie` installs a **remote-only
 client**: the CLI and the RPC transport, with no graph-native local backend and
@@ -33,12 +36,12 @@ dependency-free `embedded` backend, `potpie daemon …` reports that
 report the extra it names; do not treat it as a broken graph.
 
 ```bash
+potpie status
 potpie doctor
 potpie --json doctor
-make cli-status
 uv tool list
 which -a potpie
-potpie login <api-key> --url <host>
+potpie login --api-key <key> --url <host>
 potpie pot list
 potpie pot use <pot-id-or-alias>
 potpie --json pot info
@@ -49,7 +52,13 @@ potpie source add repo .
 potpie source add repo <owner/repo> --pot <pot>
 ```
 
-Pot scope resolves in this order:
+`login` takes flags, not a positional key. `potpie status` is the one health
+check: daemon, pot, backend readiness, claim counts and open quality findings
+in a few lines; `doctor` adds the install, the repo → pot mapping and the
+resource store, and exits 0 whenever it produced a report.
+
+Pot scope for `graph …`, `doctor`, `resolve`, `search`, `record` and every read
+resolves in this order:
 
 1. Explicit `--pot`.
 2. Repo-local default set by `source add repo` or `pot default set`.
@@ -58,6 +67,15 @@ Pot scope resolves in this order:
 4. Active pot from `potpie pot use`.
 5. Clear failure asking for setup, source registration, default selection, or
    explicit `--pot`.
+
+`potpie status` reports the *active* pot (step 4) rather than the repo default,
+so when the two differ, trust the header of a read or `doctor` for the pot a
+read will hit.
+
+A `--pot` ref may carry its origin: `local:<name-or-id>` or `managed:<name-or-id>`.
+Pass it that way once a read header has named the pot — a bare name is checked
+on both origins whenever a managed host is configured, which costs a round trip
+per command, and a name that exists on both is refused as ambiguous.
 
 A pot is a project boundary and may span multiple repos. Do not automatically
 narrow timeline reads to the current repo.
@@ -74,21 +92,30 @@ A document is not a source: `source add pdf ./q3.pdf` exits 1 with
 `source_kind_is_a_document`. Use the matching `potpie-resource-*` skill and
 `potpie resource import` instead.
 
-## Search
+## Context Verbs
 
 ```bash
+potpie status
+potpie resolve "<task>"
+potpie resolve "<task>" --intent debugging --include prior_bugs,docs,timeline
 potpie search "query"
 potpie --json search "query"
 potpie search "query" --include decisions,features
-potpie search "query" --intent debugging
-potpie search "query" --pot <pot-id-or-alias>
+potpie record --type <fix|decision|preference|bug_pattern|verification> --summary "<…>" --detail <key>=<value> --scope service:<name>
 ```
 
-The query is positional — there is no `--query`. Bare search resolves intent
-`unknown`, which covers infra topology, timeline, decisions, and ingested
-documents; `--intent` swaps in another task's families and `--include` names
-families directly. `--help` lists both vocabularies, so neither has to be
-guessed from subgraph names.
+`resolve` is the first read for a task: the intent is inferred from the task
+text when `--intent` is omitted, and the reply is a bounded envelope of
+`subject PREDICATE object · fact` rows across families with a `+N more` footer.
+`search` is the follow-up for a known phrase; its query is positional — there
+is no `--query`. Bare search resolves intent `unknown`, which ranks the phrase
+across all nine families with the same ranker as `resolve`, so a phrase from a
+document can sit below recent timeline rows: `--include docs` (or
+`--intent docs`) narrows it, and `--include` names any family directly.
+`--help` lists both vocabularies. `confidence` in either header is coverage,
+not a verdict; a small pot reads `low` with the right rows on top. `record` is the one-call write for a fix, decision,
+preference, bug pattern or verification; `--type` help names the `--detail`
+keys each type requires, and a repeated `--detail` key builds a list.
 
 ## Resources (document payloads)
 
@@ -102,23 +129,31 @@ potpie resource rm <slug> --confirm
 `import` absorbs a chunk directory an extraction script produced — atomic,
 re-import replaces and bumps `revision`, and the document's structure is
 written to the graph in the same command. `get` resolves chunk ids to text
-with no graph query and batches multiple ids in one call. `rm` is destructive
-and requires `--confirm`. `potpie doctor` reports resource store readiness.
-Ingestion flows live in the per-format `potpie-resource-*` skills.
+with no graph query and batches multiple ids in one call. `list` requires
+`--doc`. `rm` is destructive and requires `--confirm`. `potpie doctor` reports
+resource store readiness. Ingestion flows live in the per-format
+`potpie-resource-*` skills.
 
 ## Graph Workbench
 
 ```bash
-potpie --json graph status
-potpie --json graph catalog --task "<task>"
-potpie --json graph describe <subgraph> --view <view> --examples
+potpie graph catalog
+potpie graph describe <subgraph> --view <view>
 potpie graph read --subgraph <subgraph> --view <view> --limit 20
-potpie graph search-entities "<name>" --type Service --limit 10
+potpie graph search-entities "<name>" --limit 10
+potpie graph mutation-template --kind <kind>
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 potpie --json graph quality summary
 ```
+
+One rule for `--json`: text for reads, `--json` for `propose`, `commit`,
+`resource import`, and anything a script parses. `catalog --task` is accepted
+and ignored, and the text catalog (under 1 KB) already lists views and
+mutation ops. `describe --examples` renders only with `--json` and carries
+read examples only; the write payload shape is `mutation-template`.
+`commit --verify` prints the plan id, readback and quality status, so
+`graph history --plan <plan_id>` is for later inspection.
 
 Use `potpie-graph` for advanced graph workbench details.
 
@@ -137,13 +172,13 @@ pot/host/source state is a short list; write it as one.
 ## Boundaries
 
 Repository links, docs, tickets, PRs, and logs are interpreted by the harness and
-written with graph workbench mutations. Do not use pot-level connector queueing or
-deterministic local code scans as the agent ingestion path.
+written with `potpie record` or graph workbench mutations. Do not use pot-level
+connector queueing or deterministic local code scans as the agent ingestion path.
 Do not use scanner-driven graph updates.
 
-For CLI failures, stay in this skill: run `potpie doctor`, `make cli-status`, or
-`uv tool list` for install facts. For repo-local reinstall use `make cli-install`
-(not raw `uv tool install`). Do not use `python -m pip show
+For CLI failures, stay in this skill: run `potpie status`, `potpie doctor`, or
+`uv tool list` for install facts (`make cli-status` and `make cli-install` only
+inside the potpie checkout). Do not use `python -m pip show
 potpie-context-engine` for local uv-tool installs. Inspect JSON output when
 useful, check API URL/key config, confirm pot scope, and verify source
 registration before changing project code.
