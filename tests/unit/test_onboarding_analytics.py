@@ -178,7 +178,10 @@ def test_activation_event_marks_context_results(fake_sink: _FakeSink) -> None:
     ("exc", "expected"),
     [
         (ValueError("No install target registered for agent 'other'"), "invalid_agent"),
-        (ValueError("Expected a directory path, got file: /private/repo"), "filesystem"),
+        (
+            ValueError("Expected a directory path, got file: /private/repo"),
+            "filesystem",
+        ),
         (ValueError("other validation failure"), "unexpected"),
         (PermissionError("denied"), "permission_denied"),
         (OSError("disk unavailable"), "filesystem"),
@@ -208,9 +211,7 @@ def test_direct_skills_install_emits_one_canonical_outcome_per_command(
 ) -> None:
     fake_skills = _InstallSkills(
         results=[
-            SimpleNamespace(
-                agent="codex", changed=("potpie-cli",), metadata={}
-            ),
+            SimpleNamespace(agent="codex", changed=("potpie-cli",), metadata={}),
             SimpleNamespace(agent="codex", changed=(), metadata={}),
         ]
     )
@@ -250,7 +251,9 @@ def test_direct_skills_install_captures_bounded_failure_outcome(
         SimpleNamespace(skills=_InstallSkills(error=PermissionError("private path")))
     )
 
-    result = CliRunner().invoke(skills_commands.skills_app, ["install", "--agent", "codex"])
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "codex"]
+    )
 
     assert result.exit_code != 0
     assert [event.name for event in fake_sink.events] == [
@@ -289,13 +292,17 @@ def test_direct_skills_install_skips_canonical_events_for_non_activation_agents(
         SimpleNamespace(
             skills=_InstallSkills(
                 results=[
-                    SimpleNamespace(agent="default", changed=("AGENTS.md",), metadata={})
+                    SimpleNamespace(
+                        agent="default", changed=("AGENTS.md",), metadata={}
+                    )
                 ]
             )
         )
     )
 
-    result = CliRunner().invoke(skills_commands.skills_app, ["install", "--agent", "default"])
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "default"]
+    )
 
     assert result.exit_code == 0, result.output
     assert fake_sink.events == []
@@ -325,7 +332,9 @@ def test_direct_skills_install_drops_canonical_events_for_invalid_scope(
 ) -> None:
     _common.set_runtime(
         SimpleNamespace(
-            skills=_InstallSkills(error=ValueError("scope must be 'global' or 'project'"))
+            skills=_InstallSkills(
+                error=ValueError("scope must be 'global' or 'project'")
+            )
         )
     )
 
@@ -357,6 +366,47 @@ def test_agent_skills_events_drop_noncanonical_scope(
         outcome=outcome,
         duration_ms=1,
         failure_kind=failure_kind,
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_events_drop_invalid_install_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_install_outcome(
+        agent="codex",
+        entrypoint="direct_command",
+        scope="global",
+        outcome="PermissionError: private path",
+        duration_ms=1,
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_events_drop_invalid_failure_kind(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_install_outcome(
+        agent="codex",
+        entrypoint="direct_command",
+        scope="global",
+        outcome="failed",
+        duration_ms=1,
+        failure_kind="PermissionError: /private/repo",
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_events_drop_invalid_selection_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_selection_outcome(
+        selection_outcome="user typed a prompt",
+        selected_agents=("claude",),
+        duration_ms=12,
     )
 
     assert fake_sink.events == []

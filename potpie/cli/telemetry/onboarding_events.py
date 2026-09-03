@@ -18,10 +18,17 @@ _CURRENT_ENTRYPOINT: ContextVar[str | None] = ContextVar(
     "potpie_cli_onboarding_entrypoint",
     default=None,
 )
-_CANONICAL_AGENT_SKILLS_AGENTS = frozenset(
-    {"claude", "cursor", "opencode", "codex"}
-)
+_CANONICAL_AGENT_SKILLS_AGENTS = frozenset({"claude", "cursor", "opencode", "codex"})
 _CANONICAL_AGENT_SKILLS_SCOPES = frozenset({"global", "project"})
+_CANONICAL_AGENT_SKILLS_OUTCOMES = frozenset(
+    {"installed", "already_installed", "failed", "cancelled"}
+)
+_CANONICAL_AGENT_SKILLS_SELECTION_OUTCOMES = frozenset(
+    {"selected", "skipped", "cancelled"}
+)
+_CANONICAL_AGENT_SKILLS_FAILURE_KINDS = frozenset(
+    {"invalid_agent", "permission_denied", "filesystem", "unexpected"}
+)
 
 
 def begin_setup_run() -> str:
@@ -173,16 +180,24 @@ def capture_agent_skills_install_outcome(
     """Capture a supported harness installation's terminal outcome."""
     canonical_agent = canonical_agent_skills_agent(agent)
     canonical_scope = canonical_agent_skills_scope(scope)
-    if canonical_agent is None or canonical_scope is None:
+    canonical_outcome = _canonical_agent_skills_value(
+        outcome, _CANONICAL_AGENT_SKILLS_OUTCOMES
+    )
+    if canonical_agent is None or canonical_scope is None or canonical_outcome is None:
         return
     props: dict[str, AnalyticsValue] = {
         "agent": canonical_agent,
         "scope": canonical_scope,
-        "outcome": outcome,
+        "outcome": canonical_outcome,
         "duration_ms": duration_ms,
     }
     if failure_kind is not None:
-        props["failure_kind"] = failure_kind
+        canonical_failure_kind = _canonical_agent_skills_value(
+            failure_kind, _CANONICAL_AGENT_SKILLS_FAILURE_KINDS
+        )
+        if canonical_failure_kind is None:
+            return
+        props["failure_kind"] = canonical_failure_kind
     _capture(
         "cli_onboarding_agent_skills_install_outcome",
         "agent_skills",
@@ -199,9 +214,14 @@ def capture_agent_skills_selection_outcome(
     entrypoint: str = "post_setup_agent_skills",
 ) -> None:
     """Capture the wizard's agent-selection prompt outcome."""
+    canonical_selection = _canonical_agent_skills_value(
+        selection_outcome, _CANONICAL_AGENT_SKILLS_SELECTION_OUTCOMES
+    )
+    if canonical_selection is None:
+        return
     canonical_selected = (
         _canonical_agent_skills_agents(selected_agents)
-        if selection_outcome == "selected"
+        if canonical_selection == "selected"
         else ()
     )
     _capture(
@@ -209,7 +229,7 @@ def capture_agent_skills_selection_outcome(
         "agent_skills",
         entrypoint,
         {
-            "selection_outcome": selection_outcome,
+            "selection_outcome": canonical_selection,
             "selected_agent_count": len(canonical_selected),
             "selected_agents": canonical_selected,
             "duration_ms": duration_ms,
@@ -223,6 +243,13 @@ def _canonical_agent_skills_agents(agents: tuple[str, ...]) -> tuple[str, ...]:
         for agent in agents
         if (canonical := canonical_agent_skills_agent(agent)) is not None
     )
+
+
+def _canonical_agent_skills_value(value: str, allowed: frozenset[str]) -> str | None:
+    normalized = value.strip().lower()
+    if normalized in allowed:
+        return normalized
+    return None
 
 
 def capture_github_prompt_shown(*, default_answer: bool) -> None:
