@@ -11,6 +11,9 @@ import click
 from potpie.cli.commands._common import get_store
 from potpie.cli.repo_location import resolve_repo_location
 from potpie.cli.telemetry.onboarding_events import (
+    agent_skills_failure_kind,
+    capture_agent_skills_install_outcome,
+    capture_agent_skills_selection_outcome,
     capture_github_prompt_outcome,
     capture_github_prompt_shown,
     capture_integration_auth_event,
@@ -425,6 +428,41 @@ def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str,
     from potpie.cli.ui.output import print_plain_line
 
     results: list[tuple[str, Any]] = []
+
+    def install_agent(agent: str) -> bool:
+        started_ms = now_ms()
+        try:
+            result = install_agents_globally([agent])
+        except (KeyboardInterrupt, EOFError):
+            capture_agent_skills_install_outcome(
+                agent=agent,
+                entrypoint="post_setup_agent_skills",
+                scope="global",
+                outcome="cancelled",
+                duration_ms=elapsed_ms(started_ms),
+            )
+            raise
+        except Exception as exc:  # noqa: BLE001
+            capture_agent_skills_install_outcome(
+                agent=agent,
+                entrypoint="post_setup_agent_skills",
+                scope="global",
+                outcome="failed",
+                duration_ms=elapsed_ms(started_ms),
+                failure_kind=agent_skills_failure_kind(exc),
+            )
+            raise
+        results.extend(result)
+        changed = _result_changed(result)
+        capture_agent_skills_install_outcome(
+            agent=agent,
+            entrypoint="post_setup_agent_skills",
+            scope="global",
+            outcome="installed" if changed else "already_installed",
+            duration_ms=elapsed_ms(started_ms),
+        )
+        return changed
+
     if rich_enabled(as_json=False):
         from rich.console import Group
         from rich.live import Live
@@ -454,9 +492,7 @@ def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str,
                 for dots in ("   ", ".  ", ".. ", "...", " ..", "  ."):
                     live.update(render(label, dots))
                     time.sleep(0.06)
-                result = install_agents_globally([agent])
-                results.extend(result)
-                if _result_changed(result):
+                if install_agent(agent):
                     completed.append((label, "installed"))
                 else:
                     completed.append((label, "already installed"))
@@ -470,9 +506,7 @@ def _install_agents_globally_with_progress(agents: list[str]) -> list[tuple[str,
             as_json=False,
             markup=False,
         )
-        result = install_agents_globally([agent])
-        results.extend(result)
-        if _result_changed(result):
+        if install_agent(agent):
             print_plain_line(
                 f"✓ {label} (installed)",
                 as_json=False,
@@ -624,6 +658,7 @@ def _maybe_prompt_agent_skills(*, setup_agent: str) -> None:
         if setup_agent.strip().lower() in valid
         else frozenset()
     )
+    started_ms = now_ms()
     try:
         selected = prompt_multi_checkbox(
             "Which agent harnesses should receive Potpie skills globally?",
@@ -635,9 +670,11 @@ def _maybe_prompt_agent_skills(*, setup_agent: str) -> None:
             default_checked=default_checked,
         )
     except (KeyboardInterrupt, EOFError):
-        return
-
-    if not selected:
+        capture_agent_skills_selection_outcome(
+            selection_outcome="cancelled",
+            selected_agents=(),
+            duration_ms=elapsed_ms(started_ms),
+        )
         return
 
     selected_set = frozenset(selected)
@@ -646,32 +683,20 @@ def _maybe_prompt_agent_skills(*, setup_agent: str) -> None:
         for agent in POST_SETUP_AGENT_ORDER
         if agent in selected_set and agent != "default"
     ]
-    started_ms = now_ms()
-    capture_project_binding_event(
-        "cli_onboarding_agent_skills_install_started",
-        entrypoint="post_setup_agent_skills",
-        properties={"agent_count": len(agents)},
-    )
-    try:
-        result = _install_agents_globally_with_progress(agents)
-    except Exception as exc:  # noqa: BLE001
-        capture_project_binding_event(
-            "cli_onboarding_agent_skills_install_failed",
-            entrypoint="post_setup_agent_skills",
-            properties={
-                "duration_ms": elapsed_ms(started_ms),
-                "failure_kind": sanitized_failure_kind(exc),
-            },
+    if not agents:
+        capture_agent_skills_selection_outcome(
+            selection_outcome="skipped",
+            selected_agents=(),
+            duration_ms=elapsed_ms(started_ms),
         )
-        raise
-    capture_project_binding_event(
-        "cli_onboarding_agent_skills_install_completed",
-        entrypoint="post_setup_agent_skills",
-        properties={
-            "changed": _result_changed(result),
-            "duration_ms": elapsed_ms(started_ms),
-        },
+        return
+
+    capture_agent_skills_selection_outcome(
+        selection_outcome="selected",
+        selected_agents=tuple(agents),
+        duration_ms=elapsed_ms(started_ms),
     )
+    _install_agents_globally_with_progress(agents)
 
 
 def maybe_prompt_github_login(

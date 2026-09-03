@@ -18,6 +18,17 @@ _CURRENT_ENTRYPOINT: ContextVar[str | None] = ContextVar(
     "potpie_cli_onboarding_entrypoint",
     default=None,
 )
+_CANONICAL_AGENT_SKILLS_AGENTS = frozenset({"claude", "cursor", "opencode", "codex"})
+_CANONICAL_AGENT_SKILLS_SCOPES = frozenset({"global", "project"})
+_CANONICAL_AGENT_SKILLS_OUTCOMES = frozenset(
+    {"installed", "already_installed", "failed", "cancelled"}
+)
+_CANONICAL_AGENT_SKILLS_SELECTION_OUTCOMES = frozenset(
+    {"selected", "skipped", "cancelled"}
+)
+_CANONICAL_AGENT_SKILLS_FAILURE_KINDS = frozenset(
+    {"invalid_agent", "permission_denied", "filesystem", "unexpected"}
+)
 
 
 def begin_setup_run() -> str:
@@ -141,6 +152,106 @@ def capture_onboarding_event(
     _capture(name, phase, entrypoint, properties or {})
 
 
+def canonical_agent_skills_agent(agent: str) -> str | None:
+    """Return a supported agent value for canonical skills-install events."""
+    normalized = agent.strip().lower()
+    if normalized in _CANONICAL_AGENT_SKILLS_AGENTS:
+        return normalized
+    return None
+
+
+def canonical_agent_skills_scope(scope: str) -> str | None:
+    """Return a supported scope value for canonical skills-install events."""
+    normalized = scope.strip().lower()
+    if normalized in _CANONICAL_AGENT_SKILLS_SCOPES:
+        return normalized
+    return None
+
+
+def capture_agent_skills_install_outcome(
+    *,
+    agent: str,
+    entrypoint: str,
+    scope: str,
+    outcome: str,
+    duration_ms: int,
+    failure_kind: str | None = None,
+) -> None:
+    """Capture a supported harness installation's terminal outcome."""
+    canonical_agent = canonical_agent_skills_agent(agent)
+    canonical_scope = canonical_agent_skills_scope(scope)
+    canonical_outcome = _canonical_agent_skills_value(
+        outcome, _CANONICAL_AGENT_SKILLS_OUTCOMES
+    )
+    if canonical_agent is None or canonical_scope is None or canonical_outcome is None:
+        return
+    props: dict[str, AnalyticsValue] = {
+        "agent": canonical_agent,
+        "scope": canonical_scope,
+        "outcome": canonical_outcome,
+        "duration_ms": duration_ms,
+    }
+    if failure_kind is not None:
+        canonical_failure_kind = _canonical_agent_skills_value(
+            failure_kind, _CANONICAL_AGENT_SKILLS_FAILURE_KINDS
+        )
+        if canonical_failure_kind is None:
+            return
+        props["failure_kind"] = canonical_failure_kind
+    _capture(
+        "cli_onboarding_agent_skills_install_outcome",
+        "agent_skills",
+        entrypoint,
+        props,
+    )
+
+
+def capture_agent_skills_selection_outcome(
+    *,
+    selection_outcome: str,
+    selected_agents: tuple[str, ...],
+    duration_ms: int,
+    entrypoint: str = "post_setup_agent_skills",
+) -> None:
+    """Capture the wizard's agent-selection prompt outcome."""
+    canonical_selection = _canonical_agent_skills_value(
+        selection_outcome, _CANONICAL_AGENT_SKILLS_SELECTION_OUTCOMES
+    )
+    if canonical_selection is None:
+        return
+    canonical_selected = (
+        _canonical_agent_skills_agents(selected_agents)
+        if canonical_selection == "selected"
+        else ()
+    )
+    _capture(
+        "cli_onboarding_agent_skills_selection_outcome",
+        "agent_skills",
+        entrypoint,
+        {
+            "selection_outcome": canonical_selection,
+            "selected_agent_count": len(canonical_selected),
+            "selected_agents": canonical_selected,
+            "duration_ms": duration_ms,
+        },
+    )
+
+
+def _canonical_agent_skills_agents(agents: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        canonical
+        for agent in agents
+        if (canonical := canonical_agent_skills_agent(agent)) is not None
+    )
+
+
+def _canonical_agent_skills_value(value: str, allowed: frozenset[str]) -> str | None:
+    normalized = value.strip().lower()
+    if normalized in allowed:
+        return normalized
+    return None
+
+
 def capture_github_prompt_shown(*, default_answer: bool) -> None:
     _capture(
         "cli_onboarding_github_prompt_shown",
@@ -225,6 +336,21 @@ def capture_activation_succeeded(
 
 def sanitized_failure_kind(exc: BaseException) -> str:
     return type(exc).__name__
+
+
+def agent_skills_failure_kind(exc: BaseException) -> str:
+    """Return a bounded, privacy-safe category for skills-install failures."""
+    if isinstance(exc, PermissionError):
+        return "permission_denied"
+    if isinstance(exc, OSError):
+        return "filesystem"
+    if isinstance(exc, ValueError):
+        message = str(exc)
+        if "Expected a directory path" in message:
+            return "filesystem"
+        if "No install target registered for agent" in message:
+            return "invalid_agent"
+    return "unexpected"
 
 
 class CliSetupAnalyticsObserver:

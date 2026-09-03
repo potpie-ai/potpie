@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
 from potpie.cli.auth import auth_commands
+from potpie.cli.commands import _common, skills as skills_commands
 from potpie.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
+    agent_skills_failure_kind,
     begin_setup_run,
     capture_activation_succeeded,
+    capture_agent_skills_install_outcome,
+    capture_agent_skills_selection_outcome,
     capture_github_prompt_outcome,
     capture_github_prompt_shown,
     capture_setup_completed,
@@ -166,6 +172,259 @@ def test_activation_event_marks_context_results(fake_sink: _FakeSink) -> None:
     ]
     assert fake_sink.events[0].properties["command"] == "resolve"
     assert fake_sink.events[1].properties["item_count"] == 3
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (ValueError("No install target registered for agent 'other'"), "invalid_agent"),
+        (
+            ValueError("Expected a directory path, got file: /private/repo"),
+            "filesystem",
+        ),
+        (ValueError("other validation failure"), "unexpected"),
+        (PermissionError("denied"), "permission_denied"),
+        (OSError("disk unavailable"), "filesystem"),
+        (RuntimeError("unexpected"), "unexpected"),
+    ],
+)
+def test_agent_skills_failure_kind_is_bounded(
+    exc: BaseException, expected: str
+) -> None:
+    assert agent_skills_failure_kind(exc) == expected
+
+
+@dataclass
+class _InstallSkills:
+    results: list[object] = field(default_factory=list)
+    error: Exception | None = None
+
+    def install(self, **kwargs: object) -> object:
+        del kwargs
+        if self.error is not None:
+            raise self.error
+        return self.results.pop(0)
+
+
+def test_direct_skills_install_emits_one_canonical_outcome_per_command(
+    fake_sink: _FakeSink,
+) -> None:
+    fake_skills = _InstallSkills(
+        results=[
+            SimpleNamespace(agent="codex", changed=("potpie-cli",), metadata={}),
+            SimpleNamespace(agent="codex", changed=(), metadata={}),
+        ]
+    )
+    _common.set_runtime(SimpleNamespace(skills=fake_skills))
+
+    runner = CliRunner()
+    first = runner.invoke(skills_commands.skills_app, ["install", "--agent", "CoDeX"])
+    second = runner.invoke(skills_commands.skills_app, ["install", "--agent", "codex"])
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_agent_skills_install_outcome",
+        "cli_onboarding_agent_skills_install_outcome",
+    ]
+    outcomes = [
+        event
+        for event in fake_sink.events
+        if event.name == "cli_onboarding_agent_skills_install_outcome"
+    ]
+    assert [event.properties["outcome"] for event in outcomes] == [
+        "installed",
+        "already_installed",
+    ]
+    for event in outcomes:
+        assert event.properties["agent"] == "codex"
+        assert event.properties["entrypoint"] == "direct_command"
+        assert event.properties["scope"] == "global"
+        assert "failure_kind" not in event.properties
+        assert "skill_id" not in event.properties
+
+
+def test_direct_skills_install_captures_bounded_failure_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(skills=_InstallSkills(error=PermissionError("private path")))
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "codex"]
+    )
+
+    assert result.exit_code != 0
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_agent_skills_install_outcome",
+    ]
+    outcome = fake_sink.events[0]
+    assert outcome.properties["outcome"] == "failed"
+    assert outcome.properties["failure_kind"] == "permission_denied"
+    assert "private path" not in outcome.properties.values()
+
+
+def test_direct_skills_install_captures_cancelled_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(skills=_InstallSkills(error=KeyboardInterrupt()))
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "codex"]
+    )
+
+    assert result.exit_code == 130
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_agent_skills_install_outcome",
+    ]
+    outcome = fake_sink.events[0]
+    assert outcome.properties["outcome"] == "cancelled"
+    assert "failure_kind" not in outcome.properties
+
+
+def test_direct_skills_install_skips_canonical_events_for_non_activation_agents(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(
+            skills=_InstallSkills(
+                results=[
+                    SimpleNamespace(
+                        agent="default", changed=("AGENTS.md",), metadata={}
+                    )
+                ]
+            )
+        )
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "default"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_sink.events == []
+
+
+def test_direct_skills_install_drops_canonical_events_for_invalid_agent_failure(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(
+            skills=_InstallSkills(
+                error=ValueError("No install target registered for agent 'default'")
+            )
+        )
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "default"]
+    )
+
+    assert result.exit_code != 0
+    assert fake_sink.events == []
+
+
+def test_direct_skills_install_drops_canonical_events_for_invalid_scope(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(
+            skills=_InstallSkills(
+                error=ValueError("scope must be 'global' or 'project'")
+            )
+        )
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app,
+        ["install", "--agent", "cursor", "--scope", "banana"],
+    )
+
+    assert result.exit_code != 0
+    assert fake_sink.events == []
+
+
+@pytest.mark.parametrize(
+    ("outcome", "failure_kind"),
+    [
+        ("installed", None),
+        ("failed", "filesystem"),
+    ],
+)
+def test_agent_skills_events_drop_noncanonical_scope(
+    fake_sink: _FakeSink,
+    outcome: str,
+    failure_kind: str | None,
+) -> None:
+    capture_agent_skills_install_outcome(
+        agent="codex",
+        entrypoint="direct_command",
+        scope="/private/repo",
+        outcome=outcome,
+        duration_ms=1,
+        failure_kind=failure_kind,
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_events_drop_invalid_install_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_install_outcome(
+        agent="codex",
+        entrypoint="direct_command",
+        scope="global",
+        outcome="PermissionError: private path",
+        duration_ms=1,
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_events_drop_invalid_failure_kind(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_install_outcome(
+        agent="codex",
+        entrypoint="direct_command",
+        scope="global",
+        outcome="failed",
+        duration_ms=1,
+        failure_kind="PermissionError: /private/repo",
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_events_drop_invalid_selection_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_selection_outcome(
+        selection_outcome="user typed a prompt",
+        selected_agents=("claude",),
+        duration_ms=12,
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_selection_keeps_only_canonical_agents(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_selection_outcome(
+        selection_outcome="selected",
+        selected_agents=("claude", "default", "codex"),
+        duration_ms=12,
+    )
+
+    outcome = fake_sink.events[0]
+    assert outcome.name == "cli_onboarding_agent_skills_selection_outcome"
+    assert outcome.properties["selected_agents"] == ("claude", "codex")
+    assert outcome.properties["selected_agent_count"] == 2
 
 
 def test_direct_linear_login_records_integration_funnel(
