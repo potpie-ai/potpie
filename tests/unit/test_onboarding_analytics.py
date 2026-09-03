@@ -214,7 +214,7 @@ def test_direct_skills_install_emits_one_canonical_outcome_per_command(
             SimpleNamespace(agent="codex", changed=(), metadata={}),
         ]
     )
-    _common.set_host(SimpleNamespace(skills=fake_skills))
+    _common.set_runtime(SimpleNamespace(skills=fake_skills))
 
     runner = CliRunner()
     first = runner.invoke(skills_commands.skills_app, ["install", "--agent", "CoDeX"])
@@ -246,7 +246,7 @@ def test_direct_skills_install_emits_one_canonical_outcome_per_command(
 def test_direct_skills_install_captures_bounded_failure_outcome(
     fake_sink: _FakeSink,
 ) -> None:
-    _common.set_host(
+    _common.set_runtime(
         SimpleNamespace(skills=_InstallSkills(error=PermissionError("private path")))
     )
 
@@ -265,7 +265,7 @@ def test_direct_skills_install_captures_bounded_failure_outcome(
 def test_direct_skills_install_captures_cancelled_outcome(
     fake_sink: _FakeSink,
 ) -> None:
-    _common.set_host(
+    _common.set_runtime(
         SimpleNamespace(skills=_InstallSkills(error=KeyboardInterrupt()))
     )
 
@@ -285,7 +285,7 @@ def test_direct_skills_install_captures_cancelled_outcome(
 def test_direct_skills_install_skips_canonical_events_for_non_activation_agents(
     fake_sink: _FakeSink,
 ) -> None:
-    _common.set_host(
+    _common.set_runtime(
         SimpleNamespace(
             skills=_InstallSkills(
                 results=[
@@ -304,7 +304,7 @@ def test_direct_skills_install_skips_canonical_events_for_non_activation_agents(
 def test_direct_skills_install_drops_canonical_events_for_invalid_agent_failure(
     fake_sink: _FakeSink,
 ) -> None:
-    _common.set_host(
+    _common.set_runtime(
         SimpleNamespace(
             skills=_InstallSkills(
                 error=ValueError("No install target registered for agent 'default'")
@@ -323,7 +323,7 @@ def test_direct_skills_install_drops_canonical_events_for_invalid_agent_failure(
 def test_direct_skills_install_drops_canonical_events_for_invalid_scope(
     fake_sink: _FakeSink,
 ) -> None:
-    _common.set_host(
+    _common.set_runtime(
         SimpleNamespace(
             skills=_InstallSkills(error=ValueError("scope must be 'global' or 'project'"))
         )
