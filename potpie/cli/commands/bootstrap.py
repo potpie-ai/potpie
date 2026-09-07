@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import click
 import typer
 
 from potpie.cli.cli_install_status import (
@@ -19,6 +20,7 @@ from potpie.cli.cli_install_status import (
 from potpie.cli.commands._common import (
     EXIT_DEGRADED,
     EXIT_VALIDATION,
+    activation_command_outcome,
     contract,
     current_repo_identity_for_cli,
     emit,
@@ -27,9 +29,9 @@ from potpie.cli.commands._common import (
     get_config_service,
     get_daemon_service,
     get_engine_client,
-    get_root_runtime,
     get_ledger_service,
     get_pot_service,
+    get_root_runtime,
     get_setup_service,
     get_skill_service,
     is_json,
@@ -42,10 +44,10 @@ from potpie.cli.commands._common import (
 from potpie.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
     begin_setup_run,
-    capture_activation_succeeded,
     capture_project_binding_event,
     capture_setup_completed,
     capture_setup_dry_run_completed,
+    capture_setup_incomplete,
     capture_setup_started,
     elapsed_ms,
     now_ms,
@@ -224,12 +226,14 @@ def register(root: typer.Typer) -> None:
             )
             setup_started_ms = now_ms()
             begin_setup_run()
+            setup_observer = CliSetupAnalyticsObserver()
             if in_process:
-                get_setup_service(host).set_observer(CliSetupAnalyticsObserver())
+                get_setup_service(host).set_observer(setup_observer)
             capture_setup_started(
                 plan,
                 interactive=interactive_onboarding,
                 json_output=json_output,
+                dry_run=dry_run,
             )
 
             if dry_run:
@@ -249,38 +253,47 @@ def register(root: typer.Typer) -> None:
                 _emit_setup_run_metric(plan, result="dry_run", dry_run=True)
                 return
 
-            if not in_process and not human_output:
-                get_daemon_service(host).ensure(plan)
-                daemon_status = get_daemon_service(host).status()
-                running_backend = daemon_status.get("backend")
-                if backend:
-                    _raise_if_backend_mismatch(running_backend, backend)
+            try:
+                if not in_process and not human_output:
+                    get_daemon_service(host).ensure(plan)
+                    daemon_status = get_daemon_service(host).status()
+                    running_backend = daemon_status.get("backend")
+                    if backend:
+                        _raise_if_backend_mismatch(running_backend, backend)
 
-            if not in_process and human_output:
-                _validate_existing_daemon_backend(host, requested_backend=backend)
+                if not in_process and human_output:
+                    _validate_existing_daemon_backend(host, requested_backend=backend)
 
-            if use_live:
-                report = setup_ux.run_setup_live(
-                    get_setup_service(host),
-                    plan,
-                    repo=Path(repo),
-                    agent=agent,
-                    scan=scan,
-                    use_rich=True,
-                    config_home=getattr(get_daemon_service(host), "home", None),
-                    observer=CliSetupAnalyticsObserver(),
+                if use_live:
+                    report = setup_ux.run_setup_live(
+                        get_setup_service(host),
+                        plan,
+                        repo=Path(repo),
+                        agent=agent,
+                        scan=scan,
+                        use_rich=True,
+                        config_home=getattr(get_daemon_service(host), "home", None),
+                        observer=setup_observer,
+                    )
+                elif stream_plain_progress:
+                    report = setup_ux.run_setup_plain(
+                        get_setup_service(host),
+                        plan,
+                        repo=Path(repo),
+                        agent=agent,
+                        scan=scan,
+                        observer=setup_observer,
+                    )
+                else:
+                    report = get_setup_service(host).run(plan)
+            except (KeyboardInterrupt, EOFError, typer.Abort, click.Abort):
+                capture_setup_incomplete(
+                    plan=plan,
+                    incomplete_kind="cancelled",
+                    duration_ms=elapsed_ms(setup_started_ms),
+                    failure_stage=setup_observer.current_or_last_step,
                 )
-            elif stream_plain_progress:
-                report = setup_ux.run_setup_plain(
-                    get_setup_service(host),
-                    plan,
-                    repo=Path(repo),
-                    agent=agent,
-                    scan=scan,
-                    observer=CliSetupAnalyticsObserver(),
-                )
-            else:
-                report = get_setup_service(host).run(plan)
+                raise
             capture_setup_completed(
                 plan=plan,
                 ok=report.ok,
@@ -359,19 +372,21 @@ def register(root: typer.Typer) -> None:
             )
 
         with contract():
-            shell = get_root_runtime()
-            pot_id = resolve_pot_id(shell, pot)
-            data_plane = run_engine_operation(
-                get_engine_client(pot).data_plane_status(DataPlaneStatusRequest())
-            )
-            report = _build_context_status_report(
-                shell,
-                pot_id=pot_id,
-                intent=intent,
-                harness=harness,
-                data_plane=data_plane,
-            )
-            _capture_host_status_activation()
+            with activation_command_outcome(
+                command="status", result_kind="status_result"
+            ):
+                shell = get_root_runtime()
+                pot_id = resolve_pot_id(shell, pot)
+                data_plane = run_engine_operation(
+                    get_engine_client(pot).data_plane_status(DataPlaneStatusRequest())
+                )
+                report = _build_context_status_report(
+                    shell,
+                    pot_id=pot_id,
+                    intent=intent,
+                    harness=harness,
+                    data_plane=data_plane,
+                )
             emit(
                 {
                     "profile": report.profile,
@@ -815,10 +830,3 @@ def _step_state(report, step_id: str) -> str | None:
         if step.step == step_id:
             return step.state
     return None
-
-
-def _capture_host_status_activation() -> None:
-    capture_activation_succeeded(
-        command="status",
-        result_kind="status_result",
-    )
