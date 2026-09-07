@@ -142,6 +142,48 @@ def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> No
     mock_host.skills.nudge.assert_called_once_with(agent="claude")
 
 
+def test_status_uses_canonical_activation_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = StatusReport(
+        pot_id="foo-pot",
+        profile="local",
+        daemon_up=True,
+        active_pot="foo-pot",
+        backend_ready=True,
+        data_plane={"counts": {"nodes": 3}},
+    )
+    mock_host = MagicMock()
+    _configure_status_host(mock_host, report)
+    captured: list[dict[str, str]] = []
+
+    class _CaptureOutcome:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    def _activation_outcome(**properties):
+        captured.append(properties)
+        return _CaptureOutcome()
+
+    _common.set_runtime(mock_host)
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "activation_command_outcome",
+        _activation_outcome,
+    )
+
+    result = runner.invoke(cli_main.app, ["status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert captured == [{"command": "status", "result_kind": "status_result"}]
+
+
 def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
     report = StatusReport(
         pot_id="foo-pot",
@@ -436,6 +478,51 @@ def test_setup_degraded_report_preserves_exit_code_and_emits_metrics(
             {"step": "backend.provision", "state": "failed", "hard": True},
         ),
     ]
+
+
+def test_setup_interrupt_emits_cancelled_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_host = MagicMock()
+    mock_host.profile = "local"
+    mock_host.backend.profile = "falkordb"
+    mock_host.daemon.in_process = False
+    captured: list[tuple[str, str]] = []
+
+    def _interrupt_setup(_setup, _plan, **kwargs) -> None:
+        kwargs["observer"].step_started(step="backend.provision", hard=True)
+        raise KeyboardInterrupt
+
+    def _capture_incomplete(
+        *,
+        plan: SetupPlan,
+        incomplete_kind: str,
+        duration_ms: int,
+        failure_stage: str,
+    ) -> None:
+        del plan, duration_ms
+        captured.append((incomplete_kind, failure_stage))
+
+    _patch_local_setup_host(monkeypatch, mock_host)
+    monkeypatch.setattr(
+        bootstrap.setup_ux,
+        "run_setup_plain",
+        _interrupt_setup,
+    )
+    monkeypatch.setattr(
+        "potpie.cli.ui.setup_ux.rich_enabled",
+        lambda **_k: False,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "capture_setup_incomplete",
+        _capture_incomplete,
+    )
+
+    result = runner.invoke(cli_main.app, ["setup", "--yes"])
+
+    assert result.exit_code == 130
+    assert captured == [("cancelled", "backend.provision")]
 
 
 def test_doctor_emits_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:

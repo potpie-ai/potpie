@@ -7,25 +7,30 @@ become new ``--intent`` / ``--include`` / ``--type`` values, never new commands.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import typer
+from potpie_context_engine.requests import (
+    RecordRequest as EngineRecordRequest,
+)
+from potpie_context_engine.requests import (
+    ResolveRequest as EngineResolveRequest,
+)
+from potpie_context_engine.requests import SearchRequest as EngineSearchRequest
 
 from potpie.cli.commands._common import (
+    activation_command_outcome,
     contract,
     emit,
     get_engine_client,
     run_engine_operation,
 )
 from potpie.cli.telemetry.onboarding_events import (
-    capture_activation_succeeded,
+    capture_context_result_returned,
 )
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from potpie_context_engine.requests import (
-    RecordRequest as EngineRecordRequest,
-    ResolveRequest as EngineResolveRequest,
-)
-from potpie_context_engine.requests import SearchRequest as EngineSearchRequest
 
 
 def _split(value: str | None) -> tuple[str, ...]:
@@ -49,18 +54,25 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_resolve — a bounded context wrap for a task."""
         with contract():
-            client = get_engine_client(pot)
-            env = run_engine_operation(
-                client.resolve(
-                    EngineResolveRequest(
-                        task=task,
-                        intent=intent,
-                        include=_split(include),
-                        mode=mode,
+            with activation_command_outcome(
+                command="resolve", result_kind="context_result"
+            ):
+                client = get_engine_client(pot)
+                env = run_engine_operation(
+                    client.resolve(
+                        EngineResolveRequest(
+                            task=task,
+                            intent=intent,
+                            include=_split(include),
+                            mode=mode,
+                        )
                     )
                 )
+            _capture_context_result(
+                command="resolve",
+                item_count=len(env.items),
+                confidence=env.overall_confidence,
             )
-            _capture_context_activation(command="resolve", item_count=len(env.items))
             emit(_envelope_payload(env), human=_envelope_human(env))
 
     @root.command()
@@ -71,11 +83,20 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_search — narrow follow-up lookup."""
         with contract():
-            client = get_engine_client(pot)
-            env = run_engine_operation(
-                client.search(EngineSearchRequest(query=query, include=_split(include)))
+            with activation_command_outcome(
+                command="search", result_kind="context_result"
+            ):
+                client = get_engine_client(pot)
+                env = run_engine_operation(
+                    client.search(
+                        EngineSearchRequest(query=query, include=_split(include))
+                    )
+                )
+            _capture_context_result(
+                command="search",
+                item_count=len(env.items),
+                confidence=env.overall_confidence,
             )
-            _capture_context_activation(command="search", item_count=len(env.items))
             emit(_envelope_payload(env), human=_envelope_human(env))
 
     @root.command()
@@ -162,11 +183,16 @@ def _envelope_human(env) -> str:
 __all__ = ["register"]
 
 
-def _capture_context_activation(*, command: str, item_count: int) -> None:
-    capture_activation_succeeded(
+def _capture_context_result(
+    *,
+    command: Literal["resolve", "search"],
+    item_count: int,
+    confidence: str,
+) -> None:
+    capture_context_result_returned(
         command=command,
-        result_kind="context_result",
         item_count=item_count,
+        confidence=confidence,
     )
     capture_usage_command_succeeded(
         command=command,
