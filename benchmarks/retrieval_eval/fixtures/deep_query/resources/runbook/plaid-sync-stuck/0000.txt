@@ -1,0 +1,5 @@
+Symptoms: the nightly reconciliation report shows thousands of unmatched rows, account balances drift by whole transactions, reconciler logs `ITEM_LOGIN_REQUIRED` for an item.
+
+Cause: the customer must re-authenticate through Plaid Link update mode. Before PR #231 the reconciler restarted `transactions/sync` with a null cursor after re-auth and re-imported 30 days. Since v2.14.0 the cursor is persisted on `plaid_items.next_cursor` and imports are upserted by `transaction_id`.
+
+Recovery: send the update-mode link (`ledgerctl plaid relink <item_id>`), then re-run `reconciler --item <item_id> --window 3`. If duplicates were already imported, run `ledgerctl recon dedupe --item <item_id>`.

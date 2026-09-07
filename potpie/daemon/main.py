@@ -68,6 +68,12 @@ def _stop_embedded_graph_servers() -> None:
 
 
 def create_app(*, token: str, base_url: str, pid: int, log_file: str) -> FastAPI:
+    # Pin the build identity to the code this process loaded. The stamp is
+    # cached per process, so reading it now means `/health` keeps answering
+    # with the rev that started the daemon even after the checkout it was
+    # started from moves on — which is exactly the case `daemon status`'s
+    # `stale` exists to catch.
+    build_info.describe()
     host = build_host_shell()
     # Reads share; writes run alone. See potpie.daemon.concurrency for what the
     # single process-wide exclusive lock this replaces was actually protecting,

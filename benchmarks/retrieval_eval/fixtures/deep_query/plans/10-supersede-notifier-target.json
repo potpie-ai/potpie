@@ -1,0 +1,40 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "supersede:notifier-target:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "supersede_claim",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_WITH",
+   "object": {
+    "key": "deployment_target:prod:eks-notify",
+    "type": "DeploymentTarget"
+   },
+   "superseded_by": {
+    "key": "deployment_target:prod:lambda-notify",
+    "type": "DeploymentTarget",
+    "name": "lambda-notify (prod)",
+    "summary": "notifier as AWS Lambda behind SQS (moved from EKS)",
+    "description": "notifier runs as an AWS Lambda triggered by SQS since the September migration; replaces the EKS deployment. Synonyms: lambda, serverless notifier."
+   },
+   "environment": "prod",
+   "reason": "notifier moved from the EKS deployment to Lambda+SQS on 2026-09-01",
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "deploy/terraform/notifier-lambda.tf replaces deploy/k8s/notifier.yaml",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/terraform/notifier-lambda.tf",
+     "authority": "repository_metadata"
+    }
+   ]
+  }
+ ]
+}

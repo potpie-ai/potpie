@@ -1,0 +1,33 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "end:statement-tz-staging:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "end_relation_validity",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "CONFIGURES",
+   "object": {
+    "key": "config:ledger-api:STATEMENT_TZ",
+    "type": "ConfigVariable"
+   },
+   "environment": "staging",
+   "reason": "STATEMENT_TZ removed from the staging overlay; staging now inherits UTC default",
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "deploy/k8s/overlays/staging no longer sets STATEMENT_TZ",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/overlays/staging",
+     "authority": "repository_metadata"
+    }
+   ]
+  }
+ ]
+}

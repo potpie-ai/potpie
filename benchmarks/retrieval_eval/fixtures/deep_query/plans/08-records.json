@@ -1,0 +1,133 @@
+{
+  "pot_id": "golden:deep-query",
+  "idempotency_key": "records:ledgerly:round-6",
+  "created_by": {
+    "surface": "benchmark",
+    "harness": "golden-retrieval"
+  },
+  "operations": [
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "preference:reuse-the-module-level-httpx-asyncclient-timeout-5-0-no-requests-no-urllib",
+        "type": "Preference",
+        "summary": "All outbound HTTP goes through one httpx.AsyncClient with a 5 second timeout; never use requests"
+      },
+      "predicate": "POLICY_APPLIES_TO",
+      "object": {"key": "service:notifier", "type": "Service"},
+      "truth": "preference",
+      "description": "All outbound HTTP goes through one httpx.AsyncClient with a 5 second timeout; never use requests",
+      "evidence": [{"source_ref": "context_record:preference:9b5a2623a62ae81c5acc8da2", "authority": "user_statement"}]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "preference:bind-account-id-and-request-id-with-structlog-contextvars-redact-account-number-and-access-token-fields",
+        "type": "Preference",
+        "summary": "Use structlog JSON logs with account_id bound; never log account numbers or Plaid access tokens"
+      },
+      "predicate": "POLICY_APPLIES_TO",
+      "object": {"key": "repo:github-com-ledgerly-inc-ledgerly", "type": "Repository"},
+      "truth": "preference",
+      "description": "Use structlog JSON logs with account_id bound; never log account numbers or Plaid access tokens",
+      "evidence": [{"source_ref": "context_record:preference:507bd3d78bcf99ed16fa0a73", "authority": "user_statement"}]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "preference:catch-plaid-apiexception-at-the-adapter-boundary-only-re-raise-ledgerupstreamerror-request-id-and-let-the-api-layer-map-it-to-502-with-the-request-id-in-the-body",
+        "type": "Preference",
+        "summary": "Never swallow PlaidError; wrap it as LedgerUpstreamError carrying the Plaid request_id"
+      },
+      "predicate": "POLICY_APPLIES_TO",
+      "object": {"key": "service:ledger-api", "type": "Service"},
+      "truth": "preference",
+      "description": "Never swallow PlaidError; wrap it as LedgerUpstreamError carrying the Plaid request_id",
+      "evidence": [{"source_ref": "context_record:preference:9ef79b8804b0e0c752ba0253", "authority": "user_statement"}]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "preference:append-one-csv-row-per-match-to-s3-ledgerly-audit-recon-date-csv",
+        "type": "Preference",
+        "summary": "The reconciler writes a CSV audit log of every matched transaction to S3 in addition to structlog"
+      },
+      "predicate": "POLICY_APPLIES_TO",
+      "object": {"key": "service:reconciler", "type": "Service"},
+      "truth": "preference",
+      "description": "The reconciler writes a CSV audit log of every matched transaction to S3 in addition to structlog",
+      "evidence": [{"source_ref": "context_record:preference:e2a58ef8fe6b9eb9013f9113", "authority": "user_statement"}]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "decision:the-reconciler-runs-at-02-00-utc-after-plaid-s-nightly-refresh-never-schedule-it-earlier",
+        "type": "Decision",
+        "summary": "The reconciler runs at 02:00 UTC after Plaid's nightly refresh; never schedule it earlier"
+      },
+      "predicate": "DECIDED",
+      "object": {"key": "service:reconciler", "type": "Service"},
+      "truth": "user_decision",
+      "description": "The reconciler runs at 02:00 UTC after Plaid's nightly refresh; never schedule it earlier • The reconciler runs at 02:00 UTC after Plaid's nightly refresh; never schedule it earlier",
+      "evidence": [{"source_ref": "context_record:decision:5f02d1e308d4943717c71df6", "authority": "user_statement"}]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "bug_pattern:statement-pdf-render-oomkilled-for-accounts-over-5k-transactions-because-weasyprint-builds-the-whole-document-in-memory",
+        "type": "BugPattern",
+        "summary": "Statement PDF render OOMKilled for accounts over 5k transactions because WeasyPrint builds the whole document in memory"
+      },
+      "predicate": "REPRODUCES",
+      "object": {"key": "service:ledger-api", "type": "Service"},
+      "truth": "agent_claim",
+      "description": "Statement PDF render OOMKilled for accounts over 5k transactions because WeasyPrint builds the whole document in memory • Statement PDF render OOMKilled for accounts over 5k transactions because WeasyPrint builds the whole document in memory",
+      "evidence": [{"source_ref": "context_record:bug_pattern:69a4ed911d3622b7c5270d38", "authority": "user_statement"}]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "bug_pattern:statement-render-oom-fixed-by-paginating-500-rows-per-page-and-streaming-pages-pr-198",
+        "type": "BugPattern",
+        "summary": "Statement render OOM fixed by paginating 500 rows per page and streaming pages (PR #198)"
+      },
+      "predicate": "REPRODUCES",
+      "object": {"key": "service:ledger-api", "type": "Service"},
+      "truth": "agent_claim",
+      "description": "Statement render OOM fixed by paginating 500 rows per page and streaming pages (PR #198) • Statement render OOM fixed by paginating 500 rows per page and streaming pages (PR #198)",
+      "evidence": [{"source_ref": "context_record:fix:68671bee8ce3a89bf6056278", "authority": "user_statement"}]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "fix:statement-render-oom-fixed-by-paginating-500-rows-per-page-and-streaming-pages-pr-198",
+        "type": "Fix",
+        "summary": "Statement render OOM fixed by paginating 500 rows per page and streaming pages (PR #198)"
+      },
+      "predicate": "RESOLVED",
+      "object": {
+        "key": "bug_pattern:statement-render-oom-fixed-by-paginating-500-rows-per-page-and-streaming-pages-pr-198",
+        "type": "BugPattern"
+      },
+      "truth": "agent_claim",
+      "description": "Statement render OOM fixed by paginating 500 rows per page and streaming pages (PR #198) • Statement render OOM fixed by paginating 500 rows per page and streaming pages (PR #198)",
+      "evidence": [{"source_ref": "context_record:fix:68671bee8ce3a89bf6056278", "authority": "user_statement"}]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "activity:verification:fix-statement-render-oom-fixed-by-paginating-500-rows-per-page-and-streaming-pages-pr-198",
+        "type": "Activity",
+        "summary": "Rendered a 20k-row statement in staging after PR #198: 180 MB peak RSS, 4.1 s"
+      },
+      "predicate": "VERIFIED",
+      "object": {
+        "key": "fix:statement-render-oom-fixed-by-paginating-500-rows-per-page-and-streaming-pages-pr-198",
+        "type": "Fix"
+      },
+      "truth": "timeline_event",
+      "description": "Rendered a 20k-row statement in staging after PR #198: 180 MB peak RSS, 4.1 s",
+      "evidence": [{"source_ref": "context_record:verification:b3e564139d913a6f1693d740", "authority": "user_statement"}]
+    }
+  ]
+}

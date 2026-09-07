@@ -1,0 +1,46 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "preference:ledgerly-inc/ledgerly:hypothesis-for-posting-changes",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "preference:hypothesis-for-posting-changes",
+    "type": "Preference",
+    "name": "Property tests for posting changes",
+    "summary": "Every change under src/ledgerly/ledger ships a hypothesis property test asserting postings sum to zero",
+    "description": "Testing preference for the ledger core: property-based tests with hypothesis for any change to posting, journal or balance code; the invariant is that every transfer's postings sum to zero and balances are reproducible from the journal. Synonyms: property-based testing, hypothesis, ledger invariants, test policy.",
+    "properties": {
+     "policy_kind": "testing",
+     "prescription": "Add or extend a hypothesis property test that asserts postings sum to zero for any change under src/ledgerly/ledger",
+     "strength": "hard",
+     "audience": "path"
+    }
+   },
+   "predicate": "POLICY_APPLIES_TO",
+   "object": {
+    "key": "code:ledgerly:src/ledgerly/ledger",
+    "type": "CodeAsset"
+   },
+   "truth": "preference",
+   "confidence": 0.95,
+   "description": "Stated by Priya in CONTRIBUTING.md; applies to everything under src/ledgerly/ledger",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#CONTRIBUTING.md",
+     "authority": "user_statement"
+    }
+   ],
+   "extra": {
+    "repo": "github.com/ledgerly-inc/ledgerly",
+    "service": "ledger-api",
+    "file_path": "src/ledgerly/ledger",
+    "language": "python"
+   }
+  }
+ ]
+}

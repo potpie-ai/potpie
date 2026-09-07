@@ -12,6 +12,14 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from potpie import build_info
+
+#: The distribution the ``potpie`` command ships in. ``doctor`` used to report
+#: the engine library here (``cli: potpie-context-engine 0.1.0``), which named
+#: a dependency's constant version and nothing about the CLI that was run.
+CLI_DISTRIBUTION = build_info.DISTRIBUTION
+#: The engine library, and the name older uv tool installs were registered
+#: under; still recognised when reading ``uv tool list``.
 CLI_TOOL_NAME = "potpie-context-engine"
 CLI_EXECUTABLE = "potpie"
 _UV_TOOL_NAMES = frozenset({"potpie", "potpie-context-engine", "context-engine"})
@@ -34,7 +42,10 @@ _DIAGNOSTIC_COMMANDS_WINDOWS = (
 
 
 def _diagnostic_commands() -> list[str]:
-    return list(_DIAGNOSTIC_COMMANDS_WINDOWS if os.name == "nt" else _DIAGNOSTIC_COMMANDS)
+    return list(
+        _DIAGNOSTIC_COMMANDS_WINDOWS if os.name == "nt" else _DIAGNOSTIC_COMMANDS
+    )
+
 
 _LOCAL_REINSTALL_HINT = (
     "Check with `make cli-status` or `potpie doctor`. "
@@ -80,8 +91,16 @@ def collect_cli_install_status() -> dict[str, Any]:
         hint = _PUBLISHED_HINT
 
     return {
-        "package_name": CLI_TOOL_NAME,
+        "package_name": CLI_DISTRIBUTION,
         "package_version": package_version,
+        # The rev is what identifies the code (the version is a constant), but
+        # only this process knows its own; report it when the executable on
+        # PATH is the one running, and say nothing rather than guess otherwise.
+        "build": (
+            build_info.describe()["build"]
+            if _is_this_interpreter(python_interpreter)
+            else None
+        ),
         "on_path": bool(paths_on_path),
         "paths": paths_on_path,
         "primary_path": primary_path,
@@ -109,11 +128,32 @@ def collect_cli_install_status() -> dict[str, Any]:
     }
 
 
+def _is_this_interpreter(interpreter: str | None) -> bool:
+    if not interpreter:
+        return False
+    try:
+        target = Path(interpreter)
+        runtime = Path(sys.executable)
+        # Venvs can symlink their executables to the same base Python while
+        # importing different installations. Preserve the environment's bin
+        # directory, allowing python/python3 aliases only within that directory.
+        return (
+            target.parent.resolve() == runtime.parent.resolve()
+            and target.resolve() == runtime.resolve()
+        )
+    except OSError:
+        return False
+
+
 def cli_install_human(status: dict[str, Any]) -> str:
     if not status.get("on_path"):
         return "cli: potpie NOT on PATH (run: make cli-install)"
-    pkg = str(status.get("package_name") or CLI_TOOL_NAME)
+    pkg = str(status.get("package_name") or CLI_DISTRIBUTION)
     ver = status.get("package_version") or status.get("uv_tool_version") or "unknown"
+    build = status.get("build") or {}
+    rev = build_info.short_rev(build.get("rev"))
+    if rev:
+        ver = f"{ver} ({rev}, dirty)" if build.get("dirty") else f"{ver} ({rev})"
     path = status.get("primary_path") or "unknown"
     py = status.get("python_version")
     via = status.get("install_method")
@@ -133,17 +173,19 @@ def cli_install_human(status: dict[str, Any]) -> str:
 
 
 def _installed_package_version() -> str | None:
-    try:
-        return version(CLI_TOOL_NAME)
-    except PackageNotFoundError:
-        return None
+    for pkg in (CLI_DISTRIBUTION, CLI_TOOL_NAME):
+        try:
+            return version(pkg)
+        except PackageNotFoundError:
+            continue
+    return None
 
 
 def _package_version_via_interpreter(interpreter: str | None) -> str | None:
     """Read package version from the active CLI interpreter, not this process."""
     if not interpreter:
         return None
-    for pkg in (CLI_TOOL_NAME, "potpie"):
+    for pkg in (CLI_DISTRIBUTION, CLI_TOOL_NAME):
         try:
             proc = subprocess.run(
                 [

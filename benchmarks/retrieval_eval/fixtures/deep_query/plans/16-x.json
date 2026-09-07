@@ -1,0 +1,2 @@
+{"pot_id":"pot_2569a39ec330","idempotency_key":"x:probe:v1","created_by":{"surface":"cli","harness":"claude-deep-query"},"operations":[
+{"op":"link_entities","subject":{"key":"service:reconciler","type":"Service"},"predicate":"USES","object":{"key":"dependency:pypi:sqlalchemy","type":"Dependency"},"truth":"source_observation","confidence":0.9,"description":"reconciler also uses sqlalchemy","evidence":[{"source_ref":"github:ledgerly-inc/ledgerly#pyproject.toml","authority":"repository_metadata"}]}]}

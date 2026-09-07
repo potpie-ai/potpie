@@ -2657,6 +2657,40 @@ def test_graph_commit_verify_exits_zero_when_only_quality_regressed() -> None:
     )
 
 
+def test_graph_commit_human_mode_prints_the_repair_on_a_refusal() -> None:
+    """The workbench names the next action on every refusal, but human mode
+    printed status and reason and stopped; a conflict read as a dead end while
+    the one-line repair sat in a field only `--json` readers saw."""
+    _common.set_json(False)
+    conflicted = replace(
+        _commit_result(ok=False, status="conflict"),
+        detail=(
+            "_global moved from 51 to 53 after this plan was proposed; "
+            "1 commit(s) landed in between: mutation-plan:other."
+        ),
+        recommended_next_action=(
+            "Re-run `potpie graph propose --file <the same file>` and commit "
+            "the new plan_id; nothing from this plan was applied."
+        ),
+    )
+    workbench = _Workbench(commit_result=conflicted)
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(graph.graph_app, ["commit", "mutation-plan:test"])
+
+    assert result.exit_code == 1
+    # Rich wraps at 80 columns when piped, so compare on whitespace-folded text.
+    text = " ".join(result.output.split())
+    assert text.startswith("conflict: plan_id=mutation-plan:test")
+    assert "_global moved from 51 to 53" in text
+    assert text.endswith(
+        "next: Re-run `potpie graph propose --file <the same file>` and commit "
+        "the new plan_id; nothing from this plan was applied."
+    )
+    # A next action already spelled out in the body is not printed twice.
+    assert text.count("Re-run `potpie graph propose") == 1
+
+
 def test_graph_commit_verify_help_says_what_exits_nonzero() -> None:
     result = CliRunner().invoke(graph.graph_app, ["commit", "--help"])
 

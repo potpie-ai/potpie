@@ -1,0 +1,32 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "patch:notifier:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "patch_entity",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "patch": {
+    "name": "notifier",
+    "summary": "Worker that sends statement-ready emails and signed webhooks to customers",
+    "description": "notifier consumes the statements:ready Redis queue, sends statement-ready emails through the email adapter (SendGrid in prod, console in staging) and delivers webhooks signed with X-Ledgerly-Signature (HMAC-SHA256). Runs as a Lambda behind SQS since September 2026. Synonyms: notification service, email worker, webhook sender, statement emails."
+   },
+   "reason": "baseline minted the entity with its key as summary and description",
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "filled from src/ledgerly/notify/README.md",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/notify/README.md",
+     "authority": "repository_metadata"
+    }
+   ]
+  }
+ ]
+}

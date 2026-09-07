@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
 from typing import ClassVar, Literal
 
+from potpie import build_info
 from potpie.cli.telemetry.preferences import telemetry_enabled_by_preference
 from potpie_context_engine.bootstrap.runtime_settings import (
     RuntimeSettings,
@@ -73,7 +75,23 @@ def load_cli_runtime_settings() -> RuntimeSettings:
 
 
 def load_sentry_settings() -> SentrySettings:
-    return sentry_settings_from_runtime(load_cli_runtime_settings())
+    return _with_cli_release(sentry_settings_from_runtime(load_cli_runtime_settings()))
+
+
+def _with_cli_release(settings: SentrySettings) -> SentrySettings:
+    """Name the release after the distribution that owns the command.
+
+    The engine's default is ``potpie-cli@<engine version>`` -- it cannot
+    import ``potpie`` to know better -- which filed every CLI build under
+    ``0.1.0`` while the CLI itself was ``2.0.0``, and the same string was what
+    every metric carried as ``cli_version``. The CLI and the daemon both load
+    their Sentry settings through here, so both now report
+    :func:`potpie.build_info.cli_release` (version plus short rev). An
+    explicit ``POTPIE_SENTRY_RELEASE`` still wins, as it does in the engine.
+    """
+    if (os.getenv("POTPIE_SENTRY_RELEASE") or "").strip():
+        return settings
+    return replace(settings, release=build_info.cli_release())
 
 
 def load_product_analytics_settings() -> ProductAnalyticsSettings:

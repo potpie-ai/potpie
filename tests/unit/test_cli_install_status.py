@@ -256,6 +256,38 @@ def test_cli_install_human_when_missing_from_path() -> None:
     assert "make cli-install" in human
 
 
+@pytest.mark.parametrize("same_environment", [False, True])
+def test_build_identity_is_not_shared_between_venvs_using_the_same_python(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, same_environment: bool
+) -> None:
+    base = tmp_path / "base-python"
+    base.touch()
+    runtime = tmp_path / "runtime" / "bin" / "python"
+    target = (
+        runtime.with_name("python3")
+        if same_environment
+        else tmp_path / "other" / "bin" / "python"
+    )
+    for executable in (runtime, target):
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.symlink_to(base)
+    script = target.with_name("potpie")
+    script.write_text(f"#!{target}\n", encoding="utf-8")
+    monkeypatch.setattr(cis.sys, "executable", str(runtime))
+    monkeypatch.setattr(cis, "_potpie_paths_on_path", lambda: [str(script)])
+    monkeypatch.setattr(cis, "_python_version", lambda _path: "3.12.12")
+    monkeypatch.setattr(cis, "_package_version_via_interpreter", lambda _path: "2.0.0")
+    monkeypatch.setattr(cis, "_uv_tool_list_status", lambda: {})
+    build = {"rev": "runtime-revision", "dirty": False, "built_at": None}
+    describe = MagicMock(return_value={"build": build})
+    monkeypatch.setattr(cis.build_info, "describe", describe)
+
+    status = cis.collect_cli_install_status()
+
+    assert status["build"] == (build if same_environment else None)
+    assert describe.call_count == int(same_environment)
+
+
 def test_python_from_script_ignores_binary_executable(tmp_path) -> None:
     binary = tmp_path / "potpie"
     binary.write_bytes(b"\xff\xfe\xfd\xfc")
@@ -282,8 +314,13 @@ def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
         bootstrap,
         "collect_cli_install_status",
         lambda: {
-            "package_name": "potpie-context-engine",
-            "package_version": "0.1.0",
+            "package_name": "potpie",
+            "package_version": "2.0.0",
+            "build": {
+                "rev": "81da1550e39044a3f72265f5de5b07fee9af856d",
+                "dirty": True,
+                "built_at": None,
+            },
             "on_path": True,
             "primary_path": "/Users/me/.local/bin/potpie",
             "python_version": "3.12.12",
@@ -302,7 +339,10 @@ def test_doctor_includes_cli_install(monkeypatch: pytest.MonkeyPatch) -> None:
     result = runner.invoke(cli_main.app, ["doctor"])
     assert result.exit_code == 0, result.stdout
     human = " ".join(result.stdout.split())
-    assert "cli: potpie-context-engine 0.1.0" in human
+    # The distribution that owns the command, with the rev that identifies
+    # the code — not the engine library's constant version.
+    assert "cli: potpie 2.0.0 (81da1550e3, dirty)" in human
+    assert "potpie-context-engine" not in human.split("path=")[0]
     assert "via=uv_tool" in human
     assert "make cli-status" in human
     assert "make cli-install" in human

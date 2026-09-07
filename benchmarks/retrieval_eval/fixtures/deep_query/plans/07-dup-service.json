@@ -1,0 +1,41 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "dup:ledger-api-svc:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "service:ledger-api-svc",
+    "type": "Service",
+    "name": "ledger-api-svc",
+    "summary": "Ledger API service (legacy name used by the ops wiki)",
+    "description": "Older name of ledger-api from the ops wiki; same FastAPI service. Synonyms: ledger api svc."
+   }
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api-svc",
+    "type": "Service"
+   },
+   "predicate": "DEFINED_IN",
+   "object": {
+    "key": "repo:github.com/ledgerly-inc/ledgerly",
+    "type": "Repository"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "ops wiki inventory page",
+   "evidence": [
+    {
+     "source_ref": "https://wiki.ledgerly.internal/inventory",
+     "authority": "external_system"
+    }
+   ]
+  }
+ ]
+}

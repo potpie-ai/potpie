@@ -157,6 +157,26 @@ def test_sentry_release_comes_from_env_or_package_version(
     assert load_cli_sentry_settings().release.startswith("potpie-cli@")
 
 
+def test_sentry_release_is_the_cli_build_unless_the_env_names_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The engine's default named its own library version (`potpie-cli@0.1.0`
+    for a 2.0.0 CLI); the CLI and the daemon both load through here and report
+    the distribution version plus the rev that identifies the code."""
+    from potpie import build_info
+
+    monkeypatch.setenv("POTPIE_SENTRY_DSN", "https://public@example.invalid/1")
+    monkeypatch.setattr(build_info, "cli_release", lambda: "potpie-cli@2.0.0+81da1550e3")
+
+    assert load_cli_sentry_settings().release == "potpie-cli@2.0.0+81da1550e3"
+    assert shared_sentry_settings.default_cli_release() != "potpie-cli@2.0.0+81da1550e3"
+
+    monkeypatch.setenv("POTPIE_SENTRY_RELEASE", "explicit-release")
+    assert load_cli_sentry_settings().release == "explicit-release"
+    monkeypatch.setenv("POTPIE_SENTRY_RELEASE", "   ")
+    assert load_cli_sentry_settings().release == "potpie-cli@2.0.0+81da1550e3"
+
+
 def test_sentry_dist_comes_from_env_or_build_info(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

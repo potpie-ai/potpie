@@ -1,0 +1,1 @@
+Deadlocks dropped to zero in the load test; p95 posting latency 410 ms at 200 rps. Every posting path must go through `with_account_locks`; bypassing it reintroduces the deadlock. Cross-database postings (future sharding) would need a distributed lock, which this ADR does not cover. Property tests in `tests/ledger/test_posting_props.py` assert the ordering invariant.

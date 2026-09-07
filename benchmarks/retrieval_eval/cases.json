@@ -1,0 +1,317 @@
+[
+  {
+    "id": "demo_retry_policy",
+    "corpus": "demo_store",
+    "operation": "claim_query",
+    "query": "add automatic retries to flaky external API requests",
+    "predicate": "POLICY_APPLIES_TO",
+    "expected": [
+      {
+        "subject_key": "preference:wrap-retries",
+        "predicate": "POLICY_APPLIES_TO"
+      }
+    ]
+  },
+  {
+    "id": "demo_structured_logging",
+    "corpus": "demo_store",
+    "operation": "claim_query",
+    "query": "stop debugging with console output, use the logger",
+    "predicate": "POLICY_APPLIES_TO",
+    "expected": [
+      {
+        "subject_key": "preference:no-print",
+        "predicate": "POLICY_APPLIES_TO"
+      }
+    ],
+    "xfail": "R1: hashing retrieval ranks the logging paraphrase below unrelated policies"
+  },
+  {
+    "id": "demo_refund_deadlock",
+    "corpus": "demo_store",
+    "operation": "claim_query",
+    "query": "concurrent settle causes a hang on refunds",
+    "predicate": "REPRODUCES",
+    "expected": [
+      {
+        "subject_key": "bug_pattern:refund-deadlock",
+        "predicate": "REPRODUCES"
+      }
+    ]
+  },
+  {
+    "id": "demo_timezone_boundary",
+    "corpus": "demo_store",
+    "operation": "claim_query",
+    "query": "report numbers are wrong at the end of the month",
+    "predicate": "REPRODUCES",
+    "expected": [
+      {
+        "subject_key": "bug_pattern:timezone-off-by-one",
+        "predicate": "REPRODUCES"
+      }
+    ]
+  },
+  {
+    "id": "demo_webhook_replay",
+    "corpus": "demo_store",
+    "operation": "claim_query",
+    "query": "stripe sends the same event twice and we double charge",
+    "predicate": "REPRODUCES",
+    "expected": [
+      {
+        "subject_key": "bug_pattern:webhook-replay",
+        "predicate": "REPRODUCES"
+      }
+    ]
+  },
+  {
+    "id": "demo_python_indentation",
+    "corpus": "demo_store",
+    "operation": "claim_query",
+    "query": "format python with spaces instead of tab characters",
+    "predicate": "POLICY_APPLIES_TO",
+    "expected": [
+      {
+        "subject_key": "preference:four-space",
+        "predicate": "POLICY_APPLIES_TO"
+      }
+    ]
+  },
+  {
+    "id": "deep_double_charge",
+    "corpus": "deep_query",
+    "operation": "resolve",
+    "query": "customer reports a double charge after retrying a transfer",
+    "expected": [
+      {
+        "include": "timeline",
+        "source_ref": "pagerduty:INC-12"
+      },
+      {
+        "subject_key": "bug_pattern:duplicate-posting-on-retry",
+        "predicate": "REPRODUCES"
+      },
+      {
+        "subject_key": "fix:7f3a1c",
+        "predicate": "RESOLVED"
+      },
+      {
+        "include": "resources",
+        "section_key": "docsection:ledgerly-oncall-runbook:duplicate-transfers-playbook"
+      }
+    ],
+    "xfail": "R1"
+  },
+  {
+    "id": "deep_balance_drift",
+    "corpus": "deep_query",
+    "operation": "resolve",
+    "query": "balance drift after a customer re-authenticated their bank",
+    "expected": [
+      {
+        "subject_key": "bug_pattern:plaid-cursor-reset",
+        "predicate": "REPRODUCES"
+      },
+      {
+        "subject_key": "fix:c41e77",
+        "predicate": "RESOLVED"
+      },
+      {
+        "include": "timeline",
+        "source_ref": "github:ledgerly-inc/ledgerly#pull/231"
+      },
+      {
+        "include": "resources",
+        "section_key": "docsection:ledgerly-oncall-runbook:plaid-sync-stuck"
+      }
+    ],
+    "xfail": "R1"
+  },
+  {
+    "id": "deep_ledger_api_changes",
+    "corpus": "deep_query",
+    "operation": "resolve",
+    "query": "what changed in ledger-api in the last two weeks",
+    "expected": [
+      {
+        "include": "timeline",
+        "source_ref": "github:ledgerly-inc/ledgerly#releases/v2.14.0"
+      },
+      {
+        "include": "timeline",
+        "source_ref": "pagerduty:INC-12"
+      },
+      {
+        "include": "timeline",
+        "source_ref": "github:ledgerly-inc/ledgerly#pull/212"
+      },
+      {
+        "include": "timeline",
+        "source_ref": "github:ledgerly-inc/ledgerly#releases/v2.13.1"
+      }
+    ],
+    "xfail": "R1"
+  },
+  {
+    "id": "deep_rollback_runbook",
+    "corpus": "deep_query",
+    "operation": "resolve",
+    "query": "how do I roll back a bad deploy of ledger-api",
+    "expected": [
+      {
+        "include": "resources",
+        "section_key": "docsection:ledgerly-oncall-runbook:rollback-procedure"
+      }
+    ]
+  },
+  {
+    "id": "deep_advisory_locks",
+    "corpus": "deep_query",
+    "operation": "resolve",
+    "query": "why do postings use advisory locks",
+    "expected": [
+      {
+        "subject_key": "decision:advisory-locks-for-posting",
+        "predicate": "DECIDED"
+      },
+      {
+        "include": "resources",
+        "section_key": "docsection:adr-0007-advisory-locks:decision"
+      },
+      {
+        "include": "timeline",
+        "source_ref": "github:ledgerly-inc/ledgerly#docs/adr/0007-advisory-locks.md"
+      }
+    ],
+    "xfail": "R1"
+  },
+  {
+    "id": "deep_postgres_cost",
+    "corpus": "deep_query",
+    "operation": "resolve",
+    "query": "how much do we pay for postgres each month",
+    "expected": [
+      {
+        "include": "resources",
+        "document_key": "document:infra-cost-2026-q3",
+        "section": "monthly-costs"
+      }
+    ],
+    "xfail": "R1"
+  },
+  {
+    "id": "deep_notifier_webhook_retry",
+    "corpus": "deep_query",
+    "operation": "resolve",
+    "query": "add a webhook retry with backoff to the notifier",
+    "expected": [
+      {
+        "subject_key": "preference:reuse-the-module-level-httpx-asyncclient-timeout-5-0-no-requests-no-urllib",
+        "predicate": "POLICY_APPLIES_TO"
+      },
+      {
+        "subject_key": "preference:bind-account-id-and-request-id-with-structlog-contextvars-redact-account-number-and-access-token-fields",
+        "predicate": "POLICY_APPLIES_TO"
+      },
+      {
+        "include": "resources",
+        "section_key": "docsection:ledgerly-oncall-runbook:dashboards-and-alerts"
+      }
+    ],
+    "xfail": "D8"
+  },
+  {
+    "id": "deep_reconciler_ownership_and_runtime",
+    "corpus": "deep_query",
+    "operation": "resolve",
+    "query": "who owns the reconciler and where does it run in production",
+    "expected": [
+      {
+        "subject_key": "service:reconciler",
+        "predicate": "OWNED_BY",
+        "object_key": "team:payments-core"
+      },
+      {
+        "subject_key": "service:reconciler",
+        "predicate": "DEPLOYED_WITH",
+        "object_key": "deployment_target:prod:eks-cron"
+      },
+      {
+        "subject_key": "decision:the-reconciler-runs-at-02-00-utc-after-plaid-s-nightly-refresh-never-schedule-it-earlier",
+        "predicate": "DECIDED"
+      }
+    ],
+    "xfail": "R1"
+  },
+  {
+    "id": "deep_exact_document_identifier_1",
+    "corpus": "deep_query",
+    "operation": "search",
+    "query": "IDEMPOTENCY_PG_FALLBACK",
+    "top_k": 1,
+    "expected": [
+      {
+        "include": "resources",
+        "section_key": "docsection:ledgerly-oncall-runbook:duplicate-transfers-playbook"
+      }
+    ],
+    "xfail": "R2"
+  },
+  {
+    "id": "deep_exact_document_identifier_2",
+    "corpus": "deep_query",
+    "operation": "search",
+    "query": "ITEM_LOGIN_REQUIRED",
+    "top_k": 1,
+    "expected": [
+      {
+        "include": "resources",
+        "section_key": "docsection:ledgerly-oncall-runbook:plaid-sync-stuck"
+      }
+    ],
+    "xfail": "R2"
+  },
+  {
+    "id": "deep_exact_document_identifier_3",
+    "corpus": "deep_query",
+    "operation": "search",
+    "query": "X-Ledgerly-Signature",
+    "top_k": 1,
+    "expected": [
+      {
+        "include": "resources",
+        "section_key": "docsection:ledgerly-oncall-runbook:dashboards-and-alerts"
+      }
+    ],
+    "xfail": "R2"
+  },
+  {
+    "id": "deep_exact_document_identifier_4",
+    "corpus": "deep_query",
+    "operation": "search",
+    "query": "ledgerctl recon dedupe",
+    "top_k": 1,
+    "expected": [
+      {
+        "include": "resources",
+        "section_key": "docsection:ledgerly-oncall-runbook:plaid-sync-stuck"
+      }
+    ],
+    "xfail": "R2"
+  },
+  {
+    "id": "deep_exact_document_identifier_5",
+    "corpus": "deep_query",
+    "operation": "search",
+    "query": "who is on call",
+    "top_k": 1,
+    "expected": [
+      {
+        "include": "resources",
+        "section_key": "docsection:ledgerly-oncall-runbook:paging-and-severity"
+      }
+    ],
+    "xfail": "R2"
+  }
+]

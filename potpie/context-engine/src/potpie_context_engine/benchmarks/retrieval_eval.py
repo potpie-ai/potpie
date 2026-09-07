@@ -161,6 +161,12 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
         "bug_pattern:webhook-replay",
         "idempotency paraphrase",
     ),
+    GoldenCase(
+        "format python with spaces instead of tab characters",
+        "POLICY_APPLIES_TO",
+        "preference:four-space",
+        "indentation paraphrase",
+    ),
 )
 
 

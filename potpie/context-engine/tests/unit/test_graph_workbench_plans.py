@@ -1152,3 +1152,29 @@ def test_a_conflict_names_the_commits_that_landed_in_between() -> None:
         "Re-run `potpie graph propose --file <the same file>` and commit the new "
         "plan_id; nothing from this plan was applied."
     )
+
+
+def test_recommitting_a_conflicted_plan_keeps_the_reason_and_the_repair() -> None:
+    """The first attempt works out which version moved and what landed in
+    between; a retry must answer the same, not a bare "plan is conflict" with
+    a vaguer next action."""
+    workbench, _backend, _store = _service()
+    stale = workbench.propose(_link_payload(), pot_id=POT)
+    fresh = workbench.propose(
+        _link_payload(subject="service:api", object_="service:db"),
+        pot_id=POT,
+    )
+    assert workbench.commit(fresh.plan_id, pot_id=POT).ok is True
+    first = workbench.commit(stale.plan_id, pot_id=POT)
+    assert first.status == "conflict"
+
+    again = workbench.commit(stale.plan_id, pot_id=POT)
+
+    assert again.ok is False
+    assert again.status == "conflict"
+    assert again.detail is not None
+    assert again.detail.startswith("plan is conflict and cannot be committed: ")
+    assert "_global moved from 0 to 1 after this plan was proposed" in again.detail
+    assert f"1 commit(s) landed in between: {fresh.plan_id}" in again.detail
+    assert again.recommended_next_action == first.recommended_next_action
+    assert "propose --file <the same file>" in again.recommended_next_action

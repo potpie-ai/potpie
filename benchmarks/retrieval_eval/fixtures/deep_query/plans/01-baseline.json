@@ -1,0 +1,602 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "baseline:ledgerly-inc/ledgerly:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "repo:github.com/ledgerly-inc/ledgerly",
+    "type": "Repository",
+    "name": "ledgerly",
+    "summary": "Ledgerly monorepo: double-entry ledger API, Plaid bank-sync reconciler, statement notifier",
+    "description": "Python monorepo for the Ledgerly fintech backend. Contains ledger-api (FastAPI accounts/transfers/statements), reconciler (nightly Plaid bank feed reconciliation), notifier (statement-ready emails and webhooks). Synonyms: ledger service, fintech backend, bookkeeping API."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service",
+    "name": "ledger-api",
+    "summary": "FastAPI service: accounts, double-entry postings, idempotent transfers, monthly statements",
+    "description": "ledger-api is the HTTP API of Ledgerly. It records double-entry postings, serves POST /v1/transfers with X-Idempotency-Key, renders monthly statements as PDF. Talks to ledger-postgres and ledger-redis, pulls bank feeds through Plaid. Synonyms: ledger service, transfers API, accounts API, posting engine."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service",
+    "name": "reconciler",
+    "summary": "Nightly worker reconciling Plaid bank feed transactions against ledger postings",
+    "description": "reconciler runs at 02:00 UTC, pulls Plaid transactions/sync per item using a persisted cursor, matches them to ledger postings and writes discrepancy reports. Synonyms: bank sync worker, recon job, nightly reconciliation, plaid sync."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service",
+    "name": "notifier",
+    "summary": "notifier",
+    "description": "notifier"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "feature:double-entry-ledger",
+    "type": "Feature",
+    "name": "Double-entry ledger",
+    "summary": "Every transfer is two balanced postings; balances always sum to zero",
+    "description": "Double-entry bookkeeping core: journal, postings, account balances, serialization of concurrent postings. Synonyms: ledger core, journal, postings, bookkeeping."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "feature:bank-sync",
+    "type": "Feature",
+    "name": "Bank sync",
+    "summary": "Import bank transactions from Plaid and reconcile them nightly",
+    "description": "Plaid-based bank feed import and nightly reconciliation of bank transactions against ledger postings; handles item re-auth and sync cursors. Synonyms: plaid sync, bank feed import, transaction import, reconciliation."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "feature:monthly-statements",
+    "type": "Feature",
+    "name": "Monthly statements",
+    "summary": "Render monthly account statements as PDF and notify the customer",
+    "description": "Monthly statement generation (PDF via WeasyPrint, paginated 500 rows per page) and statement-ready notification by email/webhook. Synonyms: statements, PDF export, account statement, statement email."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "feature:idempotent-transfers",
+    "type": "Feature",
+    "name": "Idempotent transfers",
+    "summary": "POST /v1/transfers is safe to retry with X-Idempotency-Key",
+    "description": "Transfer creation dedupes retries by X-Idempotency-Key stored in Redis with a Postgres fallback; prevents duplicate postings on client retry. Synonyms: idempotency key, duplicate transfer prevention, safe retry."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "team:payments-core",
+    "type": "Team",
+    "name": "Payments Core",
+    "summary": "Owns ledger-api and reconciler",
+    "description": "Payments Core team: ledger correctness, bank sync, on-call primary for ledger incidents."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "team:growth",
+    "type": "Team",
+    "name": "Growth",
+    "summary": "Owns notifier and customer messaging",
+    "description": "Growth team: notifications, statement emails, webhooks to customers."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "person:priya",
+    "type": "Person",
+    "name": "Priya",
+    "summary": "Tech lead, Payments Core"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "person:marco",
+    "type": "Person",
+    "name": "Marco",
+    "summary": "Engineer, Growth"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "code:ledgerly:src/ledgerly/ledger/posting.py",
+    "type": "CodeAsset",
+    "name": "src/ledgerly/ledger/posting.py",
+    "summary": "Source path src/ledgerly/ledger/posting.py in the ledgerly repo"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "code:ledgerly:src/ledgerly/sync/plaid_feed.py",
+    "type": "CodeAsset",
+    "name": "src/ledgerly/sync/plaid_feed.py",
+    "summary": "Source path src/ledgerly/sync/plaid_feed.py in the ledgerly repo"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "code:ledgerly:src/ledgerly/statements/render.py",
+    "type": "CodeAsset",
+    "name": "src/ledgerly/statements/render.py",
+    "summary": "Source path src/ledgerly/statements/render.py in the ledgerly repo"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "code:ledgerly:src/ledgerly/api/transfers.py",
+    "type": "CodeAsset",
+    "name": "src/ledgerly/api/transfers.py",
+    "summary": "Source path src/ledgerly/api/transfers.py in the ledgerly repo"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "code:ledgerly:src/ledgerly/notify/webhooks.py",
+    "type": "CodeAsset",
+    "name": "src/ledgerly/notify/webhooks.py",
+    "summary": "Source path src/ledgerly/notify/webhooks.py in the ledgerly repo"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "code:ledgerly:src/ledgerly/ledger",
+    "type": "CodeAsset",
+    "name": "src/ledgerly/ledger",
+    "summary": "Source path src/ledgerly/ledger in the ledgerly repo"
+   }
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "repo:github.com/ledgerly-inc/ledgerly",
+    "type": "Repository"
+   },
+   "predicate": "PROVIDES",
+   "object": {
+    "key": "feature:double-entry-ledger",
+    "type": "Feature"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "README features: double-entry ledger",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#README",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "repo:github.com/ledgerly-inc/ledgerly",
+    "type": "Repository"
+   },
+   "predicate": "PROVIDES",
+   "object": {
+    "key": "feature:bank-sync",
+    "type": "Feature"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "README features: Plaid bank sync",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#README",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "repo:github.com/ledgerly-inc/ledgerly",
+    "type": "Repository"
+   },
+   "predicate": "PROVIDES",
+   "object": {
+    "key": "feature:monthly-statements",
+    "type": "Feature"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "README features: monthly statements",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#README",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "PROVIDES",
+   "object": {
+    "key": "feature:idempotent-transfers",
+    "type": "Feature"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "transfers router implements idempotency keys",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/api/transfers.py",
+     "authority": "authoritative_code"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "DEFINED_IN",
+   "object": {
+    "key": "repo:github.com/ledgerly-inc/ledgerly",
+    "type": "Repository"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "src/ledgerly/api + pyproject entry point ledger-api",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#pyproject.toml",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "DEFINED_IN",
+   "object": {
+    "key": "repo:github.com/ledgerly-inc/ledgerly",
+    "type": "Repository"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "src/ledgerly/sync + cron manifest",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#pyproject.toml",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "DEFINED_IN",
+   "object": {
+    "key": "repo:github.com/ledgerly-inc/ledgerly",
+    "type": "Repository"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "src/ledgerly/notify",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#pyproject.toml",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "feature:double-entry-ledger",
+    "type": "Feature"
+   },
+   "predicate": "IMPLEMENTED_IN",
+   "object": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "posting engine lives in ledger-api",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/ledger/posting.py",
+     "authority": "authoritative_code"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "feature:double-entry-ledger",
+    "type": "Feature"
+   },
+   "predicate": "IMPLEMENTED_IN",
+   "object": {
+    "key": "code:ledgerly:src/ledgerly/ledger/posting.py",
+    "type": "CodeAsset"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "posting.py: journal + balanced postings",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/ledger/posting.py",
+     "authority": "authoritative_code"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "feature:bank-sync",
+    "type": "Feature"
+   },
+   "predicate": "IMPLEMENTED_IN",
+   "object": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "reconciler pulls and matches the Plaid feed",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/sync/plaid_feed.py",
+     "authority": "authoritative_code"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "feature:bank-sync",
+    "type": "Feature"
+   },
+   "predicate": "IMPLEMENTED_IN",
+   "object": {
+    "key": "code:ledgerly:src/ledgerly/sync/plaid_feed.py",
+    "type": "CodeAsset"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "plaid_feed.py: transactions/sync with persisted cursor",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/sync/plaid_feed.py",
+     "authority": "authoritative_code"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "feature:monthly-statements",
+    "type": "Feature"
+   },
+   "predicate": "IMPLEMENTED_IN",
+   "object": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "statement rendering in ledger-api",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/statements/render.py",
+     "authority": "authoritative_code"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "feature:monthly-statements",
+    "type": "Feature"
+   },
+   "predicate": "IMPLEMENTED_IN",
+   "object": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "statement-ready notifications in notifier",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/notify/webhooks.py",
+     "authority": "authoritative_code"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "feature:monthly-statements",
+    "type": "Feature"
+   },
+   "predicate": "IMPLEMENTED_IN",
+   "object": {
+    "key": "code:ledgerly:src/ledgerly/statements/render.py",
+    "type": "CodeAsset"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "render.py: WeasyPrint PDF, 500 rows per page",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/statements/render.py",
+     "authority": "authoritative_code"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subject": {
+    "key": "feature:idempotent-transfers",
+    "type": "Feature"
+   },
+   "predicate": "IMPLEMENTED_IN",
+   "object": {
+    "key": "code:ledgerly:src/ledgerly/api/transfers.py",
+    "type": "CodeAsset"
+   },
+   "truth": "source_observation",
+   "confidence": 0.85,
+   "description": "transfers.py: X-Idempotency-Key check",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/api/transfers.py",
+     "authority": "authoritative_code"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "OWNED_BY",
+   "object": {
+    "key": "team:payments-core",
+    "type": "Team"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "CODEOWNERS: src/ledgerly/ledger, api \u2192 @payments-core",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#CODEOWNERS",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "OWNED_BY",
+   "object": {
+    "key": "team:payments-core",
+    "type": "Team"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "CODEOWNERS: src/ledgerly/sync \u2192 @payments-core",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#CODEOWNERS",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "OWNED_BY",
+   "object": {
+    "key": "team:growth",
+    "type": "Team"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "CODEOWNERS: src/ledgerly/notify \u2192 @growth",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#CODEOWNERS",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "person:priya",
+    "type": "Person"
+   },
+   "predicate": "MEMBER_OF",
+   "object": {
+    "key": "team:payments-core",
+    "type": "Team"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "team roster",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#CODEOWNERS",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "person:marco",
+    "type": "Person"
+   },
+   "predicate": "MEMBER_OF",
+   "object": {
+    "key": "team:growth",
+    "type": "Team"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "team roster",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#CODEOWNERS",
+     "authority": "repository_metadata"
+    }
+   ]
+  }
+ ]
+}

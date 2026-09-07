@@ -1,0 +1,2 @@
+{"pot_id":"pot_2569a39ec330","idempotency_key":"infra:ledgerly:plaid-env-prod:v2","created_by":{"surface":"cli","harness":"claude-deep-query"},"operations":[
+{"op":"link_entities","subject":{"key":"service:ledger-api","type":"Service"},"predicate":"CONFIGURES","object":{"key":"config:ledger-api:PLAID_ENV","type":"ConfigVariable"},"truth":"source_observation","confidence":0.9,"environment":"prod","description":"PLAID_ENV=production (re-asserted alone)","evidence":[{"source_ref":"github:ledgerly-inc/ledgerly#deploy/k8s/ledger-api.yaml","authority":"repository_metadata"}]}]}

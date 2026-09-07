@@ -9,7 +9,9 @@ from typing import ClassVar
 import typer
 
 from .identity_store import load_or_create_identity
-from .settings import default_cli_release, telemetry_environment
+from potpie import build_info
+
+from .settings import telemetry_environment
 
 _DAEMON_SESSION_ID = f"daemon_{uuid.uuid4().hex}"
 _CURRENT: ContextVar["TelemetryContext | None"] = ContextVar(
@@ -93,7 +95,9 @@ def bind_telemetry_context(
         command=command,
         subcommand=subcommand,
         output_mode="json" if json_output else "human",
-        cli_version=default_cli_release().removeprefix("potpie-cli@"),
+        # The distribution's version plus the short rev, not the engine
+        # library's constant: see potpie.build_info.cli_version.
+        cli_version=build_info.cli_version(),
         python_version=platform.python_version(),
         os=platform.system().lower(),
         arch=platform.machine(),

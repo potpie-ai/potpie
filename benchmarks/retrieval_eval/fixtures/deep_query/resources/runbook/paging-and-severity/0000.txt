@@ -1,0 +1,5 @@
+Primary on-call is the Payments Core rotation in PagerDuty (schedule `ledger-primary`); Growth holds `notifier-secondary`. Acknowledge within 10 minutes.
+
+Severity: Sev1 = transfer error rate above 2% over 5 minutes, or any duplicate posting; Sev2 = reconciliation report older than 26 hours, or statement rendering failures above 5%; Sev3 = notifier backlog above 10k messages.
+
+Escalate to the engineering manager after 30 minutes without mitigation. The status page is updated by the on-call, not by automation.

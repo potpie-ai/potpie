@@ -15,6 +15,7 @@ This module owns the cross-cutting concerns so the command bodies stay thin:
 from __future__ import annotations
 
 import json
+import re
 import time
 import traceback
 from contextlib import contextmanager
@@ -833,6 +834,21 @@ def _resolve_explicit_pot(explicit: str) -> str:
         return match.pot_id
 
     candidates = _searchable_origins()
+    if len(candidates) > 1 and _looks_like_pot_id(ref):
+        # A pot *id* is minted from random hex on the host that owns it; it is
+        # not a label two hosts can both have picked, so `default`'s problem
+        # does not arise and the other host has nothing to add once the
+        # current one answers. Asking it anyway cost a managed round trip
+        # (~0.5 s) on every `--pot pot_…` — the very form read headers print
+        # and the skills teach agents to pass back.
+        current = candidates[0]
+        found = _find_pot_in(
+            current, ref, unreachable_hint=_qualify_hint("--pot", current, ref)
+        )
+        if found is not None and found.pot_id == ref and not found.archived:
+            hosts.set_current_origin(current)
+            return found.pot_id
+
     matches: list[_PotMatch] = []
     for candidate in candidates:
         found = _find_pot_in(
@@ -855,6 +871,16 @@ def _resolve_explicit_pot(explicit: str) -> str:
     )
     hosts.set_current_origin(match.origin)
     return match.pot_id
+
+
+#: The shape every pot store mints (``pot_`` + hex); a name that happens to
+#: look like this still needs name disambiguation unless the match's actual
+#: pot_id equals the reference.
+_POT_ID_RE: Final = re.compile(r"^pot_[0-9a-f]{8,32}$")
+
+
+def _looks_like_pot_id(ref: str) -> bool:
+    return _POT_ID_RE.match(ref) is not None
 
 
 def resolve_pot_scope(

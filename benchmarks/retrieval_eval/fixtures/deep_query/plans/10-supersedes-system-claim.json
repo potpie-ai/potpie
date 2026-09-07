@@ -1,0 +1,12 @@
+{
+  "claims": [
+    {
+      "subject_key": "deployment_target:prod:lambda-notify",
+      "predicate": "SUPERSEDES",
+      "object_key": "deployment_target:prod:eks-notify",
+      "truth": "agent_claim",
+      "description": "lambda-notify replaced the notifier EKS deployment",
+      "source_ref": "supersede:notifier-target:v1"
+    }
+  ]
+}

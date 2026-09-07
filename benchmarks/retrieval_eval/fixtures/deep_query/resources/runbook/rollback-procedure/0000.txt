@@ -1,0 +1,9 @@
+ledger-api and reconciler ship through Argo CD from `main`. To roll back ledger-api:
+
+```
+kubectl -n ledger rollout undo deployment/ledger-api
+kubectl -n ledger rollout status deployment/ledger-api
+argocd app set ledger-api-prod --sync-policy none   # stop Argo re-syncing main
+```
+
+Re-enable auto-sync (`argocd app set ledger-api-prod --sync-policy automated`) once the fix is on main. The reconciler CronJob keeps the image tag from the last successful sync; suspend it during a rollback with `kubectl -n ledger patch cronjob reconciler-nightly -p '{"spec":{"suspend":true}}'`. Never roll back ledger-postgres migrations by hand; migrations are forward-only.

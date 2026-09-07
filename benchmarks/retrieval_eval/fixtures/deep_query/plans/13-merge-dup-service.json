@@ -1,0 +1,27 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "merge:ledger-api-svc:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "merge_duplicate_entities",
+   "subject": {
+    "key": "service:ledger-api-svc",
+    "type": "Service"
+   },
+   "object": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "external_ids": {
+    "legacy_key": "service:ledger-api-svc",
+    "ops_wiki": "ledger-api-svc"
+   },
+   "reason": "ops wiki name for the same FastAPI service",
+   "description": "same deployment, same repo path"
+  }
+ ]
+}

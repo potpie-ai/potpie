@@ -1,0 +1,318 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "doclinks:ledgerly:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "document:ledgerly-oncall-runbook",
+    "type": "Document"
+   },
+   "object": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "On-call runbook covers ledger-api: paging, rollback via Argo CD, duplicate transfers playbook, dashboards.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/ledgerly-oncall-runbook/rollback-procedure/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "document:ledgerly-oncall-runbook",
+    "type": "Document"
+   },
+   "object": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "Runbook covers the reconciler: Plaid sync stuck, cursor reset recovery, suspending the CronJob during rollback.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/ledgerly-oncall-runbook/plaid-sync-stuck/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "document:ledgerly-oncall-runbook",
+    "type": "Document"
+   },
+   "object": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "Runbook covers notifier paging (notifier-secondary), queue depth alert and webhook signature.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/ledgerly-oncall-runbook/dashboards-and-alerts/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "docsection:ledgerly-oncall-runbook:duplicate-transfers-playbook",
+    "type": "DocumentSection"
+   },
+   "object": {
+    "key": "bug_pattern:duplicate-posting-on-retry",
+    "type": "BugPattern"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "The duplicate transfers playbook is the operational procedure for this bug pattern (INC-12).",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/ledgerly-oncall-runbook/duplicate-transfers-playbook/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "docsection:ledgerly-oncall-runbook:duplicate-transfers-playbook",
+    "type": "DocumentSection"
+   },
+   "object": {
+    "key": "fix:7f3a1c",
+    "type": "Fix"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "The playbook names the Postgres fallback flag that the fix introduced.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/ledgerly-oncall-runbook/duplicate-transfers-playbook/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "docsection:ledgerly-oncall-runbook:plaid-sync-stuck",
+    "type": "DocumentSection"
+   },
+   "object": {
+    "key": "bug_pattern:plaid-cursor-reset",
+    "type": "BugPattern"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "Recovery procedure for the cursor reset bug pattern.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/ledgerly-oncall-runbook/plaid-sync-stuck/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "docsection:ledgerly-oncall-runbook:rollback-procedure",
+    "type": "DocumentSection"
+   },
+   "object": {
+    "key": "deployment_target:prod:eks-ledger",
+    "type": "DeploymentTarget"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "How to roll back the EKS deployment of ledger-api.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/ledgerly-oncall-runbook/rollback-procedure/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "document:adr-0007-advisory-locks",
+    "type": "Document"
+   },
+   "object": {
+    "key": "decision:advisory-locks-for-posting",
+    "type": "Decision"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "ADR-0007 is the written record of the advisory-lock decision.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/adr-0007-advisory-locks/decision/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "document:adr-0007-advisory-locks",
+    "type": "Document"
+   },
+   "object": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "ADR-0007 governs posting serialization in ledger-api.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/adr-0007-advisory-locks/decision/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "docsection:adr-0007-advisory-locks:decision",
+    "type": "DocumentSection"
+   },
+   "object": {
+    "key": "code:ledgerly:src/ledgerly/ledger/posting.py",
+    "type": "CodeAsset"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "The decision section names with_account_locks in posting.py.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/adr-0007-advisory-locks/decision/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "document:infra-cost-2026-q3",
+    "type": "Document"
+   },
+   "object": {
+    "key": "datastore:ledger-postgres",
+    "type": "DataStore"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "Cost sheet line: RDS ledger-postgres $1,850/month.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/infra-cost-2026-q3/monthly-costs/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "document:infra-cost-2026-q3",
+    "type": "Document"
+   },
+   "object": {
+    "key": "adapter:bank_feed:plaid",
+    "type": "Adapter"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "Cost sheet line: Plaid $2,400/month for ~8,000 items.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/infra-cost-2026-q3/monthly-costs/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "document:infra-cost-2026-q3",
+    "type": "Document"
+   },
+   "object": {
+    "key": "cluster:eks-us-east-1",
+    "type": "Cluster"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "Cost sheet line: EKS prod $4,200/month.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/infra-cost-2026-q3/monthly-costs/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  },
+  {
+   "op": "assert_claim",
+   "subgraph": "knowledge",
+   "predicate": "DOCUMENTS",
+   "subject": {
+    "key": "document:infra-cost-2026-q3",
+    "type": "Document"
+   },
+   "object": {
+    "key": "adapter:email:sendgrid",
+    "type": "Adapter"
+   },
+   "truth": "agent_claim",
+   "confidence": 0.9,
+   "description": "Cost sheet line: SendGrid $95/month.",
+   "evidence": [
+    {
+     "source_ref": "potpie://res/infra-cost-2026-q3/monthly-costs/0000",
+     "authority": "agent_observation"
+    }
+   ]
+  }
+ ]
+}

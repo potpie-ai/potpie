@@ -1,0 +1,20 @@
+{
+  "source_ref": "https://docs.google.com/spreadsheets/d/ledgerly-infra-q3",
+  "source_kind": "spreadsheet",
+  "sections": [
+    {
+      "slug": "monthly-costs",
+      "title": "Q3 2026 monthly infrastructure costs",
+      "summary": "Ledgerly infra cost report Q3 2026, monthly USD: EKS prod cluster $4,200 (3x m6i.xlarge), RDS ledger-postgres $1,850 (db.r6g.xlarge Multi-AZ), ElastiCache ledger-redis $310, SendGrid $95, Plaid $2,400 (~8,000 connected items at $0.30), EKS staging $640, Grafana Cloud $420; total $9,915/month. Covers 'how much does X cost', 'infra spend', 'plaid bill', 'postgres cost'.",
+      "ordinal": 1,
+      "content_hash": "sha256:4531b610c53094e0081ff8d60d1df2c4f182dcc831ae0460415abecfcdd412dd",
+      "chunks": [
+        {
+          "seq": 0,
+          "label": "Q3 2026 monthly infrastructure costs: line_item,provider,service,environment,monthly_usd,notes",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

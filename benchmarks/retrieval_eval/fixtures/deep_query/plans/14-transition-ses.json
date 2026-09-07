@@ -1,0 +1,21 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "transition:ses:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "transition_state",
+   "subject": {
+    "key": "decision:ses-migration-q4",
+    "type": "Decision"
+   },
+   "from_state": "proposed",
+   "to_state": "accepted",
+   "reason": "Accepted in the 2026-09-02 platform review",
+   "description": "SES migration approved for Q4"
+  }
+ ]
+}

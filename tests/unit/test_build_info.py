@@ -39,6 +39,104 @@ def test_build_stamp_is_a_dict_even_when_the_file_is_absent() -> None:
     assert isinstance(build_info.build_stamp(), dict)
 
 
+
+
+# --- a checkout outranks the stamp -------------------------------------------
+
+
+def _clear_caches() -> None:
+    """Drop the per-process caches, whichever of them a test left patched."""
+    for name in ("checkout_root", "build_stamp", "_checkout_dirty"):
+        clear = getattr(getattr(build_info, name), "cache_clear", None)
+        if clear is not None:
+            clear()
+
+
+def _head(cwd: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_inside_a_checkout_the_stamp_is_head_not_the_baked_file(monkeypatch, tmp_path: Path) -> None:
+    """An editable install runs whatever the checkout holds now; a stamp written
+    at the last `make cli-install` named a rev that no longer existed in the
+    code, and `stale` compared that stale stamp against itself."""
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "one")
+    _clear_caches()
+    monkeypatch.setattr(build_info, "checkout_root", lambda: tmp_path)
+    monkeypatch.setattr(build_info, "_baked_stamp", lambda: {"rev": "baked-and-stale", "dirty": False})
+
+    stamp = build_info.build_stamp()
+    assert stamp["rev"] == _head(tmp_path)
+    assert stamp["source"] == build_info.STAMP_SOURCE_CHECKOUT
+    assert stamp["built_at"] is None
+    assert set(build_info.describe()["build"]) == {"rev", "dirty", "built_at"}
+    assert build_info.describe()["build"]["dirty"] is False
+
+    # A new commit moves the rev the next process sees (this one is cached).
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "two")
+    assert build_info.build_stamp()["rev"] != _head(tmp_path)
+    build_info.build_stamp.cache_clear()
+    assert build_info.build_stamp()["rev"] == _head(tmp_path)
+
+    # `dirty` is the hook's definition: modified tracked files, not untracked ones.
+    (tmp_path / "loose.txt").write_text("x", encoding="utf-8")
+    build_info._checkout_dirty.cache_clear()
+    assert build_info.describe()["build"]["dirty"] is False
+    _git(tmp_path, "add", "loose.txt")
+    _git(tmp_path, "commit", "-q", "-m", "track")
+    (tmp_path / "loose.txt").write_text("y", encoding="utf-8")
+    build_info._checkout_dirty.cache_clear()
+    assert build_info.describe()["build"]["dirty"] is True
+    _clear_caches()
+
+
+def test_the_rev_is_read_from_git_files_for_branches_packed_refs_and_detached_heads(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(tmp_path, "commit", "-q", "--allow-empty", "-m", "one")
+    head = _head(tmp_path)
+    assert build_info._rev_from_git_files(tmp_path) == head
+
+    _git(tmp_path, "pack-refs", "--all")
+    assert not (tmp_path / ".git" / "refs" / "heads" / "main").exists()
+    assert build_info._rev_from_git_files(tmp_path) == head
+
+    _git(tmp_path, "checkout", "-q", "--detach", head)
+    assert build_info._rev_from_git_files(tmp_path) == head
+
+    # A worktree's `.git` is a file pointing at its gitdir; refs live in the common dir.
+    _git(tmp_path, "checkout", "-q", "main")
+    wt = tmp_path.parent / (tmp_path.name + "-wt")
+    _git(tmp_path, "worktree", "add", "-q", str(wt), "-b", "side")
+    assert (wt / ".git").is_file()
+    assert build_info._rev_from_git_files(wt) == head
+
+    assert build_info._rev_from_git_files(tmp_path / "nowhere") is None
+
+
+def test_outside_a_checkout_the_baked_stamp_stands(monkeypatch) -> None:
+    _clear_caches()
+    monkeypatch.setattr(build_info, "checkout_root", lambda: None)
+    monkeypatch.setattr(build_info, "_baked_stamp", lambda: {"rev": "baked", "dirty": True, "built_at": "t"})
+    assert build_info.build_stamp() == {"rev": "baked", "dirty": True, "built_at": "t"}
+    assert build_info.describe()["build"] == {"rev": "baked", "dirty": True, "built_at": "t"}
+    _clear_caches()
+
+
+def test_cli_version_is_the_distribution_version_plus_the_short_rev(monkeypatch) -> None:
+    """Telemetry tagged every command `cli_version: 0.1.0` — the engine library's
+    constant — so no dashboard could tell one CLI build from another."""
+    version = build_info.distribution_version() or "unknown"
+    monkeypatch.setattr(build_info, "build_stamp", lambda: {"rev": "81da1550e39044a3f72265f5de5b07fee9af856d"})
+    assert build_info.cli_version() == f"{version}+81da1550e3"
+    assert build_info.cli_release() == f"potpie-cli@{version}+81da1550e3"
+    assert not build_info.cli_version().startswith("0.1.0")
+    monkeypatch.setattr(build_info, "build_stamp", lambda: {})
+    assert build_info.cli_version() == version
+
+
 # --- the hook ---------------------------------------------------------------
 
 

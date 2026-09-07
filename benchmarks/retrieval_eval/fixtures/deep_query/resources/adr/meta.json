@@ -1,0 +1,48 @@
+{
+  "source_ref": "https://github.com/ledgerly-inc/ledgerly/blob/main/docs/adr/0007-advisory-locks.md",
+  "source_kind": "markdown",
+  "sections": [
+    {
+      "slug": "context",
+      "title": "Context",
+      "summary": "Why ADR-0007 exists: SELECT FOR UPDATE deadlocked at 0.4% of postings at 200 rps when two transfers touched the same accounts in opposite order; retrying doubled p95 to 1.6 s; a single-writer queue per account added 300 ms. Covers 'deadlock', 'posting latency', 'why advisory locks'.",
+      "ordinal": 1,
+      "content_hash": "sha256:6a3b80b9d9f9cdff6bc1084f89f9eb5d3524f64741a370334fa7fceba34e3fa7",
+      "chunks": [
+        {
+          "seq": 0,
+          "label": "Context: Two transfers touching the same pair of accounts in opposite order deadlocked under `SELECT ... FOR UPDATE` during the May load test (deadlock rate 0.",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "slug": "decision",
+      "title": "Decision",
+      "summary": "ADR-0007 decision: serialize concurrent postings per account with pg_advisory_xact_lock(account_id), acquired in ascending account_id order, transaction-scoped; implemented by with_account_locks in src/ledgerly/ledger/posting.py. Covers 'locking strategy', 'advisory lock', 'posting serialization'.",
+      "ordinal": 2,
+      "content_hash": "sha256:a8927e35e5165548389918a5042de8d92a15e96d41979c78e02ba3625af78946",
+      "chunks": [
+        {
+          "seq": 0,
+          "label": "Decision: Concurrent postings to the same account are serialized with `pg_advisory_xact_lock(account_id)`, acquired in ascending account_id order before any row",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "slug": "consequences",
+      "title": "Consequences",
+      "summary": "Consequences of ADR-0007: deadlocks zero, p95 posting latency 410 ms at 200 rps; every posting path must use with_account_locks or deadlocks return; sharding would need a distributed lock; property tests in tests/ledger/test_posting_props.py assert lock ordering. Covers 'invariants', 'what not to bypass'.",
+      "ordinal": 3,
+      "content_hash": "sha256:d690dcd365d1eed6a58db260ae857d40ef9055f0d0b3581fa200c2948bb0cb82",
+      "chunks": [
+        {
+          "seq": 0,
+          "label": "Consequences: Deadlocks dropped to zero in the load test; p95 posting latency 410 ms at 200 rps. Every posting path must go through `with_account_locks`; bypassing ",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

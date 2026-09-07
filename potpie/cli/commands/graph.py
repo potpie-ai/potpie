@@ -429,10 +429,13 @@ def _emit_graph_result(
             recommended_next_action=recommended_next_action
             or payload.get("recommended_next_action"),
         )
-    emit(
-        _with_shared_error_keys(env.to_dict()),
-        human=_with_graph_warnings(human, merged_warnings),
-    )
+    human_text = _with_graph_warnings(human, merged_warnings)
+    if payload.get("ok", True) is False:
+        human_text = _with_next_action(
+            human_text,
+            recommended_next_action or payload.get("recommended_next_action"),
+        )
+    emit(_with_shared_error_keys(env.to_dict()), human=human_text)
     if payload.get("ok", True) is False:
         # Through the shared table rather than a blanket 1: a workbench result
         # that reports `unavailable` or `not_implemented` means the same thing
@@ -3765,6 +3768,23 @@ def _proposal_human(result) -> str:
         if code or message:
             lines.append(f"  [issue] {code}: {message}")
     return "\n".join(lines)
+
+
+def _with_next_action(human: str, next_action: object) -> str:
+    """Append the repair to a failed command's human output.
+
+    The workbench says what to do next on every refusal — re-run propose with
+    the same file after a conflict, commit with ``--approved-by`` when review
+    is required — but only ``--json`` readers ever saw it: human mode printed
+    the status and the reason and stopped, so a conflict read as a dead end
+    while the one-line repair sat in a field nobody rendered.
+    """
+    if not isinstance(next_action, str):
+        return human
+    action = next_action.strip()
+    if not action or action in human:
+        return human
+    return f"{human}\nnext: {action}"
 
 
 def _commit_human(result) -> str:

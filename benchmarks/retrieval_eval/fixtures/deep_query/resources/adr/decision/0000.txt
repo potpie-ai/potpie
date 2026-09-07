@@ -1,0 +1,1 @@
+Concurrent postings to the same account are serialized with `pg_advisory_xact_lock(account_id)`, acquired in ascending account_id order before any row is touched. Locks are transaction-scoped so a crashed worker cannot leak them. The lock lives in `src/ledgerly/ledger/posting.py` (`with_account_locks`).

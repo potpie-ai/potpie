@@ -197,6 +197,72 @@ def test_a_bare_name_unique_to_the_remote_resolves_there(registry) -> None:
     assert (origin, pot_id) == ("managed", "pot_m2")
 
 
+def _count_calls(pots: _Pots) -> list[int]:
+    calls = [0]
+    original = pots.list_pots
+
+    def counting() -> list[_Pot]:
+        calls[0] += 1
+        return original()
+
+    pots.list_pots = counting  # type: ignore[method-assign]
+    return calls
+
+
+def test_a_bare_pot_id_the_current_host_owns_never_asks_the_other(registry) -> None:
+    """Ids are minted from random hex on the host that owns them — not a label
+    two hosts can both have picked — so once the current host answers there
+    is nothing to disambiguate. Asking the remote anyway cost a managed round
+    trip on every `--pot pot_…`, the form read headers print."""
+    registry[hosts.LOCAL].pots._pots.append(_Pot("pot_0123456789ab", "hexed"))
+    remote_calls = _count_calls(registry[hosts.MANAGED].pots)
+
+    pot_id = _common._resolve_explicit_pot("pot_0123456789ab")
+
+    assert (hosts.current_origin(), pot_id) == ("local", "pot_0123456789ab")
+    assert remote_calls == [0]
+
+    # A *name* still checks both hosts: `default` on both is the whole point.
+    result = _run("--json", "graph", "catalog", "--pot", "default")
+    assert json.loads(result.output)["error"]["code"] == "ambiguous_pot"
+    assert remote_calls == [1]
+
+
+def test_a_bare_pot_id_only_the_remote_owns_still_resolves_there(registry) -> None:
+    registry[hosts.MANAGED].pots._pots.append(_Pot("pot_fedcba987654", "remote-hexed"))
+
+    pot_id = _common._resolve_explicit_pot("pot_fedcba987654")
+
+    assert (hosts.current_origin(), pot_id) == ("managed", "pot_fedcba987654")
+
+
+@pytest.mark.parametrize("remote_id", ["pot_0123456789ab", "pot_bbbbbbbbbbbb"])
+def test_an_id_shaped_name_still_requires_host_disambiguation(
+    registry, remote_id
+) -> None:
+    ref = "pot_0123456789ab"
+    registry[hosts.LOCAL].pots._pots.append(_Pot("pot_aaaaaaaaaaaa", ref))
+    registry[hosts.MANAGED].pots._pots.append(_Pot(remote_id, ref))
+
+    result = _run("--json", "graph", "catalog", "--pot", ref)
+
+    assert result.exit_code == _common.EXIT_VALIDATION
+    assert json.loads(result.output)["error"]["code"] == "ambiguous_pot"
+
+
+def test_an_archived_pot_id_on_the_current_host_does_not_shadow_a_live_one_elsewhere(
+    registry,
+) -> None:
+    old = _Pot("pot_0123456789ab", "old")
+    old.archived = True
+    registry[hosts.LOCAL].pots._pots.append(old)
+    registry[hosts.MANAGED].pots._pots.append(_Pot("pot_0123456789ab", "moved"))
+
+    pot_id = _common._resolve_explicit_pot("pot_0123456789ab")
+
+    assert (hosts.current_origin(), pot_id) == ("managed", "pot_0123456789ab")
+
+
 def test_a_qualified_ref_moves_the_whole_command(registry) -> None:
     pot_id = _common._resolve_explicit_pot("managed:default")
 

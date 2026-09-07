@@ -1,0 +1,1050 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "infra:ledgerly-inc/ledgerly:all:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "environment:prod",
+    "type": "Environment",
+    "name": "prod",
+    "summary": "Production, AWS us-east-1"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "environment:staging",
+    "type": "Environment",
+    "name": "staging",
+    "summary": "Staging, shared EKS cluster, sandbox bank adapter"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "cluster:eks-us-east-1",
+    "type": "Cluster",
+    "name": "eks-us-east-1",
+    "summary": "Production EKS cluster in us-east-1"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "cluster:eks-staging",
+    "type": "Cluster",
+    "name": "eks-staging",
+    "summary": "Staging EKS cluster"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "datastore:ledger-postgres",
+    "type": "DataStore",
+    "name": "ledger-postgres",
+    "summary": "RDS Postgres 16: accounts, journal, postings, idempotency fallback table",
+    "description": "Primary relational store of Ledgerly on RDS Postgres 16 (db.r6g.xlarge). Holds accounts, journal entries, postings, plaid_items with sync cursors, and the idempotency_keys fallback table. Synonyms: ledger DB, postgres, RDS, main database."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "datastore:ledger-redis",
+    "type": "DataStore",
+    "name": "ledger-redis",
+    "summary": "ElastiCache Redis: idempotency keys (24h TTL) and the notifier queue",
+    "description": "ElastiCache Redis cluster used for X-Idempotency-Key lookups with 24h TTL and as the notifier work queue. Synonyms: redis, cache, elasticache, idempotency cache, queue."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "dependency:pypi:plaid-python",
+    "type": "Dependency",
+    "name": "plaid-python",
+    "summary": "Plaid API client"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "dependency:pypi:sqlalchemy",
+    "type": "Dependency",
+    "name": "sqlalchemy",
+    "summary": "ORM / SQL toolkit"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "dependency:pypi:pandas",
+    "type": "Dependency",
+    "name": "pandas",
+    "summary": "DataFrames for reconciliation matching"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "dependency:pypi:httpx",
+    "type": "Dependency",
+    "name": "httpx",
+    "summary": "async HTTP client"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "dependency:pypi:weasyprint",
+    "type": "Dependency",
+    "name": "weasyprint",
+    "summary": "HTML to PDF for statements"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "adapter:bank_feed:plaid",
+    "type": "Adapter",
+    "name": "Plaid bank feed",
+    "summary": "Production bank feed adapter backed by Plaid transactions/sync",
+    "description": "bank_feed adapter selected in prod: Plaid, production environment, per-item sync cursor. Synonyms: plaid adapter, bank feed provider."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "adapter:bank_feed:fake-bank",
+    "type": "Adapter",
+    "name": "Fake bank feed",
+    "summary": "Deterministic sandbox bank feed for staging and tests",
+    "description": "bank_feed adapter selected in staging: fake-bank, generates deterministic transactions from a seed. Synonyms: sandbox bank, stub bank feed."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "adapter:email:sendgrid",
+    "type": "Adapter",
+    "name": "SendGrid email",
+    "summary": "Production email adapter (SendGrid v3 API)",
+    "description": "email adapter in prod: SendGrid, dynamic templates, statement-ready emails. Synonyms: sendgrid, email provider."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "adapter:email:console",
+    "type": "Adapter",
+    "name": "Console email",
+    "summary": "Staging email adapter that logs instead of sending"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "deployment_target:prod:eks-ledger",
+    "type": "DeploymentTarget",
+    "name": "eks-ledger (prod)",
+    "summary": "Deployment ledger-api on EKS, 3 replicas, rolling via Argo CD",
+    "description": "ledger-api runs as Kubernetes Deployment ledger-api in namespace ledger on eks-us-east-1, 3 replicas, rolled out by Argo CD from main. Synonyms: k8s deployment, argo rollout, ledger pods."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "deployment_target:prod:eks-cron",
+    "type": "DeploymentTarget",
+    "name": "eks-cron (prod)",
+    "summary": "CronJob reconciler at 02:00 UTC on EKS",
+    "description": "reconciler runs as Kubernetes CronJob reconciler-nightly, schedule 0 2 * * *, on eks-us-east-1. Synonyms: cronjob, nightly job."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "deployment_target:prod:eks-notify",
+    "type": "DeploymentTarget",
+    "name": "eks-notify (prod)",
+    "summary": "Deployment notifier on EKS, 2 replicas"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "deployment_target:prod:lambda-notify",
+    "type": "DeploymentTarget",
+    "name": "lambda-notify (prod)",
+    "summary": "notifier as AWS Lambda behind SQS (moved from EKS)",
+    "description": "notifier runs as an AWS Lambda triggered by SQS since the September migration; replaces the EKS deployment. Synonyms: lambda, serverless notifier."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "deployment_target:staging:eks-staging",
+    "type": "DeploymentTarget",
+    "name": "eks-staging",
+    "summary": "All services on the staging EKS cluster, 1 replica each"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "config:ledger-api:PLAID_ENV",
+    "type": "ConfigVariable",
+    "name": "PLAID_ENV",
+    "summary": "Selects the Plaid environment: production in prod, sandbox in staging",
+    "description": "PLAID_ENV env var read by ledger-api and reconciler; production|sandbox; sandbox pairs with the fake-bank adapter. Synonyms: plaid environment, sandbox mode."
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "config:ledger-api:STATEMENT_TZ",
+    "type": "ConfigVariable",
+    "name": "STATEMENT_TZ",
+    "summary": "Timezone used to cut monthly statements (default UTC)"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "config:reconciler:RECON_WINDOW_DAYS",
+    "type": "ConfigVariable",
+    "name": "RECON_WINDOW_DAYS",
+    "summary": "How many days back the reconciler re-matches (default 3)"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "config:notifier:EMAIL_PROVIDER",
+    "type": "ConfigVariable",
+    "name": "EMAIL_PROVIDER",
+    "summary": "sendgrid|console \u2014 selects the email adapter"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "api_contract:ledger-api:POST:/v1/transfers",
+    "type": "APIContract",
+    "name": "POST /v1/transfers",
+    "summary": "Create a transfer; requires X-Idempotency-Key; 201 or 409 on conflicting replay"
+   }
+  },
+  {
+   "op": "upsert_entity",
+   "subject": {
+    "key": "api_contract:ledger-api:GET:/v1/statements/{id}",
+    "type": "APIContract",
+    "name": "GET /v1/statements/{id}",
+    "summary": "Fetch a rendered monthly statement PDF"
+   }
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "environment:prod",
+    "type": "Environment"
+   },
+   "predicate": "HOSTED_ON",
+   "object": {
+    "key": "cluster:eks-us-east-1",
+    "type": "Cluster"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "terraform/prod/eks.tf",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#terraform/prod/eks.tf",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "environment:staging",
+    "type": "Environment"
+   },
+   "predicate": "HOSTED_ON",
+   "object": {
+    "key": "cluster:eks-staging",
+    "type": "Cluster"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "terraform/staging/eks.tf",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#terraform/staging/eks.tf",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_TO",
+   "object": {
+    "key": "environment:prod",
+    "type": "Environment"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "argo app ledger-api-prod",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/argo/ledger-api-prod.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_TO",
+   "object": {
+    "key": "environment:staging",
+    "type": "Environment"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "argo app ledger-api-staging",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/argo/ledger-api-staging.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "staging"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_WITH",
+   "object": {
+    "key": "deployment_target:prod:eks-ledger",
+    "type": "DeploymentTarget"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "k8s Deployment, 3 replicas",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/ledger-api.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_WITH",
+   "object": {
+    "key": "deployment_target:staging:eks-staging",
+    "type": "DeploymentTarget"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "staging overlay",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/overlays/staging",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "staging"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "datastore:ledger-postgres",
+    "type": "DataStore"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "SQLAlchemy engine on DATABASE_URL",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/db.py",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "datastore:ledger-redis",
+    "type": "DataStore"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "idempotency key store, 24h TTL",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/api/transfers.py",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "dependency:pypi:plaid-python",
+    "type": "Dependency"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "pyproject dependency",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#pyproject.toml",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "dependency:pypi:sqlalchemy",
+    "type": "Dependency"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "pyproject dependency",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#pyproject.toml",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "dependency:pypi:weasyprint",
+    "type": "Dependency"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "statement PDF rendering",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#pyproject.toml",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "USES_ADAPTER",
+   "object": {
+    "key": "adapter:bank_feed:plaid",
+    "type": "Adapter"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "settings.bank_feed = plaid when PLAID_ENV=production",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/settings.py",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "USES_ADAPTER",
+   "object": {
+    "key": "adapter:bank_feed:fake-bank",
+    "type": "Adapter"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "settings.bank_feed = fake when PLAID_ENV=sandbox",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/settings.py",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "staging"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "CONFIGURES",
+   "object": {
+    "key": "config:ledger-api:PLAID_ENV",
+    "type": "ConfigVariable"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "PLAID_ENV=production",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/ledger-api.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "CONFIGURES",
+   "object": {
+    "key": "config:ledger-api:PLAID_ENV",
+    "type": "ConfigVariable"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "PLAID_ENV=sandbox",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/overlays/staging",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "staging"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "CONFIGURES",
+   "object": {
+    "key": "config:ledger-api:STATEMENT_TZ",
+    "type": "ConfigVariable"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "STATEMENT_TZ=America/New_York",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/ledger-api.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "CONFIGURES",
+   "object": {
+    "key": "config:ledger-api:STATEMENT_TZ",
+    "type": "ConfigVariable"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "STATEMENT_TZ=UTC (to be removed)",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/overlays/staging",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "staging"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "EXPOSES",
+   "object": {
+    "key": "api_contract:ledger-api:POST:/v1/transfers",
+    "type": "APIContract"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "router transfers.py",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/api/transfers.py",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "predicate": "EXPOSES",
+   "object": {
+    "key": "api_contract:ledger-api:GET:/v1/statements/{id}",
+    "type": "APIContract"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "router statements.py",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/api/statements.py",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_TO",
+   "object": {
+    "key": "environment:prod",
+    "type": "Environment"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "CronJob reconciler-nightly",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/reconciler-cron.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_WITH",
+   "object": {
+    "key": "deployment_target:prod:eks-cron",
+    "type": "DeploymentTarget"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "CronJob 0 2 * * *",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/reconciler-cron.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "datastore:ledger-postgres",
+    "type": "DataStore"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "reads postings, writes plaid_items.cursor",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/sync/plaid_feed.py",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "dependency:pypi:pandas",
+    "type": "Dependency"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "matching in DataFrames",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#pyproject.toml",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "dependency:pypi:plaid-python",
+    "type": "Dependency"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "transactions/sync",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#pyproject.toml",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "USES_ADAPTER",
+   "object": {
+    "key": "adapter:bank_feed:plaid",
+    "type": "Adapter"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "same bank_feed setting as ledger-api",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/settings.py",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "CONFIGURES",
+   "object": {
+    "key": "config:reconciler:RECON_WINDOW_DAYS",
+    "type": "ConfigVariable"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "RECON_WINDOW_DAYS=3",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/reconciler-cron.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:reconciler",
+    "type": "Service"
+   },
+   "predicate": "DEPENDS_ON",
+   "object": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "calls GET /v1/accounts/{id}/postings",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/sync/plaid_feed.py",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_TO",
+   "object": {
+    "key": "environment:prod",
+    "type": "Environment"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "argo app notifier-prod",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/argo/notifier-prod.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_TO",
+   "object": {
+    "key": "environment:staging",
+    "type": "Environment"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "argo app notifier-staging",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/argo/notifier-staging.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "staging"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "DEPLOYED_WITH",
+   "object": {
+    "key": "deployment_target:prod:eks-notify",
+    "type": "DeploymentTarget"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "k8s Deployment notifier, 2 replicas",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/notifier.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "datastore:ledger-redis",
+    "type": "DataStore"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "BLPOP on queue statements:ready",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/notify/worker.py",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "datastore:ledger-postgres",
+    "type": "DataStore"
+   },
+   "truth": "source_observation",
+   "confidence": 0.5,
+   "description": "WRONG: notifier never touches postgres (to be retracted)",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#README",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "dependency:pypi:httpx",
+    "type": "Dependency"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "webhook delivery",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#pyproject.toml",
+     "authority": "repository_metadata"
+    }
+   ]
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "USES_ADAPTER",
+   "object": {
+    "key": "adapter:email:sendgrid",
+    "type": "Adapter"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "EMAIL_PROVIDER=sendgrid",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/notifier.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "USES_ADAPTER",
+   "object": {
+    "key": "adapter:email:console",
+    "type": "Adapter"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "EMAIL_PROVIDER=console",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/overlays/staging",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "staging"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "CONFIGURES",
+   "object": {
+    "key": "config:notifier:EMAIL_PROVIDER",
+    "type": "ConfigVariable"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "EMAIL_PROVIDER=sendgrid",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#deploy/k8s/notifier.yaml",
+     "authority": "repository_metadata"
+    }
+   ],
+   "environment": "prod"
+  },
+  {
+   "op": "link_entities",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "DEPENDS_ON",
+   "object": {
+    "key": "service:ledger-api",
+    "type": "Service"
+   },
+   "truth": "source_observation",
+   "confidence": 0.9,
+   "description": "fetches statement metadata from GET /v1/statements/{id}",
+   "evidence": [
+    {
+     "source_ref": "github:ledgerly-inc/ledgerly#src/ledgerly/notify/webhooks.py",
+     "authority": "repository_metadata"
+    }
+   ]
+  }
+ ]
+}

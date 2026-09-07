@@ -1,0 +1,24 @@
+{
+ "pot_id": "pot_2569a39ec330",
+ "idempotency_key": "retract:notifier-postgres:v1",
+ "created_by": {
+  "surface": "cli",
+  "harness": "claude-deep-query"
+ },
+ "operations": [
+  {
+   "op": "retract_claim",
+   "subject": {
+    "key": "service:notifier",
+    "type": "Service"
+   },
+   "predicate": "USES",
+   "object": {
+    "key": "datastore:ledger-postgres",
+    "type": "DataStore"
+   },
+   "reason": "notifier never connects to Postgres; the baseline claim was wrong",
+   "description": "grep of src/ledgerly/notify shows no DATABASE_URL usage"
+  }
+ ]
+}

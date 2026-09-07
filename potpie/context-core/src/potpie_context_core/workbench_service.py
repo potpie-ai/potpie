@@ -340,6 +340,15 @@ class GraphWorkbenchService:
             return _committed_plan_result(record)
 
         if record.status in TERMINAL_PLAN_STATUSES:
+            # A retried commit of a conflicted plan deserves the answer the
+            # first attempt worked out — which version moved and what landed
+            # in between is stored on the record — and the same repair. A bare
+            # "plan is conflict" here sent the second call to a different,
+            # vaguer next action than the first, as if the reason had gone.
+            conflicted = record.status == GraphMutationPlanStatus.conflict.value
+            detail = f"plan is {record.status} and cannot be committed"
+            if conflicted and record.detail:
+                detail = f"{detail}: {record.detail}"
             return GraphMutationCommitResult(
                 ok=False,
                 plan_id=record.plan_id,
@@ -351,8 +360,12 @@ class GraphWorkbenchService:
                 diff=record.diff,
                 claim_keys=_claim_keys_from_record(record),
                 approval=record.approval,
-                detail=f"plan is {record.status} and cannot be committed",
-                recommended_next_action="Create a fresh proposal if a write is still needed.",
+                detail=detail,
+                recommended_next_action=(
+                    _CONFLICT_NEXT_ACTION
+                    if conflicted
+                    else "Create a fresh proposal if a write is still needed."
+                ),
             )
         retrying_execution = (
             record.status == GraphMutationPlanStatus.error.value
