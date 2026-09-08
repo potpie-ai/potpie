@@ -236,24 +236,24 @@ def register(root: typer.Typer) -> None:
                 dry_run=dry_run,
             )
 
-            if dry_run:
-                if in_process or get_daemon_service(host).status().get("up"):
-                    preview = get_setup_service(host).preview(plan)
-                else:
-                    from potpie.runtime.composition import build_local_runtime
-
-                    preview_runtime = build_local_runtime()
-                    preview = get_setup_service(preview_runtime.root).preview(plan)
-                capture_setup_dry_run_completed(
-                    plan=plan,
-                    planned_step_count=len(preview.steps),
-                    hard_step_count=sum(1 for step in preview.steps if step.hard),
-                )
-                emit(preview.to_dict(), human=_preview_human(preview))
-                _emit_setup_run_metric(plan, result="dry_run", dry_run=True)
-                return
-
             try:
+                if dry_run:
+                    if in_process or get_daemon_service(host).status().get("up"):
+                        preview = get_setup_service(host).preview(plan)
+                    else:
+                        from potpie.runtime.composition import build_local_runtime
+
+                        preview_runtime = build_local_runtime()
+                        preview = get_setup_service(preview_runtime.root).preview(plan)
+                    capture_setup_dry_run_completed(
+                        plan=plan,
+                        planned_step_count=len(preview.steps),
+                        hard_step_count=sum(1 for step in preview.steps if step.hard),
+                    )
+                    emit(preview.to_dict(), human=_preview_human(preview))
+                    _emit_setup_run_metric(plan, result="dry_run", dry_run=True)
+                    return
+
                 if not in_process and not human_output:
                     get_daemon_service(host).ensure(plan)
                     daemon_status = get_daemon_service(host).status()
@@ -292,6 +292,7 @@ def register(root: typer.Typer) -> None:
                     incomplete_kind="cancelled",
                     duration_ms=elapsed_ms(setup_started_ms),
                     failure_stage=setup_observer.current_or_last_step,
+                    dry_run=dry_run,
                 )
                 raise
             capture_setup_completed(
@@ -360,21 +361,21 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_status — host, pot, backend, and skill readiness."""
         _ = host  # Backward-compatible flag; readiness is now the default.
-        if verify:
-            fail(
-                code="validation_error",
-                message="`--verify` moved to `potpie auth status --verify`.",
-                next_action=(
-                    "Run `potpie auth status --verify` for integration auth status, "
-                    "or `potpie status` for context readiness."
-                ),
-                exit_code=EXIT_VALIDATION,
-            )
-
         with contract():
             with activation_command_outcome(
                 command="status", result_kind="status_result"
             ):
+                if verify:
+                    fail(
+                        code="validation_error",
+                        message="`--verify` moved to `potpie auth status --verify`.",
+                        next_action=(
+                            "Run `potpie auth status --verify` for integration auth status, "
+                            "or `potpie status` for context readiness."
+                        ),
+                        exit_code=EXIT_VALIDATION,
+                    )
+
                 shell = get_root_runtime()
                 pot_id = resolve_pot_id(shell, pot)
                 data_plane = run_engine_operation(

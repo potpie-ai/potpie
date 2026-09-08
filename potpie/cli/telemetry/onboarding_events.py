@@ -149,6 +149,7 @@ def capture_setup_incomplete(
     incomplete_kind: Literal["cancelled"],
     duration_ms: int,
     failure_stage: str,
+    dry_run: bool = False,
 ) -> None:
     _capture(
         "cli_onboarding_setup_incomplete",
@@ -156,7 +157,7 @@ def capture_setup_incomplete(
         "setup",
         {
             **_setup_plan_properties(plan),
-            "dry_run": False,
+            "dry_run": dry_run,
             "incomplete_kind": incomplete_kind,
             "failure_stage": failure_stage,
             "duration_ms": duration_ms,
