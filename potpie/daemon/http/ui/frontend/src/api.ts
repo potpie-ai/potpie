@@ -32,6 +32,8 @@ function potParam(pot?: string): string {
   return pot ? `pot=${encodeURIComponent(pot)}` : "";
 }
 
+let sessionReported = false;
+
 export const api = {
   pots: () => jget<PotsResponse>("/pots"),
 
@@ -67,4 +69,14 @@ export const api = {
         pot ? `&${potParam(pot)}` : ""
       }`,
     ),
+
+  reportSession: (hadGraph: boolean) => {
+    if (sessionReported) return;
+    sessionReported = true;
+    void fetch(`${BASE}/telemetry/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ had_graph: hadGraph }),
+    }).catch(() => undefined);
+  },
 };

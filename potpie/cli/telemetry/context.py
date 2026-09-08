@@ -83,8 +83,23 @@ class TelemetryContext:
 def bind_telemetry_context(
     ctx: typer.Context, *, json_output: bool
 ) -> TelemetryContext:
-    identity = load_or_create_identity()
     command, subcommand = _command_parts(ctx)
+    return _bind_context(
+        command=command,
+        subcommand=subcommand,
+        output_mode="json" if json_output else "human",
+    )
+
+
+def bind_daemon_telemetry_context() -> TelemetryContext:
+    """Bind process-wide identity so the UI daemon can emit PostHog events."""
+    return _bind_context(command="ui", subcommand=None, output_mode="ui")
+
+
+def _bind_context(
+    *, command: str | None, subcommand: str | None, output_mode: str
+) -> TelemetryContext:
+    identity = load_or_create_identity()
     telemetry = TelemetryContext(
         anonymous_install_id=identity.anonymous_install_id,
         invocation_id=f"invoke_{uuid.uuid4().hex}",
@@ -92,7 +107,7 @@ def bind_telemetry_context(
         environment=telemetry_environment(),
         command=command,
         subcommand=subcommand,
-        output_mode="json" if json_output else "human",
+        output_mode=output_mode,
         cli_version=default_cli_release().removeprefix("potpie-cli@"),
         python_version=platform.python_version(),
         os=platform.system().lower(),

@@ -128,3 +128,115 @@ def test_pots_api_includes_counts_for_selector() -> None:
     assert body["pots"][0]["counts"]["claims"] == 0
     assert body["pots"][1]["source_count"] == 1
     assert body["pots"][1]["counts"] == {"claims": 82, "entities": 46}
+
+
+def test_ui_session_beacon_records_usage_without_sensitive_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import potpie.cli.telemetry.product_analytics as product_analytics
+    from potpie.cli.telemetry.context import TelemetryContext
+    from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
+
+    class _Sink:
+        events: list[ProductAnalyticsEvent] = []
+
+        def capture(self, event: ProductAnalyticsEvent) -> None:
+            self.events.append(event)
+
+    sink = _Sink()
+    monkeypatch.setattr(product_analytics, "_sink", sink)
+    monkeypatch.setattr(
+        "potpie.cli.telemetry.product_analytics.current_telemetry_context",
+        lambda: TelemetryContext(
+            anonymous_install_id="install_123",
+            invocation_id="invoke_456",
+            daemon_session_id="daemon_789",
+            environment="staging",
+            command="ui",
+            subcommand=None,
+            output_mode="ui",
+            cli_version="0.1.0",
+            python_version="3.13.0",
+            os="darwin",
+            arch="arm64",
+        ),
+    )
+    app = FastAPI()
+    app.include_router(
+        build_ui_api_router(pots=object(), graph=object(), backend=object())
+    )
+    response = TestClient(app).post(
+        "/api/telemetry/session",
+        json={
+            "had_graph": True,
+            "pot_id": "secret-pot",
+            "query": "private source",
+            "name": "My Repo",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert len(sink.events) == 1
+    event = sink.events[0]
+    assert event.name == "cli_usage_command_succeeded"
+    assert event.properties["command"] == "ui"
+    assert event.properties["result_kind"] == "ui_session"
+    assert event.properties["feature"] == "ui"
+    assert event.properties["had_graph"] is True
+    dumped = repr(event.properties)
+    assert "secret-pot" not in dumped
+    assert "private source" not in dumped
+    assert "My Repo" not in dumped
+
+
+def test_pots_list_does_not_record_ui_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import potpie.cli.telemetry.product_analytics as product_analytics
+    from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
+
+    class _Sink:
+        events: list[ProductAnalyticsEvent] = []
+
+        def capture(self, event: ProductAnalyticsEvent) -> None:
+            self.events.append(event)
+
+    class Pot:
+        def __init__(self, pot_id: str, name: str, active: bool = False) -> None:
+            self.pot_id = pot_id
+            self.name = name
+            self.active = active
+
+    class Pots:
+        def list_pots(self):
+            return [Pot("p1", "empty", True)]
+
+        def active_pot(self):
+            return Pot("p1", "empty", True)
+
+        def list_sources(self, *, pot_id):
+            return []
+
+    class Graph:
+        def data_plane_status(self, pot_id):
+            return type("Status", (), {"counts": {}})()
+
+    sink = _Sink()
+    monkeypatch.setattr(product_analytics, "_sink", sink)
+    app = FastAPI()
+    app.include_router(
+        build_ui_api_router(pots=Pots(), graph=Graph(), backend=object())
+    )
+    response = TestClient(app).get("/api/pots")
+    assert response.status_code == 200
+    assert sink.events == []
+
+
+def test_ui_session_beacon_succeeds_when_analytics_is_noop() -> None:
+    app = FastAPI()
+    app.include_router(
+        build_ui_api_router(pots=object(), graph=object(), backend=object())
+    )
+    response = TestClient(app).post("/api/telemetry/session")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
