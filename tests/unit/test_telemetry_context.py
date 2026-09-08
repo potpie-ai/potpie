@@ -63,6 +63,4 @@ def test_daemon_context_uses_install_id_and_ui_command(monkeypatch, tmp_path) ->
     assert ctx.subcommand is None
     assert ctx.output_mode == "ui"
     assert current_telemetry_context() is ctx
-    assert (
-        load_or_create_identity().anonymous_install_id == ctx.anonymous_install_id
-    )
+    assert load_or_create_identity().anonymous_install_id == ctx.anonymous_install_id
