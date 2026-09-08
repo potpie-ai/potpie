@@ -16,7 +16,7 @@ _POTS_SOURCES_COMMANDS: frozenset[str] = frozenset(
 
 def usage_feature(*, command: str, result_kind: str) -> str | None:
     """Map a usage event onto a closed Q13 product surface, or None."""
-    if result_kind == "ui_session" or command == "ui":
+    if result_kind == "ui_session":
         return "ui"
     if result_kind == "graph_command" or command.startswith("graph."):
         return "graph"
