@@ -4,7 +4,10 @@ from typer.testing import CliRunner
 
 from potpie.cli import main as host_cli
 from potpie.cli.commands import _common
-from potpie.cli.telemetry.context import current_telemetry_context
+from potpie.cli.telemetry.context import (
+    bind_daemon_telemetry_context,
+    current_telemetry_context,
+)
 from potpie.cli.telemetry.identity_store import load_or_create_identity
 
 
@@ -50,3 +53,16 @@ def test_cli_context_does_not_include_command_args(monkeypatch, tmp_path) -> Non
     assert ctx is not None
     assert ctx.command == "pot"
     assert ctx.subcommand is None
+
+
+def test_daemon_context_uses_install_id_and_ui_command(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    ctx = bind_daemon_telemetry_context()
+
+    assert ctx.command == "ui"
+    assert ctx.subcommand is None
+    assert ctx.output_mode == "ui"
+    assert current_telemetry_context() is ctx
+    assert (
+        load_or_create_identity().anonymous_install_id == ctx.anonymous_install_id
+    )

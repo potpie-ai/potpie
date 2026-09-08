@@ -6,6 +6,7 @@ import typer
 
 from potpie.cli.telemetry.context import (
     TelemetryContext,
+    bind_daemon_telemetry_context,
     bind_telemetry_context,
     current_telemetry_context,
 )
@@ -27,6 +28,7 @@ def load_anonymous_install_id(home: Path | None = None) -> str:
 __all__ = [
     "TelemetryContext",
     "bind_cli_telemetry_context",
+    "bind_daemon_telemetry_context",
     "current_telemetry_context",
     "load_anonymous_install_id",
 ]
