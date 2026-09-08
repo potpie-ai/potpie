@@ -253,6 +253,7 @@ def test_provider_select_result_records_usage_after_success(
         ("skills update", "skills_result", "skills"),
         ("skills remove", "skills_result", "skills"),
         ("ui", "ui_session", "ui"),
+        ("ui", "status_result", None),
         ("pot create", "pot_result", "pots_sources"),
         ("pot use", "pot_result", "pots_sources"),
         ("source add", "source_result", "pots_sources"),
