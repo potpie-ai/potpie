@@ -135,6 +135,35 @@ def test_setup_cancellation_is_an_incomplete_terminal_outcome(
     assert fake_sink.events[1].properties["setup_run_id"] == current_setup_run_id()
 
 
+def test_setup_dry_run_cancellation_preserves_dry_run_on_incomplete_event(
+    fake_sink: _FakeSink,
+) -> None:
+    plan = SetupPlan(repo=".", agent="claude")
+
+    begin_setup_run()
+    capture_setup_started(
+        plan,
+        interactive=False,
+        json_output=False,
+        dry_run=True,
+    )
+    capture_setup_incomplete(
+        plan=plan,
+        incomplete_kind="cancelled",
+        duration_ms=9,
+        failure_stage="setup_execution",
+        dry_run=True,
+    )
+
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_setup_started",
+        "cli_onboarding_setup_incomplete",
+    ]
+    assert fake_sink.events[0].properties["dry_run"] is True
+    assert fake_sink.events[1].properties["dry_run"] is True
+    assert fake_sink.events[1].properties["incomplete_kind"] == "cancelled"
+
+
 def test_setup_hard_failure_has_bounded_incomplete_kind(fake_sink: _FakeSink) -> None:
     capture_setup_completed(
         plan=SetupPlan(),
