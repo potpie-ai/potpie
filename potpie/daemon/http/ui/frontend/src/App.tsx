@@ -102,7 +102,9 @@ export default function App() {
       ? "timeline"
       : "graph",
   );
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [hidden, setHidden] = useState<Set<string>>(
+    () => new Set(["DocumentSection"]),
+  );
   const [showHint, setShowHint] = useState(true);
 
   const revealTimelineTypes = () =>

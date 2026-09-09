@@ -93,6 +93,7 @@ worktrees/
 .repos_local/
 .data/
 .debug/
+/ingestion/
 
 .ruff_cache/
 .pytest_cache/

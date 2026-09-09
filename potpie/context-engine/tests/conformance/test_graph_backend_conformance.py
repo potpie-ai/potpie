@@ -77,7 +77,8 @@ def _plan(summary="prefers structured logging"):
         event_ref=EventRef(event_id="e1", source_system="agent", pot_id=POT),
         summary=summary,
         entity_upserts=[
-            EntityUpsert(entity_key="pref:logging", labels=("Preference",))
+            EntityUpsert(entity_key="pref:logging", labels=("Preference",)),
+            EntityUpsert(entity_key="svc:api", labels=("Service",)),
         ],
         edge_upserts=[
             EdgeUpsert(
@@ -150,14 +151,15 @@ def test_runtime_only_backend_does_not_need_provisioning() -> None:
     assert isinstance(runtime_only, GraphBackend)
 
 
-@pytest.mark.parametrize("profile", FULL_PROFILES)
-def test_mutation_then_claim_query_round_trip(profile, tmp_path):
-    backend = _build(profile, tmp_path)
+@pytest.mark.parametrize("profile", RUNNABLE_PROFILES)
+def test_mutation_then_claim_query_round_trip(profile, tmp_path, monkeypatch):
+    backend = _build(profile, tmp_path, monkeypatch)
     result = backend.mutation.apply(_plan(), expected_pot_id=POT)
     assert result.ok
     rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
     assert len(rows) == 1
     assert rows[0].fact == "prefers structured logging"
+    assert backend.analytics.counts(POT)["claims"] == 1
 
 
 @pytest.mark.parametrize("profile", FULL_PROFILES)

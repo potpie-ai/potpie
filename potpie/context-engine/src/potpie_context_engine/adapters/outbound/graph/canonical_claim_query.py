@@ -221,7 +221,7 @@ def stamp_scored_rows(scored: Iterable[tuple[float, ClaimRow]]) -> list[ClaimRow
 # write/index-side concern, and shipping a full vector per row dominates the
 # reply size (and, on redis backends, RESP parse time) of every claim scan.
 FIND_CLAIMS_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
 WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
