@@ -22,6 +22,9 @@
     "vite": "^6.4.3"
   },
   "overrides": {
-    "postcss": ">=8.5.23"
+    "postcss": ">=8.5.23",
+    "baseline-browser-mapping": ">=2.11.0",
+    "browserslist": ">=4.28.7",
+    "nanoid": ">=3.3.18 <4.0.0"
   }
 }

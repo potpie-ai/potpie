@@ -126,6 +126,10 @@ override-dependencies = [
     "pydantic-ai-slim>=1.106.0",
     # CVE-2025-3000: torch <= 2.12.1; 2.13.0 is the first patched release on PyPI.
     "torch>=2.13.0",
+    # GHSA-8xx6-hgc6-gc2m and related httpx2/httpcore2 advisories: keep the
+    # transitive genai-prices client stack on patched releases.
+    "httpx2>=2.12.0",
+    "httpcore2>=2.10.0",
 ]
 
 [tool.uv.workspace]
