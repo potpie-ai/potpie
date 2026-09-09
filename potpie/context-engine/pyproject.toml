@@ -124,6 +124,12 @@ dev = [
 ]
 
 [tool.uv]
+override-dependencies = [
+    # GHSA-8xx6-hgc6-gc2m and related httpx2/httpcore2 advisories: keep the
+    # transitive genai-prices client stack on patched releases.
+    "httpx2>=2.12.0",
+    "httpcore2>=2.10.0",
+]
 constraint-dependencies = [
     "aiohttp>=3.14.3",
     "cryptography>=50.0.0",
@@ -136,4 +142,6 @@ constraint-dependencies = [
     "starlette>=1.3.1",
     "torch>=2.13.0",
     "urllib3>=2.7.0",
+    "httpx2>=2.12.0",
+    "httpcore2>=2.10.0",
 ]
