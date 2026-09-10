@@ -158,7 +158,7 @@ If your team needs a new integration or harness, please
 
 ## Architecture
 
-Potpie's current architecture is CLI-first. CLI is designed to be used by both humans and agents. Read the deeper architecture notes in [`docs/context-graph/architecture.md`](https://github.com/potpie-ai/potpie/blob/main/docs/context-graph/architecture.md).
+Potpie's current architecture is CLI-first. CLI is designed to be used by both humans and agents. Start with the [service architecture and data-flow diagrams](docs/architecture/README.md) for Pie, the CLI, daemon, managed backend, VS Code, Copilot, graph ontology, workbench, and setup commands. The [context-graph architecture notes](docs/context-graph/architecture.md) provide additional subsystem detail.
 
 ## License
 

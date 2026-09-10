@@ -1,0 +1,93 @@
+[
+  {
+    "skill": "potpie-change-timeline",
+    "agent_lines": 102,
+    "claude_present": true,
+    "identical": true,
+    "diff": []
+  },
+  {
+    "skill": "potpie-cli",
+    "agent_lines": 184,
+    "claude_present": false,
+    "identical": false,
+    "diff": []
+  },
+  {
+    "skill": "potpie-debug-memory",
+    "agent_lines": 110,
+    "claude_present": true,
+    "identical": true,
+    "diff": []
+  },
+  {
+    "skill": "potpie-graph",
+    "agent_lines": 335,
+    "claude_present": true,
+    "identical": false,
+    "diff": [
+      "--- \n",
+      "+++ \n",
+      "@@ -181,6 +181,10 @@\n",
+      " potpie --json graph commit mutation-plan:01JY8T5C --verify",
+      " ```",
+      " ",
+      "+`graph mutation-template` is an unscoped, offline schema helper. It accepts",
+      "+`--pot <origin>:<name>` for uniform command invocation, but ignores the selector",
+      "+and does not resolve or validate it. Select the actual target on `graph propose`.",
+      "+",
+      " `mutation-template` kinds: `repo-baseline`, `feature`, `preference`,",
+      " `preference-policy`, `infra-snapshot`, `bug-fix`, `decision`, `timeline-event`,",
+      " `timeline-change` \u2014 placeholders you fill from sources you actually read;"
+    ]
+  },
+  {
+    "skill": "potpie-infra-architecture",
+    "agent_lines": 116,
+    "claude_present": true,
+    "identical": true,
+    "diff": []
+  },
+  {
+    "skill": "potpie-project-preferences",
+    "agent_lines": 103,
+    "claude_present": true,
+    "identical": true,
+    "diff": []
+  },
+  {
+    "skill": "potpie-repo-baseline",
+    "agent_lines": 187,
+    "claude_present": true,
+    "identical": true,
+    "diff": []
+  },
+  {
+    "skill": "potpie-resource-markdown",
+    "agent_lines": 275,
+    "claude_present": true,
+    "identical": true,
+    "diff": []
+  },
+  {
+    "skill": "potpie-resource-pdf",
+    "agent_lines": 260,
+    "claude_present": true,
+    "identical": true,
+    "diff": []
+  },
+  {
+    "skill": "potpie-resource-spreadsheet",
+    "agent_lines": 273,
+    "claude_present": true,
+    "identical": true,
+    "diff": []
+  },
+  {
+    "skill": "potpie-source-ingestion",
+    "agent_lines": 290,
+    "claude_present": true,
+    "identical": true,
+    "diff": []
+  }
+]

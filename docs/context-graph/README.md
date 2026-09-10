@@ -1,5 +1,9 @@
 # Context Graph Docs
 
+Diagrams include PNG previews and SVG links for viewers without Mermaid support; expandable Mermaid source remains beside each preview. Regenerate both images when changing a diagram's source.
+
+For the service topology reviewed on 2026-09-10, including implemented managed routing, Pie/VS Code/Copilot, and current compatibility gaps, start with [Service architecture](../architecture/README.md). The older snapshot below contains historical roadmap statements that no longer describe every current surface.
+
 > Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
 
 The Context Graph is Potpie's durable, shared **project memory for AI agents** — a
@@ -11,6 +15,13 @@ code, PRs, tickets, and chat on every task. Humans and agents talk to the **same
 `resolve`/`search`/`record` compatibility wrappers — there is no separate "future
 V2." The same Pot Management, Graph, and Skill Manager service modules run inside
 either a local daemon or a managed backend API; **state stays local by default**.
+
+![Context Graph Docs](diagrams/readme-1.png)
+
+[Open SVG](diagrams/readme-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
 
 ```mermaid
 flowchart TB
@@ -42,6 +53,8 @@ flowchart TB
   cg_cli -. "managed routing<br/>(CapabilityNotImplemented)" .-> cg_api
   cg_services -. "pull events (external clients are stubs)" .-> cg_ledger
 ```
+
+</details>
 
 ## Target OSS default
 

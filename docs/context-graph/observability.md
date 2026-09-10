@@ -17,6 +17,13 @@ Both composition roots wire the same port: the local agent spine
 
 ## Shape
 
+![Shape](diagrams/observability-1.png)
+
+[Open SVG](diagrams/observability-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart LR
   obs_core["shared services<br/>Pot Mgmt · Graph Service<br/>Graph Workbench · Skill Manager"]
@@ -32,6 +39,8 @@ flowchart LR
   obs_port --> obs_console
   obs_port --> obs_otel
 ```
+
+</details>
 
 Default behavior:
 

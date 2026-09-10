@@ -23,6 +23,13 @@ through explicit harness-style mutation fixtures or a ledger-replay path.
 
 ## Pipeline
 
+![Pipeline](diagrams/bench-plan-1.png)
+
+[Open SVG](diagrams/bench-plan-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart LR
   cg_fixtures["fixtures + universe"]
@@ -36,6 +43,8 @@ flowchart LR
   cg_fixtures --> cg_ingest --> cg_graph_backend --> cg_query --> cg_eval --> cg_report
   cg_fixtures --> cg_ledger_replay --> cg_ingest
 ```
+
+</details>
 
 Reads use the shipped V1.5 workbench (`potpie graph read` over named views; see
 [querying.md](./querying.md)); writes use `graph propose` → `graph commit --verify`
@@ -178,6 +187,13 @@ the curated quick subset (`core/scenario.py`).
 The default universe is `acme`: a small fictitious company with stable services,
 repos, people, environments, ADRs, runbooks, and incidents.
 
+![Synthetic Universe](diagrams/bench-plan-2.png)
+
+[Open SVG](diagrams/bench-plan-2.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TB
   cg_acme["Acme universe"]
@@ -191,6 +207,8 @@ flowchart TB
   cg_acme --> cg_adrs
   cg_acme --> cg_events
 ```
+
+</details>
 
 Source types: GitHub, Linear, Slack, Notion, repo docs, alerting, deploy events,
 and (roadmap) external Event Ledger replay.

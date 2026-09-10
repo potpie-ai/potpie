@@ -42,6 +42,13 @@ semantic search indexes, traversal/inspection views, analytics rollups — is a
 
 > The graph model is the invariant. Physical storage is an adapter.
 
+![Claims, not payloads](diagrams/vision-1.png)
+
+[Open SVG](diagrams/vision-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart LR
   cg_claims[("canonical claims<br/>(source of truth)")]
@@ -53,6 +60,8 @@ flowchart LR
   cg_claims --> cg_inspection
   cg_claims --> cg_analytics
 ```
+
+</details>
 
 The full vocabulary — 25 entity types, 27 public predicates plus a `RELATED_TO`
 fallback, 7 truth classes — is owned by [ontology.md](./ontology.md). PRs, commits,
@@ -97,6 +106,13 @@ skills teach.
 
 ## Product Shape
 
+![Product Shape](diagrams/vision-2.png)
+
+[Open SVG](diagrams/vision-2.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TB
   cg_agent["agent harness<br/>(skills + CLI)"]
@@ -111,6 +127,8 @@ flowchart TB
   cg_cli -. "swap wiring (unbuilt)" .-> cg_managed
   cg_ledger -. "pull / consume (unbuilt)" .-> cg_graph
 ```
+
+</details>
 
 There are three intended product boundaries. Only the first is shipped today.
 

@@ -43,6 +43,13 @@ nudge). Both altitudes are implemented by `DefaultGraphService`
 Every read — `resolve`/`search`, `graph read`, named views, and the zero-token
 nudge ([`ingestion-nudge.md`](./ingestion-nudge.md)) — collapses onto one path:
 
+![2. The single read trunk (P8/P9)](diagrams/querying-1.png)
+
+[Open SVG](diagrams/querying-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart LR
   q_in["resolve / search / graph read / nudge"]
@@ -62,6 +69,8 @@ flowchart LR
   q_readers --> q_env
   q_env --> q_out
 ```
+
+</details>
 
 `ReadOrchestrator.resolve()` (`application/services/read_orchestrator.py`) does four
 things:

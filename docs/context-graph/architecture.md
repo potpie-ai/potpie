@@ -24,6 +24,13 @@ level](#the-write-door-high-level)).
 The engine is ports-and-adapters. Pure model in the middle, I/O at the edges,
 composition roots at the top.
 
+![Hexagonal layers](diagrams/architecture-1.png)
+
+[Open SVG](diagrams/architecture-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TB
   cg_inbound["inbound adapters<br/>cli · http ingestion · daemon HTTP · webhooks"]
@@ -41,6 +48,8 @@ flowchart TB
   cg_outbound --> cg_domain
 ```
 
+</details>
+
 | Layer | Path | Responsibility |
 |---|---|---|
 | **domain/** | `domain/` | Pure model and contracts: the three ontology catalogs, contract constants, ports (Protocols), DTOs, ranking, coherence invariants, identity. No I/O. Import-time coherence guards fail startup fast if vocabularies drift. |
@@ -56,6 +65,13 @@ The architecture's single spine is `CLI → HostShell → service(s) → ports`
 
 There are **two separate composition roots**, and conflating them is the most
 common architecture error.
+
+![Two composition roots / two HTTP roots](diagrams/architecture-2.png)
+
+[Open SVG](diagrams/architecture-2.svg)
+
+<details>
+<summary>Mermaid source</summary>
 
 ```mermaid
 flowchart TB
@@ -76,6 +92,8 @@ flowchart TB
     cg_fastapi --> cg_pipeline --> cg_neo
   end
 ```
+
+</details>
 
 1. **The local agent spine** — `bootstrap/host_wiring.py build_host_shell()`
    builds `HostShell`, which the product adapters (CLI and daemon HTTP) bind
@@ -151,6 +169,13 @@ reads return ranked evidence (`AgentEnvelope`) and the agent reasons over it.
 Protocol that **bundles six capability ports** in two tiers, plus three bundle
 members.
 
+![The `GraphBackend` port](diagrams/architecture-3.png)
+
+[Open SVG](diagrams/architecture-3.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TB
   cg_be["GraphBackend"]
@@ -172,6 +197,8 @@ flowchart TB
   cg_be --> cg_snap
   cg_be -. "profile · capabilities() · provision(plan)" .-> cg_meta["bundle members"]
 ```
+
+</details>
 
 - **Canonical:** `mutation` (`apply`/`apply_async`, `invalidate`, `reset_pot`,
   `readiness`) and `claim_query` (`find_claims`, `entity_labels`,
@@ -254,6 +281,13 @@ validates, lowers accepted ops, and persists a plan record with no graph write;
 calls the single backend write door, and `--verify` reads the committed claims
 back.
 
+![The write door (high level)](diagrams/architecture-4.png)
+
+[Open SVG](diagrams/architecture-4.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart LR
   cg_propose["potpie graph propose<br/>(validate · lower · persist plan)"]
@@ -262,6 +296,8 @@ flowchart LR
   cg_writer["GraphWriterPort<br/>upsert_entities → upsert_edges → delete_edges → invalidate"]
   cg_propose --> cg_commit --> cg_apply --> cg_writer
 ```
+
+</details>
 
 Two corrections to the previous version of this doc:
 
@@ -357,6 +393,13 @@ distinct.
    `sources`, `health`) + `LedgerCursorStorePort`. The *cursor* concept belongs
    only to this external seam, never to the internal Postgres store.
 
+![Two ledgers: the live event store vs the external seam](diagrams/architecture-5.png)
+
+[Open SVG](diagrams/architecture-5.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart LR
   cg_int["internal Postgres event store<br/>context_events · queued/processing/done/error"]
@@ -365,6 +408,8 @@ flowchart LR
   cg_int --> cg_graph
   cg_ext -. "pull (roadmap)" .-> cg_graph
 ```
+
+</details>
 
 > **Roadmap (not yet wired):** the external Event Ledger clients
 > (`adapters/outbound/ledger/managed_client.py`, `self_hosted_client.py`) are

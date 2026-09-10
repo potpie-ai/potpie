@@ -33,6 +33,13 @@ for the full command surface see [`cli-flow.md`](./cli-flow.md).
 | Workbench command envelope + command sets | `domain/graph_workbench.py` |
 | Import-time ontology coherence guards | `domain/coherence.py` |
 
+![Where the contract lives](diagrams/ontology-1.png)
+
+[Open SVG](diagrams/ontology-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TB
   ont_e["ENTITY_TYPES<br/>(25 labels)"]
@@ -56,6 +63,8 @@ flowchart TB
   ont_guard -. validates .-> ont_views
   ont_guard -. validates .-> ont_wb
 ```
+
+</details>
 
 Module rule (from `domain/ontology.py`): **add an entity = one row in
 `ENTITY_TYPES`; add a predicate = one row in `EDGE_TYPES`; add a record type =

@@ -20,6 +20,13 @@ the same `potpie` CLI.
 options, with the rest of the surface assembled from top-level registrars and
 `add_typer` sub-apps. Every command routes `CLI → HostShell → service(s) → ports`.
 
+![One CLI for humans and agents](diagrams/cli-flow-1.png)
+
+[Open SVG](diagrams/cli-flow-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart LR
   cf_user["user / agent"]
@@ -31,6 +38,8 @@ flowchart LR
 
   cf_user --> cf_cli --> cf_common --> cf_shell --> cf_svc --> cf_ports
 ```
+
+</details>
 
 ### Global options (root `@app.callback`)
 
@@ -695,6 +704,13 @@ Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >
 
 ## Canonical journey
 
+![Canonical journey](diagrams/cli-flow-2.png)
+
+[Open SVG](diagrams/cli-flow-2.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart LR
   cf_setup["setup --repo . --agent claude"]
@@ -707,6 +723,8 @@ flowchart LR
   cf_nudge -.-> cf_read
   cf_write -.-> cf_read
 ```
+
+</details>
 
 Local first run (OSS default — `falkordb_lite`, detached daemon, skills installed
 during setup):

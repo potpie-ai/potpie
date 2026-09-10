@@ -53,6 +53,13 @@ All inbound surfaces normalize to a single `IngestionSubmissionRequest`
 `DefaultIngestionSubmissionService.submit()`
 (`application/services/ingestion_submission_service.py`).
 
+![2. How raw episodes/events enter](diagrams/ingestion-nudge-1.png)
+
+[Open SVG](diagrams/ingestion-nudge-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TD
   ing_ep2["POST /api/v1/context/events/reconcile<br/>(agent_reconciliation)"]
@@ -72,6 +79,8 @@ flowchart TD
   ing_submit -->|"all other events"| ing_admit
   ing_admit --> ing_store
 ```
+
+</details>
 
 ### Entry points
 

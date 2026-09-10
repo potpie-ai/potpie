@@ -26,6 +26,13 @@ Every write — whether authored by a harness skill, the `record` bridge, or the
 server-side reconciliation agent — funnels through the same tiers. Agents emit *semantic*
 operations; Cypher and structural edge/entity DTOs are internal.
 
+![1. The tiered write stack](diagrams/writing-1.png)
+
+[Open SVG](diagrams/writing-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TD
   w_dsl["Semantic DSL<br/>{pot_id, operations:[...]}<br/>domain/semantic_mutations.py"]
@@ -44,6 +51,8 @@ flowchart TD
   w_spineB --> w_pre
   w_pre --> w_door --> w_store
 ```
+
+</details>
 
 | Tier | Module | Responsibility |
 |---|---|---|

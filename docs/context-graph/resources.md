@@ -48,6 +48,13 @@ Split a document into two halves that each live where they belong. The **bytes**
 
 ## How it works
 
+![How it works](diagrams/resources-1.png)
+
+[Open SVG](diagrams/resources-1.svg)
+
+<details>
+<summary>Mermaid source</summary>
+
 ```mermaid
 flowchart LR
     agent["coding agent<br/>+ per-format skill"]
@@ -55,17 +62,19 @@ flowchart LR
     dir[/"chunk dir<br/>sections + meta.json"/]
     imp["potpie resource import"]
     disk[("&lt;home&gt;/resources/&lt;pot_dir&gt;/")]
-    graph[("Document + Section<br/>nodes, claims")]
+    resource_graph[("Document + Section<br/>nodes, claims")]
     get["potpie resource get"]
 
     agent -->|"writes"| script
     script -->|"splits by section"| dir
     imp -->|"reads + validates"| dir
     imp -->|"1. stores bytes"| disk
-    imp -->|"2. upserts structure"| graph
-    graph -.->|"chunk ids"| get
+    imp -->|"2. upserts structure"| resource_graph
+    resource_graph -.->|"chunk ids"| get
     get -->|"reads by path"| disk
 ```
+
+</details>
 
 Ingest: the agent picks the skill for the format, writes a script that walks the document's own structure, and emits one directory per section plus a `meta.json`. `resource import` reads that directory on the caller's side and ships its contents with the call (`files`, keyed by relative path), so the host never needs a view of the caller's filesystem — a detached daemon has its own working directory and a managed service is on another machine. The store materialises the files into a scratch directory, validates sizes and slugs exactly as it would a path, writes chunks to a temp dir and atomically renames it into place, then upserts the Document and its Sections in one mutation batch. Bytes land before graph state on purpose — a failed graph write leaves orphan bytes that the next import overwrites, whereas the reverse order would leave live claims pointing at files that do not exist.
 
@@ -74,6 +83,13 @@ Find, then fetch: an agent searches as usual. Section summaries are embedded lik
 Re-import replaces: the same slug deletes the old chunk set, writes the new one, bumps `revision`, and invalidates claims from the prior revision using supersession the claim store already has. `revision` advances only when the section set actually moved (something added, changed, or removed) — re-importing a byte-identical directory is a genuine no-op, because R7 hangs prior-revision invalidation on this counter and a number that ticks on no-ops cannot say which revision a claim was made against.
 
 ## Contracts
+
+![Contracts](diagrams/resources-2.png)
+
+[Open SVG](diagrams/resources-2.svg)
+
+<details>
+<summary>Mermaid source</summary>
 
 ```mermaid
 erDiagram
@@ -93,6 +109,8 @@ erDiagram
     Document }o--o{ Entity : DOCUMENTS
     DocumentSection }o--o{ Entity : DOCUMENTS
 ```
+
+</details>
 
 Chunks are files, not nodes: a 500-page PDF becomes ~40 section nodes, not ~400 chunk nodes.
 
