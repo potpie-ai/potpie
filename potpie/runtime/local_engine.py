@@ -102,6 +102,7 @@ class LocalEngineServices:
     nudge: Any
     ingestion: Any | None = None
     ingestion_events: Any | None = None
+    resources: Any | None = None
 
 
 class LocalContextSelectorResolver:

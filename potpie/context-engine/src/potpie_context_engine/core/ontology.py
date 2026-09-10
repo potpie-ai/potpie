@@ -625,19 +625,40 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         text_patterns=(r"\bdecision\b", r"\b(ADR|architecture decision)\b"),
         property_signatures=("rationale", "alternatives_rejected"),
     ),
+    "DocumentSection": _e(
+        "DocumentSection",
+        "memory",
+        "A searchable division of an ingested document (section with summary + chunk refs).",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="document-section",
+        fact_family="docs",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=24 * WEEK,
+    ),
+    "DocumentElement": _e(
+        "DocumentElement",
+        "memory",
+        "A provenance element from an ingested document (page region, table, figure, text block).",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="document-element",
+        fact_family="docs",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=24 * WEEK,
+    ),
     # --- Generic fail-open fallbacks (soft-fail downgrade targets) ----------
     # The agent reconciliation path coerces unrecognized output onto these
     # rather than rejecting the batch. ``public=False`` keeps them out of the
     # agent-facing topology contract; they carry no project-map family.
     "Document": _e(
         "Document",
-        "evidence",
-        "Generic document / note (soft-fail fallback for unrecognized doc-like entities).",
-        identity_class=IdentityClass.CONTENT_HASH,
+        "memory",
+        "An ingested or referenced project document (slug identity, chunk refs off-graph).",
+        identity_class=IdentityClass.SLUG_ALIAS,
         key_prefix="document",
-        public=False,
-        fact_family="evidence",
+        public=True,
+        fact_family="docs",
         source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=24 * WEEK,
     ),
     "Observation": _e(
         "Observation",
@@ -937,6 +958,24 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         ],
         category="memory",
         source_inferred=("Decision",),
+    ),
+    "SECTION_OF": _x(
+        "SECTION_OF",
+        "A document section belongs to its parent document.",
+        [("DocumentSection", "Document")],
+        category="memory",
+        predicate_family="document_structure",
+        source_inferred=("DocumentSection",),
+        target_inferred=("Document",),
+    ),
+    "ELEMENT_OF": _x(
+        "ELEMENT_OF",
+        "A document element belongs to its parent document (provenance ledger projection).",
+        [("DocumentElement", "Document")],
+        category="memory",
+        predicate_family="document_structure",
+        source_inferred=("DocumentElement",),
+        target_inferred=("Document",),
     ),
     # --- Generic fail-open fallback (soft-fail downgrade target) ------------
     # Unrecognized agent-emitted edge types coerce onto this wildcard edge
