@@ -1,0 +1,36 @@
+id: bug_auth_token_expiry_race
+use_case: BUG
+universe: acme
+
+seed:
+  # Universe files under fixtures/raw_events/universe/acme/ are ingested at -365d
+  # via the `universe: acme` declaration (00-auth-service, 01-api-gateway,
+  # 02-checkout-api, 03-user-profile-api, 10-team).
+
+ingest:
+  # OPS-355 symptom: around -14d
+  - { event: linear/ops_355_jwt_expiry_symptom.json, at: "-14d" }
+  # Slack thread: around -13d
+  - { event: slack/thread_jwt_race_diagnosis.json, at: "-13d" }
+  # OPS-431 root cause: around -10d
+  - { event: linear/ops_431_jwt_race_root_cause.json, at: "-10d" }
+  # Notion postmortem: around -7d
+  - { event: notion/postmortem_jwt_race.json, at: "-7d" }
+
+query:
+  intent: "What caused the intermittent 401 errors in the auth service and how was it resolved?"
+  include: [issues, pages, messages]
+  scope: { services: [auth-service] }
+
+ground_truth:
+  must_cite:
+    - linear:issue:OPS-355:create
+    - linear:issue:OPS-431:create
+    - notion:page:jwt-race-postmortem:created
+    - slack:thread:C04AUTH401:1737028800.001234
+  must_not_cite: []
+  expected_answer_contains:
+    - JWT token expiry race condition
+    - concurrent token refresh
+    - OPS-355
+    - OPS-431

@@ -1,0 +1,59 @@
+{
+  "connector": "notion",
+  "event_type": "page",
+  "action": "created",
+  "source_id": "notion:page:jwt-race-postmortem:created",
+  "occurred_at": "2026-01-15T00:00:00Z",
+  "repo_name": "acme/platform",
+  "payload": {
+    "object": "page",
+    "id": "notion-page-jwt-race-pm-001",
+    "created_time": "2026-06-02T16:30:00.000Z",
+    "last_edited_time": "2026-06-02T16:30:00.000Z",
+    "url": "https://www.notion.so/acme/JWT-Token-Expiry-Race-Postmortem-jwt-race-postmortem",
+    "icon": {
+      "type": "emoji",
+      "emoji": "🔐"
+    },
+    "properties": {
+      "Name": {
+        "id": "title",
+        "type": "title",
+        "title": [
+          {
+            "type": "text",
+            "plain_text": "Postmortem: JWT Token Expiry Race (OPS-355 / OPS-431)",
+            "text": {
+              "content": "Postmortem: JWT Token Expiry Race (OPS-355 / OPS-431)"
+            }
+          }
+        ]
+      },
+      "Status": {
+        "type": "select",
+        "select": {
+          "name": "Published"
+        }
+      },
+      "Service": {
+        "type": "multi_select",
+        "multi_select": [
+          {
+            "name": "auth-service"
+          }
+        ]
+      },
+      "Severity": {
+        "type": "select",
+        "select": {
+          "name": "SEV-2"
+        }
+      }
+    },
+    "content": "# Postmortem: JWT Token Expiry Race\n\n**Incident:** OPS-355 (symptom) → OPS-431 (root cause)\n**Service:** auth-service\n**Authors:** Maya Chen (@maya-chen), Jordan Park (@jordan-park)\n**Date:** 2026-06-02\n\n## Timeline\n\n| Time (UTC) | Event |\n|---|---|\n| 2026-05-26 09:14 | OPS-355 opened — intermittent 401s under concurrent load, root cause unknown |\n| 2026-05-27 14:20 | #incidents-auth Slack thread opened; on-call begins correlating refresh worker metrics with 401 spikes |\n| 2026-05-30 11:42 | OPS-431 opened — JWT token expiry race condition identified; links to OPS-355 |\n| 2026-05-31 18:00 | Fix deployed: Redis lock + token_version guard around refresh path |\n| 2026-06-01 09:00 | 401 error rate returned to baseline; incident closed |\n\n## Root cause\n\nauth-service had **two independent expiry checks** with no coordination:\n\n- the **background token refresh worker** rotates refresh tokens when `exp - now < refresh_leeway`\n- the **request handler** validates bearer tokens on introspection and downstream calls\n\nUnder concurrent load, both paths could act on the same session within a ~50–120ms window. The worker invalidated an access token the handler was still accepting, producing **intermittent 401 Unauthorized** responses that cleared on client retry (after refresh).\n\nThis is a classic **JWT token expiry race condition** driven by **concurrent token refresh** without a shared lock or monotonic token version.\n\n## Resolution\n\n1. Added a Redis distributed lock keyed on `session_id` around the refresh worker critical section\n2. Introduced `token_version` incremented atomically on every refresh; handler rejects stale versions with a structured error\n3. Added load test `tests/integration/test_concurrent_refresh_race.py` reproducing the race\n\n## Follow-ups\n\n- [ ] Audit other services for duplicate expiry checks outside auth-service\n- [ ] Add `auth_refresh_race_window_ms` metric and alert\n- [ ] Document refresh locking contract in `services/auth-service/README.md`\n- [ ] Review on-call runbook for auth 401 spikes (link OPS-355 / OPS-431)\n\n## Related tickets\n\n- OPS-355 — symptom report\n- OPS-431 — root cause ticket"
+  },
+  "_meta": {
+    "captured_from": "synthetic",
+    "redactions": []
+  }
+}

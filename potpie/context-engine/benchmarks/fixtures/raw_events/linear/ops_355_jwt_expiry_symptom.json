@@ -1,0 +1,69 @@
+{
+  "connector": "linear",
+  "event_type": "issue",
+  "action": "create",
+  "source_id": "linear:issue:OPS-355:create",
+  "occurred_at": "2026-01-15T00:00:00Z",
+  "repo_name": "acme/platform",
+  "payload": {
+    "action": "create",
+    "type": "Issue",
+    "createdAt": "2026-05-26T09:14:22.000Z",
+    "webhookId": "wh-linear-ops355-create",
+    "data": {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "identifier": "OPS-355",
+      "title": "Intermittent 401 errors from auth-service under concurrent load",
+      "description": "## Symptom\n\nDuring peak traffic (~2k RPS) customers and internal services report sporadic **401 Unauthorized** responses from **auth-service**. Failures are non-deterministic — the same bearer token succeeds on retry.\n\n## Observed behavior\n\n- api-gateway access logs show bursts of `401` on `/v1/introspect` and `/v1/refresh`\n- checkout-api and user-profile-api see downstream 401s when forwarding tokens\n- Error rate spikes to ~3% for 5–10 minute windows, then clears without deploys\n- No obvious correlation with deploys, key rotation, or client version\n\n## Initial triage\n\n- Redis and Postgres look healthy\n- JWT signing keys unchanged\n- No recent auth-service config changes\n\n## Status\n\nRoot cause **not yet identified**. Tracking as active incident.\n\n## Links\n\n- Grafana: auth-service 401 rate panel\n- PagerDuty: PD-AUTH-401-SPIKE",
+      "priority": 1,
+      "priorityLabel": "Urgent",
+      "url": "https://linear.app/acme/issue/OPS-355",
+      "createdAt": "2026-05-26T09:14:22.000Z",
+      "updatedAt": "2026-05-26T09:14:22.000Z",
+      "state": {
+        "id": "state-in-progress-001",
+        "name": "In Progress",
+        "type": "started",
+        "color": "#f2c94c"
+      },
+      "team": {
+        "id": "team-ops-001",
+        "key": "OPS",
+        "name": "Operations"
+      },
+      "teamId": "team-ops-001",
+      "assignee": {
+        "id": "user-maya-chen",
+        "name": "Maya Chen",
+        "displayName": "Maya Chen",
+        "email": "maya.chen@example.test"
+      },
+      "creator": {
+        "id": "user-jordan-park",
+        "name": "Jordan Park",
+        "displayName": "Jordan Park",
+        "email": "jordan.park@example.test"
+      },
+      "labels": [
+        {
+          "id": "label-incident",
+          "name": "incident",
+          "color": "#eb5757"
+        },
+        {
+          "id": "label-auth",
+          "name": "auth-service",
+          "color": "#2f80ed"
+        }
+      ],
+      "project": {
+        "id": "proj-platform-reliability",
+        "name": "Platform Reliability"
+      }
+    }
+  },
+  "_meta": {
+    "captured_from": "synthetic",
+    "redactions": []
+  }
+}
