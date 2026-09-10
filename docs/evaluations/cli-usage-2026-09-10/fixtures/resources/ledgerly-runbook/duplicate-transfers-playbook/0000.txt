@@ -1,0 +1,11 @@
+Symptoms: customer reports a double charge, `ledger_idempotency_conflicts_total` stays flat while `ledger_transfers_created_total` spikes, Redis failover event in the ElastiCache console. This was INC-12 (2026-08-30): the `X-Idempotency-Key` check lived only in Redis and failed open.
+
+Mitigation: enable the Postgres fallback flag `IDEMPOTENCY_PG_FALLBACK=1` (default since v2.14.0), then find duplicates with:
+
+```
+select idempotency_key, count(*) from transfers
+where created_at > now() - interval '2 hours'
+group by 1 having count(*) > 1;
+```
+
+Reverse each duplicate with `ledgerctl transfers reverse <transfer_id> --reason INC-<n>`; the reversal posts a compensating entry, never deletes. Notify Growth so statement emails are regenerated.

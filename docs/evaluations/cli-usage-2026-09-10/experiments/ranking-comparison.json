@@ -1,0 +1,128 @@
+[
+  {
+    "case": "body-default",
+    "variant": "baseline",
+    "target_rank": 23,
+    "top_family": "timeline",
+    "promoted": 0
+  },
+  {
+    "case": "body-default",
+    "variant": "equal_family_weights",
+    "target_rank": 1,
+    "top_family": "resources",
+    "promoted": 9
+  },
+  {
+    "case": "body-default",
+    "variant": "lexical_coverage_0.8",
+    "target_rank": 1,
+    "top_family": "resources",
+    "promoted": 1
+  },
+  {
+    "case": "rollback-search",
+    "variant": "baseline",
+    "target_rank": 22,
+    "top_family": "timeline",
+    "promoted": 0
+  },
+  {
+    "case": "rollback-search",
+    "variant": "equal_family_weights",
+    "target_rank": 1,
+    "top_family": "resources",
+    "promoted": 7
+  },
+  {
+    "case": "rollback-search",
+    "variant": "lexical_coverage_0.8",
+    "target_rank": 1,
+    "top_family": "resources",
+    "promoted": 1
+  },
+  {
+    "case": "rollback-default",
+    "variant": "baseline",
+    "target_rank": 4,
+    "top_family": "decisions",
+    "promoted": 0
+  },
+  {
+    "case": "rollback-default",
+    "variant": "equal_family_weights",
+    "target_rank": 1,
+    "top_family": "docs",
+    "promoted": 17
+  },
+  {
+    "case": "rollback-default",
+    "variant": "lexical_coverage_0.8",
+    "target_rank": 1,
+    "top_family": "resources",
+    "promoted": 1
+  },
+  {
+    "case": "negative-default",
+    "variant": "baseline",
+    "target_rank": null,
+    "top_family": "decisions",
+    "promoted": 0
+  },
+  {
+    "case": "negative-default",
+    "variant": "equal_family_weights",
+    "target_rank": null,
+    "top_family": "docs",
+    "promoted": 7
+  },
+  {
+    "case": "negative-default",
+    "variant": "lexical_coverage_0.8",
+    "target_rank": null,
+    "top_family": "decisions",
+    "promoted": 0
+  },
+  {
+    "case": "owners-natural",
+    "variant": "baseline",
+    "target_rank": 1,
+    "top_family": "infra_topology",
+    "promoted": 0
+  },
+  {
+    "case": "owners-natural",
+    "variant": "equal_family_weights",
+    "target_rank": 1,
+    "top_family": "infra_topology",
+    "promoted": 6
+  },
+  {
+    "case": "owners-natural",
+    "variant": "lexical_coverage_0.8",
+    "target_rank": 1,
+    "top_family": "infra_topology",
+    "promoted": 0
+  },
+  {
+    "case": "debug-natural",
+    "variant": "baseline",
+    "target_rank": 2,
+    "top_family": "timeline",
+    "promoted": 0
+  },
+  {
+    "case": "debug-natural",
+    "variant": "equal_family_weights",
+    "target_rank": 2,
+    "top_family": "timeline",
+    "promoted": 0
+  },
+  {
+    "case": "debug-natural",
+    "variant": "lexical_coverage_0.8",
+    "target_rank": 2,
+    "top_family": "timeline",
+    "promoted": 0
+  }
+]

@@ -1,0 +1,20 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/nandan/Desktop/Dev/potpie/.venv/bin/python
+cachedir: .pytest_cache
+benchmark: 5.2.3 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+rootdir: /Users/nandan/Desktop/Dev/potpie/potpie/context-engine
+configfile: pyproject.toml
+plugins: benchmark-5.2.3, cov-7.1.0, asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 8 items
+
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_returns_nodes_and_edges_and_strips_embeddings PASSED [ 12%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_neighborhood_bfs_collects_incident_edges_and_hydrates PASSED [ 25%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_neighborhood_clamps_depth PASSED [ 37%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_uses_claim_query_for_scoped_filters PASSED [ 50%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_keeps_unscoped_limit_on_full_graph_path PASSED [ 62%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_does_not_mark_exact_cap_as_truncated PASSED [ 75%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_marks_over_cap_results_as_truncated PASSED [ 87%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_in_memory_neighborhood_preserves_parallel_claims PASSED [100%]
+
+============================== 8 passed in 0.16s ===============================

@@ -1,0 +1,840 @@
+{
+  "build": {
+    "git_rev": "4936b6cee2578641698b8167ef2dc7498dc10064",
+    "dirty": true,
+    "version": "2.0.0",
+    "engine": "0.1.0",
+    "python": "3.12.13",
+    "dependency_environment": "Existing repository venv; three newly built wheels installed to isolated target",
+    "wheel_sha256": {
+      "potpie-2.0.0-py3-none-any.whl": "d42bfde79bc69615e3a1518b3fba460bd4fbaf38614c91f3c69af0919ad2a46c",
+      "potpie_context_engine-0.1.0-py3-none-any.whl": "d95c25cd94896e7165a09f07ad08870ec93f0b1e0e957d0dcf93c237cd499c77",
+      "potpie_context_core-0.1.0-py3-none-any.whl": "2d7c2240a877c244407b0cd707da5a3f16bab9de66895ad3358037f546ca3a4e"
+    }
+  },
+  "pot_id": "pot_b10a82caa287",
+  "pot_name": "cli-usage-eval",
+  "backend": "falkordb_lite",
+  "resource_index": "sqlite_hybrid",
+  "embedder": "sentence-transformers/all-MiniLM-L6-v2",
+  "counts": {
+    "claims": 126,
+    "entities": 79,
+    "predicates": 25,
+    "invalidated": 0
+  },
+  "resources": {
+    "documents": 4,
+    "sections": 12,
+    "chunks": 12
+  },
+  "recorded_command_count": 109,
+  "query_matrix_count": 45,
+  "warm_matrix_seconds": {
+    "median": 0.246,
+    "p95": 0.269,
+    "min": 0.202,
+    "max": 0.277
+  },
+  "contract_tests": {
+    "passed": 156,
+    "seconds": 4.24
+  },
+  "fetch_checks": [
+    {
+      "command": "resource-batch",
+      "resource_id": "potpie://res/ledgerly-runbook/rollback-procedure/0000",
+      "matches_seed_bytes": true,
+      "sha256": "6ebcb61d7fdb7d6f2b564ecc9f093c52f93403e537a5c19f0c4e43489a3b907c"
+    },
+    {
+      "command": "resource-batch",
+      "resource_id": "potpie://res/field-reference/recovery-marker/0000",
+      "matches_seed_bytes": true,
+      "sha256": "e98238a5301bbd7a078667de7181df99ab9493fe65888ccbca8d95e2f8949555"
+    },
+    {
+      "command": "resource-after-reimport",
+      "resource_id": "potpie://res/field-reference/terminology/0000",
+      "matches_seed_bytes": true,
+      "sha256": "aa5fdf6c2556071c6bb96a09b00bb482cf20ceb6c4d3c28007419f5d3c674598"
+    },
+    {
+      "command": "resource-after-reimport",
+      "resource_id": "potpie://res/field-reference/recovery-marker/0000",
+      "matches_seed_bytes": true,
+      "sha256": "e98238a5301bbd7a078667de7181df99ab9493fe65888ccbca8d95e2f8949555"
+    },
+    {
+      "command": "post-restart-resource",
+      "resource_id": "potpie://res/field-reference/recovery-marker/0000",
+      "matches_seed_bytes": true,
+      "sha256": "e98238a5301bbd7a078667de7181df99ab9493fe65888ccbca8d95e2f8949555"
+    }
+  ],
+  "commands": [
+    {
+      "id": "propose-01-baseline",
+      "exit_code": 0,
+      "seconds": 0.247,
+      "stdout_bytes": 5402,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "propose-01-baseline",
+      "exit_code": 0,
+      "seconds": 0.248,
+      "stdout_bytes": 5402,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "commit-01-baseline",
+      "exit_code": 0,
+      "seconds": 3.026,
+      "stdout_bytes": 10897,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "propose-02-infra",
+      "exit_code": 0,
+      "seconds": 0.252,
+      "stdout_bytes": 9172,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "commit-02-infra",
+      "exit_code": 1,
+      "seconds": 0.985,
+      "stdout_bytes": 18838,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "propose-03-decisions",
+      "exit_code": 0,
+      "seconds": 0.244,
+      "stdout_bytes": 2359,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "commit-03-decisions",
+      "exit_code": 1,
+      "seconds": 0.24,
+      "stdout_bytes": 3596,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "propose-04-preference-policy",
+      "exit_code": 0,
+      "seconds": 0.244,
+      "stdout_bytes": 1159,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "commit-04-preference-policy",
+      "exit_code": 0,
+      "seconds": 0.376,
+      "stdout_bytes": 2549,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "propose-05-bugs",
+      "exit_code": 0,
+      "seconds": 0.245,
+      "stdout_bytes": 2473,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "commit-05-bugs",
+      "exit_code": 0,
+      "seconds": 0.515,
+      "stdout_bytes": 5177,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "propose-06-timeline",
+      "exit_code": 1,
+      "seconds": 0.246,
+      "stdout_bytes": 2691,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "propose-decisions-approved",
+      "exit_code": 0,
+      "seconds": 0.249,
+      "stdout_bytes": 1927,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "commit-decisions-approved",
+      "exit_code": 0,
+      "seconds": 0.458,
+      "stdout_bytes": 3992,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "propose-timeline-corrected",
+      "exit_code": 0,
+      "seconds": 0.241,
+      "stdout_bytes": 10038,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "commit-timeline-corrected",
+      "exit_code": 0,
+      "seconds": 1.255,
+      "stdout_bytes": 20308,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "import-ledgerly-runbook",
+      "exit_code": 0,
+      "seconds": 0.401,
+      "stdout_bytes": 2224,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "import-ledgerly-adr-0007",
+      "exit_code": 0,
+      "seconds": 0.317,
+      "stdout_bytes": 1505,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "import-ledgerly-costs",
+      "exit_code": 0,
+      "seconds": 0.286,
+      "stdout_bytes": 1050,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "propose-doc-links",
+      "exit_code": 0,
+      "seconds": 0.253,
+      "stdout_bytes": 1497,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "commit-doc-links",
+      "exit_code": 0,
+      "seconds": 0.506,
+      "stdout_bytes": 3226,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "seed-status",
+      "exit_code": 0,
+      "seconds": 0.332,
+      "stdout_bytes": 1544,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "import-field-reference",
+      "exit_code": 0,
+      "seconds": 0.316,
+      "stdout_bytes": 1605,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "debug-natural",
+      "exit_code": 0,
+      "seconds": 0.26,
+      "stdout_bytes": 34272,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "debug-targeted",
+      "exit_code": 0,
+      "seconds": 0.246,
+      "stdout_bytes": 3559,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "rollback-default",
+      "exit_code": 0,
+      "seconds": 0.258,
+      "stdout_bytes": 34013,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "rollback-docs",
+      "exit_code": 0,
+      "seconds": 0.247,
+      "stdout_bytes": 15866,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "rollback-search",
+      "exit_code": 0,
+      "seconds": 0.273,
+      "stdout_bytes": 50296,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "rollback-search-docs",
+      "exit_code": 0,
+      "seconds": 0.249,
+      "stdout_bytes": 7774,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "adr-paraphrase",
+      "exit_code": 0,
+      "seconds": 0.254,
+      "stdout_bytes": 25311,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "adr-docs",
+      "exit_code": 0,
+      "seconds": 0.249,
+      "stdout_bytes": 6336,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "cost-docs",
+      "exit_code": 0,
+      "seconds": 0.25,
+      "stdout_bytes": 2572,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "pms-default",
+      "exit_code": 0,
+      "seconds": 0.264,
+      "stdout_bytes": 42420,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "pms-docs",
+      "exit_code": 0,
+      "seconds": 0.25,
+      "stdout_bytes": 9929,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "pms-search",
+      "exit_code": 0,
+      "seconds": 0.263,
+      "stdout_bytes": 42444,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "body-default",
+      "exit_code": 0,
+      "seconds": 0.269,
+      "stdout_bytes": 54637,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "body-docs",
+      "exit_code": 0,
+      "seconds": 0.248,
+      "stdout_bytes": 15861,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "body-resources",
+      "exit_code": 0,
+      "seconds": 0.239,
+      "stdout_bytes": 1836,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "body-passages",
+      "exit_code": 0,
+      "seconds": 0.243,
+      "stdout_bytes": 1662,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "body-paraphrase",
+      "exit_code": 0,
+      "seconds": 0.238,
+      "stdout_bytes": 2859,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "negative-default",
+      "exit_code": 0,
+      "seconds": 0.26,
+      "stdout_bytes": 18292,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "negative-docs",
+      "exit_code": 0,
+      "seconds": 0.249,
+      "stdout_bytes": 7073,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "negative-passages",
+      "exit_code": 0,
+      "seconds": 0.245,
+      "stdout_bytes": 3033,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "negative-passages-threshold",
+      "exit_code": 0,
+      "seconds": 0.249,
+      "stdout_bytes": 1619,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "body-passages-threshold",
+      "exit_code": 0,
+      "seconds": 0.245,
+      "stdout_bytes": 1613,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "owners-natural",
+      "exit_code": 0,
+      "seconds": 0.27,
+      "stdout_bytes": 51806,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "owners-targeted",
+      "exit_code": 0,
+      "seconds": 0.238,
+      "stdout_bytes": 937,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "infra-prod",
+      "exit_code": 0,
+      "seconds": 0.241,
+      "stdout_bytes": 4742,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "infra-prod-inclusive",
+      "exit_code": 0,
+      "seconds": 0.243,
+      "stdout_bytes": 13862,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "infra-staging",
+      "exit_code": 0,
+      "seconds": 0.238,
+      "stdout_bytes": 5043,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "infra-invalid-direction",
+      "exit_code": 0,
+      "seconds": 0.236,
+      "stdout_bytes": 1361,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "preferences-natural",
+      "exit_code": 0,
+      "seconds": 0.277,
+      "stdout_bytes": 66014,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "preferences-scoped",
+      "exit_code": 0,
+      "seconds": 0.236,
+      "stdout_bytes": 2142,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "preferences-query",
+      "exit_code": 0,
+      "seconds": 0.244,
+      "stdout_bytes": 1133,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "decisions-service",
+      "exit_code": 0,
+      "seconds": 0.236,
+      "stdout_bytes": 3255,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "decisions-repo",
+      "exit_code": 0,
+      "seconds": 0.236,
+      "stdout_bytes": 3273,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "timeline-natural",
+      "exit_code": 0,
+      "seconds": 0.254,
+      "stdout_bytes": 34848,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "timeline-targeted",
+      "exit_code": 0,
+      "seconds": 0.243,
+      "stdout_bytes": 4621,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "entity-exact",
+      "exit_code": 0,
+      "seconds": 0.256,
+      "stdout_bytes": 2775,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "entity-paraphrase",
+      "exit_code": 0,
+      "seconds": 0.256,
+      "stdout_bytes": 2401,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "entity-bad-type",
+      "exit_code": 0,
+      "seconds": 0.246,
+      "stdout_bytes": 361,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "resource-discovery",
+      "exit_code": 1,
+      "seconds": 0.202,
+      "stdout_bytes": 159,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "resource-list",
+      "exit_code": 0,
+      "seconds": 0.237,
+      "stdout_bytes": 4997,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "resource-batch",
+      "exit_code": 0,
+      "seconds": 0.239,
+      "stdout_bytes": 1565,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "resource-missing",
+      "exit_code": 1,
+      "seconds": 0.238,
+      "stdout_bytes": 232,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "invalid-include",
+      "exit_code": 0,
+      "seconds": 0.23,
+      "stdout_bytes": 302,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "invalid-view",
+      "exit_code": 1,
+      "seconds": 0.239,
+      "stdout_bytes": 1118,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "query-presentation",
+      "exit_code": 0,
+      "seconds": 0.254,
+      "stdout_bytes": 7367,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "pms-default-text",
+      "exit_code": 0,
+      "seconds": 0.271,
+      "stdout_bytes": 1669,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "body-passages-text",
+      "exit_code": 0,
+      "seconds": 0.244,
+      "stdout_bytes": 281,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "negative-default-text",
+      "exit_code": 0,
+      "seconds": 0.264,
+      "stdout_bytes": 3065,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "negative-passages-text",
+      "exit_code": 0,
+      "seconds": 0.242,
+      "stdout_bytes": 743,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "infra-prod-text",
+      "exit_code": 0,
+      "seconds": 0.247,
+      "stdout_bytes": 2096,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "preferences-scoped-text",
+      "exit_code": 0,
+      "seconds": 0.237,
+      "stdout_bytes": 721,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "timeline-targeted-text",
+      "exit_code": 0,
+      "seconds": 0.243,
+      "stdout_bytes": 1516,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "resource-batch-text",
+      "exit_code": 0,
+      "seconds": 0.233,
+      "stdout_bytes": 994,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "query-presentation-text",
+      "exit_code": 0,
+      "seconds": 0.259,
+      "stdout_bytes": 1585,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "inspect-config",
+      "exit_code": 0,
+      "seconds": 0.243,
+      "stdout_bytes": 523,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "config-neighborhood",
+      "exit_code": 0,
+      "seconds": 0.238,
+      "stdout_bytes": 519,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "infra-raw",
+      "exit_code": 0,
+      "seconds": 0.244,
+      "stdout_bytes": 74914,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "rollback-default-text",
+      "exit_code": 0,
+      "seconds": 0.263,
+      "stdout_bytes": 4218,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "body-default-text",
+      "exit_code": 0,
+      "seconds": 0.277,
+      "stdout_bytes": 2605,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "unknown-include-text",
+      "exit_code": 0,
+      "seconds": 0.233,
+      "stdout_bytes": 105,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "pms-resources",
+      "exit_code": 0,
+      "seconds": 0.239,
+      "stdout_bytes": 3239,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "pms-combined",
+      "exit_code": 0,
+      "seconds": 0.256,
+      "stdout_bytes": 12909,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "rollback-deep",
+      "exit_code": 0,
+      "seconds": 0.26,
+      "stdout_bytes": 34006,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "preferences-onboarding",
+      "exit_code": 0,
+      "seconds": 0.239,
+      "stdout_bytes": 452,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "passage-full",
+      "exit_code": 0,
+      "seconds": 0.244,
+      "stdout_bytes": 494,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "record-one",
+      "exit_code": 0,
+      "seconds": 0.286,
+      "stdout_bytes": 153,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "retrieve-record",
+      "exit_code": 0,
+      "seconds": 0.24,
+      "stdout_bytes": 11069,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "new-empty-pot",
+      "exit_code": 0,
+      "seconds": 0.267,
+      "stdout_bytes": 581,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "cross-pot-resource",
+      "exit_code": 1,
+      "seconds": 0.238,
+      "stdout_bytes": 240,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "cross-pot-search",
+      "exit_code": 0,
+      "seconds": 0.26,
+      "stdout_bytes": 1565,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "import-idempotent",
+      "exit_code": 0,
+      "seconds": 0.283,
+      "stdout_bytes": 1605,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "resource-after-reimport",
+      "exit_code": 0,
+      "seconds": 0.233,
+      "stdout_bytes": 1071,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "pre-restart-status",
+      "exit_code": 0,
+      "seconds": 0.343,
+      "stdout_bytes": 1544,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "restart",
+      "exit_code": 0,
+      "seconds": 11.603,
+      "stdout_bytes": 216,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "post-restart-status",
+      "exit_code": 0,
+      "seconds": 0.517,
+      "stdout_bytes": 1544,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "post-restart-record",
+      "exit_code": 0,
+      "seconds": 2.427,
+      "stdout_bytes": 11075,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "post-restart-resource",
+      "exit_code": 0,
+      "seconds": 0.24,
+      "stdout_bytes": 562,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "index-status",
+      "exit_code": 0,
+      "seconds": 0.232,
+      "stdout_bytes": 578,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "final-skills",
+      "exit_code": 0,
+      "seconds": 0.276,
+      "stdout_bytes": 1278,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "status-codex",
+      "exit_code": 0,
+      "seconds": 0.456,
+      "stdout_bytes": 1240,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "config-canonical",
+      "exit_code": 0,
+      "seconds": 0.248,
+      "stdout_bytes": 109438,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "final-doctor",
+      "exit_code": 1,
+      "seconds": 0.2,
+      "stdout_bytes": 157,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "collision-pot",
+      "exit_code": 0,
+      "seconds": 0.268,
+      "stdout_bytes": 585,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "collision-propose",
+      "exit_code": 0,
+      "seconds": 0.245,
+      "stdout_bytes": 1333,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "collision-commit",
+      "exit_code": 1,
+      "seconds": 0.297,
+      "stdout_bytes": 2984,
+      "stderr_bytes": 0
+    },
+    {
+      "id": "collision-read",
+      "exit_code": 0,
+      "seconds": 0.232,
+      "stdout_bytes": 3605,
+      "stderr_bytes": 0
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+Two transfers touching the same pair of accounts in opposite order deadlocked under `SELECT ... FOR UPDATE` during the May load test (deadlock rate 0.4% at 200 rps). Retrying the whole transaction on deadlock doubled p95 posting latency to 1.6 s. A single-writer queue per account was prototyped and added 300 ms of queueing under the same load.

@@ -1,0 +1,8 @@
+pot=cli-usage-fixed (pot_75f168da217d)
+view=knowledge.document_passages backed=True items=1 quality=ok confidence=low
+match=hybrid query_threshold=auto filter=relative similarity_calibrated=True
+  • [ResourceChunk] potpie://res/field-reference/recovery-marker/0000  score=1.0
+    The manual recovery token is ORCHID-731. The token is used only in the 
+synthetic offline…
+    refs: fixture://field-reference
+    fetch: potpie resource get potpie://res/field-reference/recovery-marker/0000

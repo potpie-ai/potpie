@@ -1,0 +1,539 @@
+[
+  {
+    "id": "debug-natural",
+    "args": [
+      "resolve",
+      "Why are customers charged twice after Redis fails over?"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "debug-targeted",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "debugging",
+      "--view",
+      "prior_occurrences",
+      "--query",
+      "duplicate transfers Redis failover",
+      "--limit",
+      "5"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "rollback-default",
+    "args": [
+      "resolve",
+      "How do I roll back a bad ledger-api deploy?"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "rollback-docs",
+    "args": [
+      "resolve",
+      "How do I roll back a bad ledger-api deploy?",
+      "--include",
+      "docs"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "rollback-search",
+    "args": [
+      "search",
+      "disable Argo auto-sync after rollback"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "rollback-search-docs",
+    "args": [
+      "search",
+      "disable Argo auto-sync after rollback",
+      "--include",
+      "docs"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "adr-paraphrase",
+    "args": [
+      "resolve",
+      "Why did we choose advisory locks instead of a single writer queue?"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "adr-docs",
+    "args": [
+      "resolve",
+      "Why did we choose advisory locks instead of a single writer queue?",
+      "--include",
+      "docs"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "cost-docs",
+    "args": [
+      "search",
+      "What is the monthly cost of Plaid?",
+      "--include",
+      "docs"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "pms-default",
+    "args": [
+      "resolve",
+      "What does PMS stand for in this project?"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "pms-docs",
+    "args": [
+      "resolve",
+      "What does PMS stand for in this project?",
+      "--include",
+      "docs"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "pms-search",
+    "args": [
+      "search",
+      "PMS full form"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "body-default",
+    "args": [
+      "search",
+      "ORCHID-731"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "body-docs",
+    "args": [
+      "search",
+      "ORCHID-731",
+      "--include",
+      "docs"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "body-resources",
+    "args": [
+      "search",
+      "ORCHID-731",
+      "--include",
+      "resources"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "body-passages",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "knowledge",
+      "--view",
+      "document_passages",
+      "--query",
+      "ORCHID-731",
+      "--limit",
+      "5"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "body-paraphrase",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "knowledge",
+      "--view",
+      "document_passages",
+      "--query",
+      "How long must rollback stay on hold during the recovery drill?",
+      "--limit",
+      "5"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "negative-default",
+    "args": [
+      "resolve",
+      "How do we rotate the quantum banana reactor?"
+    ],
+    "expectation": "Distinguish absence of an answer from unrelated candidates."
+  },
+  {
+    "id": "negative-docs",
+    "args": [
+      "search",
+      "quantum banana reactor",
+      "--include",
+      "docs"
+    ],
+    "expectation": "Distinguish absence of an answer from unrelated candidates."
+  },
+  {
+    "id": "negative-passages",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "knowledge",
+      "--view",
+      "document_passages",
+      "--query",
+      "quantum banana reactor",
+      "--limit",
+      "5"
+    ],
+    "expectation": "Distinguish absence of an answer from unrelated candidates."
+  },
+  {
+    "id": "negative-passages-threshold",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "knowledge",
+      "--view",
+      "document_passages",
+      "--query",
+      "quantum banana reactor",
+      "--query-threshold",
+      "0.7",
+      "--limit",
+      "5"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "body-passages-threshold",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "knowledge",
+      "--view",
+      "document_passages",
+      "--query",
+      "ORCHID-731",
+      "--query-threshold",
+      "0.7",
+      "--limit",
+      "5"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "owners-natural",
+    "args": [
+      "resolve",
+      "Who owns the notifier service?"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "owners-targeted",
+    "args": [
+      "graph",
+      "neighborhood",
+      "--entity",
+      "service:notifier",
+      "--predicate",
+      "OWNED_BY"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "infra-prod",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "infra_topology",
+      "--view",
+      "service_neighborhood",
+      "--scope",
+      "service:ledger-api",
+      "--environment",
+      "prod",
+      "--limit",
+      "50"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "infra-prod-inclusive",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "infra_topology",
+      "--view",
+      "service_neighborhood",
+      "--scope",
+      "service:ledger-api,include_unqualified_environment:true",
+      "--environment",
+      "prod",
+      "--limit",
+      "50"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "infra-staging",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "infra_topology",
+      "--view",
+      "service_neighborhood",
+      "--scope",
+      "service:ledger-api",
+      "--environment",
+      "staging",
+      "--limit",
+      "50"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "infra-invalid-direction",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "infra_topology",
+      "--view",
+      "service_neighborhood",
+      "--scope",
+      "service:ledger-api",
+      "--direction",
+      "sideways"
+    ],
+    "expectation": "Reject invalid input with nonzero exit and corrective instructions."
+  },
+  {
+    "id": "preferences-natural",
+    "args": [
+      "resolve",
+      "Add a new posting path to ledger-api safely"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "preferences-scoped",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "decisions",
+      "--view",
+      "preferences_for_scope",
+      "--scope",
+      "service:ledger-api",
+      "--limit",
+      "20"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "preferences-query",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "decisions",
+      "--view",
+      "preferences_for_scope",
+      "--scope",
+      "service:ledger-api",
+      "--query",
+      "Add a new posting path to ledger-api safely",
+      "--limit",
+      "20"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "decisions-service",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "decisions",
+      "--view",
+      "active_decisions",
+      "--scope",
+      "service:ledger-api"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "decisions-repo",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "decisions",
+      "--view",
+      "active_decisions",
+      "--repo",
+      "github.com/ledgerly-inc/ledgerly"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "timeline-natural",
+    "args": [
+      "resolve",
+      "What changed in the last 30 days?"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "timeline-targeted",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "recent_changes",
+      "--view",
+      "timeline",
+      "--time-window",
+      "30d",
+      "--limit",
+      "50"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "entity-exact",
+    "args": [
+      "graph",
+      "search-entities",
+      "ledger-api",
+      "--limit",
+      "5"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "entity-paraphrase",
+    "args": [
+      "graph",
+      "search-entities",
+      "payments API",
+      "--limit",
+      "5"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "entity-bad-type",
+    "args": [
+      "graph",
+      "search-entities",
+      "ledger-api",
+      "--type",
+      "service"
+    ],
+    "expectation": "Reject invalid input with nonzero exit and corrective instructions."
+  },
+  {
+    "id": "resource-discovery",
+    "args": [
+      "resource",
+      "list"
+    ],
+    "expectation": "Reject invalid input with nonzero exit and corrective instructions."
+  },
+  {
+    "id": "resource-list",
+    "args": [
+      "resource",
+      "list",
+      "--doc",
+      "ledgerly-runbook"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "resource-batch",
+    "args": [
+      "resource",
+      "get",
+      "potpie://res/ledgerly-runbook/rollback-procedure/0000",
+      "potpie://res/field-reference/recovery-marker/0000",
+      "--with-neighbors"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  },
+  {
+    "id": "resource-missing",
+    "args": [
+      "resource",
+      "get",
+      "potpie://res/field-reference/missing/0000"
+    ],
+    "expectation": "Reject invalid input with nonzero exit and corrective instructions."
+  },
+  {
+    "id": "invalid-include",
+    "args": [
+      "resolve",
+      "rollback",
+      "--include",
+      "documents"
+    ],
+    "expectation": "Reject invalid input with nonzero exit and corrective instructions."
+  },
+  {
+    "id": "invalid-view",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "knowledge",
+      "--view",
+      "made_up"
+    ],
+    "expectation": "Reject invalid input with nonzero exit and corrective instructions."
+  },
+  {
+    "id": "query-presentation",
+    "args": [
+      "graph",
+      "read",
+      "--subgraph",
+      "knowledge",
+      "--view",
+      "document_context",
+      "--query",
+      "ledger-api rollback",
+      "--limit",
+      "5"
+    ],
+    "expectation": "Return source-backed context; see report for exact expected evidence."
+  }
+]

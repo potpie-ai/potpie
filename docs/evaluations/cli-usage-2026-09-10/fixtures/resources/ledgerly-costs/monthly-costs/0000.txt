@@ -1,0 +1,9 @@
+line_item,provider,service,environment,monthly_usd,notes
+EKS control plane + nodes,AWS,cluster:eks-us-east-1,prod,4200,3x m6i.xlarge + control plane
+RDS ledger-postgres,AWS,datastore:ledger-postgres,prod,1850,db.r6g.xlarge Multi-AZ 500GB
+ElastiCache ledger-redis,AWS,datastore:ledger-redis,prod,310,cache.r6g.large x2
+SendGrid,SendGrid,adapter:email:sendgrid,prod,95,Pro 100k emails
+Plaid,Plaid,adapter:bank_feed:plaid,prod,2400,per connected item ~$0.30 x 8000
+EKS staging,AWS,cluster:eks-staging,staging,640,2x m6i.large
+Loki + Grafana Cloud,Grafana,observability,prod,420,50GB logs
+Total,,,,9915,

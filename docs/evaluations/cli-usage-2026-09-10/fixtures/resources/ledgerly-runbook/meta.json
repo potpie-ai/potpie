@@ -1,0 +1,76 @@
+{
+  "source_ref": "fixture://ledgerly/runbook",
+  "source_kind": "markdown",
+  "sections": [
+    {
+      "slug": "paging-and-severity",
+      "title": "Paging and severity",
+      "summary": "On-call paging for Ledgerly: PagerDuty schedules ledger-primary (Payments Core) and notifier-secondary (Growth), 10-minute ack. Sev1 = transfer error rate over 2% for 5 minutes or any duplicate posting; Sev2 = reconciliation report older than 26 hours or statement render failures over 5%; Sev3 = notifier backlog over 10k. Escalate to the EM after 30 minutes. Covers 'who is on call', 'what is a sev1', 'how to escalate'.",
+      "ordinal": 1,
+      "content_hash": "sha256:0306e4b164051b3364538cc2334945af05a72bb7c8a76c6b73ce7cb31e23ffa3",
+      "chunks": [
+        {
+          "seq": 0,
+          "label": "Paging and severity: Primary on-call is the Payments Core rotation in PagerDuty (schedule `ledger-primary`); Growth holds `notifier-secondary`. Acknowledge within 10 minut",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "slug": "rollback-procedure",
+      "title": "Rolling back a bad deploy",
+      "summary": "Rollback procedure for ledger-api on EKS via Argo CD: kubectl rollout undo deployment/ledger-api in namespace ledger, disable Argo auto-sync with argocd app set --sync-policy none, re-enable once the fix is on main; suspend the reconciler-nightly CronJob during a rollback; database migrations are forward-only and never rolled back by hand. Covers 'how to roll back', 'argocd sync', 'bad deploy'.",
+      "ordinal": 2,
+      "content_hash": "sha256:6ebcb61d7fdb7d6f2b564ecc9f093c52f93403e537a5c19f0c4e43489a3b907c",
+      "chunks": [
+        {
+          "seq": 0,
+          "label": "Rolling back a bad deploy: ledger-api and reconciler ship through Argo CD from `main`. To roll back ledger-api:",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "slug": "duplicate-transfers-playbook",
+      "title": "Duplicate transfers playbook",
+      "summary": "Playbook for duplicate transfers / double charges (INC-12, 2026-08-30): symptoms are ledger_idempotency_conflicts_total flat while ledger_transfers_created_total spikes and a Redis failover; the X-Idempotency-Key check failed open. Mitigation: IDEMPOTENCY_PG_FALLBACK=1 (default since v2.14.0), find duplicates with the group-by query on transfers, reverse each with ledgerctl transfers reverse (compensating entry, never delete), tell Growth to regenerate statement emails. Covers 'double charge', 'duplicate posting', 'redis failover'.",
+      "ordinal": 3,
+      "content_hash": "sha256:dffe8a133d99e814f01e0048d8ad3a040a939ae28bc5df935e7d32a45f16e06f",
+      "chunks": [
+        {
+          "seq": 0,
+          "label": "Duplicate transfers playbook: Symptoms: customer reports a double charge, `ledger_idempotency_conflicts_total` stays flat while `ledger_transfers_created_total` spikes, Redis failo",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "slug": "plaid-sync-stuck",
+      "title": "Plaid sync stuck or drifting",
+      "summary": "Plaid sync stuck or balance drift: reconciliation shows thousands of unmatched rows, reconciler logs ITEM_LOGIN_REQUIRED; the customer must re-auth through Plaid Link update mode (ledgerctl plaid relink), then re-run reconciler --item --window 3; before PR #231 a re-auth reset the transactions/sync cursor and re-imported 30 days, now the cursor is persisted on plaid_items.next_cursor and imports upsert by transaction_id; ledgerctl recon dedupe removes duplicates already imported. Covers 'sync stuck', 'balance drift', 'cursor reset', 'ITEM_LOGIN_REQUIRED'.",
+      "ordinal": 4,
+      "content_hash": "sha256:0974e3cbc45ce2f45d2bde3d484de762625c095a8f612b685f62a52258101a0c",
+      "chunks": [
+        {
+          "seq": 0,
+          "label": "Plaid sync stuck or drifting: Symptoms: the nightly reconciliation report shows thousands of unmatched rows, account balances drift by whole transactions, reconciler logs `ITEM_LOG",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "slug": "dashboards-and-alerts",
+      "title": "Dashboards and alerts",
+      "summary": "Grafana folder Ledgerly / Production: ledger-posting-latency-p95 (alert 800 ms), transfer-error-rate (2%), recon-report-age (26 h), notifier-queue-depth (10k); Loki logs under namespace ledger, follow a transfer by request_id; outgoing webhooks carry X-Ledgerly-Signature, an HMAC-SHA256 over the raw body verified with the shared secret. Covers 'which dashboard', 'alert thresholds', 'webhook signature'.",
+      "ordinal": 5,
+      "content_hash": "sha256:1bd730b5933582cdf346df08f783da96f88e54cf8bc803bf48dfa5cf81232ef8",
+      "chunks": [
+        {
+          "seq": 0,
+          "label": "Dashboards and alerts: Grafana folder `Ledgerly / Production`: `ledger-posting-latency-p95` (alert at 800 ms), `transfer-error-rate` (alert at 2%), `recon-report-age` (alert",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

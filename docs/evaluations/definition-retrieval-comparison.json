@@ -1,0 +1,2613 @@
+{
+  "date": "2026-09-10",
+  "scope": "Synthetic local retrieval fixture; not the managed PMS graph.",
+  "baseline_method": "Explicit prior intents (resolve=feature, search=unknown) exercise unchanged ordinary ranking; this is a policy comparison, not a historical deployment replay.",
+  "fixture": "../../potpie/context-engine/tests/fixtures/retrieval/definitions.json",
+  "retrieval_mode": "in_memory lexical",
+  "results": [
+    {
+      "method": "resolve",
+      "query": "What is the full form of PMS?",
+      "include": [
+        "docs"
+      ],
+      "baseline": {
+        "pot_id": "p",
+        "intent": "feature",
+        "items": [
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.3674332814487309,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.5163977794943222
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "sparse",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.5163977794943222,
+              "coverage_quality": 0.75,
+              "reader_score": 0.5652819714595859,
+              "include_weight": 0.65
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "docs",
+            "status": "sparse",
+            "candidate_pool": 1,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "low",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "source_policy": "references_only",
+          "intent_source": "explicit",
+          "readers": {
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 1
+            }
+          }
+        }
+      },
+      "current": {
+        "pot_id": "p",
+        "intent": "definition",
+        "items": [
+          {
+            "include": "docs",
+            "candidate_key": "correct",
+            "score": 0.8299938215388454,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:correct",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "correct",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS stands for Prüfung Montage Service.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/definition/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/definition/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.5142680615395581,
+              "definition_match": 1.0,
+              "definition_authority": 1.0,
+              "reader_score": 0.8299938215388454,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "incorrect",
+            "score": 0.5661258970105435,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:incorrect",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "incorrect",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "PMS stands for Project Management System.",
+              "environment": null,
+              "source_refs": [
+                "agent:guess"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "inferred",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.45,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.47464542003012417,
+              "definition_match": 1.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.5661258970105435,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "negated",
+            "score": 0.17096400316398386,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:negated",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "negated",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS does not stand for Product Management Software.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/corrections/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/corrections/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "base_score": 0.48846858046852537,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.17096400316398386,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "question",
+            "score": 0.16706960639303278,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:question",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "question",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "Does PMS stand for Project Management System?",
+              "environment": null,
+              "source_refs": [
+                "agent:question"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "stated",
+              "properties": {
+                "semantic_similarity": 0.3779644730092272
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.6,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3779644730092272,
+              "coverage_quality": 0.75,
+              "base_score": 0.4773417325515223,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16706960639303278,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "other_acronym",
+            "score": 0.16480175382353457,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:other_acronym",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "other_acronym",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "ERP stands for Enterprise Resource Planning. PMS integrates with ERP.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/erp/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.31622776601683794
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/erp/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.31622776601683794,
+              "coverage_quality": 0.75,
+              "base_score": 0.4708621537815274,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16480175382353457,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.1602529703340493,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.28867513459481287
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.28867513459481287,
+              "coverage_quality": 0.75,
+              "base_score": 0.4578656295258552,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.1602529703340493,
+              "include_weight": 1.0
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "docs",
+            "status": "partial",
+            "candidate_pool": 6,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "medium",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "source_policy": "references_only",
+          "intent_source": "inferred",
+          "readers": {
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 6,
+              "definition_subject": "PMS",
+              "warnings": [
+                "Definition wording indicates relevance, not corroboration; verify the source refs and truth metadata, especially for competing expansions."
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "search",
+      "query": "PMS full form",
+      "include": [],
+      "baseline": {
+        "pot_id": "p",
+        "intent": "unknown",
+        "items": [
+          {
+            "include": "infra_topology",
+            "candidate_key": "topology",
+            "score": 0.6422811242808207,
+            "payload": {
+              "predicate": "DEPENDS_ON",
+              "subject_key": "service:pms",
+              "object_key": "service:redis",
+              "claim_key": "topology",
+              "subgraph": null,
+              "truth": null,
+              "description": null,
+              "fact": "PMS full form deployment uses Redis. PMS service depends on Redis.",
+              "environment": null,
+              "source_refs": [],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "deterministic"
+            },
+            "coverage_status": "sparse",
+            "breakdown": {
+              "strength": 1.0,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.9523809523809523,
+              "semantic_similarity": 0.5773502691896257,
+              "coverage_quality": 0.75,
+              "reader_score": 0.6422811242808207,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.36240566037735855,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.5
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.5,
+              "coverage_quality": 0.75,
+              "reader_score": 0.5575471698113208,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "correct",
+            "score": 0.3175045773045415,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:correct",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "correct",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS stands for Prüfung Montage Service.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/definition/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/definition/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "reader_score": 0.48846858046852537,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "negated",
+            "score": 0.30606039995799283,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:negated",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "negated",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS does not stand for Product Management Software.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/corrections/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.31622776601683794
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/corrections/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.31622776601683794,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4708621537815274,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "other_acronym",
+            "score": 0.2976126591918059,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:other_acronym",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "other_acronym",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "ERP stands for Enterprise Resource Planning. PMS integrates with ERP.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/erp/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.28867513459481287
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/erp/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.28867513459481287,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4578656295258552,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "question",
+            "score": 0.2965880503144654,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:question",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "question",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "Does PMS stand for Project Management System?",
+              "environment": null,
+              "source_refs": [
+                "agent:question"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "stated",
+              "properties": {
+                "semantic_similarity": 0.3333333333333333
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.6,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3333333333333333,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4562893081761006,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "incorrect",
+            "score": 0.29174986032340944,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:incorrect",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "incorrect",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "PMS stands for Project Management System.",
+              "environment": null,
+              "source_refs": [
+                "agent:guess"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "inferred",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.45,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4488459389590914,
+              "include_weight": 0.65
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "infra_topology",
+            "status": "sparse",
+            "candidate_pool": 1,
+            "graph_view": "infra_topology.service_neighborhood",
+            "best_relevance": null
+          },
+          {
+            "include": "timeline",
+            "status": "empty",
+            "candidate_pool": 0,
+            "graph_view": "recent_changes.timeline",
+            "best_relevance": null
+          },
+          {
+            "include": "decisions",
+            "status": "empty",
+            "candidate_pool": 0,
+            "graph_view": "decisions.active_decisions",
+            "best_relevance": null
+          },
+          {
+            "include": "docs",
+            "status": "partial",
+            "candidate_pool": 6,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          },
+          {
+            "include": "resources",
+            "status": "empty",
+            "candidate_pool": 0,
+            "graph_view": "knowledge.document_passages",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "low",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "search": true,
+          "intent_source": "explicit",
+          "readers": {
+            "infra_topology": {
+              "anchor_keys": [],
+              "environment": null,
+              "include_unqualified_environment": false,
+              "candidate_pool": 1
+            },
+            "timeline": {
+              "anchor_keys": [],
+              "scope_filters": {},
+              "window_after": null,
+              "window_before": null,
+              "candidate_pool": 0,
+              "activity_pool": 0
+            },
+            "decisions": {
+              "anchor_keys": [],
+              "candidate_pool": 0
+            },
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 6
+            },
+            "resources": {
+              "match_mode": "disabled",
+              "profile": "none",
+              "candidate_pool": 0,
+              "lexical_candidates": 0,
+              "semantic_candidates": 0,
+              "detail": "no resource index is wired on this host, so document payloads are not searchable",
+              "best_relevance": null,
+              "query_threshold": null,
+              "threshold_mode": "relative",
+              "similarity_calibrated": false,
+              "warnings": []
+            }
+          }
+        }
+      },
+      "current": {
+        "pot_id": "p",
+        "intent": "definition",
+        "items": [
+          {
+            "include": "docs",
+            "candidate_key": "correct",
+            "score": 0.8299938215388454,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:correct",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "correct",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS stands for Prüfung Montage Service.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/definition/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/definition/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.5142680615395581,
+              "definition_match": 1.0,
+              "definition_authority": 1.0,
+              "reader_score": 0.8299938215388454,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "incorrect",
+            "score": 0.5661258970105435,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:incorrect",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "incorrect",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "PMS stands for Project Management System.",
+              "environment": null,
+              "source_refs": [
+                "agent:guess"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "inferred",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.45,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.47464542003012417,
+              "definition_match": 1.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.5661258970105435,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "infra_topology",
+            "candidate_key": "topology",
+            "score": 0.32114056214041037,
+            "payload": {
+              "predicate": "DEPENDS_ON",
+              "subject_key": "service:pms",
+              "object_key": "service:redis",
+              "claim_key": "topology",
+              "subgraph": null,
+              "truth": null,
+              "description": null,
+              "fact": "PMS full form deployment uses Redis. PMS service depends on Redis.",
+              "environment": null,
+              "source_refs": [],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "deterministic"
+            },
+            "coverage_status": "sparse",
+            "breakdown": {
+              "strength": 1.0,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.9523809523809523,
+              "semantic_similarity": 0.5773502691896257,
+              "coverage_quality": 0.75,
+              "reader_score": 0.6422811242808207,
+              "include_weight": 0.5
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "negated",
+            "score": 0.17096400316398386,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:negated",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "negated",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS does not stand for Product Management Software.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/corrections/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/corrections/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "base_score": 0.48846858046852537,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.17096400316398386,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "question",
+            "score": 0.16706960639303278,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:question",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "question",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "Does PMS stand for Project Management System?",
+              "environment": null,
+              "source_refs": [
+                "agent:question"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "stated",
+              "properties": {
+                "semantic_similarity": 0.3779644730092272
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.6,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3779644730092272,
+              "coverage_quality": 0.75,
+              "base_score": 0.4773417325515223,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16706960639303278,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "other_acronym",
+            "score": 0.16480175382353457,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:other_acronym",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "other_acronym",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "ERP stands for Enterprise Resource Planning. PMS integrates with ERP.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/erp/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.31622776601683794
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/erp/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.31622776601683794,
+              "coverage_quality": 0.75,
+              "base_score": 0.4708621537815274,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16480175382353457,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.1602529703340493,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.28867513459481287
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.28867513459481287,
+              "coverage_quality": 0.75,
+              "base_score": 0.4578656295258552,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.1602529703340493,
+              "include_weight": 1.0
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "docs",
+            "status": "partial",
+            "candidate_pool": 6,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          },
+          {
+            "include": "resources",
+            "status": "empty",
+            "candidate_pool": 0,
+            "graph_view": "knowledge.document_passages",
+            "best_relevance": null
+          },
+          {
+            "include": "features",
+            "status": "empty",
+            "candidate_pool": 0,
+            "graph_view": "features.feature_context",
+            "best_relevance": null
+          },
+          {
+            "include": "infra_topology",
+            "status": "sparse",
+            "candidate_pool": 1,
+            "graph_view": "infra_topology.service_neighborhood",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "low",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "search": true,
+          "intent_source": "inferred",
+          "readers": {
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 6,
+              "definition_subject": "PMS",
+              "warnings": [
+                "Definition wording indicates relevance, not corroboration; verify the source refs and truth metadata, especially for competing expansions."
+              ]
+            },
+            "resources": {
+              "match_mode": "disabled",
+              "profile": "none",
+              "candidate_pool": 0,
+              "lexical_candidates": 0,
+              "semantic_candidates": 0,
+              "detail": "no resource index is wired on this host, so document payloads are not searchable",
+              "best_relevance": null,
+              "query_threshold": null,
+              "threshold_mode": "relative",
+              "similarity_calibrated": false,
+              "warnings": []
+            },
+            "features": {
+              "anchor_keys": [],
+              "candidate_pool": 0
+            },
+            "infra_topology": {
+              "anchor_keys": [],
+              "environment": null,
+              "include_unqualified_environment": false,
+              "candidate_pool": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "search",
+      "query": "PMS full form",
+      "include": [
+        "docs"
+      ],
+      "baseline": {
+        "pot_id": "p",
+        "intent": "unknown",
+        "items": [
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.36240566037735855,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.5
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.5,
+              "coverage_quality": 0.75,
+              "reader_score": 0.5575471698113208,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "correct",
+            "score": 0.3175045773045415,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:correct",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "correct",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS stands for Prüfung Montage Service.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/definition/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/definition/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "reader_score": 0.48846858046852537,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "negated",
+            "score": 0.30606039995799283,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:negated",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "negated",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS does not stand for Product Management Software.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/corrections/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.31622776601683794
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/corrections/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.31622776601683794,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4708621537815274,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "other_acronym",
+            "score": 0.2976126591918059,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:other_acronym",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "other_acronym",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "ERP stands for Enterprise Resource Planning. PMS integrates with ERP.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/erp/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.28867513459481287
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/erp/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.28867513459481287,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4578656295258552,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "question",
+            "score": 0.2965880503144654,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:question",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "question",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "Does PMS stand for Project Management System?",
+              "environment": null,
+              "source_refs": [
+                "agent:question"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "stated",
+              "properties": {
+                "semantic_similarity": 0.3333333333333333
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.6,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3333333333333333,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4562893081761006,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "incorrect",
+            "score": 0.29174986032340944,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:incorrect",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "incorrect",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "PMS stands for Project Management System.",
+              "environment": null,
+              "source_refs": [
+                "agent:guess"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "inferred",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.45,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4488459389590914,
+              "include_weight": 0.65
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "docs",
+            "status": "partial",
+            "candidate_pool": 6,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "medium",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "search": true,
+          "intent_source": "explicit",
+          "readers": {
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 6
+            }
+          }
+        }
+      },
+      "current": {
+        "pot_id": "p",
+        "intent": "definition",
+        "items": [
+          {
+            "include": "docs",
+            "candidate_key": "correct",
+            "score": 0.8299938215388454,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:correct",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "correct",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS stands for Prüfung Montage Service.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/definition/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/definition/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.5142680615395581,
+              "definition_match": 1.0,
+              "definition_authority": 1.0,
+              "reader_score": 0.8299938215388454,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "incorrect",
+            "score": 0.5661258970105435,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:incorrect",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "incorrect",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "PMS stands for Project Management System.",
+              "environment": null,
+              "source_refs": [
+                "agent:guess"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "inferred",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.45,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.47464542003012417,
+              "definition_match": 1.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.5661258970105435,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "negated",
+            "score": 0.17096400316398386,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:negated",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "negated",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS does not stand for Product Management Software.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/corrections/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/corrections/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "base_score": 0.48846858046852537,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.17096400316398386,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "question",
+            "score": 0.16706960639303278,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:question",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "question",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "Does PMS stand for Project Management System?",
+              "environment": null,
+              "source_refs": [
+                "agent:question"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "stated",
+              "properties": {
+                "semantic_similarity": 0.3779644730092272
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.6,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3779644730092272,
+              "coverage_quality": 0.75,
+              "base_score": 0.4773417325515223,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16706960639303278,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "other_acronym",
+            "score": 0.16480175382353457,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:other_acronym",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "other_acronym",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "ERP stands for Enterprise Resource Planning. PMS integrates with ERP.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/erp/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.31622776601683794
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/erp/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.31622776601683794,
+              "coverage_quality": 0.75,
+              "base_score": 0.4708621537815274,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16480175382353457,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.1602529703340493,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.28867513459481287
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.28867513459481287,
+              "coverage_quality": 0.75,
+              "base_score": 0.4578656295258552,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.1602529703340493,
+              "include_weight": 1.0
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "docs",
+            "status": "partial",
+            "candidate_pool": 6,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "medium",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "search": true,
+          "intent_source": "inferred",
+          "readers": {
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 6,
+              "definition_subject": "PMS",
+              "warnings": [
+                "Definition wording indicates relevance, not corroboration; verify the source refs and truth metadata, especially for competing expansions."
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "resolve",
+      "query": "PMS full form",
+      "include": [
+        "docs"
+      ],
+      "baseline": {
+        "pot_id": "p",
+        "intent": "feature",
+        "items": [
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.36240566037735855,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.5
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.5,
+              "coverage_quality": 0.75,
+              "reader_score": 0.5575471698113208,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "correct",
+            "score": 0.3175045773045415,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:correct",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "correct",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS stands for Prüfung Montage Service.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/definition/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/definition/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "reader_score": 0.48846858046852537,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "negated",
+            "score": 0.30606039995799283,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:negated",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "negated",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS does not stand for Product Management Software.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/corrections/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.31622776601683794
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/corrections/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.31622776601683794,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4708621537815274,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "other_acronym",
+            "score": 0.2976126591918059,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:other_acronym",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "other_acronym",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "ERP stands for Enterprise Resource Planning. PMS integrates with ERP.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/erp/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.28867513459481287
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/erp/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.28867513459481287,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4578656295258552,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "question",
+            "score": 0.2965880503144654,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:question",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "question",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "Does PMS stand for Project Management System?",
+              "environment": null,
+              "source_refs": [
+                "agent:question"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "stated",
+              "properties": {
+                "semantic_similarity": 0.3333333333333333
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.6,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3333333333333333,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4562893081761006,
+              "include_weight": 0.65
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "incorrect",
+            "score": 0.29174986032340944,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:incorrect",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "incorrect",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "PMS stands for Project Management System.",
+              "environment": null,
+              "source_refs": [
+                "agent:guess"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "inferred",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.45,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "reader_score": 0.4488459389590914,
+              "include_weight": 0.65
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "docs",
+            "status": "partial",
+            "candidate_pool": 6,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "medium",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "source_policy": "references_only",
+          "intent_source": "explicit",
+          "readers": {
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 6
+            }
+          }
+        }
+      },
+      "current": {
+        "pot_id": "p",
+        "intent": "definition",
+        "items": [
+          {
+            "include": "docs",
+            "candidate_key": "correct",
+            "score": 0.8299938215388454,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:correct",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "correct",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS stands for Prüfung Montage Service.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/definition/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/definition/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.5142680615395581,
+              "definition_match": 1.0,
+              "definition_authority": 1.0,
+              "reader_score": 0.8299938215388454,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "incorrect",
+            "score": 0.5661258970105435,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:incorrect",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "incorrect",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "PMS stands for Project Management System.",
+              "environment": null,
+              "source_refs": [
+                "agent:guess"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "inferred",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.45,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.47464542003012417,
+              "definition_match": 1.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.5661258970105435,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "negated",
+            "score": 0.17096400316398386,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:negated",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "negated",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS does not stand for Product Management Software.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/corrections/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/corrections/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "base_score": 0.48846858046852537,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.17096400316398386,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "question",
+            "score": 0.16706960639303278,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:question",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "question",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "Does PMS stand for Project Management System?",
+              "environment": null,
+              "source_refs": [
+                "agent:question"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "stated",
+              "properties": {
+                "semantic_similarity": 0.3779644730092272
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.6,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3779644730092272,
+              "coverage_quality": 0.75,
+              "base_score": 0.4773417325515223,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16706960639303278,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "other_acronym",
+            "score": 0.16480175382353457,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:other_acronym",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "other_acronym",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "ERP stands for Enterprise Resource Planning. PMS integrates with ERP.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/erp/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.31622776601683794
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/erp/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.31622776601683794,
+              "coverage_quality": 0.75,
+              "base_score": 0.4708621537815274,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16480175382353457,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.1602529703340493,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.28867513459481287
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.28867513459481287,
+              "coverage_quality": 0.75,
+              "base_score": 0.4578656295258552,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.1602529703340493,
+              "include_weight": 1.0
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "docs",
+            "status": "partial",
+            "candidate_pool": 6,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "medium",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "source_policy": "references_only",
+          "intent_source": "inferred",
+          "readers": {
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 6,
+              "definition_subject": "PMS",
+              "warnings": [
+                "Definition wording indicates relevance, not corroboration; verify the source refs and truth metadata, especially for competing expansions."
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "method": "search",
+      "query": "What is the full form of PMS?",
+      "include": [
+        "docs"
+      ],
+      "baseline": {
+        "pot_id": "p",
+        "intent": "unknown",
+        "items": [
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.3674332814487309,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.5163977794943222
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "sparse",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.5163977794943222,
+              "coverage_quality": 0.75,
+              "reader_score": 0.5652819714595859,
+              "include_weight": 0.65
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "docs",
+            "status": "sparse",
+            "candidate_pool": 1,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "low",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "search": true,
+          "intent_source": "explicit",
+          "readers": {
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 1
+            }
+          }
+        }
+      },
+      "current": {
+        "pot_id": "p",
+        "intent": "definition",
+        "items": [
+          {
+            "include": "docs",
+            "candidate_key": "correct",
+            "score": 0.8299938215388454,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:correct",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "correct",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS stands for Prüfung Montage Service.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/definition/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/definition/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.5142680615395581,
+              "definition_match": 1.0,
+              "definition_authority": 1.0,
+              "reader_score": 0.8299938215388454,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "incorrect",
+            "score": 0.5661258970105435,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:incorrect",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "incorrect",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "PMS stands for Project Management System.",
+              "environment": null,
+              "source_refs": [
+                "agent:guess"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "inferred",
+              "properties": {
+                "semantic_similarity": 0.408248290463863
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.45,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.408248290463863,
+              "coverage_quality": 0.75,
+              "base_score": 0.47464542003012417,
+              "definition_match": 1.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.5661258970105435,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "negated",
+            "score": 0.17096400316398386,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:negated",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "negated",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS does not stand for Product Management Software.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/corrections/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.3535533905932738
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/corrections/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3535533905932738,
+              "coverage_quality": 0.75,
+              "base_score": 0.48846858046852537,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.17096400316398386,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "question",
+            "score": 0.16706960639303278,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:question",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "question",
+              "subgraph": "knowledge",
+              "truth": "agent_claim",
+              "description": null,
+              "fact": "Does PMS stand for Project Management System?",
+              "environment": null,
+              "source_refs": [
+                "agent:question"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "stated",
+              "properties": {
+                "semantic_similarity": 0.3779644730092272
+              }
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.6,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.3779644730092272,
+              "coverage_quality": 0.75,
+              "base_score": 0.4773417325515223,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16706960639303278,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "other_acronym",
+            "score": 0.16480175382353457,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:other_acronym",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "other_acronym",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "ERP stands for Enterprise Resource Planning. PMS integrates with ERP.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/architecture/erp/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.31622776601683794
+              },
+              "chunk_ids": [
+                "potpie://res/architecture/erp/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.31622776601683794,
+              "coverage_quality": 0.75,
+              "base_score": 0.4708621537815274,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.16480175382353457,
+              "include_weight": 1.0
+            }
+          },
+          {
+            "include": "docs",
+            "candidate_key": "distractor",
+            "score": 0.1602529703340493,
+            "payload": {
+              "predicate": "DOCUMENTS",
+              "subject_key": "docsection:architecture:distractor",
+              "object_key": "feature:pms-service-software",
+              "claim_key": "distractor",
+              "subgraph": "knowledge",
+              "truth": "authoritative_fact",
+              "description": null,
+              "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.",
+              "environment": null,
+              "source_refs": [
+                "potpie://res/operations/configuration/0"
+              ],
+              "source_system": null,
+              "valid_at": null,
+              "valid_until": null,
+              "observed_at": null,
+              "evidence_strength": "attested",
+              "properties": {
+                "semantic_similarity": 0.28867513459481287
+              },
+              "chunk_ids": [
+                "potpie://res/operations/configuration/0"
+              ]
+            },
+            "coverage_status": "partial",
+            "breakdown": {
+              "strength": 0.8,
+              "recency": 0.5,
+              "scope_overlap": 0.5,
+              "corroboration": 0.5,
+              "semantic_similarity": 0.28867513459481287,
+              "coverage_quality": 0.75,
+              "base_score": 0.4578656295258552,
+              "definition_match": 0.0,
+              "definition_authority": 0.0,
+              "reader_score": 0.1602529703340493,
+              "include_weight": 1.0
+            }
+          }
+        ],
+        "coverage": [
+          {
+            "include": "docs",
+            "status": "partial",
+            "candidate_pool": 6,
+            "graph_view": "knowledge.document_context",
+            "best_relevance": null
+          }
+        ],
+        "unsupported_includes": [],
+        "overall_confidence": "medium",
+        "as_of": null,
+        "metadata": {
+          "mode": "fast",
+          "search": true,
+          "intent_source": "inferred",
+          "readers": {
+            "docs": {
+              "anchor_keys": [],
+              "candidate_pool": 6,
+              "definition_subject": "PMS",
+              "warnings": [
+                "Definition wording indicates relevance, not corroboration; verify the source refs and truth metadata, especially for competing expansions."
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

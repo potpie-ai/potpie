@@ -1,0 +1,52 @@
+{
+  "operations": [
+    {
+      "op": "link_entities",
+      "subject": {
+        "key": "service:probe-api",
+        "type": "Service",
+        "name": "probe-api"
+      },
+      "predicate": "CONFIGURES",
+      "object": {
+        "key": "config:probe-api:bank_env",
+        "type": "ConfigVariable",
+        "name": "BANK_ENV"
+      },
+      "environment": "prod",
+      "truth": "source_observation",
+      "confidence": 0.9,
+      "description": "BANK_ENV=production in prod",
+      "evidence": [
+        {
+          "source_ref": "fixture://config/prod",
+          "authority": "repository_metadata"
+        }
+      ]
+    },
+    {
+      "op": "link_entities",
+      "subject": {
+        "key": "service:probe-api",
+        "type": "Service",
+        "name": "probe-api"
+      },
+      "predicate": "CONFIGURES",
+      "object": {
+        "key": "config:probe-api:bank_env",
+        "type": "ConfigVariable",
+        "name": "BANK_ENV"
+      },
+      "environment": "staging",
+      "truth": "source_observation",
+      "confidence": 0.9,
+      "description": "BANK_ENV=sandbox in staging",
+      "evidence": [
+        {
+          "source_ref": "fixture://config/staging",
+          "authority": "repository_metadata"
+        }
+      ]
+    }
+  ]
+}

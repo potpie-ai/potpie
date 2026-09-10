@@ -1,0 +1,1 @@
+PMS stands for Prüfung/Montage/Service in this project. It is the field-operations workflow for inspecting, installing, and servicing equipment. PMS does not mean Property Management System here.

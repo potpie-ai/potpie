@@ -1,0 +1,321 @@
+{
+  "idempotency_key": "timeline:ledgerly:2026-05..09:v1",
+  "created_by": {
+    "surface": "cli",
+    "harness": "claude-deep-query"
+  },
+  "operations": [
+    {
+      "op": "append_event",
+      "verb": "deployed",
+      "occurred_at": "2026-09-02T14:05:00Z",
+      "description": "Deployed ledger-api v2.14.0 to prod via Argo CD: Postgres idempotency fallback (PR #212) and statement pagination (PR #198). Regression keywords: transfers 503, idempotency, statement render.",
+      "actor": {
+        "key": "person:priya",
+        "type": "Person"
+      },
+      "targets": [
+        {
+          "key": "service:ledger-api",
+          "type": "Service"
+        },
+        {
+          "key": "deployment_target:prod:eks-ledger",
+          "type": "DeploymentTarget"
+        }
+      ],
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#releases/v2.14.0",
+          "authority": "external_system"
+        }
+      ],
+      "mentions": [
+        {
+          "key": "fix:7f3a1c",
+          "type": "Fix"
+        },
+        {
+          "key": "feature:idempotent-transfers",
+          "type": "Feature"
+        }
+      ]
+    },
+    {
+      "op": "append_event",
+      "verb": "merged_pr",
+      "occurred_at": "2026-09-01T09:40:00Z",
+      "description": "PR #231 'Persist Plaid sync cursor per item' merged: plaid_feed.py stores next_cursor on plaid_items and dedupes by transaction_id. Fixes the 30-day re-import after ITEM_LOGIN_REQUIRED. Regression keywords: cursor, re-auth, duplicate bank transactions, balance drift.",
+      "actor": {
+        "key": "person:priya",
+        "type": "Person"
+      },
+      "targets": [
+        {
+          "key": "service:reconciler",
+          "type": "Service"
+        },
+        {
+          "key": "code:ledgerly:src/ledgerly/sync/plaid_feed.py",
+          "type": "CodeAsset"
+        }
+      ],
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#pull/231",
+          "authority": "external_system"
+        }
+      ],
+      "mentions": [
+        {
+          "key": "feature:bank-sync",
+          "type": "Feature"
+        },
+        {
+          "key": "bug_pattern:plaid-cursor-reset",
+          "type": "BugPattern"
+        },
+        {
+          "key": "fix:c41e77",
+          "type": "Fix"
+        }
+      ]
+    },
+    {
+      "op": "append_event",
+      "verb": "incident",
+      "occurred_at": "2026-08-30T03:12:00Z",
+      "description": "INC-12: duplicate transfers for 41 minutes during an ElastiCache failover; POST /v1/transfers retries after 502 posted twice because the idempotency check failed open. 37 duplicate postings reversed manually. Regression keywords: duplicate transfer, double posting, redis failover.",
+      "actor": {
+        "key": "person:priya",
+        "type": "Person"
+      },
+      "targets": [
+        {
+          "key": "service:ledger-api",
+          "type": "Service"
+        },
+        {
+          "key": "code:ledgerly:src/ledgerly/api/transfers.py",
+          "type": "CodeAsset"
+        },
+        {
+          "key": "datastore:ledger-redis",
+          "type": "DataStore"
+        }
+      ],
+      "evidence": [
+        {
+          "source_ref": "pagerduty:INC-12",
+          "authority": "external_system"
+        }
+      ],
+      "mentions": [
+        {
+          "key": "bug_pattern:duplicate-posting-on-retry",
+          "type": "BugPattern"
+        }
+      ]
+    },
+    {
+      "op": "append_event",
+      "verb": "merged_pr",
+      "occurred_at": "2026-08-28T16:20:00Z",
+      "description": "PR #212 'Check idempotency key in Postgres when Redis unavailable' merged: fail closed with 503 when both stores are down. Regression keywords: 503 on transfers, idempotency fallback.",
+      "actor": {
+        "key": "person:priya",
+        "type": "Person"
+      },
+      "targets": [
+        {
+          "key": "service:ledger-api",
+          "type": "Service"
+        },
+        {
+          "key": "code:ledgerly:src/ledgerly/api/transfers.py",
+          "type": "CodeAsset"
+        }
+      ],
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#pull/212",
+          "authority": "external_system"
+        }
+      ],
+      "mentions": [
+        {
+          "key": "fix:7f3a1c",
+          "type": "Fix"
+        },
+        {
+          "key": "feature:idempotent-transfers",
+          "type": "Feature"
+        }
+      ]
+    },
+    {
+      "op": "append_event",
+      "verb": "rollback",
+      "occurred_at": "2026-08-20T11:00:00Z",
+      "description": "Rolled back ledger-api v2.13.1 to v2.13.0: statement PDF rendering OOM-killed pods for accounts over 5k transactions (WeasyPrint). Regression keywords: statement timeout, OOMKilled, PDF render.",
+      "actor": {
+        "key": "person:priya",
+        "type": "Person"
+      },
+      "targets": [
+        {
+          "key": "service:ledger-api",
+          "type": "Service"
+        },
+        {
+          "key": "deployment_target:prod:eks-ledger",
+          "type": "DeploymentTarget"
+        }
+      ],
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#releases/v2.13.1",
+          "authority": "external_system"
+        }
+      ],
+      "mentions": [
+        {
+          "key": "feature:monthly-statements",
+          "type": "Feature"
+        }
+      ]
+    },
+    {
+      "op": "append_event",
+      "verb": "merged_pr",
+      "occurred_at": "2026-08-05T13:30:00Z",
+      "description": "PR #198 'Paginate statement rendering' merged: render.py streams 500 rows per page; memory flat at 180 MB for 20k-row statements. Regression keywords: statement render, pagination, OOM.",
+      "actor": {
+        "key": "person:marco",
+        "type": "Person"
+      },
+      "targets": [
+        {
+          "key": "service:ledger-api",
+          "type": "Service"
+        },
+        {
+          "key": "code:ledgerly:src/ledgerly/statements/render.py",
+          "type": "CodeAsset"
+        }
+      ],
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#pull/198",
+          "authority": "external_system"
+        }
+      ],
+      "mentions": [
+        {
+          "key": "feature:monthly-statements",
+          "type": "Feature"
+        }
+      ]
+    },
+    {
+      "op": "append_event",
+      "verb": "deployed",
+      "occurred_at": "2026-07-10T10:00:00Z",
+      "description": "Deployed notifier v1.4.0 to prod: webhook signing with X-Ledgerly-Signature (HMAC-SHA256) and SendGrid dynamic templates. Regression keywords: webhook signature, email template.",
+      "actor": {
+        "key": "person:marco",
+        "type": "Person"
+      },
+      "targets": [
+        {
+          "key": "service:notifier",
+          "type": "Service"
+        },
+        {
+          "key": "code:ledgerly:src/ledgerly/notify/webhooks.py",
+          "type": "CodeAsset"
+        }
+      ],
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#releases/notifier-v1.4.0",
+          "authority": "external_system"
+        }
+      ],
+      "mentions": [
+        {
+          "key": "feature:monthly-statements",
+          "type": "Feature"
+        }
+      ]
+    },
+    {
+      "op": "append_event",
+      "verb": "linear_done",
+      "occurred_at": "2026-06-02T15:00:00Z",
+      "description": "LED-88 'Sandbox bank adapter for staging' done: fake-bank adapter generates deterministic transactions when PLAID_ENV=sandbox.",
+      "actor": {
+        "key": "person:priya",
+        "type": "Person"
+      },
+      "targets": [
+        {
+          "key": "service:ledger-api",
+          "type": "Service"
+        }
+      ],
+      "evidence": [
+        {
+          "source_ref": "linear:LED-88",
+          "authority": "external_system"
+        }
+      ],
+      "mentions": [
+        {
+          "key": "feature:bank-sync",
+          "type": "Feature"
+        },
+        {
+          "key": "adapter:bank_feed:fake-bank",
+          "type": "Adapter"
+        }
+      ]
+    },
+    {
+      "op": "append_event",
+      "verb": "decided",
+      "occurred_at": "2026-05-15T17:00:00Z",
+      "description": "ADR-0007 accepted: serialize postings per account with pg_advisory_xact_lock instead of SELECT FOR UPDATE after the May deadlock incident.",
+      "actor": {
+        "key": "person:priya",
+        "type": "Person"
+      },
+      "targets": [
+        {
+          "key": "service:ledger-api",
+          "type": "Service"
+        },
+        {
+          "key": "code:ledgerly:src/ledgerly/ledger/posting.py",
+          "type": "CodeAsset"
+        }
+      ],
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#docs/adr/0007-advisory-locks.md",
+          "authority": "external_system"
+        }
+      ],
+      "mentions": [
+        {
+          "key": "decision:advisory-locks-for-posting",
+          "type": "Decision"
+        },
+        {
+          "key": "feature:double-entry-ledger",
+          "type": "Feature"
+        }
+      ]
+    }
+  ]
+}

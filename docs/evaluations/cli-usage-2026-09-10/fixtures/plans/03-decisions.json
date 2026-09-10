@@ -1,0 +1,107 @@
+{
+  "idempotency_key": "decisions:ledgerly:v1",
+  "created_by": {
+    "surface": "cli",
+    "harness": "claude-deep-query"
+  },
+  "operations": [
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "decision:advisory-locks-for-posting",
+        "type": "Decision",
+        "name": "Advisory locks for posting serialization",
+        "summary": "Serialize concurrent postings per account with pg_advisory_xact_lock(account_id) instead of SELECT FOR UPDATE",
+        "description": "Decision: concurrent postings to the same account are serialized with Postgres transaction-scoped advisory locks keyed by account_id. Rejected: SELECT FOR UPDATE (deadlocks when two transfers touch the same two accounts in opposite order), a single-writer queue (adds latency). Synonyms: locking strategy, posting serialization, deadlock fix, pg_advisory_xact_lock.",
+        "properties": {
+          "status": "accepted",
+          "lifecycle_state": "accepted"
+        }
+      },
+      "predicate": "DECIDED",
+      "object": {
+        "key": "repo:github.com/ledgerly-inc/ledgerly",
+        "type": "Repository"
+      },
+      "truth": "user_decision",
+      "confidence": 1.0,
+      "description": "Decided by Priya after the May deadlock incident; alternatives: SELECT FOR UPDATE (deadlocked under contention), single-writer queue (too slow).",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#docs/adr/0007-advisory-locks.md",
+          "authority": "user_statement"
+        }
+      ]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "decision:advisory-locks-for-posting",
+        "type": "Decision"
+      },
+      "predicate": "AFFECTS",
+      "object": {
+        "key": "service:ledger-api",
+        "type": "Service"
+      },
+      "truth": "user_decision",
+      "confidence": 1.0,
+      "description": "posting engine in ledger-api applies the lock",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#docs/adr/0007-advisory-locks.md",
+          "authority": "user_statement"
+        }
+      ]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "decision:advisory-locks-for-posting",
+        "type": "Decision"
+      },
+      "predicate": "AFFECTS",
+      "object": {
+        "key": "code:ledgerly:src/ledgerly/ledger/posting.py",
+        "type": "CodeAsset"
+      },
+      "truth": "user_decision",
+      "confidence": 1.0,
+      "description": "posting.py acquires pg_advisory_xact_lock",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#docs/adr/0007-advisory-locks.md",
+          "authority": "user_statement"
+        }
+      ]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "decision:ses-migration-q4",
+        "type": "Decision",
+        "name": "Migrate notifier email from SendGrid to SES in Q4",
+        "summary": "Proposal: replace the SendGrid email adapter with Amazon SES in Q4 2026",
+        "description": "Proposed decision to move statement emails from SendGrid to Amazon SES for cost and deliverability; keeps the email adapter interface. Synonyms: email provider migration, SES, sendgrid replacement.",
+        "properties": {
+          "status": "proposed",
+          "lifecycle_state": "proposed"
+        }
+      },
+      "predicate": "DECIDED",
+      "object": {
+        "key": "service:notifier",
+        "type": "Service"
+      },
+      "truth": "user_decision",
+      "confidence": 0.8,
+      "description": "Proposed by Marco: SendGrid cost and deliverability; SES via the same email adapter interface. Not yet accepted.",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#docs/adr/0009-ses.md",
+          "authority": "user_statement"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,171 @@
+{
+  "scope": "Diagnostic synthetic corpus; same-agent evaluation, not a blinded general recall benchmark",
+  "pot": "local:cli-usage-fixed",
+  "pot_id": "pot_75f168da217d",
+  "minimal_pot": "local:cli-env-fixed",
+  "backend": "falkordb_lite",
+  "resource_index": "sqlite_hybrid",
+  "query_cases": 45,
+  "additional_probes": 7,
+  "tests": {
+    "cli": 236,
+    "engine": 170,
+    "core": 44,
+    "real_falkordb": 12,
+    "inspection_unit": 8,
+    "unique_total": 470
+  },
+  "checks": {
+    "45_cases_replayed": true,
+    "four_targeted_retrieval_fixes_rank_first": true,
+    "all_37_infra_claims_read_back": true,
+    "minimal_commit_verified": true,
+    "both_environments_visible_in_neighborhood": true,
+    "invalid_include_rejected": true,
+    "invalid_direction_rejected": true,
+    "near_miss_not_lexically_promoted": true,
+    "definition_ranking_not_lexically_overridden": true,
+    "negative_query_warning_preserved": true,
+    "uppercase_docs_find_pms": true,
+    "paraphrase_holdouts_find_source_first": true
+  },
+  "comparisons": [
+    {
+      "case": "body-default",
+      "target": "field-reference/recovery-marker",
+      "before_rank": 23,
+      "after_rank": 1
+    },
+    {
+      "case": "rollback-search",
+      "target": "ledgerly-runbook/rollback-procedure",
+      "before_rank": 22,
+      "after_rank": 1
+    },
+    {
+      "case": "rollback-default",
+      "target": "ledgerly-runbook/rollback-procedure",
+      "before_rank": 4,
+      "after_rank": 1
+    },
+    {
+      "case": "pms-docs",
+      "target": "field-reference/terminology",
+      "before_rank": null,
+      "after_rank": 1
+    }
+  ],
+  "warm_query_median_seconds": 0.247,
+  "wheel_sha256": {
+    "potpie-2.0.0-py3-none-any.whl": "7bdd2a4436aff22672719a0934a735771d632cf8f3369cd5aa416676041b4324",
+    "potpie_context_engine-0.1.0-py3-none-any.whl": "b0d43e610f9bd81b10761f3e0c00628c45a7273f3150694b18ac9d4918f74590",
+    "potpie_context_core-0.1.0-py3-none-any.whl": "b7effdc50201b8301d472ecc40361791889c9155540b0a0d550e4055f34ed500"
+  },
+  "unresolved": [
+    "unsupported-answer abstention",
+    "mandatory preferences in default resolve",
+    "consistent result and verification outcome contract",
+    "entity type case validation",
+    "document inventory",
+    "default harness detection",
+    "architecture why intent routing"
+  ],
+  "holdouts": [
+    {
+      "id": "near-miss-token",
+      "command": [
+        "--json",
+        "search",
+        "ORCHID-732",
+        "--pot",
+        "local:cli-usage-fixed"
+      ],
+      "exit_code": 0,
+      "first_candidate": "activity:443ced5ee411"
+    },
+    {
+      "id": "other-acronym",
+      "command": [
+        "--json",
+        "resolve",
+        "What does CRM stand for?",
+        "--include",
+        "docs",
+        "--pot",
+        "local:cli-usage-fixed"
+      ],
+      "exit_code": 0,
+      "first_candidate": "potpie://res/field-reference/unrelated-glossary/0000"
+    },
+    {
+      "id": "missing-acronym",
+      "command": [
+        "--json",
+        "resolve",
+        "What does XYZ stand for?",
+        "--include",
+        "docs",
+        "--pot",
+        "local:cli-usage-fixed"
+      ],
+      "exit_code": 0,
+      "first_candidate": "potpie://res/field-reference/terminology/0000"
+    },
+    {
+      "id": "rollback-paraphrase",
+      "command": [
+        "--json",
+        "search",
+        "Which Kubernetes command reverses a ledger-api rollout?",
+        "--include",
+        "docs",
+        "--pot",
+        "local:cli-usage-fixed"
+      ],
+      "exit_code": 0,
+      "first_candidate": "claim:pot_75f168da217d:knowledge:docsection:ledgerly-runbook:rollback-procedure:SECTION_OF:document:ledgerly-runbook:58cfe696d6cb"
+    },
+    {
+      "id": "cost-paraphrase",
+      "command": [
+        "--json",
+        "search",
+        "Which vendor costs 2400 dollars each month?",
+        "--include",
+        "docs",
+        "--pot",
+        "local:cli-usage-fixed"
+      ],
+      "exit_code": 0,
+      "first_candidate": "claim:pot_75f168da217d:knowledge:docsection:ledgerly-costs:monthly-costs:SECTION_OF:document:ledgerly-costs:ae87a0d7f821"
+    },
+    {
+      "id": "uppercase-docs",
+      "command": [
+        "--json",
+        "resolve",
+        "What does PMS stand for?",
+        "--include",
+        "DOCS",
+        "--pot",
+        "local:cli-usage-fixed"
+      ],
+      "exit_code": 0,
+      "first_candidate": "potpie://res/field-reference/terminology/0000"
+    },
+    {
+      "id": "recovery-paraphrase",
+      "command": [
+        "--json",
+        "search",
+        "How many minutes should rollback stay paused during the offline drill?",
+        "--include",
+        "docs",
+        "--pot",
+        "local:cli-usage-fixed"
+      ],
+      "exit_code": 0,
+      "first_candidate": "potpie://res/field-reference/recovery-marker/0000"
+    }
+  ]
+}

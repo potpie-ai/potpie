@@ -1,0 +1,1 @@
+The manual recovery token is ORCHID-731. The token is used only in the synthetic offline drill. The maintenance window is 03:17 UTC and the rollback hold is exactly 47 minutes.

@@ -1,0 +1,31 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0 -- /Users/nandan/Desktop/Dev/potpie/.venv/bin/python
+cachedir: .pytest_cache
+benchmark: 5.2.3 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+rootdir: /Users/nandan/Desktop/Dev/potpie/potpie/context-engine
+configfile: pyproject.toml
+plugins: benchmark-5.2.3, cov-7.1.0, asyncio-1.4.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 19 items
+
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_write_read_reset_roundtrip PASSED [  5%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_entity_upsert_rejects_canonical_labels_conflicting_with_key PASSED [ 10%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_entity_label_repair_cleans_existing_pollution PASSED [ 15%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_vector_search_orders_by_cosine_distance PASSED [ 21%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_source_ref_filters_accept_legacy_scalars[None] PASSED [ 26%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_source_ref_filters_accept_legacy_scalars[login auth] PASSED [ 31%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_writer_persists_source_refs_as_native_arrays[ref:a] PASSED [ 36%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_writer_persists_source_refs_as_native_arrays[refs1] PASSED [ 42%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_environment_claims_survive_normalization_storage_and_reassertion[True-True] PASSED [ 47%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_environment_claims_survive_normalization_storage_and_reassertion[True-False] PASSED [ 52%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_environment_claims_survive_normalization_storage_and_reassertion[False-True] PASSED [ 57%]
+potpie/context-engine/tests/integration/test_falkordb_roundtrip.py::test_environment_claims_survive_normalization_storage_and_reassertion[False-False] PASSED [ 63%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_returns_nodes_and_edges_and_strips_embeddings PASSED [ 68%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_neighborhood_bfs_collects_incident_edges_and_hydrates PASSED [ 73%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_neighborhood_clamps_depth PASSED [ 78%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_uses_claim_query_for_scoped_filters PASSED [ 84%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_keeps_unscoped_limit_on_full_graph_path PASSED [ 89%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_does_not_mark_exact_cap_as_truncated PASSED [ 94%]
+potpie/context-engine/tests/unit/test_falkordb_inspection.py::test_slice_marks_over_cap_results_as_truncated PASSED [100%]
+
+======================== 19 passed in 76.27s (0:01:16) =========================

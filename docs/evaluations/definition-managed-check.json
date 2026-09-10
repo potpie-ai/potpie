@@ -1,0 +1,33 @@
+{
+  "date": "2026-09-10",
+  "workspace_head": "4936b6cee2578641698b8167ef2dc7498dc10064",
+  "workspace_dirty": true,
+  "cli_version_output": "potpie 2.0.0 (3ef25f82bb, dirty)\npotpie-context-engine 0.1.0\npython 3.12.13",
+  "managed_deployed_revision": null,
+  "command": [
+    "potpie",
+    "--json",
+    "resolve",
+    "What is the full form of PMS?",
+    "--include",
+    "docs",
+    "--pot",
+    "managed:pms"
+  ],
+  "exit_code": 1,
+  "result": {
+    "ok": false,
+    "code": "pot_not_found",
+    "message": "No pot matching 'pms' on the managed host.",
+    "detail": null,
+    "recommended_next_action": "run 'potpie pot list --managed'"
+  },
+  "verification_status": "unavailable",
+  "reason": "User confirmed PMS is not available in this environment. No claims, entity metadata, linking history, or PMS deployed revisions were available to inspect.",
+  "pending_commands": [
+    "potpie --json search \"PMS full form\" --pot managed:pms",
+    "potpie --json search \"PMS full form\" --include docs --pot managed:pms",
+    "potpie --json resolve \"PMS full form\" --include docs --pot managed:pms",
+    "potpie --json search \"What is the full form of PMS?\" --include docs --pot managed:pms"
+  ]
+}

@@ -1,0 +1,191 @@
+{
+  "idempotency_key": "bug-fix:ledgerly:duplicate-and-cursor:v1",
+  "created_by": {
+    "surface": "cli",
+    "harness": "claude-deep-query"
+  },
+  "operations": [
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "bug_pattern:duplicate-posting-on-retry",
+        "type": "BugPattern",
+        "name": "Duplicate posting on client retry",
+        "summary": "A retried POST /v1/transfers created a second transfer when Redis was unavailable",
+        "description": "Duplicate transfers / double postings after a client retry: the X-Idempotency-Key check lived only in Redis and failed open during the Redis failover, so the retry after a 502 posted twice. Symptoms: duplicate transfer, double charge, balance off by the transfer amount, ledger_idempotency_conflicts_total flat while duplicates appear. Synonyms: double posting, duplicate transfer, idempotency failed open, redis failover duplicates.",
+        "properties": {
+          "symptom_signature": "duplicate transfer after 502 retry; idempotency key miss during redis outage"
+        }
+      },
+      "predicate": "REPRODUCES",
+      "object": {
+        "key": "service:ledger-api",
+        "type": "Service"
+      },
+      "truth": "agent_claim",
+      "confidence": 0.85,
+      "description": "Seen in INC-12 (2026-08-30) after a Redis failover: clients retried POST /v1/transfers after a 502 and the idempotency key lookup failed open.",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#README",
+          "authority": "agent_observation"
+        }
+      ]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "bug_pattern:duplicate-posting-on-retry",
+        "type": "BugPattern"
+      },
+      "predicate": "REPRODUCES",
+      "object": {
+        "key": "code:ledgerly:src/ledgerly/api/transfers.py",
+        "type": "CodeAsset"
+      },
+      "truth": "agent_claim",
+      "confidence": 0.9,
+      "description": "transfers.py checked Redis only",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#README",
+          "authority": "agent_observation"
+        }
+      ]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "fix:2b9d0e",
+        "type": "Fix",
+        "name": "Retry-After header on 502",
+        "summary": "Added Retry-After header; did not stop duplicates",
+        "description": "Failed attempt: sending Retry-After on 502 responses so clients back off. Duplicates persisted because the idempotency check itself was the gap.",
+        "properties": {
+          "fix_steps": "return Retry-After: 2 with 502",
+          "verification_status": "failed"
+        }
+      },
+      "predicate": "ATTEMPTED_FIX_FAILED",
+      "object": {
+        "key": "bug_pattern:duplicate-posting-on-retry",
+        "type": "BugPattern"
+      },
+      "truth": "agent_claim",
+      "confidence": 0.85,
+      "description": "First attempt added Retry-After: 2 on 502s; clients still retried and duplicates continued during the outage.",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#README",
+          "authority": "agent_observation"
+        }
+      ]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "fix:7f3a1c",
+        "type": "Fix",
+        "name": "Postgres fallback for idempotency keys",
+        "summary": "Check X-Idempotency-Key in Postgres idempotency_keys when Redis is down; fail closed with 503 if both are unavailable",
+        "description": "Fix for duplicate postings on retry: transfers.py now consults the Postgres idempotency_keys table when the Redis lookup errors, and returns 503 instead of posting when neither store answers. Files: src/ledgerly/api/transfers.py, migrations/0042_idempotency_keys.py. Verified against the INC-12 replay. Synonyms: idempotency fallback, fail closed, redis outage fix.",
+        "properties": {
+          "fix_steps": "consult idempotency_keys table on Redis error; 503 when both stores fail",
+          "verification_status": "verified"
+        }
+      },
+      "predicate": "RESOLVED",
+      "object": {
+        "key": "bug_pattern:duplicate-posting-on-retry",
+        "type": "BugPattern"
+      },
+      "truth": "agent_claim",
+      "confidence": 0.85,
+      "description": "PR #212: check the idempotency key in the Postgres idempotency_keys table when Redis is unavailable; verified by replaying INC-12 traffic in staging.",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#README",
+          "authority": "agent_observation"
+        }
+      ]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "activity:github:ledgerly:pr-212",
+        "type": "Activity",
+        "name": "PR #212 verification run",
+        "summary": "Replay of INC-12 traffic in staging produced no duplicates"
+      },
+      "predicate": "VERIFIED",
+      "object": {
+        "key": "fix:7f3a1c",
+        "type": "Fix"
+      },
+      "truth": "agent_claim",
+      "confidence": 0.9,
+      "description": "CI replay of INC-12 traffic: 0 duplicates across 12k retried transfers",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#pull/212",
+          "authority": "ci_run"
+        }
+      ]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "bug_pattern:plaid-cursor-reset",
+        "type": "BugPattern",
+        "name": "Plaid sync cursor reset after re-auth",
+        "summary": "Reconciler re-imported 30 days of bank transactions after an item re-auth reset the sync cursor",
+        "description": "Balance drift / duplicate bank transactions after a Plaid item re-authentication: ITEM_LOGIN_REQUIRED, the update-mode Link flow, and the reconciler starting transactions/sync with cursor=null so every historical transaction came back as added. Symptoms: balance drift, duplicate bank entries, recon report shows thousands of unmatched rows. Synonyms: cursor reset, plaid re-auth duplicates, transactions/sync from scratch, ITEM_LOGIN_REQUIRED.",
+        "properties": {
+          "symptom_signature": "ITEM_LOGIN_REQUIRED then reconciler imports 30 days again; balance drift"
+        }
+      },
+      "predicate": "REPRODUCES",
+      "object": {
+        "key": "service:reconciler",
+        "type": "Service"
+      },
+      "truth": "agent_claim",
+      "confidence": 0.85,
+      "description": "After an item re-auth (ITEM_LOGIN_REQUIRED) the reconciler restarted transactions/sync from a null cursor and re-imported 30 days of transactions.",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#README",
+          "authority": "agent_observation"
+        }
+      ]
+    },
+    {
+      "op": "assert_claim",
+      "subject": {
+        "key": "fix:c41e77",
+        "type": "Fix",
+        "name": "Persist Plaid sync cursor per item",
+        "summary": "Store transactions/sync cursor on plaid_items and dedupe by transaction_id",
+        "description": "Fix for the cursor reset: plaid_feed.py stores next_cursor on plaid_items after every page and the importer upserts by Plaid transaction_id, so a re-auth or restart never re-imports history. Files: src/ledgerly/sync/plaid_feed.py, migrations/0044_plaid_cursor.py. Synonyms: cursor persistence, transaction_id dedupe.",
+        "properties": {
+          "fix_steps": "persist next_cursor per item; upsert by transaction_id",
+          "verification_status": "verified"
+        }
+      },
+      "predicate": "RESOLVED",
+      "object": {
+        "key": "bug_pattern:plaid-cursor-reset",
+        "type": "BugPattern"
+      },
+      "truth": "agent_claim",
+      "confidence": 0.85,
+      "description": "PR #231: persist the sync cursor per plaid_item and dedupe imported rows by transaction_id; a re-auth keeps the cursor.",
+      "evidence": [
+        {
+          "source_ref": "github:ledgerly-inc/ledgerly#README",
+          "authority": "agent_observation"
+        }
+      ]
+    }
+  ]
+}

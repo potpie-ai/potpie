@@ -1,0 +1,1 @@
+CRM stands for Customer Relationship Management. The legacy property portal used the phrase Property Management System, but that portal is unrelated to the field-operations PMS workflow.
