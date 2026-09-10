@@ -37,10 +37,23 @@ def main() -> None:
     from potpie.daemon.telemetry.sentry_runtime import configure_daemon_sentry
 
     configure_daemon_sentry()
+    _configure_daemon_product_analytics()
     try:
         asyncio.run(_run())
     except KeyboardInterrupt:
         pass
+
+
+def _configure_daemon_product_analytics() -> None:
+    try:
+        from potpie.cli.telemetry import settings
+        from potpie.cli.telemetry.context import bind_daemon_telemetry_context
+        from potpie.cli.telemetry.product_analytics import configure_product_analytics
+
+        configure_product_analytics(settings.load_product_analytics_settings())
+        bind_daemon_telemetry_context()
+    except Exception:  # noqa: BLE001 — analytics must never block daemon start
+        return
 
 
 async def _run() -> None:

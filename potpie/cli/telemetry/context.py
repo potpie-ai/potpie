@@ -102,6 +102,25 @@ def bind_telemetry_context(
     return telemetry
 
 
+def bind_daemon_telemetry_context() -> TelemetryContext:
+    identity = load_or_create_identity()
+    telemetry = TelemetryContext(
+        anonymous_install_id=identity.anonymous_install_id,
+        invocation_id=f"invoke_{uuid.uuid4().hex}",
+        daemon_session_id=_DAEMON_SESSION_ID,
+        environment=telemetry_environment(),
+        command="ui",
+        subcommand=None,
+        output_mode="ui",
+        cli_version=default_cli_release().removeprefix("potpie-cli@"),
+        python_version=platform.python_version(),
+        os=platform.system().lower(),
+        arch=platform.machine(),
+    )
+    _ = _CURRENT.set(telemetry)
+    return telemetry
+
+
 def current_telemetry_context() -> TelemetryContext | None:
     return _CURRENT.get()
 

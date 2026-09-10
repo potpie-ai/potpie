@@ -311,6 +311,32 @@ def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
 
         return _guarded(go)
 
+    @router.post("/api/telemetry/session")
+    def ui_session(
+        payload: dict[str, Any] | None = Body(default=None),
+    ) -> dict[str, bool]:
+        """Record that the SPA finished its initial pots/graph load.
+
+        The CLI ``potpie ui`` probe hits ``GET /ui/api/pots`` only. This POST is
+        the Q11 signal: the explorer actually loaded in a browser.
+        """
+        try:
+            from potpie.cli.telemetry.usage_events import (
+                capture_usage_command_succeeded,
+            )
+
+            properties: dict[str, bool] = {}
+            if isinstance(payload, dict) and isinstance(payload.get("had_graph"), bool):
+                properties["had_graph"] = payload["had_graph"]
+            capture_usage_command_succeeded(
+                command="ui",
+                result_kind="ui_session",
+                properties=dict(properties) if properties else None,
+            )
+        except Exception:  # noqa: BLE001, S110 — analytics must never fail the SPA
+            pass
+        return {"ok": True}
+
     return router
 
 

@@ -35,6 +35,7 @@ from potpie.cli.telemetry.onboarding_events import (
     now_ms,
     sanitized_failure_kind,
 )
+from potpie.cli.telemetry.usage_events import capture_usage_command_succeeded
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.requests import ResetContextRequest
@@ -261,6 +262,10 @@ def pot_create(
             human=human,
             repo=guidance_repo,
         )
+        capture_usage_command_succeeded(
+            command="pot create",
+            result_kind="pot_result",
+        )
         emit(payload, human=human)
 
 
@@ -279,6 +284,10 @@ def pot_use(
             host,
             ref,
             also_default_for_current_repo=also_default_for_current_repo,
+        )
+        capture_usage_command_succeeded(
+            command="pot use",
+            result_kind="pot_result",
         )
         emit(payload, human=human)
 
@@ -527,6 +536,10 @@ def source_add(
                 "step_state": "done",
                 "duration_ms": elapsed_ms(started_ms),
             },
+        )
+        capture_usage_command_succeeded(
+            command="source add",
+            result_kind="source_result",
         )
         resolved_location = payload.get("location", location)
         repo_default_set = bool(payload.get("repo_default_set"))
