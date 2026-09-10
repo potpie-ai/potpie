@@ -357,8 +357,8 @@ def _timeline_event_bullet_lines(
 def _item_bullet_lines(
     item: Mapping[str, Any], ctx: ReadPresentationContext
 ) -> list[str]:
-    entity_type = item.get("entity_type") or "?"
     entity_key = _item_entity_key(item)
+    entity_type = _entity_label(item, entity_key)
     summary = _display_fact(item.get("summary") or entity_key or "", ctx)
     meta_parts: list[str] = []
     if item.get("score") is not None:
@@ -499,6 +499,33 @@ def _related_keys_from_relations(
             if len(keys) >= 10:
                 return keys
     return keys
+
+
+def _entity_label(item: Mapping[str, Any], entity_key: str) -> str:
+    """Best label for a row's ``[type]`` tag.
+
+    Rows whose reader does not set ``entity_type`` used to render a bare
+    ``[?]``. The key is namespaced (``decision:…``, ``service:local:…``), so
+    its prefix names the kind even when the type field is absent.
+    """
+    explicit = _str(item.get("entity_type"))
+    if explicit:
+        return explicit
+    labels = item.get("labels")
+    if isinstance(labels, (list, tuple)) and labels:
+        first = _str(labels[0])
+        if first:
+            return first
+    scheme, separator, rest = entity_key.partition("://")
+    if separator and scheme:
+        # `potpie://res/<doc>/<section>/<seq>` — the first path segment names
+        # the kind; the scheme is always "potpie" and says nothing.
+        segment = rest.split("/", 1)[0]
+        return segment or scheme
+    prefix, separator, _rest = entity_key.partition(":")
+    if separator and prefix:
+        return prefix
+    return "?"
 
 
 def _item_entity_key(item: Mapping[str, Any]) -> str:

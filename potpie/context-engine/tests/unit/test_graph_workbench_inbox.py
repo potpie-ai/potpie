@@ -238,3 +238,34 @@ def test_local_json_inbox_store_preserves_cross_process_writes(tmp_path) -> None
     state = json.loads((tmp_path / "graph_inbox.json").read_text(encoding="utf-8"))
     assert "graph-inbox:first" in state["items"]["pot-a"]
     assert "graph-inbox:second" in state["items"]["pot-b"]
+
+
+def test_inbox_item_not_found_names_the_pot_it_searched(tmp_path) -> None:
+    """m4: inbox items are pot-scoped; the failure must say which pot."""
+    workbench, _backend = _service(tmp_path)
+
+    result = workbench.inbox_show(pot_id="pot-beta", item_id="graph-inbox:nope")
+
+    assert result.ok is False
+    assert "pot-beta" in result.detail
+    assert "--pot pot-beta" in result.recommended_next_action
+
+
+def test_inbox_actor_fields_are_rejected_with_the_flag_that_sets_them(
+    tmp_path,
+) -> None:
+    """m6: "claimed_by is required" named a wire field, not the `--by` flag."""
+    workbench, _backend = _service(tmp_path)
+    added = workbench.inbox_add(pot_id=POT, summary="Investigate prior bug")
+    assert added.item is not None
+
+    with pytest.raises(ValueError, match=r"claimed_by is required \(pass --by\)"):
+        workbench.inbox_claim(pot_id=POT, item_id=added.item.item_id, claimed_by="")
+
+    with pytest.raises(ValueError, match=r"closed_by is required \(pass --by\)"):
+        workbench.inbox_mark_applied(
+            pot_id=POT,
+            item_id=added.item.item_id,
+            closed_by=None,
+            linked_plan_id="mutation-plan:test",
+        )

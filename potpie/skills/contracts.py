@@ -38,6 +38,11 @@ class SkillStatus:
     installed: tuple[SkillInfo, ...] = ()
     missing: tuple[SkillInfo, ...] = ()
     outdated: tuple[SkillInfo, ...] = ()
+    unmanaged: tuple[str, ...] = ()
+    """Potpie-named skill directories present in the harness that this build's
+    catalog does not contain — usually left behind by a newer or older potpie.
+    Reporting them keeps ``skills status`` from claiming a clean install while
+    the harness is loading skills this CLI cannot service."""
 
 
 @dataclass(frozen=True, slots=True)

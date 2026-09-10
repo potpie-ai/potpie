@@ -13,6 +13,7 @@ import shlex
 import sys
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -100,6 +101,27 @@ from potpie_context_engine.domain.nudge import NUDGE_EVENT_HELP
 
 graph_app = typer.Typer(help="Graph reads/admin via capability ports.")
 inbox_app = typer.Typer(help="Pending graph-work inbox.")
+
+# `--pot` is accepted by every other graph leaf, so a caller naturally reaches
+# for `graph inbox --pot X list`. Typer puts group options on the group, so
+# accept it there too and let the leaves inherit it.
+_INBOX_GROUP_POT: ContextVar[str | None] = ContextVar("_INBOX_GROUP_POT", default=None)
+
+
+@inbox_app.callback()
+def _inbox_group(
+    pot: str = typer.Option(
+        None, "--pot", help="Pot id/name for every inbox subcommand."
+    ),
+) -> None:
+    _INBOX_GROUP_POT.set(pot or None)
+
+
+def _inbox_pot(pot: str | None) -> str | None:
+    """Leaf ``--pot`` wins; otherwise inherit the group's."""
+    return pot or _INBOX_GROUP_POT.get()
+
+
 quality_app = typer.Typer(help="Read-only graph quality reports.")
 bulk_app = typer.Typer(help="Chunked semantic graph mutation application.")
 backend_app = typer.Typer(help="GraphBackend profile selection + health.")
@@ -530,7 +552,7 @@ def graph_catalog(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).catalog(
+            get_engine_client(pot_id).catalog(
                 EngineCatalogRequest(task=task, subgraph=subgraph)
             )
         )
@@ -540,13 +562,52 @@ def graph_catalog(
         _emit_graph_result(ctx, payload, human=human)
 
 
+def _split_qualified_view(
+    subgraph: str | None, view: str | None
+) -> tuple[str | None, str | None]:
+    """Accept a fully-qualified ``<subgraph>.<view>`` in ``--view``.
+
+    Returns ``(subgraph, view)``. A dotted ``--view`` supplies the subgraph;
+    a conflicting ``--subgraph`` is an error rather than a silent override.
+    """
+    value = (view or "").strip()
+    if "." not in value:
+        return subgraph, view
+    qualified_subgraph, _, qualified_view = value.partition(".")
+    if "." in qualified_view:
+        raise ValueError(
+            f"view {view!r} is not a valid <subgraph>.<view> name; "
+            "run 'potpie graph catalog' for the qualified names"
+        )
+    existing = (subgraph or "").strip()
+    if existing and existing != qualified_subgraph:
+        raise ValueError(
+            f"--subgraph {existing!r} conflicts with --view {view!r}; "
+            "pass the subgraph once"
+        )
+    return qualified_subgraph, qualified_view
+
+
 @graph_app.command("read")
 def graph_read(
+    view_ref: str = typer.Argument(
+        None,
+        metavar="[SUBGRAPH.VIEW]",
+        help=(
+            "Qualified view name exactly as 'potpie graph catalog' prints it, "
+            "e.g. debugging.prior_occurrences. Alternative to --subgraph/--view."
+        ),
+    ),
     subgraph: str = typer.Option(
         None, "--subgraph", help="Canonical graph subgraph, e.g. debugging"
     ),
     view: str = typer.Option(
-        None, "--view", help="View name within --subgraph, e.g. prior_occurrences"
+        None,
+        "--view",
+        help=(
+            "View name within --subgraph, e.g. prior_occurrences. Also accepts "
+            "the qualified 'subgraph.view' form."
+        ),
     ),
     query: str = typer.Option(None, "--query"),
     query_threshold: float = typer.Option(
@@ -611,14 +672,27 @@ def graph_read(
 ) -> None:
     """V2-style read over a named view (routes through the read trunk)."""
     with _graph_command("graph.read") as ctx:
-        if not subgraph:
-            raise ValueError("--subgraph is required")
+        # `graph catalog` advertises views as `<subgraph>.<view>`; accept that
+        # exact string, positionally or via --view, so catalog output is
+        # copy-pasteable instead of always needing a manual split.
+        if view_ref:
+            if view:
+                raise ValueError(
+                    f"pass the view once: got positional {view_ref!r} and "
+                    f"--view {view!r}"
+                )
+            view = view_ref
+        subgraph, view = _split_qualified_view(subgraph, view)
         if not view:
-            raise ValueError("--view is required")
-        if "." in view:
             raise ValueError(
-                "graph read now requires --subgraph <name> --view <view>; "
-                f"got fully-qualified view {view!r}"
+                "--view is required (e.g. --subgraph debugging "
+                "--view prior_occurrences, or --view debugging.prior_occurrences)"
+            )
+        if not subgraph:
+            raise ValueError(
+                f"--subgraph is required for view {view!r} "
+                f"(e.g. --subgraph <name> --view {view}); "
+                "run 'potpie graph catalog' for the qualified names"
             )
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
@@ -641,7 +715,7 @@ def graph_read(
             requested_limit=limit,
         )
         result = run_engine_operation(
-            get_engine_client(pot).read(
+            get_engine_client(pot_id).read(
                 EngineReadRequest(
                     subgraph=subgraph,
                     view=view,
@@ -730,7 +804,7 @@ def timeline_recent(
             requested_limit=limit,
         )
         result = run_engine_operation(
-            get_engine_client(pot).read(
+            get_engine_client(pot_id).read(
                 EngineReadRequest(
                     subgraph="recent_changes",
                     view="timeline",
@@ -799,7 +873,7 @@ def graph_search_entities(
         ctx.set_pot_id(pot_id)
         since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
         result = run_engine_operation(
-            get_engine_client(pot).search_entities(
+            get_engine_client(pot_id).search_entities(
                 EngineSearchEntitiesRequest(
                     query=effective_query,
                     type=type_,
@@ -859,7 +933,7 @@ def graph_mutate(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         payload = _load_json(file)
-        client = get_engine_client(pot)
+        client = get_engine_client(pot_id)
         proposal = run_engine_operation(
             client.propose(
                 EngineProposeRequest(mutation=_context_bound_mutation(payload))
@@ -1330,7 +1404,7 @@ def graph_nudge(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).nudge(
+            get_engine_client(pot_id).nudge(
                 EngineNudgeRequest(
                     event=event,
                     session_id=session,
@@ -1359,7 +1433,7 @@ def graph_status(pot: str = typer.Option(None, "--pot")) -> None:
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         dp = run_engine_operation(
-            get_engine_client(pot).data_plane_status(EngineDataPlaneStatusRequest())
+            get_engine_client(pot_id).data_plane_status(EngineDataPlaneStatusRequest())
         )
         versions = {"_global": int(dict(dp.counts).get("claims", 0))}
         ctx.set_subgraph_versions(versions)
@@ -1452,7 +1526,7 @@ def graph_neighborhood(
         ctx.set_pot_id(pot_id)
         predicates = _parse_predicates(predicate)
         sl = run_engine_operation(
-            get_engine_client(pot).neighborhood(
+            get_engine_client(pot_id).neighborhood(
                 EngineNeighborhoodRequest(
                     entity_key=entity,
                     depth=depth,
@@ -1513,7 +1587,7 @@ def graph_propose(
         ctx.set_pot_id(pot_id)
         payload = _load_json(file)
         result = run_engine_operation(
-            get_engine_client(pot).propose(
+            get_engine_client(pot_id).propose(
                 EngineProposeRequest(
                     mutation=_context_bound_mutation(payload),
                     ttl_seconds=_parse_ttl_seconds(ttl),
@@ -1549,7 +1623,7 @@ def graph_commit(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).commit(
+            get_engine_client(pot_id).commit(
                 EngineCommitRequest(
                     plan_id=plan_id,
                     approved_by=approved_by,
@@ -1652,7 +1726,7 @@ def graph_bulk_apply(
             start_chunk=start_chunk,
             manifest=manifest,
         )
-        client = get_engine_client(pot)
+        client = get_engine_client(pot_id)
         ok = True
 
         for chunk in chunks:
@@ -1784,7 +1858,7 @@ def graph_history(
         ctx.set_pot_id(pot_id)
         since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
         result = run_engine_operation(
-            get_engine_client(pot).history(
+            get_engine_client(pot_id).history(
                 EngineHistoryRequest(
                     entity_key=entity,
                     claim_key=claim,
@@ -1816,10 +1890,10 @@ def graph_inbox_add(
 ) -> None:
     with _graph_command("graph.inbox.add") as ctx:
         host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
+        pot_id = resolve_pot_id(host, _inbox_pot(pot))
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).inbox_add(
+            get_engine_client(pot_id).inbox_add(
                 EngineInboxAddRequest(
                     summary=summary,
                     details=details,
@@ -1846,11 +1920,11 @@ def graph_inbox_list(
 ) -> None:
     with _graph_command("graph.inbox.list") as ctx:
         host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
+        pot_id = resolve_pot_id(host, _inbox_pot(pot))
         ctx.set_pot_id(pot_id)
         since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
         result = run_engine_operation(
-            get_engine_client(pot).inbox_list(
+            get_engine_client(pot_id).inbox_list(
                 EngineInboxListRequest(
                     status=tuple(status or ()),
                     claimed_by=claimed_by,
@@ -1874,10 +1948,12 @@ def graph_inbox_show(
         if not item_id:
             raise ValueError("item_id is required")
         host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
+        pot_id = resolve_pot_id(host, _inbox_pot(pot))
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).inbox_show(EngineInboxShowRequest(item_id=item_id))
+            get_engine_client(pot_id).inbox_show(
+                EngineInboxShowRequest(item_id=item_id)
+            )
         )
         _emit_inbox_result(ctx, result)
 
@@ -1892,10 +1968,10 @@ def graph_inbox_claim(
         if not item_id:
             raise ValueError("item_id is required")
         host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
+        pot_id = resolve_pot_id(host, _inbox_pot(pot))
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).inbox_claim(
+            get_engine_client(pot_id).inbox_claim(
                 EngineInboxClaimRequest(item_id=item_id, claimed_by=claimed_by)
             )
         )
@@ -1914,10 +1990,10 @@ def graph_inbox_mark_applied(
         if not item_id:
             raise ValueError("item_id is required")
         host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
+        pot_id = resolve_pot_id(host, _inbox_pot(pot))
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).inbox_mark_applied(
+            get_engine_client(pot_id).inbox_mark_applied(
                 EngineInboxMarkAppliedRequest(
                     item_id=item_id,
                     closed_by=closed_by,
@@ -1940,10 +2016,10 @@ def graph_inbox_mark_rejected(
         if not item_id:
             raise ValueError("item_id is required")
         host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
+        pot_id = resolve_pot_id(host, _inbox_pot(pot))
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).inbox_mark_rejected(
+            get_engine_client(pot_id).inbox_mark_rejected(
                 EngineInboxMarkRejectedRequest(
                     item_id=item_id,
                     closed_by=closed_by,
@@ -1967,10 +2043,10 @@ def graph_inbox_close(
         if not item_id:
             raise ValueError("item_id is required")
         host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
+        pot_id = resolve_pot_id(host, _inbox_pot(pot))
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).inbox_close(
+            get_engine_client(pot_id).inbox_close(
                 EngineInboxCloseRequest(
                     item_id=item_id,
                     closed_by=closed_by,
@@ -2111,7 +2187,7 @@ def _run_quality_report(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         result = run_engine_operation(
-            get_engine_client(pot).quality(
+            get_engine_client(pot_id).quality(
                 EngineQualityRequest(
                     report=report,
                     subgraph=subgraph,
@@ -2134,7 +2210,7 @@ def graph_inspect(
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
         sl = run_engine_operation(
-            get_engine_client(pot).inspect(
+            get_engine_client(pot_id).inspect(
                 EngineInspectRequest(entity_key=entity_key, depth=depth)
             )
         )

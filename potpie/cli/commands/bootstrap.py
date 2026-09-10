@@ -35,7 +35,7 @@ from potpie.cli.commands._common import (
     is_json,
     repo_default_pot_id,
     repo_effective_pot_info,
-    resolve_pot_id,
+    resolve_pot_scope,
     run_engine_operation,
     use_pot_selection,
 )
@@ -360,9 +360,12 @@ def register(root: typer.Typer) -> None:
 
         with contract():
             shell = get_root_runtime()
-            pot_id = resolve_pot_id(shell, pot)
+            pot_id, resolved_via = resolve_pot_scope(shell, pot)
+            # Resolve once and target that pot explicitly. Passing the raw
+            # ``--pot`` here let the engine re-resolve on its own and report a
+            # different pot's counts under the active pot's name.
             data_plane = run_engine_operation(
-                get_engine_client(pot).data_plane_status(DataPlaneStatusRequest())
+                get_engine_client(pot_id).data_plane_status(DataPlaneStatusRequest())
             )
             report = _build_context_status_report(
                 shell,
@@ -370,13 +373,21 @@ def register(root: typer.Typer) -> None:
                 intent=intent,
                 harness=harness,
                 data_plane=data_plane,
+                resolved_via=resolved_via,
             )
             _capture_host_status_activation()
             emit(
                 {
                     "profile": report.profile,
                     "daemon_up": report.daemon_up,
+                    "pot": {
+                        "id": report.pot_id,
+                        "name": report.pot_name,
+                        "resolved_via": report.resolved_via,
+                    },
+                    "pot_id": report.pot_id,
                     "active_pot": report.active_pot,
+                    "active_pot_id": report.active_pot_id,
                     "backend_ready": report.backend_ready,
                     "data_plane": dict(report.data_plane),
                     "pot_summary": dict(report.pot_summary),
@@ -550,6 +561,14 @@ def register(root: typer.Typer) -> None:
     root.add_typer(config_app, name="config")
 
 
+_RESOLUTION_LABELS = {
+    "explicit": "via --pot",
+    "repo_default": "via this repo's default pot binding",
+    "linked_repo": "via the pot this repo is registered in",
+    "active_pot": "via the active pot",
+}
+
+
 def _build_context_status_report(
     shell,
     *,
@@ -557,10 +576,12 @@ def _build_context_status_report(
     intent: str,
     harness: str,
     data_plane,
+    resolved_via: str | None = None,
 ) -> StatusReport:
     """Join root-owned status surfaces with the engine-owned data plane."""
     aggregate = get_pot_service(shell).aggregate_status(pot_id=pot_id)
     active = aggregate.active_pot
+    target = getattr(aggregate, "target_pot", None)
     nudge = get_skill_service(shell).nudge(agent=harness) if harness else None
     backend_ready = bool(data_plane.backend_ready)
     if active is None:
@@ -571,6 +592,9 @@ def _build_context_status_report(
         next_action = "Run 'potpie resolve \"<task>\"' to pull context for your work."
     return StatusReport(
         pot_id=pot_id,
+        pot_name=(target.name if target is not None else pot_id),
+        resolved_via=resolved_via,
+        active_pot_id=(active.pot_id if active else None),
         profile=shell.profile,
         daemon_up=True,
         active_pot=active.name if active else None,
@@ -635,10 +659,22 @@ def _setup_human(report, *, include_steps: bool = True) -> str:
 
 
 def _status_human(report) -> str:
+    pot_label = report.pot_name or report.active_pot
     lines = [
         f"profile={report.profile} daemon={'up' if report.daemon_up else 'down'} "
-        f"pot={report.active_pot} backend_ready={report.backend_ready}",
+        f"pot={pot_label} ({report.pot_id}) backend_ready={report.backend_ready}",
     ]
+    if report.resolved_via:
+        lines.append(
+            f"  resolved: {_RESOLUTION_LABELS.get(report.resolved_via, report.resolved_via)}"
+        )
+    # The active-pot pointer and the pot this directory resolves to are
+    # different things; say so rather than labelling one with the other's name.
+    if report.active_pot_id and report.active_pot_id != report.pot_id:
+        lines.append(
+            f"  note: active pot is {report.active_pot} ({report.active_pot_id}); "
+            f"commands here use {pot_label} — pass --pot to override"
+        )
     counts = dict(report.data_plane).get("counts") or {}
     if counts:
         lines.append(f"  graph: {counts}")

@@ -129,7 +129,9 @@ def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> No
 
     _common.set_runtime(mock_host)
     monkeypatch.setattr(
-        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+        bootstrap,
+        "resolve_pot_scope",
+        lambda _host, pot: (pot or "foo-pot", "explicit" if pot else "active_pot"),
     )
 
     result = runner.invoke(cli_main.app, ["status"])
@@ -155,7 +157,9 @@ def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) ->
 
     _common.set_runtime(mock_host)
     monkeypatch.setattr(
-        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+        bootstrap,
+        "resolve_pot_scope",
+        lambda _host, pot: (pot or "foo-pot", "explicit" if pot else "active_pot"),
     )
 
     result = runner.invoke(cli_main.app, ["status", "--host"])
@@ -189,8 +193,8 @@ def test_status_non_default_pot_triggers_host_path(
     _common.set_runtime(mock_host)
     monkeypatch.setattr(
         bootstrap,
-        "resolve_pot_id",
-        lambda _host, pot: pot or "custom-pot",
+        "resolve_pot_scope",
+        lambda _host, pot: (pot or "custom-pot", "explicit"),
     )
 
     result = runner.invoke(cli_main.app, ["status", "--pot", "custom-pot"])
@@ -212,7 +216,9 @@ def test_status_host_json_output(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_host = MagicMock()
     _configure_status_host(mock_host, report)
     _common.set_runtime(mock_host)
-    monkeypatch.setattr(bootstrap, "resolve_pot_id", lambda _host, pot: "foo-pot")
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_scope", lambda _host, pot: ("foo-pot", "active_pot")
+    )
 
     result = runner.invoke(cli_main.app, ["--json", "status"])
 

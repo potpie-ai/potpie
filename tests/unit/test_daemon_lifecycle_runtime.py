@@ -69,15 +69,79 @@ def test_daemon_restart_refuses_when_running_backend_unknown(
     monkeypatch.setattr(
         daemon,
         "status",
-        lambda: {"up": True, "mode": "detached", "home": str(tmp_path)},
+        lambda: {
+            "up": True,
+            "mode": "detached",
+            "home": str(tmp_path),
+            "identity": "ok",
+        },
     )
     monkeypatch.setattr(daemon, "stop", lambda: calls.append("stop"))
     monkeypatch.setattr(daemon, "start", lambda **_kwargs: calls.append("start"))
 
-    with pytest.raises(RuntimeError, match="cannot determine running daemon backend"):
+    # A *typed* refusal, not a bare RuntimeError: the CLI renders this as a
+    # daemon failure with a next action instead of "Unexpected internal error".
+    with pytest.raises(DaemonStopError) as raised:
         daemon.restart()
 
+    assert "cannot determine the running daemon" in str(raised.value)
+    assert raised.value.error.code == "daemon_backend_undetermined"
+    assert raised.value.error.recommended_next_action
     assert calls == []
+
+
+def test_daemon_restart_replaces_a_daemon_it_cannot_authenticate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An upgrade leaves a running daemon whose record this build cannot read.
+
+    Restart is the recovery the CLI recommends, so it must take that process
+    down by signal rather than refusing for an unknown backend.
+    """
+    daemon = Daemon(home=tmp_path, in_process=False)
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        daemon,
+        "status",
+        lambda: {
+            "up": True,
+            "mode": "detached",
+            "home": str(tmp_path),
+            "pid": 4242,
+            "identity": "unauthenticated",
+        },
+    )
+    monkeypatch.setattr(daemon, "stop", lambda **kwargs: calls.append(("stop", kwargs)))
+    monkeypatch.setattr(
+        daemon, "start", lambda **kwargs: calls.append(("start", kwargs)) or {}
+    )
+
+    daemon.restart()
+
+    assert calls[0] == ("stop", {"force": True})
+    assert calls[1][0] == "start"
+
+
+def test_force_stop_refuses_a_recorded_pid_that_is_not_a_daemon(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """PIDs are reused; a forced takedown must verify identity first."""
+    daemon = Daemon(home=tmp_path, in_process=False)
+    monkeypatch.setattr(
+        "potpie.daemon.lifecycle._process_command_line",
+        lambda _pid: "/usr/bin/vim notes.txt",
+    )
+    killed: list[int] = []
+    monkeypatch.setattr(
+        "potpie.daemon.lifecycle.os.kill",
+        lambda pid, _sig: killed.append(pid),
+    )
+
+    with pytest.raises(DaemonStopError) as raised:
+        daemon._force_stop(4242)
+
+    assert raised.value.error.code == "daemon_recorded_pid_not_a_daemon"
+    assert killed == []
 
 
 def test_stop_preserves_credential_while_replacement_boot_owns_runtime(

@@ -21,7 +21,11 @@ _PLACEHOLDER = """<!doctype html>
 margin:4rem auto;padding:0 1rem;color:#222}code{background:#f3f3f5;padding:.15em .4em;
 border-radius:4px}</style></head><body>
 <h1>Potpie Graph Explorer</h1>
-<p>The UI bundle has not been built yet. From the repo root, run:</p>
+<p>The UI bundle has not been built yet.</p>
+<p>Installed from PyPI? Reinstall to get the bundle:</p>
+<pre><code>uv tool install --force potpie
+potpie daemon restart</code></pre>
+<p>Working from a source checkout? Build it from the repo root:</p>
 <pre><code>make cli-install
 # or: make ui-build
 potpie daemon restart</code></pre>

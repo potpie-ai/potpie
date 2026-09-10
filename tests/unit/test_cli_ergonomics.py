@@ -139,7 +139,9 @@ class _Graph:
 
 def test_source_add_repo_dot_resolves_before_storing(monkeypatch) -> None:
     monkeypatch.setattr(
-        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
+        repo_location,
+        "git_remote_or_reason",
+        lambda cwd: ("github.com/acme/shop", None),
     )
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
@@ -158,7 +160,7 @@ def test_source_add_repo_dot_resolves_before_storing(monkeypatch) -> None:
 
 
 def test_source_add_repo_current_falls_back_to_cwd(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(repo_location, "current_git_remote", lambda cwd: None)
+    monkeypatch.setattr(repo_location, "git_remote_or_reason", lambda cwd: (None, None))
     monkeypatch.chdir(tmp_path)
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
@@ -185,7 +187,9 @@ def test_source_add_non_repo_kind_keeps_location_verbatim() -> None:
 
 def test_source_add_repo_no_default_skips_repo_default(monkeypatch) -> None:
     monkeypatch.setattr(
-        repo_location, "current_git_remote", lambda cwd: "github.com/acme/shop"
+        repo_location,
+        "git_remote_or_reason",
+        lambda cwd: ("github.com/acme/shop", None),
     )
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)

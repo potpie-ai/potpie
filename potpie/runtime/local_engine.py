@@ -33,6 +33,7 @@ from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,
+    missing_field_message,
 )
 from potpie_context_engine.core.ports.agent_context import (
     RecordRequest as AgentRecordRequest,
@@ -935,7 +936,7 @@ def build_local_resource_manager(services: Any) -> ContextResourceManager:
 
 def _required_value(value: str | None, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field} is required")
+        raise ValueError(missing_field_message(field))
     return value
 
 

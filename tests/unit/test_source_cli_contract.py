@@ -100,10 +100,13 @@ def test_source_add_json_marks_registration_only() -> None:
         "kind": "repo",
         "name": "platform",
         "location": "owner/repo",
+        "resolved_location": "owner/repo",
         "pot_id": "pot-1",
         "registration_only": True,
         "repo_default_set": False,
         "repo_key": "owner/repo",
+        "reused_existing": False,
+        "requested_name_ignored": False,
     }
     assert fake_pots.repo_defaults == {}
 

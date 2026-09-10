@@ -45,7 +45,13 @@ class SourceInfo:
 
 @dataclass(frozen=True, slots=True)
 class PotAggregateStatus:
-    """Control-plane half of ``context_status``."""
+    """Control-plane half of ``context_status``.
+
+    ``active_pot`` is the globally active pot pointer; ``target_pot`` is the pot
+    the rollup actually describes (``sources``/``backend_ready``). The two
+    differ whenever a repo default routes the caller elsewhere, so both are
+    reported rather than letting one label the other's numbers.
+    """
 
     active_pot: PotInfo | None
     pot_count: int = 0
@@ -53,6 +59,7 @@ class PotAggregateStatus:
     backend_ready: bool = False
     detail: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    target_pot: PotInfo | None = None
 
 
 class PotManagementService(Protocol):

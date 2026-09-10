@@ -35,6 +35,39 @@ class ContextRecordValidationError(ValueError):
 
 
 VERIFICATION_OUTCOMES = frozenset({"worked", "didnt_work", "partial"})
+
+# Detail keys each structured record type *must* carry, keyed by record type.
+# The ``_build_*`` validators below are the enforcement; this table is the
+# machine-readable statement of the same contract, so callers (the CLI's
+# ``record --detail``) can ask what a type needs instead of discovering it by
+# submitting and failing. ``test_context_records`` keeps the two in lockstep.
+REQUIRED_RECORD_DETAILS: dict[str, tuple[str, ...]] = {
+    "bug_pattern": ("kind",),
+    "decision": ("rationale",),
+    "preference": ("policy_kind",),
+    "policy": ("policy_kind",),
+    "verification": ("target_ref", "outcome"),
+}
+
+# Detail keys constrained to a fixed vocabulary, so callers can say which
+# values are legal up front.
+RECORD_DETAIL_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
+    ("verification", "outcome"): tuple(sorted(VERIFICATION_OUTCOMES)),
+}
+
+
+def required_record_details(record_type: str) -> tuple[str, ...]:
+    """Detail keys ``record_type`` requires; empty for free-form types."""
+
+    return REQUIRED_RECORD_DETAILS.get((record_type or "").strip().lower(), ())
+
+
+def record_detail_choices(record_type: str, field: str) -> tuple[str, ...]:
+    """Allowed values for a constrained detail field, else empty."""
+
+    return RECORD_DETAIL_CHOICES.get(((record_type or "").strip().lower(), field), ())
+
+
 PREFERENCE_STRENGTHS = frozenset({"hard", "strong", "soft"})
 PREFERENCE_AUDIENCES = frozenset({"team", "service", "project", "global"})
 SCOPE_KINDS = frozenset(
@@ -391,6 +424,8 @@ _BUILDERS = {
 
 __all__ = [
     "BugPatternRecord",
+    "RECORD_DETAIL_CHOICES",
+    "REQUIRED_RECORD_DETAILS",
     "ContextRecordValidationError",
     "DecisionRecord",
     "FixRecord",
@@ -404,7 +439,9 @@ __all__ = [
     "VerificationRecord",
     "has_structured_schema",
     "has_structured_details",
+    "record_detail_choices",
     "record_to_dict",
+    "required_record_details",
     "structured_detail_keys",
     "validate_record_payload",
 ]

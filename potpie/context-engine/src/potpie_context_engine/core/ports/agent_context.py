@@ -128,15 +128,30 @@ class StatusReport:
     """Outcome of ``context_status`` — composed across the three services."""
 
     pot_id: str
+    """The pot this report actually describes — the one every scoped command in
+    this working directory will touch. ``data_plane`` and ``pot_summary`` are
+    always this pot's."""
+
     profile: str  # local | managed
     daemon_up: bool
     active_pot: str | None
+    """Name of the globally *active* pot pointer, which is not necessarily
+    :attr:`pot_id` — a repo default can route this directory elsewhere."""
+
     backend_ready: bool
     data_plane: Mapping[str, Any] = field(default_factory=dict)
     pot_summary: Mapping[str, Any] = field(default_factory=dict)
     skills: SkillNudge | None = None
     recommended_next_action: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    pot_name: str | None = None
+    """Display name of :attr:`pot_id`."""
+
+    resolved_via: str | None = None
+    """How :attr:`pot_id` was chosen: explicit | repo_default | linked_repo |
+    active_pot."""
+
+    active_pot_id: str | None = None
 
 
 class AgentContextPort(Protocol):

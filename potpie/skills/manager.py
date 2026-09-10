@@ -182,9 +182,10 @@ class DefaultSkillManager:
         self, *, agent: str, path: str | None = None, scope: str = "global"
     ) -> SkillStatus:
         catalog = catalog_by_id()
-        installed = self._target_for_scope(
-            agent=agent, scope=scope, path=path
-        ).installed()
+        target = self._target_for_scope(agent=agent, scope=scope, path=path)
+        installed = target.installed()
+        unmanaged_probe = getattr(target, "unmanaged", None)
+        unmanaged = tuple(unmanaged_probe()) if callable(unmanaged_probe) else ()
         installed_infos: list[SkillInfo] = []
         missing: list[SkillInfo] = []
         outdated: list[SkillInfo] = []
@@ -211,6 +212,7 @@ class DefaultSkillManager:
             installed=tuple(installed_infos),
             missing=tuple(missing),
             outdated=tuple(outdated),
+            unmanaged=unmanaged,
         )
 
     def nudge(self, *, agent: str) -> SkillNudge:
