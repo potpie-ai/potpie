@@ -6,6 +6,7 @@ graph surface.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -685,9 +686,92 @@ def test_read_returns_unsupported_for_filters_outside_view_contract(service) -> 
         )
     )
 
+    # A filter the view cannot apply is a refused read, not an empty one. It
+    # used to come back ``ok=True`` with zero items, which the CLI rendered as
+    # ``(no rows)`` under a zero exit code: a caller could not tell "nothing
+    # matched" from "your filter was never applied".
+    body = env.to_dict()
+    assert body["ok"] is False
+    assert body["status"] == "unsupported_filter"
+    assert "does not support filter language" in body["message"]
+    assert "supported filters: " in body["message"]
+    assert "service" in body["message"]
     assert env.items == ()
     assert env.unsupported[0]["name"] == "language"
+    assert env.unsupported[0]["reason"] == "unsupported_filter"
+    assert "service" in env.unsupported[0]["detail"]["supported_filters"]
     assert env.coverage[0]["status"] == "unsupported"
+    assert env.quality["reason"] == "unsupported_filter"
+
+
+def test_read_rejects_query_on_a_view_that_cannot_filter_by_query(service) -> None:
+    # The session report's exact shape: the generic ``graph read`` CLI exposes
+    # ``--query``, so ``admin.inspection_slice --query PMS`` looked valid and
+    # answered ``(no rows)`` with exit 0.
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="admin",
+            view="inspection_slice",
+            query="PMS",
+            limit=20,
+            detail="full",
+        )
+    )
+
+    body = env.to_dict()
+    assert body["ok"] is False
+    assert body["status"] == "unsupported_filter"
+    assert body["message"] == (
+        "graph read view 'admin.inspection_slice' does not support filter "
+        "query; supported filters: source_ref"
+    )
+    assert [item["name"] for item in env.unsupported] == ["query"]
+    assert env.unsupported[0]["detail"]["supported_filters"] == ["source_ref"]
+
+
+def test_read_missing_scope_and_unsupported_filter_report_both(service) -> None:
+    # ``since`` is outside feature_context's contract and no anchoring scope
+    # was given. Missing scope stays the headline status (it is the harder
+    # blocker), but the unsupported filter is still named so one re-run fixes
+    # both.
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="features",
+            view="feature_context",
+            since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    body = env.to_dict()
+    assert body["ok"] is False
+    assert body["status"] == "missing_required_scope"
+    assert "requires one of" in body["message"]
+    assert "does not support filter since" in body["message"]
+    assert {item["reason"] for item in env.unsupported} == {
+        "unsupported_filter",
+        "missing_required_scope",
+    }
+
+
+def test_read_with_supported_filters_and_no_matches_is_still_ok(service) -> None:
+    # The refusal must not swallow the ordinary empty answer.
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="debugging",
+            view="prior_occurrences",
+            query="timeout",
+            scope={"service": "api"},
+        )
+    )
+
+    body = env.to_dict()
+    assert body["ok"] is True
+    assert "status" not in body
+    assert env.items == ()
+    assert env.unsupported == ()
 
 
 def test_read_missing_required_scope_is_validation_failure(service) -> None:

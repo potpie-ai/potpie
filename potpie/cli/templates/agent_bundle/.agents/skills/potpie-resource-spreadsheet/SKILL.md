@@ -1,6 +1,6 @@
 ---
 name: potpie-resource-spreadsheet
-version: "3"
+version: "4"
 description: "Use when the user asks to ingest a spreadsheet or CSV (cost report, inventory, tracker, export) into Potpie so agents can search and cite it. Teaches the extraction-script flow: one section per sheet, header-repeated row chunks, `potpie resource import`, summaries that carry the key figures, and — critically — deriving the durable facts as graph claims with chunk-id evidence, because chunked rows retrieve badly as text. Chunk text never passes through the agent's own output."
 ---
 
@@ -9,8 +9,8 @@ description: "Use when the user asks to ingest a spreadsheet or CSV (cost report
 An ingested document is split in two. The **bytes** become pot-scoped chunk
 files behind `potpie resource`; the **structure** becomes graph nodes — a
 `Document` owning one `DocumentSection` per real division, joined by
-`SECTION_OF`. Each section's summary becomes a claim and is the **only index
-into its chunks**. Ingestion is harness-led — you read the source, choose the
+`SECTION_OF`. Each section's summary becomes a claim and indexes the section for graph context. The
+resource index separately searches chunk text, including unsummarized rows. Ingestion is harness-led — you read the source, choose the
 sections, and write the summaries; Potpie validates, stores, and embeds. No
 Potpie-side parser or scan command writes the graph for you.
 
@@ -87,9 +87,7 @@ Hard limits, enforced at import:
 | `content_hash` | script-computed digest of the section's text; if empty, every re-import treats the section as changed |
 
 Those caps compound: a five-chunk section holds up to 40,000 characters and is
-indexed by at most 2,000 of summary — roughly 20:1, and anything the summary
-does not name is reachable only *after* search has already landed on that
-section. On a sheet that is the norm rather than the exception, which is why
+indexed by at most 2,000 of summary — roughly 20:1, and details absent from the summary require chunk-text retrieval. On a sheet that is the norm rather than the exception, which is why
 Step 5's derived claims are mandatory here: rows nobody named in a summary or a
 claim are effectively unindexed.
 
@@ -141,7 +139,7 @@ def pack_rows(header, rows):
 # 3. Write meta.json with summary "" for every section.
 ```
 
-## Step 3 — Summaries: the only index
+## Step 3 — Summaries for graph context
 
 The script splits; it cannot judge. You write every summary by reading the
 emitted chunk files (or `potpie resource get` after import). A summary is a
@@ -179,7 +177,7 @@ it:
   reported issue and re-import.
 - `sections_added / kept / changed / removed` — `changed` is the re-summarize
   list on a refresh.
-- `summary_pending` — sections still invisible to semantic search.
+- `summary_pending` — sections that still need retrieval-grade graph summaries.
 - `recommended_next_action` — the one thing still missing, in order: a summary
   to write, a `DOCUMENTS` link when the document has none live (Step 5), or the
   retrieval check in Step 6.
@@ -242,13 +240,10 @@ future agent will see them. Test with the *question* a user would ask ("how
 much do we pay Datadog"), not with the sheet's own column words — if it does
 not surface, the summary or the derived claims are too thin.
 
-`potpie search "<phrase>" --include docs` narrows the envelope to documents
-alone, which splits the two causes apart: a hit there but not in the bare
-search means the index works and was simply outranked; nothing there means the
-summary and claims need the rewrite. `potpie graph read --subgraph knowledge
---view document_passages --query "<phrase>"` matches the chunk text itself and
-returns chunk ids, which separates a weak summary from text that was never
-stored.
+`potpie search "<question>" --include docs` searches summaries and chunk text.
+`--include resources` searches text only. Fetch returned chunk ids to verify
+figures and formulas. If known stored rows do not surface, inspect
+`resource index status` before rewriting summaries or re-importing.
 
 ## Report back
 

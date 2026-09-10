@@ -178,9 +178,7 @@ class TestEnvelopeBuilder:
                     response=_resp(
                         family="prior_bugs",
                         items=[
-                            _ranked_item(
-                                key="bug-a", score=0.9, payload={"src": "bug"}
-                            )
+                            _ranked_item(key="bug-a", score=0.9, payload={"src": "bug"})
                         ],
                         coverage_status="complete",
                     ),
@@ -303,3 +301,49 @@ class TestAgentContractGenerator:
         emit(buf_a)
         emit(buf_b)
         assert buf_a.getvalue() == buf_b.getvalue()
+
+
+def test_exact_passage_survives_cross_family_demotion_without_promoting_weak_hits():
+    builder = EnvelopeBuilder()
+    resources = _resp(
+        family="resources",
+        coverage_status="partial",
+        items=[
+            _ranked_item(
+                key="exact-token",
+                score=0.55,
+                payload={"retrieval": {"lexical_rank": 1, "term_coverage": 1.0}},
+            ),
+            _ranked_item(
+                key="one-word-overlap",
+                score=0.7,
+                payload={"retrieval": {"lexical_rank": 2, "term_coverage": 0.2}},
+            ),
+            _ranked_item(
+                key="no-lexical-match",
+                score=0.65,
+                payload={"retrieval": {"lexical_rank": None, "term_coverage": 0.0}},
+            ),
+        ],
+    )
+    timeline = _resp(
+        family="timeline",
+        coverage_status="complete",
+        items=[_ranked_item(key="recent-but-unrelated", score=0.8, payload={})],
+    )
+    env = builder.build(
+        pot_id="p",
+        intent="unknown",
+        requested_includes=["resources", "timeline"],
+        results=[
+            IncludeResult("resources", resources),
+            IncludeResult("timeline", timeline),
+        ],
+    )
+    assert [item.candidate_key for item in env.items] == [
+        "exact-token",
+        "recent-but-unrelated",
+        "one-word-overlap",
+        "no-lexical-match",
+    ]
+    assert env.items[0].breakdown["lexical_coverage_floor"] == 1.0

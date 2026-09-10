@@ -68,6 +68,10 @@ _VALIDATION_CODES: Final[frozenset[str]] = frozenset(
 )
 
 
+class RpcDeadlineExceeded(ContextEngineDisabled):
+    """The client stopped waiting; remote completion is unknown."""
+
+
 @dataclass(slots=True)
 class DaemonRpcClient:
     """Small local HTTP client that calls operations inside the daemon."""
@@ -410,7 +414,7 @@ def _client_deadline_exceeded(
     a false failure. The only honest next step is to go and look.
     """
     waited = f" within {deadline:g}s" if deadline is not None else ""
-    exc = ContextEngineDisabled(
+    exc = RpcDeadlineExceeded(
         f"{label} did not answer{waited} ({cause.__class__.__name__}). That is a "
         "client-side deadline, not a failure: the request may still be running "
         "there."

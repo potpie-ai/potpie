@@ -489,8 +489,8 @@ def _import_payload(result: ResourceImportResult) -> dict[str, Any]:
     if pending:
         warnings.append(
             f"{len(pending)} section(s) imported without a summary: "
-            f"{', '.join(pending)}. A section is found only by its summary, so "
-            "read each one and write it before the document is searchable."
+            f"{', '.join(pending)}. Summaries improve graph context retrieval; "
+            "indexed chunk text is searchable with 'potpie search <phrase> --include resources'."
         )
     graph = _graph_payload(result)
     warnings.extend(graph["warnings"])

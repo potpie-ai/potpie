@@ -183,8 +183,8 @@ class TimelineReader:
             window_before=window_before,
         )
         if req.query:
-            # Pool-relative, not ``req.query_threshold``. That flag defaults to
-            # an absolute 0.70 that no measured similarity in a real pot
+            # Pool-relative, not ``req.query_threshold``. Its former shared
+            # default was an absolute 0.70 that no measured similarity in a real pot
             # reaches (see ``relative_relevance_floor``), and a task sentence
             # never clears the lexical path either — every token has to be in
             # the row. So through ``resolve`` / ``search``, where the query is

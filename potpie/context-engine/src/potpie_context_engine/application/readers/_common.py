@@ -39,7 +39,7 @@ class ReadRequest:
     freshness_preference: str = "balanced"
     include_invalidated: bool = False
     source_refs: tuple[str, ...] = ()
-    query_threshold: float = 0.70
+    query_threshold: float | None = None
     # Traverse-axis controls (Query Surface). Only the neighborhood reader uses
     # these; other readers ignore them.
     depth: int | None = None
@@ -334,8 +334,8 @@ def relative_relevance_floor(
     ingested documents) the *best* hit for a well-formed query lands at
     0.50-0.60, and anything at or past orthogonal clamps to exactly 0.0. So an
     absolute floor is unusable across corpora and embedders — in particular
-    :data:`QUERY_SIMILARITY_THRESHOLD` (0.70), the value ``--query-threshold``
-    defaults to, is above every score that corpus can produce and would empty
+    :data:`QUERY_SIMILARITY_THRESHOLD` (0.70), the historical shared default,
+    is above every score that corpus can produce and would empty
     every read. What *is* stable is the shape: a real answer sits well clear of
     the tail behind it, so cutting at a fraction of the pool's best keeps the
     answer and drops the filler regardless of where the scale happens to sit.
@@ -356,7 +356,7 @@ def row_matches_query(
     row: ClaimRow,
     query: str | None,
     *,
-    threshold: float = QUERY_SIMILARITY_THRESHOLD,
+    threshold: float | None = None,
 ) -> bool:
     """Return whether a row is relevant enough for an explicit graph-read query."""
     clean_query = _clean_query(query)
@@ -365,7 +365,8 @@ def row_matches_query(
     if _query_text_matches(row, clean_query):
         return True
     similarity = claim_semantic_similarity(row)
-    return similarity is not None and similarity >= threshold
+    floor = QUERY_SIMILARITY_THRESHOLD if threshold is None else threshold
+    return similarity is not None and similarity >= floor
 
 
 def _endpoints(row: ClaimRow) -> tuple[str, str]:

@@ -183,7 +183,7 @@ class DefaultGraphService:
             scope=dict(request.scope),
             include=list(request.include) or None,
             max_items=request.max_items,
-            metadata={"mode": request.mode, "search": True},
+            metadata={"mode": request.mode, "search": True, **dict(request.metadata)},
         )
 
     # --- writes -------------------------------------------------------------
@@ -348,6 +348,11 @@ class DefaultGraphService:
         unsupported = _unsupported_read_filters(request, contract)
         missing = _missing_required_read_scope(request, contract)
         if unsupported or missing:
+            # Both are refusals, not empty answers. An unsupported filter used
+            # to come back ``ok=True`` with zero items, so a caller who passed
+            # ``--query`` to a view that cannot filter by query saw the same
+            # ``(no rows)`` as a genuine miss and a zero exit code. The read
+            # never ran; say so, and name what the view would have accepted.
             missing_item = {
                 "name": contract.name,
                 "reason": "missing_required_scope",
@@ -362,25 +367,28 @@ class DefaultGraphService:
             quality_reason = (
                 "missing_required_scope" if missing else "unsupported_filter"
             )
+            messages: list[str] = []
+            if missing:
+                messages.append(_missing_required_scope_message(contract))
+            if unsupported:
+                messages.append(_unsupported_filter_message(contract, unsupported))
             return GraphReadResult(
                 view=contract.name,
                 subgraph=contract.subgraph,
-                ok=not missing,
-                status="missing_required_scope" if missing else None,
-                message=(
-                    _missing_required_scope_message(contract) if missing else None
-                ),
+                ok=False,
+                status=quality_reason,
+                message="; ".join(messages),
                 items=(),
                 coverage=(
                     {
                         "view": spec.name,
-                        "status": "unsupported" if unsupported or missing else "empty",
+                        "status": "unsupported",
                         "candidate_pool": 0,
                     },
                 ),
                 freshness=_read_freshness(None, backend_freshness={}),
                 quality={
-                    "status": "unsupported" if unsupported or missing else "empty",
+                    "status": "unsupported",
                     "reason": quality_reason,
                 },
                 source_refs=(),
@@ -1054,6 +1062,22 @@ def _missing_required_read_scope(
     )
 
 
+def _unsupported_filter_message(
+    contract: ViewContract, unsupported: tuple[dict[str, Any], ...]
+) -> str:
+    names = ", ".join(str(item["name"]) for item in unsupported)
+    noun = "filter" if len(unsupported) == 1 else "filters"
+    supported = sorted(contract.supported_filters)
+    accepted = (
+        "supported filters: " + ", ".join(supported)
+        if supported
+        else "this view accepts no filters"
+    )
+    return (
+        f"graph read view {contract.name!r} does not support {noun} {names}; {accepted}"
+    )
+
+
 def _missing_required_scope_message(contract: ViewContract) -> str:
     requirements: list[str] = []
     if contract.required_scope:
@@ -1100,6 +1124,13 @@ def _read_result_from_envelope(
     definition: GraphDefinition,
 ) -> GraphReadResult:
     meta = dict(env.metadata)
+    reader_metadata = meta.get("readers", {})
+    # A named view routes to one reader. Its retrieval mode may differ from
+    # the claim backend's mode (for example a hybrid document index).
+    if len(env.coverage) == 1:
+        match_mode = reader_metadata.get(env.coverage[0].include, {}).get(
+            "match_mode", match_mode
+        )
     items = tuple(
         _normalize_read_item(item, definition=definition) for item in env.items
     )
@@ -1109,12 +1140,22 @@ def _read_result_from_envelope(
         subgraph=contract.subgraph,
         items=items,
         coverage=tuple(
-            _coverage_dict(report, view_name=contract.name) for report in env.coverage
+            _coverage_dict(
+                report,
+                view_name=contract.name,
+                metadata=reader_metadata.get(report.include, {}),
+            )
+            for report in env.coverage
         ),
         freshness=_read_freshness(env, backend_freshness=backend_freshness),
         quality=_read_quality(env, backend_quality=backend_quality),
         source_refs=source_refs,
         match_mode=match_mode,
+        warnings=tuple(
+            warning
+            for report in env.coverage
+            for warning in reader_metadata.get(report.include, {}).get("warnings", ())
+        ),
         backed=bool(meta.get("backed", contract.backed)),
         read_shape=str(meta.get("read_shape") or contract.result_shape),
         inline_relations=tuple(
@@ -1134,7 +1175,9 @@ def _read_result_from_envelope(
     )
 
 
-def _coverage_dict(report, *, view_name: str) -> dict[str, Any]:
+def _coverage_dict(
+    report, *, view_name: str, metadata: Mapping[str, Any]
+) -> dict[str, Any]:
     # The workbench speaks view vocabulary in and out; the include family the
     # read trunk routed through stays internal (a graph read routes exactly
     # one include, so coverage rows all belong to the requested view).
@@ -1142,6 +1185,8 @@ def _coverage_dict(report, *, view_name: str) -> dict[str, Any]:
         "view": view_name,
         "status": report.status,
         "candidate_pool": report.candidate_pool,
+        "best_relevance": report.best_relevance,
+        "metadata": dict(metadata),
     }
 
 
@@ -1151,6 +1196,10 @@ def _normalize_read_item(
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> dict[str, Any]:
     payload = dict(item.payload)
+    if payload.get("kind") == "resource_chunk":
+        from .resource_read_projection import resource_read_item
+
+        return resource_read_item(item)
     entity = payload.get("entity") if isinstance(payload.get("entity"), Mapping) else {}
     relations_raw = (
         payload.get("relations") if isinstance(payload.get("relations"), list) else []

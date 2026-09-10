@@ -428,7 +428,7 @@ class _Inspection:
     ) -> GraphSlice:
         seen_nodes: dict[str, GraphNode] = {}
         edges: list[GraphEdge] = []
-        seen_edges: set[tuple[str, str, str]] = set()
+        seen_edges: set[tuple[str, ...]] = set()
         frontier = {entity_key}
         max_edges = max(0, int(limit)) if limit is not None else None
         predicate_set = {p.upper() for p in predicates if p}
@@ -455,7 +455,9 @@ class _Inspection:
                 follows_in = walk_in and row.object_key in current
                 if not (follows_out or follows_in):
                     continue
-                edge_key = (row.subject_key, row.predicate, row.object_key)
+                edge_key = (
+                    row.subject_key, row.predicate, row.object_key, str(row.claim_key or "")
+                )
                 if edge_key not in seen_edges:
                     seen_edges.add(edge_key)
                     edges.append(_edge(row))

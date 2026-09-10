@@ -274,3 +274,27 @@ def test_edge_deletes_rewritten_and_self_loops_dropped() -> None:
     assert len(plan.edge_deletes) == 1
     assert plan.edge_deletes[0].from_entity_key == "agents"
     assert plan.edge_deletes[0].to_entity_key == "x"
+
+
+@pytest.mark.parametrize("discriminator", ["claim_key", "environment", "source_ref"])
+def test_parallel_claim_identity_survives_endpoint_normalization(discriminator):
+    plan = _plan(
+        edge_upserts=[
+            EdgeUpsert(
+                "CONFIGURES", "Service:API", "config:mode", {discriminator: "prod"}
+            ),
+            EdgeUpsert(
+                "CONFIGURES", "service:api", "config:mode", {discriminator: "staging"}
+            ),
+            EdgeUpsert(
+                "CONFIGURES", "service:api", "config:mode", {discriminator: "staging"}
+            ),
+        ]
+    )
+    canonicalize_reconciliation_plan(plan)
+    assert len(plan.edge_upserts) == 2
+    assert {edge.properties[discriminator] for edge in plan.edge_upserts} == {
+        "prod",
+        "staging",
+    }
+    assert {edge.from_entity_key for edge in plan.edge_upserts} == {"service:api"}

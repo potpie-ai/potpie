@@ -137,7 +137,8 @@ class GraphReadRequest:
     source_refs: tuple[str, ...] = ()
     detail: str = "compact"
     relations: str = "summary"
-    query_threshold: float = 0.70
+    query_threshold: float | None = None
+    """Explicit similarity floor; None leaves filtering to the reader's default."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,6 +376,8 @@ def read_item_for_detail(
                 # ``resource get`` takes, and dropping them would put a
                 # ``resource list`` hop between a search hit and its text.
                 "chunk_ids",
+                "fetch",
+                "retrieval",
                 "truth",
                 "coverage_status",
             )

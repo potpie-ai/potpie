@@ -53,8 +53,28 @@ INCLUDE_RANK_WEIGHT: Mapping[str, float] = {
 }
 
 
-def include_rank_weight(include: str) -> float:
+def include_rank_weight(include: str, intent: str | None = None) -> float:
+    if intent == "definition":
+        return {"docs": 1.0, "resources": 0.95}.get(include, 0.5)
+    if intent == "docs":
+        return {"docs": 1.0, "resources": 1.0}.get(include, 0.8)
     return float(INCLUDE_RANK_WEIGHT.get(include, 1.0))
+
+
+def _lexical_coverage_floor(include: str, payload: Mapping[str, object]) -> float:
+    """Protect strong query-term matches, not partial overlaps or unknown scores."""
+    retrieval = payload.get("retrieval")
+    if include != "resources" or not isinstance(retrieval, Mapping):
+        return 0.0
+    coverage = retrieval.get("term_coverage")
+    if (
+        retrieval.get("lexical_rank") is not None
+        and isinstance(coverage, (int, float))
+        and not isinstance(coverage, bool)
+        and 0.8 <= coverage <= 1.0
+    ):
+        return float(coverage)
+    return 0.0
 
 
 @dataclass(slots=True)
@@ -105,6 +125,7 @@ class EnvelopeBuilder:
 
         items: list[EvidenceItem] = []
         coverage: list[CoverageReport] = []
+        reader_metadata: dict[str, dict[str, object]] = {}
         for include_result in results:
             inc = include_result.include
             if matched and inc not in matched_set:
@@ -112,16 +133,31 @@ class EnvelopeBuilder:
                 # under this intent. Skip silently.
                 continue
             resp = include_result.response
-            weight = include_rank_weight(inc)
+            reader_metadata[inc] = dict(resp.meta)
+            weight = include_rank_weight(inc, intent)
             for ranked in resp.items:
+                payload = dict(ranked.candidate.payload)
+                # Definition readers already distinguish affirmative evidence,
+                # negation and authority; lexical overlap must not override that.
+                lexical_floor = (
+                    _lexical_coverage_floor(inc, payload)
+                    if intent != "definition"
+                    else 0.0
+                )
+                score = max(ranked.score * weight, lexical_floor)
                 items.append(
                     EvidenceItem(
                         include=inc,
                         candidate_key=ranked.candidate.candidate_key,
-                        score=ranked.score * weight,
-                        payload=dict(ranked.candidate.payload),
+                        score=score,
+                        payload=payload,
                         coverage_status=resp.coverage_status,
-                        breakdown=dict(ranked.breakdown),
+                        breakdown={
+                            **dict(ranked.breakdown),
+                            "reader_score": ranked.score,
+                            "include_weight": weight,
+                            "lexical_coverage_floor": lexical_floor,
+                        },
                     )
                 )
             best_relevance = resp.meta.get("best_relevance")
@@ -152,7 +188,10 @@ class EnvelopeBuilder:
             unsupported_includes=tuple(unsupported_raw),
             overall_confidence=derive_overall_confidence(coverage=coverage),
             as_of=as_of,
-            metadata=dict(metadata or {}),
+            metadata={
+                **dict(metadata or {}),
+                **({"readers": reader_metadata} if reader_metadata else {}),
+            },
         )
 
 

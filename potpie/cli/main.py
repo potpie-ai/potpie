@@ -388,8 +388,11 @@ def run_cli(argv: list[str] | None = None) -> None:
     from potpie.cli.ui.output import (
         configure_cli_logging,
         configure_error_output,
+        configure_output_streams,
     )
 
+    # Help is eager: the root callback runs too late to protect its rendering.
+    configure_output_streams()
     args = list(argv if argv is not None else sys.argv[1:])
     bootstrap_output_flags_from_argv(args)
     if is_json():

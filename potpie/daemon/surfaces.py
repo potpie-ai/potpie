@@ -139,7 +139,16 @@ READ_ONLY_RPC_MEMBERS: Final[dict[str, frozenset[str]]] = {
             "search_entities_async",
         }
     ),
-    "graph_workbench": frozenset({"history", "inbox_list", "inbox_show", "quality"}),
+    "graph_workbench": frozenset(
+        {
+            "history",
+            "inbox_list",
+            "inbox_show",
+            "quality",
+            "commit_status",
+            "verify_commit",
+        }
+    ),
     "installer": frozenset({"is_installed"}),
     # ``pull`` is missing on purpose: it advances the consumer cursor.
     "ledger": frozenset({"query", "sources", "status"}),

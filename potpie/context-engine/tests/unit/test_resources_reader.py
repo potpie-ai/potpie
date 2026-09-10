@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from potpie_context_core.ports.graph_service import GraphReadRequest
 from potpie_context_core.agent_context_port import (
     DEFAULT_INTENT_INCLUDES,
     READER_BACKED_INCLUDES,
@@ -16,12 +17,17 @@ from potpie_context_core.ports.resource_index import (
     ChunkHit,
     IndexCapabilities,
     IndexSearchResult,
+    ResourceIndexError,
+)
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
 )
 from potpie_context_engine.application.readers._common import ReadRequest
 from potpie_context_engine.application.readers.resources import ResourcesReader
 from potpie_context_engine.application.services.envelope_builder import (
     INCLUDE_RANK_WEIGHT,
 )
+from potpie_context_engine.application.services.graph_service import DefaultGraphService
 from potpie_context_engine.domain.ranking import RankingService
 
 
@@ -337,3 +343,116 @@ def test_best_relevance_is_none_when_nothing_was_scored_semantically():
     )
     response = rdr.read(ReadRequest(pot_id="p", query="ERR_QUOTA_EXCEEDED"))
     assert response.meta["best_relevance"] is None
+
+
+@pytest.mark.parametrize(
+    "threshold, expected",
+    [(None, {0, 1, 2, 3}), (0.0, {0, 1, 2}), (0.7, {0, 1}), (0.99, set())],
+)
+def test_explicit_threshold_filters_measured_similarity_without_lexical_bypass(
+    threshold, expected
+):
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=True,
+            hits=(
+                hit(0, similarity=0.9, semantic_rank=1),
+                hit(1, similarity=0.7, semantic_rank=2),
+                hit(2, similarity=0.1, lexical_rank=1, term_coverage=0.25),
+                hit(3, lexical_rank=2, term_coverage=1.0),
+            ),
+        )
+    )
+    response = rdr.read(
+        ReadRequest(pot_id="p", query="PMS full form", query_threshold=threshold)
+    )
+    assert {item.candidate.payload["seq"] for item in response.items} == expected
+    assert response.meta["query_threshold"] == threshold
+    if not expected:
+        assert "No passages meet" in response.meta["warnings"][0]
+    if threshold == 0.7:
+        assert response.meta["warnings"] == []
+
+
+@pytest.mark.parametrize(
+    "mode", [MATCH_MODE_LEXICAL, MATCH_MODE_HYBRID, MATCH_MODE_DISABLED]
+)
+def test_explicit_threshold_refuses_an_index_without_calibrated_similarity(mode):
+    rdr, _ = reader(IndexSearchResult(profile="fake", match_mode=mode))
+    with pytest.raises(ResourceIndexError, match="cannot apply a calibrated") as exc:
+        rdr.read(ReadRequest(pot_id="p", query="PMS", query_threshold=0.5))
+    assert "Omit --query-threshold" in exc.value.recommended_next_action
+
+
+@pytest.mark.parametrize("threshold", [-0.1, 1.1, float("nan"), float("inf")])
+def test_invalid_threshold_fails_before_search(threshold):
+    rdr, index = reader(IndexSearchResult(profile="fake"))
+    with pytest.raises(ResourceIndexError, match="between 0.0 and 1.0"):
+        rdr.read(ReadRequest(pot_id="p", query="PMS", query_threshold=threshold))
+    assert index.calls == []
+
+
+@pytest.mark.parametrize("calibrated", [True, False])
+def test_a_full_page_of_weak_hits_carries_a_warning(calibrated):
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="fake",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=calibrated,
+            hits=tuple(
+                hit(i, similarity=0.1, lexical_rank=i + 1, term_coverage=0.25)
+                for i in range(5)
+            ),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="PMS full form", max_items=5))
+    assert response.coverage_status == "complete"
+    assert len(response.items) == 5
+    warning = response.meta["warnings"][0]
+    assert ("Weak passage matches" if calibrated else "uncalibrated") in warning
+
+
+def test_lexical_only_evidence_is_reported_as_unmeasured():
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="fake",
+            match_mode=MATCH_MODE_LEXICAL,
+            similarity_calibrated=True,
+            hits=(hit(0, lexical_rank=1, term_coverage=1.0),),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="PMS"))
+    assert "no measured semantic similarity" in response.meta["warnings"][0]
+
+
+@pytest.mark.parametrize("threshold, count", [(None, 1), (0.7, 0)])
+def test_passage_view_preserves_threshold_and_evidence_diagnostics(threshold, count):
+    index = FakeIndex(
+        IndexSearchResult(
+            profile="fake",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=True,
+            hits=(hit(0, similarity=0.1, lexical_rank=1, term_coverage=0.25),),
+        )
+    )
+    service = DefaultGraphService(backend=InMemoryGraphBackend(), resource_index=index)
+    result = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="knowledge",
+            view="document_passages",
+            query="PMS full form",
+            query_threshold=threshold,
+            limit=1,
+        )
+    )
+    body = result.to_dict()
+    assert body["ok"] is True
+    assert len(body["items"]) == count
+    assert body["match_mode"] == MATCH_MODE_HYBRID
+    assert body["coverage"][0]["metadata"]["query_threshold"] == threshold
+    assert body["coverage"][0]["metadata"]["similarity_calibrated"] is True
+    assert body["coverage"][0]["best_relevance"] == 0.1
+    assert body["warnings"]

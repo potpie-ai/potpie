@@ -1152,3 +1152,95 @@ def test_a_conflict_names_the_commits_that_landed_in_between() -> None:
         "Re-run `potpie graph propose --file <the same file>` and commit the new "
         "plan_id; nothing from this plan was applied."
     )
+
+
+def test_deferred_verification_returns_receipt_and_retry_never_writes_twice(
+    monkeypatch, tmp_path
+) -> None:
+    from potpie_context_core import workbench_service
+
+    workbench, backend, store = _service()
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    store = LocalJsonGraphPlanStore(home=tmp_path)
+    # Seed the persisted store before committing, so both CAS transitions are exercised.
+    store.save(workbench.plan_store.get(plan_id=proposal.plan_id, pot_id=POT))
+    workbench.plan_store = store
+    original_verify = workbench_service._verify_ingestion_commit
+
+    def blocked_verification(*args, **kwargs):
+        raise AssertionError("verification ran before receipt was returned")
+
+    monkeypatch.setattr(
+        workbench_service, "_verify_ingestion_commit", blocked_verification
+    )
+    receipt = workbench.commit(
+        proposal.plan_id, pot_id=POT, verify=True, defer_verification=True
+    )
+    assert receipt.ok and receipt.verification is None
+    record = store.get(plan_id=proposal.plan_id, pot_id=POT)
+    assert record.verification_quality_before is not None
+    # Persisted baseline survives a real JSON round trip/restart.
+    restored = GraphMutationPlanRecord.from_dict(
+        json.loads(json.dumps(record.to_dict()))
+    )
+    assert restored.verification_quality_before == record.verification_quality_before
+    store.save(restored)
+    assert (
+        workbench.commit_status(proposal.plan_id, pot_id=POT).mutation_id
+        == receipt.mutation_id
+    )
+    assert (
+        workbench.commit_status(proposal.plan_id, pot_id="other").status == "not_found"
+    )
+
+    def forbidden_apply(*args, **kwargs):
+        raise AssertionError("retry applied the mutation again")
+
+    monkeypatch.setattr(type(backend.mutation), "apply", forbidden_apply)
+    monkeypatch.setattr(workbench_service, "_verify_ingestion_commit", original_verify)
+    verified = workbench.verify_commit(proposal.plan_id, pot_id=POT)
+    assert verified.ok and verified.readback_count == 1
+    retry = workbench.commit(proposal.plan_id, pot_id=POT, verify=True)
+    assert retry.mutation_id == receipt.mutation_id
+    assert retry.verification.ok and retry.verification.readback_count == 1
+
+
+def test_separate_verification_preserves_quality_regression() -> None:
+    workbench, _, _ = _service()
+    first = workbench.propose(_owner_payload("team:platform"), pot_id=POT)
+    assert workbench.commit(first.plan_id, pot_id=POT).ok
+    second = workbench.propose(_owner_payload("team:backend"), pot_id=POT)
+    assert workbench.commit(
+        second.plan_id, pot_id=POT, verify=True, defer_verification=True
+    ).ok
+    verification = workbench.verify_commit(second.plan_id, pot_id=POT)
+    assert verification.status == "degraded"
+    assert verification.quality_regressions
+
+
+def test_verification_without_baseline_does_not_invent_quality_delta() -> None:
+    workbench, _, _ = _service()
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    assert (
+        workbench.verify_commit(proposal.plan_id, pot_id=POT).status == "not_committed"
+    )
+    workbench.commit(proposal.plan_id, pot_id=POT)
+    verification = workbench.verify_commit(proposal.plan_id, pot_id=POT)
+    assert verification.readback_count == 1
+    assert verification.quality_delta == {}
+    assert any("baseline unavailable" in warning for warning in verification.warnings)
+
+
+@pytest.mark.parametrize("status", ["conflict", "expired", "invalid", "abandoned", "error"])
+def test_commit_status_preserves_durable_failure_and_repair(status) -> None:
+    workbench, _, store = _service()
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    record = store.get(plan_id=proposal.plan_id, pot_id=POT)
+    store.save(replace(record, status=status, detail="original failure detail"))
+    result = workbench.commit_status(proposal.plan_id, pot_id=POT)
+    assert not result.ok and result.status == status
+    assert result.detail == "original failure detail"
+    assert "recover_stale" not in result.recommended_next_action
+    assert (
+        "backend readiness" if status == "error" else "fresh proposal"
+    ) in result.recommended_next_action

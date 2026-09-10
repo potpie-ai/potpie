@@ -297,3 +297,169 @@ def test_vector_search_orders_by_cosine_distance(shared_graph) -> None:
     assert [r.object_key for r in rows] == ["service:auth", "service:db"]
     assert rows[0].properties["semantic_similarity"] == pytest.approx(1.0)
     assert rows[1].properties["semantic_similarity"] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("fact_query", [None, "login auth"])
+def test_source_ref_filters_accept_legacy_scalars(shared_graph, fact_query) -> None:
+    """Exercise real Cypher with mixed stored types and exact OR matching."""
+    settings = _Settings()
+    writer = FalkorDBGraphWriter(settings, graph=shared_graph, embedder=_FakeEmbedder())
+    assert asyncio.run(writer.ensure_indexes()) is True
+    for key, refs, primary, gid in [
+        ("scalar", "ref:a", "ref:primary", "p1"),
+        ("array", ["ref:b", "ref:c"], "ref:other", "p1"),
+        ("missing", None, "ref:d", "p1"),
+        ("empty", [], "ref:empty", "p1"),
+        ("substring", "ref:ab", "ref:none", "p1"),
+        ("other-pot", "ref:a", "ref:primary", "p2"),
+    ]:
+        shared_graph.query(
+            "CREATE (a:Entity {group_id: $gid, entity_key: $key})"
+            "-[r:RELATES_TO {group_id: $gid, name: 'DEPENDS_ON',"
+            " subject_key: $key, object_key: 'service:auth', claim_key: $key,"
+            " fact: 'login auth', source_ref: $primary, source_refs: $refs}]->"
+            "(b:Entity {group_id: $gid, entity_key: 'service:auth'}) "
+            "SET r.fact_embedding = vecf32([1.0, 0.0, 0.0])",
+            params={"gid": gid, "key": key, "refs": refs, "primary": primary},
+        )
+    reader = FalkorDBClaimQueryStore(
+        settings, graph=shared_graph, embedder=_FakeEmbedder()
+    )
+    if fact_query:
+        # Do not let the adapter's lexical fallback mask a broken vector filter.
+        def no_fallback(_params):
+            raise AssertionError("vector query unexpectedly fell back to lexical")
+
+        reader._find_claims_lexical = no_fallback
+    for refs, expected in [
+        (("ref:a",), {"scalar"}),
+        (("ref:c",), {"array"}),
+        (("ref:a", "ref:c", "ref:d"), {"scalar", "array", "missing"}),
+        (("ref:primary",), {"scalar"}),
+        ((), {"scalar", "array", "missing", "empty", "substring"}),
+    ]:
+        rows = reader.find_claims(
+            ClaimQueryFilter(
+                pot_id="p1", source_ref_in=refs, fact_query=fact_query, limit=20
+            )
+        )
+        assert {row.claim_key for row in rows} == expected
+        if "scalar" in expected:
+            assert next(
+                row for row in rows if row.claim_key == "scalar"
+            ).source_refs == ("ref:a",)
+    if not fact_query:
+        assert (
+            reader.find_claims(
+                ClaimQueryFilter(pot_id="p1", source_ref_in=("ref:unknown",))
+            )
+            == []
+        )
+
+
+@pytest.mark.parametrize("refs", ["ref:a", ["ref:a", "ref:b"]])
+def test_writer_persists_source_refs_as_native_arrays(shared_graph, refs) -> None:
+    writer = FalkorDBGraphWriter(_Settings(), graph=shared_graph)
+    prov = ProvenanceRef(pot_id="p1", source_event_id="e1", source_system="agent")
+
+    async def seed():
+        await writer.upsert_entities(
+            "p1",
+            [
+                EntityUpsert("service:web", ("Entity", "Service"), {}),
+                EntityUpsert("service:auth", ("Entity", "Service"), {}),
+            ],
+            prov,
+        )
+        await writer.upsert_edges(
+            "p1",
+            [
+                EdgeUpsert(
+                    "DEPENDS_ON", "service:web", "service:auth", {"source_refs": refs}
+                )
+            ],
+            prov,
+        )
+
+    asyncio.run(seed())
+    result = shared_graph.query("MATCH ()-[r:RELATES_TO]->() RETURN r.source_refs")
+    assert result.result_set == [[[refs] if isinstance(refs, str) else refs]]
+    reader = FalkorDBClaimQueryStore(_Settings(), graph=shared_graph)
+    assert (
+        len(reader.find_claims(ClaimQueryFilter(pot_id="p1", source_ref_in=("ref:a",))))
+        == 1
+    )
+
+
+@pytest.mark.parametrize("same_source", [True, False])
+@pytest.mark.parametrize("separate_batches", [True, False])
+def test_environment_claims_survive_normalization_storage_and_reassertion(
+    shared_graph, same_source, separate_batches
+):
+    from potpie_context_core.entity_canonicalization import (
+        canonicalize_reconciliation_plan,
+    )
+    from potpie_context_core.reconciliation import MutationBatch
+
+    writer = FalkorDBGraphWriter(
+        _Settings(), graph=shared_graph, embedder=_FakeEmbedder()
+    )
+    reader = FalkorDBClaimQueryStore(_Settings(), graph=shared_graph)
+    prov = ProvenanceRef(pot_id="env-test", source_event_id="seed")
+    edges = [
+        EdgeUpsert(
+            "CONFIGURES",
+            "service:api",
+            "config:mode",
+            {
+                "claim_key": f"claim:{env}",
+                "environment": env,
+                "source_ref": "fixture:config" if same_source else f"fixture:{env}",
+                "fact": fact,
+            },
+        )
+        for env, fact in [("prod", "auth production"), ("staging", "sandbox only")]
+    ]
+
+    async def write():
+        await writer.upsert_entities(
+            "env-test",
+            [
+                EntityUpsert("service:api", ("Entity", "Service")),
+                EntityUpsert("config:mode", ("Entity", "ConfigVariable")),
+            ],
+            prov,
+        )
+        batches = [[edge] for edge in edges] if separate_batches else [edges]
+        for group in batches:
+            batch = MutationBatch(edge_upserts=group)
+            canonicalize_reconciliation_plan(batch)
+            await writer.upsert_edges("env-test", batch.edge_upserts, prov)
+        await writer.upsert_edges("env-test", edges, prov)
+
+    asyncio.run(write())
+    claims = reader.find_claims(ClaimQueryFilter(pot_id="env-test"))
+    assert len(claims) == 2
+    assert {row.claim_key: row.fact for row in claims} == {
+        "claim:prod": "auth production",
+        "claim:staging": "sandbox only",
+    }
+    vectors = shared_graph.query(
+        "MATCH ()-[r:RELATES_TO]->() RETURN r.claim_key, "
+        "vec.cosineDistance(r.fact_embedding, vecf32([1, 0, 0]))"
+    ).result_set
+    assert dict(vectors) == {"claim:prod": 0.0, "claim:staging": 1.0}
+
+    from potpie_context_engine.adapters.outbound.graph.falkordb_inspection import (
+        FalkorDBInspection,
+    )
+
+    inspection = FalkorDBInspection(settings=_Settings(), graph=shared_graph)
+    neighborhood = inspection.neighborhood(
+        pot_id="env-test", entity_key="service:api", depth=2
+    )
+    assert len(neighborhood.edges) == 2
+    assert {edge.properties["claim_key"] for edge in neighborhood.edges} == {
+        "claim:prod",
+        "claim:staging",
+    }

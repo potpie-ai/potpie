@@ -188,3 +188,30 @@ def test_slice_marks_over_cap_results_as_truncated() -> None:
     sl = insp.slice(pot_id=POT, filter_=ClaimQueryFilter(pot_id=POT))
 
     assert sl.truncated is True
+
+
+def test_in_memory_neighborhood_preserves_parallel_claims() -> None:
+    from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+        _Inspection,
+        InMemoryClaimQueryStore,
+    )
+
+    store = InMemoryClaimQueryStore()
+    store.rows.extend(
+        ClaimRow(
+            pot_id=POT,
+            predicate="CONFIGURES",
+            subject_key="service:api",
+            object_key="config:mode",
+            claim_key=f"claim:{env}",
+            environment=env,
+        )
+        for env in ("prod", "staging")
+    )
+    result = _Inspection(store).neighborhood(
+        pot_id=POT, entity_key="service:api", depth=2
+    )
+    assert len(result.edges) == 2
+    assert {edge.properties["claim_key"] for edge in result.edges} == {
+        "claim:prod", "claim:staging"
+    }

@@ -471,6 +471,10 @@ async def upsert_edges_async(
             # Carry the ontology-specific extras alongside POC fields.
             for k, v in extras.items():
                 edge_props[k] = v
+            # Legacy callers may supply one reference as a scalar. Persist the
+            # canonical array shape so subsequent source-reference reads are safe.
+            if isinstance(edge_props.get("source_refs"), str):
+                edge_props["source_refs"] = [edge_props["source_refs"]]
             edge_props.update(
                 _embedding_props(
                     embedder=embedder,
@@ -486,6 +490,11 @@ async def upsert_edges_async(
             if provenance.mutation_id:
                 edge_props["mutation_id"] = provenance.mutation_id
 
+            # Semantic claims already carry a stable identity including environment
+            # and evidence. Existing stored claims have this property, so matching
+            # it also reuses pre-upgrade rows on an idempotent reassertion.
+            claim_key = edge_props.get("claim_key")
+            claim_identity = ", claim_key: $claim_key" if claim_key else ""
             await session.run(
                 f"""
                 MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}})
@@ -495,7 +504,7 @@ async def upsert_edges_async(
                     name: $predicate,
                     subject_key: $from_key,
                     object_key: $to_key,
-                    source_ref: $source_ref
+                    source_ref: $source_ref{claim_identity}
                 }}]->(b)
                 ON CREATE SET
                     r.uuid = randomUUID(),
@@ -510,6 +519,7 @@ async def upsert_edges_async(
                 from_key=item.from_entity_key,
                 to_key=item.to_entity_key,
                 source_ref=source_ref,
+                claim_key=claim_key,
                 now=now.isoformat(),
                 props=_coerce_props_for_neo4j(edge_props),
             )

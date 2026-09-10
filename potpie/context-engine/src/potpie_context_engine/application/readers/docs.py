@@ -44,6 +44,11 @@ from potpie_context_engine.application.readers._common import (
     row_matches_query,
     scoped_entity_keys,
 )
+from potpie_context_core.definition_query import definition_subject
+from potpie_context_engine.domain.definition_retrieval import (
+    has_definition,
+    rank_definitions,
+)
 from potpie_context_core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
@@ -97,18 +102,48 @@ class DocsReader:
                 )
             )
 
-        ranked = rank_candidates(service=self.ranker, candidates=candidates, req=req)
+        ranking_req = (
+            dataclasses.replace(req, max_items=0) if req.intent == "definition" else req
+        )
+        ranked = rank_candidates(
+            service=self.ranker, candidates=candidates, req=ranking_req
+        )
+        if req.intent == "definition":
+            ranked = rank_definitions(ranked, req.query)
+            if req.max_items > 0:
+                ranked = ranked[: req.max_items]
         return ReadResponse(
             family=self.family,
             items=tuple(ranked),
             coverage_status=coverage_status_from_count(
                 found=len(ranked), requested=req.max_items
             ),
-            meta={"anchor_keys": list(anchor_keys), "candidate_pool": len(rows)},
+            meta={
+                "anchor_keys": list(anchor_keys),
+                "candidate_pool": len(rows),
+                **(
+                    {
+                        "definition_subject": definition_subject(
+                            req.query, allow_bare=True
+                        ),
+                        "warnings": [
+                            "Definition wording indicates relevance, not corroboration; verify the source refs and truth metadata, especially for competing expansions."
+                        ],
+                    }
+                    if req.intent == "definition"
+                    else {}
+                ),
+            },
         )
 
     def _rows(self, req: ReadRequest, *, anchor_keys: Iterable[str]) -> list[ClaimRow]:
         anchors = tuple(anchor_keys)
+        # Definition wording is a routing cue; the term itself is the recall query.
+        query = (
+            (definition_subject(req.query, allow_bare=True) or req.query)
+            if req.intent == "definition"
+            else req.query
+        )
         base: dict[str, Any] = {
             "pot_id": req.pot_id,
             "include_invalidated": req.include_invalidated,
@@ -127,7 +162,7 @@ class DocsReader:
                     **scoped,
                     predicate_in=_DOC_PREDICATES,
                     subject_label=label,
-                    fact_query=req.query,
+                    fact_query=query,
                 )
             )
             if label == _SECTION_LABEL:
@@ -147,7 +182,7 @@ class DocsReader:
                     **base,
                     predicate_in=(_STRUCTURE_PREDICATE,),
                     subject_label=_SECTION_LABEL,
-                    fact_query=req.query,
+                    fact_query=query,
                 )
             )
             section_keys.update(row.subject_key for row in sections)
@@ -193,10 +228,10 @@ def _rows_clearing_relevance_floor(
       ``SECTION_OF`` *is* the queried row, it carries a score, and it is judged
       on it.
 
-    ``req.query_threshold`` is deliberately not consulted. It is plumbed to
-    every reader with a 0.70 default that no measured score in the corpus
-    reaches, so honouring it here would return nothing at all; the floor is
-    derived from the pool instead. Recalibrating that flag is its own change.
+    ``req.query_threshold`` is deliberately not consulted by this claim reader.
+    The former shared 0.70 default exceeded measured scores in the corpus, so
+    the floor is derived from the pool instead. Explicit threshold support
+    here remains separate from the resource index's passage threshold.
     """
     if not (req.query and req.query.strip()):
         return rows
@@ -209,7 +244,10 @@ def _rows_clearing_relevance_floor(
             and claim_semantic_similarity(row) is None
         ):
             unscored_structure.append(row)
-        elif row_matches_query(row, req.query, threshold=floor):
+        elif (
+            req.intent == "definition"
+            and has_definition(row.fact, definition_subject(req.query, allow_bare=True))
+        ) or row_matches_query(row, req.query, threshold=floor):
             kept.append(row)
     # Admission and scoring are separate questions: a structural row is
     # admitted because its section survived, and scored from that section's

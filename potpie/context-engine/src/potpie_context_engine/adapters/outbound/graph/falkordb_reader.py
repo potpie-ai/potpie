@@ -55,7 +55,7 @@ WHERE r.group_id = $gid
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
   AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
-  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN coalesce(r.source_refs, []) WHERE ref IN $source_refs))
+  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
   AND ($include_invalid OR r.invalid_at IS NULL)
   AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)

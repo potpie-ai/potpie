@@ -18,8 +18,10 @@ from typing import Any, Mapping
 from potpie_context_core.agent_context_port import (
     infer_context_intent,
     normalize_context_intent,
+    normalize_context_values,
 )
 from potpie_context_core.agent_envelope import AgentEnvelope
+from potpie_context_core.definition_query import definition_subject
 from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.ports.agent_context import (
     RecordReceipt,
@@ -59,7 +61,21 @@ class AgentContextService:
         return self.graph.resolve(_with_effective_intent(request))
 
     def search(self, request: SearchRequest) -> AgentEnvelope:
-        return self.graph.search(request)
+        explicit = (request.intent or "").strip()
+        intent = explicit or (
+            "definition" if definition_subject(request.query) else "unknown"
+        )
+        return self.graph.search(
+            dataclasses.replace(
+                request,
+                intent=intent,
+                include=_document_includes(request.include),
+                metadata={
+                    **dict(request.metadata),
+                    "intent_source": "explicit" if explicit else "inferred",
+                },
+            )
+        )
 
     def record(self, request: RecordRequest) -> RecordReceipt:
         return self.graph.record(request)
@@ -114,8 +130,21 @@ def _with_effective_intent(request: ResolveRequest) -> ResolveRequest:
     return dataclasses.replace(
         request,
         intent=intent,
+        include=_document_includes(request.include),
         metadata={**dict(request.metadata), "intent_source": source},
     )
+
+
+def _document_includes(include: tuple[str, ...]) -> tuple[str, ...]:
+    """The agent-facing document filter searches summaries and source text.
+
+    Named graph views retain their precise summary/passage distinction.
+    Explicit resources-only requests remain available for exact source lookup.
+    """
+    include = tuple(normalize_context_values(include))
+    if "docs" in include and "resources" not in include:
+        return (*include, "resources")
+    return include
 
 
 def _data_plane_dict(dp, *, quality: Mapping[str, Any] | None = None) -> dict:

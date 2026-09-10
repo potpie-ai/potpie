@@ -1,0 +1,20 @@
+{
+  "queries": [
+    "What is the full form of PMS?",
+    "PMS full form",
+    "What does PMS stand for?",
+    "PMS stands for",
+    "abbreviation of PMS",
+    "PMS abbreviation",
+    "acronym expansion of PMS",
+    "pms full form"
+  ],
+  "claims": [
+    {"key": "correct", "fact": "PMS stands for Prüfung Montage Service.", "truth": "authoritative_fact", "strength": "attested", "ref": "potpie://res/architecture/definition/0"},
+    {"key": "incorrect", "fact": "PMS stands for Project Management System.", "truth": "agent_claim", "strength": "inferred", "ref": "agent:guess"},
+    {"key": "negated", "fact": "PMS does not stand for Product Management Software.", "truth": "authoritative_fact", "strength": "attested", "ref": "potpie://res/architecture/corrections/0"},
+    {"key": "question", "fact": "Does PMS stand for Project Management System?", "truth": "agent_claim", "strength": "stated", "ref": "agent:question"},
+    {"key": "other_acronym", "fact": "ERP stands for Enterprise Resource Planning. PMS integrates with ERP.", "truth": "authoritative_fact", "strength": "attested", "ref": "potpie://res/architecture/erp/0"},
+    {"key": "distractor", "fact": "PMS full form is entered in the deployment configuration. PMS uses Redis in production.", "truth": "authoritative_fact", "strength": "attested", "ref": "potpie://res/operations/configuration/0"}
+  ]
+}

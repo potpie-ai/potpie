@@ -153,6 +153,7 @@ class GraphMutationPlanRecord:
     ontology_version: str = ONTOLOGY_VERSION
     commit_attempt_id: str | None = None
     commit_attempt_started_at: datetime | None = None
+    verification_quality_before: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -180,6 +181,7 @@ class GraphMutationPlanRecord:
             "warnings": list(self.warnings),
             "approval": self.approval.to_dict() if self.approval else None,
             "mutation_id": self.mutation_id,
+            "verification_quality_before": _json_safe(self.verification_quality_before),
             "commit_attempt_id": self.commit_attempt_id,
             "commit_attempt_started_at": self.commit_attempt_started_at.isoformat()
             if self.commit_attempt_started_at is not None
@@ -214,6 +216,7 @@ class GraphMutationPlanRecord:
                 dict(i) for i in raw.get("review_required_ops") or ()
             ),
             rejected_ops=tuple(dict(i) for i in raw.get("rejected_ops") or ()),
+            verification_quality_before=raw.get("verification_quality_before"),
             lowered_batch=mutation_batch_from_dict(raw.get("lowered_batch")),
             provenance=provenance_context_from_dict(raw.get("provenance")),
             expected_subgraph_versions=_int_mapping(

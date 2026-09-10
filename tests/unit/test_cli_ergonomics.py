@@ -716,3 +716,35 @@ def test_mutation_template_unknown_kind_fails_with_next_action() -> None:
     payload = json.loads(result.output)
     assert payload["error"]["code"] == "unknown_template_kind"
     assert "repo-baseline" in payload["recommended_next_action"]
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("selector", ["local:missing", "managed:missing"])
+def test_mutation_template_accepts_pot_without_host_access(
+    monkeypatch, json_output, selector
+):
+    def forbidden(*args, **kwargs):
+        pytest.fail("schema templates must not resolve a pot or access a host")
+
+    from potpie.cli import hosts
+
+    monkeypatch.setattr(graph, "resolve_pot_id", forbidden)
+    monkeypatch.setattr(hosts, "build_host", forbidden)
+    _common.set_json(json_output)
+    result = CliRunner().invoke(
+        graph.graph_app, ["mutation-template", "--kind", "feature", "--pot", selector]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    if json_output:
+        assert payload["pot_id"] is None
+        payload = payload["result"]["template"]
+    assert payload == graph._MUTATION_TEMPLATES["feature"]
+
+
+def test_mutation_template_help_explains_unscoped_pot():
+    result = CliRunner().invoke(graph.graph_app, ["mutation-template", "--help"])
+    assert result.exit_code == 0, result.output
+    text = " ".join(result.output.split())
+    assert "--pot" in text
+    assert "not resolved or validated" in text

@@ -217,6 +217,10 @@ def stamp_scored_rows(scored: Iterable[tuple[float, ClaimRow]]) -> list[ClaimRow
     return out
 
 
+# Concatenating with [] preserves native arrays and wraps legacy scalar
+# source_refs as one element before any() (coalesce alone does not coerce types).
+# Keep the vector query predicates consistent with this scan predicate.
+#
 # ``fact_embedding: NULL`` overrides the ``.*`` projection: embeddings are a
 # write/index-side concern, and shipping a full vector per row dominates the
 # reply size (and, on redis backends, RESP parse time) of every claim scan.
@@ -229,7 +233,7 @@ WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
   AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
-  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN coalesce(r.source_refs, []) WHERE ref IN $source_refs))
+  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
   AND ($include_invalid OR r.invalid_at IS NULL)
   AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)

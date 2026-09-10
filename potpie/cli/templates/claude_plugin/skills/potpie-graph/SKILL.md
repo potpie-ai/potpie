@@ -1,6 +1,6 @@
 ---
 name: "potpie-graph"
-version: "7"
+version: "8"
 description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions, fetching ingested document chunks with `potpie resource get`, and responding to nudges."
 ---
 
@@ -52,9 +52,10 @@ infer `feature`; the families still come back); `--include` names families.
 relevant is the best hit — not a verdict: a small pot reads `low` with the
 right answer on top. A score is one composite per read (similarity first, then
 scope, strength, recency): compare rows within a read, never across reads; an
-exact hit sat at 0.55–0.65. `search` is the same ranker with no intent over
-all nine families, so a phrase from a document ranks below recent timeline
-rows unless you add `--include docs`. Two needs `resolve` does not serve:
+score includes retrieval relevance, not answer probability. Strong lexical
+passage matches are protected from family demotion. `search` is a broad lookup;
+`--include docs` searches summaries and chunk text, while `--include resources`
+searches text alone. Two needs `resolve` does not serve:
 
 | Need | Read |
 |---|---|
@@ -79,12 +80,12 @@ topology — in one flat list; `--predicate USES` narrows it.
 | `decisions.preferences_for_scope` | `--repo current`, or `--scope service:…,path:…`; no `--query` | which preferences apply to this code |
 | `debugging.prior_occurrences` | `--query` (symptom), optional `--scope service:…` | "seen this before? what fixed it" (bug + fix/PR inline) |
 | `recent_changes.timeline` | `--time-window`, or `--since`/`--until`; optional `--scope` | recent PRs/tickets/activity for the project pot |
-| `infra_topology.service_neighborhood` | `--scope service:…` `--depth` `--direction out|in|both` (any other spelling returns no rows, not an error); `--environment` only with `include_unqualified_environment:true` in the scope | dependency blast-radius, env-qualified |
+| `infra_topology.service_neighborhood` | `--scope service:…` `--depth` `--direction out|in|both` (invalid values are rejected); `--environment` only with `include_unqualified_environment:true` in the scope | dependency blast-radius, env-qualified |
 | `features.feature_context` | optional `--scope anchor_entity_key:repo:…` | what a repo/service does (Feature nodes via `PROVIDES` / `IMPLEMENTED_IN`) |
-| `decisions.active_decisions` | `--scope service:…` — decisions anchor on services; a repo scope returns none | active decisions |
+| `decisions.active_decisions` | `--scope service:…` — decisions anchor on services; use the scope the decision is actually linked to, including a repo | active decisions |
 | `code_topology.ownership_by_path` | `--scope` | who owns a scope |
 | `knowledge.document_context` | `--query` / `--scope` | which ingested document sections cover it; hits carry chunk ids, and a section repeats once per claim about it (same chunk id) |
-| `knowledge.document_passages` | `--query` | the top `--limit` chunk ids by chunk *text*, no floor and no text: fetch the first one or two with `resource get` |
+| `knowledge.document_passages` | `--query` | chunk-text matches with snippets and fetch commands; weak matches may be filtered or warned about |
 
 Scope keys: `repo`, `path`, `file_path`, `service`, `anchor_entity_key`,
 `language`, `framework`, `audience`. A repo key is `repo:<host>/<org>/<name>`
@@ -115,9 +116,9 @@ potpie resource get potpie://res/<doc>/<section>/0000 potpie://res/<doc>/<sectio
 
 `potpie resource list --doc <name>` lists a known document's sections, chunk
 ids and first lines in one call. `document_passages` matches the chunk text
-itself and returns only chunk ids — for a phrase you know is in the document
-that no summary surfaced; it always fills `--limit`, so fetch the top one or
-two. `SECTION_OF`
+itself and returns chunk ids with snippets — for a phrase you know is in the document
+that no summary surfaced; it applies a relative relevance filter, so fewer than `--limit` hits may
+return. Fetch the strongest supporting passages. `SECTION_OF`
 holds a document together; `DOCUMENTS` points a document (or one section) at
 what it covers — assert it when reference material lands. New documents go
 through the per-format `potpie-resource-*` skills and `potpie resource import`;
@@ -128,19 +129,19 @@ payloads never enter the graph.
 The local embedder is small; recall depends on the query. Expand the user's
 words for `prior_occurrences`, `timeline` and `document_context` — "add retry
 to the payments client" → also "timeout, flaky, tenacity, backoff, external
-call". Those views rank their pool and return up to `--limit` rows however
-weak: `--query-threshold` is honoured only by `preferences_for_scope`, so a
-full list is not evidence and an empty one means the scope or window is
-empty. Judge each row by its score and text. Never pass `--query` to
+call". These are ranked candidates, not guaranteed answers. Document reads apply
+relative filtering; bugs and timeline may retain weak candidates.
+`--query-threshold` is supported by preferences and passage reads, but a high
+semantic threshold can discard exact identifiers. Judge source text and match
+metadata; a full list is not evidence that the question was answered. Never pass `--query` to
 `preferences_for_scope`.
 
 ## 3. Resolve identity — `graph search-entities`
 
 Read with the obvious key first; the header says `items=0` when it is wrong.
 Search on a miss, and **before** asserting against an entity no read has shown
-you — untyped, because a wrong `--type` guess returns nothing (there is no
-`Adapter` node; a Stripe adapter is `dependency:pypi:stripe` plus a `code:`
-asset):
+you — untyped, because a wrong `--type` guess returns nothing (check the catalog rather than guessing; `Adapter` is an entity type, while
+a dependency or implementation file may use another type):
 
 ```bash
 potpie graph search-entities "payments api" --limit 10
@@ -179,6 +180,10 @@ potpie graph mutation-template --kind bug-fix
 potpie --json graph propose --file mutation.json
 potpie --json graph commit mutation-plan:01JY8T5C --verify
 ```
+
+`graph mutation-template` is an unscoped, offline schema helper. It accepts
+`--pot <origin>:<name>` for uniform command invocation, but ignores the selector
+and does not resolve or validate it. Select the actual target on `graph propose`.
 
 `mutation-template` kinds: `repo-baseline`, `feature`, `preference`,
 `preference-policy`, `infra-snapshot`, `bug-fix`, `decision`, `timeline-event`,

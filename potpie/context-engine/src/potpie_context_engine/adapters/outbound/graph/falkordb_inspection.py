@@ -162,7 +162,7 @@ class FalkorDBInspection:
         walk_in = direction in ("in", "both")
         visited: set[str] = {entity_key}
         frontier: set[str] = {entity_key}
-        edges: dict[tuple[str, str, str], GraphEdge] = {}
+        edges: dict[tuple[str, ...], GraphEdge] = {}
         truncated = False
         for _ in range(depth):
             if not frontier:
@@ -180,11 +180,15 @@ class FalkorDBInspection:
                 follows_in = walk_in and tgt in frontier
                 if not (follows_out or follows_in):
                     continue
-                edges[(src, pred, tgt)] = GraphEdge(
+                props = _clean_props(rec.get("props"))
+                # A traversal can encounter the same edge twice; distinct claims
+                # on the same endpoints must still be visible independently.
+                identity = str(props.get("claim_key") or props.get("uuid") or "")
+                edges[(src, pred, tgt, identity)] = GraphEdge(
                     predicate=pred,
                     from_key=src,
                     to_key=tgt,
-                    properties=_clean_props(rec.get("props")),
+                    properties=props,
                 )
                 if follows_out and tgt not in visited:
                     new.add(tgt)

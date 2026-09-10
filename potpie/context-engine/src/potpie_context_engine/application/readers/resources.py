@@ -27,15 +27,18 @@ error.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Sequence
 
+from potpie_context_core.agent_envelope import relevance_confidence
 from potpie_context_core.ports.resource_index import (
     LEXICAL_RANK_DECAY,
     MATCH_MODE_DISABLED,
+    RESOURCE_INDEX_QUERY_INVALID,
     SIMILARITY_BLEND,
     ChunkHit,
     IndexSearchResult,
+    ResourceIndexError,
     ResourceIndexPort,
 )
 from potpie_context_engine.application.readers._common import (
@@ -47,6 +50,7 @@ from potpie_context_engine.application.readers._common import (
     rank_candidates,
 )
 from potpie_context_engine.domain.ranking import Candidate, RankingService
+from potpie_context_engine.domain.definition_retrieval import rank_definitions
 
 
 @dataclass(slots=True)
@@ -62,6 +66,12 @@ class ResourcesReader:
 
     def read(self, req: ReadRequest) -> ReadResponse:
         query = (req.query or "").strip()
+        threshold = req.query_threshold
+        if threshold is not None and (not 0.0 <= threshold <= 1.0 or not query):
+            raise ResourceIndexError(
+                RESOURCE_INDEX_QUERY_INVALID,
+                "Passage query threshold must be between 0.0 and 1.0 and requires a query.",
+            )
         if not query:
             # A resource corpus has no standing order — no recency, no
             # strength, nothing that makes one passage the answer to no
@@ -84,15 +94,42 @@ class ResourcesReader:
             query=query,
             # Over-fetch so the floor below has a tail to cut and still leaves
             # a full page behind.
-            limit=max(req.max_items * 2, req.max_items),
+            limit=(
+                max(req.max_items * 8, 64)
+                if req.intent == "definition"
+                else max(req.max_items * 2, req.max_items)
+            ),
             doc=_requested_doc(req),
         )
-        hits = _hits_clearing_relevance_floor(result.hits)
+        if threshold is not None:
+            if not result.similarity_calibrated:
+                raise ResourceIndexError(
+                    RESOURCE_INDEX_QUERY_INVALID,
+                    "This resource index cannot apply a calibrated semantic similarity threshold.",
+                    detail=f"profile={result.profile}, match_mode={result.match_mode}",
+                    recommended_next_action=(
+                        "Omit --query-threshold to use default passage filtering, "
+                        "or configure a resource index with calibrated semantic similarity."
+                    ),
+                )
+            hits = [
+                hit
+                for hit in result.hits
+                if hit.similarity is not None and hit.similarity >= threshold
+            ]
+        else:
+            hits = _hits_clearing_relevance_floor(result.hits)
         ranked = rank_candidates(
             service=self.ranker,
             candidates=[_candidate(hit, result) for hit in hits],
-            req=req,
+            req=replace(req, max_items=0) if req.intent == "definition" else req,
         )
+        if req.intent == "definition":
+            ranked = rank_definitions(ranked, req.query)
+            if req.max_items > 0:
+                ranked = ranked[: req.max_items]
+        returned_ids = {item.candidate.candidate_key for item in ranked}
+        returned_hits = [hit for hit in hits if hit.resource_id in returned_ids]
         return ReadResponse(
             family=self.family,
             items=tuple(ranked),
@@ -117,8 +154,41 @@ class ResourcesReader:
                 # the answer". Only meaningful when the index says its
                 # similarities are calibrated.
                 "best_relevance": _best_calibrated_relevance(result),
+                "query_threshold": threshold,
+                "threshold_mode": "absolute" if threshold is not None else "relative",
+                "similarity_calibrated": result.similarity_calibrated,
+                "warnings": _passage_warnings(result, returned_hits, threshold),
             },
         )
+
+
+def _passage_warnings(
+    result: IndexSearchResult, hits: Sequence[ChunkHit], threshold: float | None
+) -> list[str]:
+    if not hits:
+        if threshold is not None and result.hits:
+            return [
+                f"No passages meet the requested semantic similarity threshold ({threshold:g}); "
+                "hits without measured similarity are excluded."
+            ]
+        return []
+    if not result.similarity_calibrated:
+        return [
+            "Passage similarity is uncalibrated; ranked matches do not establish "
+            "that the query is answered."
+        ]
+    measured = [hit.similarity for hit in hits if hit.similarity is not None]
+    if not measured:
+        return [
+            "Passages have no measured semantic similarity; relevance is based on lexical matches."
+        ]
+    best = max(measured)
+    if relevance_confidence(best) == "low":
+        return [
+            f"Weak passage matches: best returned semantic similarity is {best:.3f}. "
+            "These passages may not answer the query."
+        ]
+    return []
 
 
 def _best_calibrated_relevance(result: IndexSearchResult) -> float | None:

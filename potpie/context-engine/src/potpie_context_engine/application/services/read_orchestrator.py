@@ -122,7 +122,7 @@ class ReadOrchestrator:
         freshness_preference: str = "balanced",
         include_invalidated: bool = False,
         source_refs: tuple[str, ...] = (),
-        query_threshold: float = 0.70,
+        query_threshold: float | None = None,
         depth: int | None = None,
         direction: str | None = None,
         metadata: Mapping[str, Any] | None = None,

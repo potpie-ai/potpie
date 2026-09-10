@@ -321,11 +321,28 @@ class _Workbench:
             raise AssertionError("propose should not be called")
         return self.proposal
 
-    def commit(self, plan_id, *, pot_id, approved_by=None, verify=False):
+    def commit(
+        self,
+        plan_id,
+        *,
+        pot_id,
+        approved_by=None,
+        verify=False,
+        defer_verification=False,
+    ):
         self.commit_calls.append((plan_id, pot_id, approved_by, verify))
         if self.commit_result is None:
             raise AssertionError("commit should not be called")
         return self.commit_result
+
+    def verify_commit(self, plan_id, *, pot_id):
+        assert self.commit_result is not None
+        return self.commit_result.verification or GraphIngestionVerificationResult(
+            ok=True,
+            status="ok",
+            plan_id=plan_id,
+            pot_id=pot_id,
+        )
 
     def history(self, **kwargs):
         self.history_calls.append(kwargs)
@@ -1605,6 +1622,102 @@ def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
     assert emitted["error"]["code"] == "missing_required_scope"
     assert emitted["unsupported"][0]["reason"] == "missing_required_scope"
     assert emitted["error"]["detail"]["quality"]["reason"] == "missing_required_scope"
+
+
+def _unsupported_query_read_result() -> GraphReadResult:
+    """What the real service returns for ``admin.inspection_slice --query PMS``."""
+    message = (
+        "graph read view 'admin.inspection_slice' does not support filter "
+        "query; supported filters: source_ref"
+    )
+    return GraphReadResult(
+        graph_contract_version="v1.5",
+        ontology_version="2026-06-graph",
+        view="admin.inspection_slice",
+        subgraph="admin",
+        ok=False,
+        status="unsupported_filter",
+        message=message,
+        read_shape="raw_graph",
+        coverage=(
+            {
+                "view": "admin.inspection_slice",
+                "status": "unsupported",
+                "candidate_pool": 0,
+            },
+        ),
+        quality={"status": "unsupported", "reason": "unsupported_filter"},
+        unsupported=(
+            {
+                "name": "query",
+                "reason": "unsupported_filter",
+                "detail": {
+                    "view": "admin.inspection_slice",
+                    "supported_filters": ["source_ref"],
+                },
+            },
+        ),
+    )
+
+
+def test_graph_read_unsupported_filter_result_is_error_envelope() -> None:
+    # Friction 6 of the 2026-09-10 session report: this read exited 0 with
+    # ``unsupported_filter=query`` / ``(no rows)`` and looked like a genuine
+    # empty result. It is a refused read and must fail like one.
+    _common.set_json(True)
+    graph_service = _Graph(read_result=_unsupported_query_read_result())
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "admin",
+            "--view",
+            "inspection_slice",
+            "--query",
+            "PMS",
+            "--limit",
+            "20",
+            "--detail",
+            "full",
+        ],
+    )
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.read", ok=False)
+    assert emitted["error"]["code"] == "unsupported_filter"
+    assert "does not support filter query" in emitted["error"]["message"]
+    assert emitted["unsupported"][0]["name"] == "query"
+    assert emitted["unsupported"][0]["detail"]["supported_filters"] == ["source_ref"]
+    assert emitted["error"]["detail"]["quality"]["reason"] == "unsupported_filter"
+
+
+def test_graph_read_unsupported_filter_human_output_names_filter_and_exits() -> None:
+    _common.set_json(False)
+    graph_service = _Graph(read_result=_unsupported_query_read_result())
+    _common.set_host(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "admin",
+            "--view",
+            "inspection_slice",
+            "--query",
+            "PMS",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "does not support filter query" in result.output
+    assert "supported filters: source_ref" in result.output
+    # Never dressed up as an ordinary empty page.
+    assert "(no rows)" not in result.output
 
 
 def test_graph_read_include_guess_error_carries_did_you_mean() -> None:

@@ -1,6 +1,6 @@
 ---
 name: potpie-cli
-version: "6"
+version: "7"
 description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, resource (document payload) commands, and pot scope behavior."
 ---
 
@@ -57,7 +57,7 @@ check: daemon, pot, backend readiness, claim counts and open quality findings
 in a few lines; `doctor` adds the install, the repo → pot mapping and the
 resource store, and exits 0 whenever it produced a report.
 
-Pot scope for `graph …`, `doctor`, `resolve`, `search`, `record` and every read
+Pot scope for `graph …`, `resolve`, `search`, `record` and scoped resource reads
 resolves in this order:
 
 1. Explicit `--pot`.
@@ -68,9 +68,10 @@ resolves in this order:
 5. Clear failure asking for setup, source registration, default selection, or
    explicit `--pot`.
 
-`potpie status` reports the *active* pot (step 4) rather than the repo default,
-so when the two differ, trust the header of a read or `doctor` for the pot a
-read will hit.
+`potpie status` reports the effective pot for the repo and also names the
+active pot. Use `status --harness codex` (or your harness) for skill readiness;
+setup/skills use `--agent`, while status uses `--harness`. `doctor` reports the
+current routing and does not accept `--pot`.
 
 A `--pot` ref may carry its origin: `local:<name-or-id>` or `managed:<name-or-id>`.
 Pass it that way once a read header has named the pot — a bare name is checked
@@ -108,10 +109,9 @@ potpie record --type <fix|decision|preference|bug_pattern|verification> --summar
 text when `--intent` is omitted, and the reply is a bounded envelope of
 `subject PREDICATE object · fact` rows across families with a `+N more` footer.
 `search` is the follow-up for a known phrase; its query is positional — there
-is no `--query`. Bare search resolves intent `unknown`, which ranks the phrase
-across all nine families with the same ranker as `resolve`, so a phrase from a
-document can sit below recent timeline rows: `--include docs` (or
-`--intent docs`) narrows it, and `--include` names any family directly.
+is no `--query`. Bare search is broad and infers definition intent for acronym questions.
+`--include docs` searches both section summaries and document text;
+`--include resources` searches text only. Unknown include names are errors.
 `--help` lists both vocabularies. `confidence` in either header is coverage,
 not a verdict; a small pot reads `low` with the right rows on top. `record` is the one-call write for a fix, decision,
 preference, bug pattern or verification; `--type` help names the `--detail`

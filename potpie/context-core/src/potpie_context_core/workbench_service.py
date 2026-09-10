@@ -321,8 +321,13 @@ class GraphWorkbenchService:
         approved_by: str | None = None,
         verify: bool = False,
         recover_stale: bool = False,
+        defer_verification: bool = False,
     ) -> GraphMutationCommitResult:
-        """Apply an unexpired server-created plan by id."""
+        """Apply a plan; defer_verification returns the receipt before readback.
+
+        With verify=True the quality baseline is persisted for verify_commit,
+        even when post-commit checks are deferred to a separate RPC.
+        """
         now = datetime.now(timezone.utc)
         record = self.plan_store.get(pot_id=pot_id, plan_id=plan_id)
         if record is None:
@@ -337,7 +342,12 @@ class GraphWorkbenchService:
             )
 
         if record.status == GraphMutationPlanStatus.committed.value:
-            return _committed_plan_result(record)
+            receipt = _committed_plan_result(record)
+            if verify and not defer_verification:
+                receipt = replace(
+                    receipt, verification=self.verify_commit(plan_id, pot_id=pot_id)
+                )
+            return receipt
 
         if record.status in TERMINAL_PLAN_STATUSES:
             return GraphMutationCommitResult(
@@ -382,7 +392,7 @@ class GraphWorkbenchService:
                     record,
                     lookup=lookup,
                     now=now,
-                    verify=verify,
+                    verify=verify and not defer_verification,
                 )
             if lookup.state == MutationExecutionState.in_flight.value:
                 return _concurrent_commit_result(
@@ -505,6 +515,12 @@ class GraphWorkbenchService:
             mutation_id=execution_mutation_id,
             commit_attempt_id=uuid.uuid4().hex,
             commit_attempt_started_at=attempt_started_at,
+            verification_quality_before={
+                "status": quality_before["status"],
+                "quality_counts": _quality_count_map(quality_before),
+            }
+            if quality_before is not None
+            else None,
             detail=None,
         )
         if not self.plan_store.compare_and_set(
@@ -541,7 +557,7 @@ class GraphWorkbenchService:
                     before_quality=quality_before,
                     definition=self.definition,
                 )
-                if verify
+                if verify and not defer_verification
                 else None
             )
             return GraphMutationCommitResult(
@@ -688,7 +704,7 @@ class GraphWorkbenchService:
                 before_quality=quality_before,
                 definition=self.definition,
             )
-            if verify
+            if verify and not defer_verification
             else None
         )
         return GraphMutationCommitResult(
@@ -788,7 +804,7 @@ class GraphWorkbenchService:
                 self.backend,
                 pot_id=record.pot_id,
                 record=committed,
-                before_quality=None,
+                before_quality=record.verification_quality_before,
                 definition=self.definition,
             )
             if verify
@@ -860,6 +876,57 @@ class GraphWorkbenchService:
                 "Inspect graph history using the mutation_id. Create a fresh "
                 "proposal only after reconciling whether the mutation landed."
             ),
+        )
+
+    def commit_status(self, plan_id: str, *, pot_id: str) -> GraphMutationCommitResult:
+        """Read a durable plan receipt without touching the graph or applying work."""
+        record = self.plan_store.get(pot_id=pot_id, plan_id=plan_id)
+        if record is None:
+            return GraphMutationCommitResult(
+                ok=False,
+                plan_id=plan_id,
+                pot_id=pot_id,
+                risk="low",
+                status="not_found",
+            )
+        if record.status == GraphMutationPlanStatus.committed.value:
+            return _committed_plan_result(record)
+        if record.status == GraphMutationPlanStatus.committing.value:
+            return _concurrent_commit_result(record)
+        if record.status == GraphMutationPlanStatus.error.value:
+            next_action = "Inspect graph history for this plan and backend readiness before retrying."
+        elif record.status in TERMINAL_PLAN_STATUSES:
+            next_action = "Create a fresh proposal if a write is still needed."
+        else:
+            next_action = _commit_next_action(
+                plan_id, approved=record.approval is not None
+            )
+        return replace(
+            _committed_plan_result(record),
+            ok=False,
+            detail=record.detail or f"plan is {record.status}",
+            recommended_next_action=next_action,
+        )
+
+    def verify_commit(
+        self, plan_id: str, *, pot_id: str
+    ) -> GraphIngestionVerificationResult:
+        """Verify a committed plan without applying its mutations again."""
+        record = self.plan_store.get(pot_id=pot_id, plan_id=plan_id)
+        if record is None or record.status != GraphMutationPlanStatus.committed.value:
+            return GraphIngestionVerificationResult(
+                ok=False,
+                status="not_committed",
+                plan_id=plan_id,
+                pot_id=pot_id,
+                detail="Only a durably committed plan can be verified.",
+            )
+        return _verify_ingestion_commit(
+            self.backend,
+            pot_id=pot_id,
+            record=record,
+            before_quality=record.verification_quality_before,
+            definition=self.definition,
         )
 
     def history(
@@ -1839,7 +1906,7 @@ def _verify_ingestion_commit(
     )
     before_counts = _quality_count_map(before_quality)
     after_counts = _quality_count_map(after_quality)
-    deltas = _quality_count_delta(before_counts, after_counts)
+    deltas = _quality_count_delta(before_counts, after_counts) if before_quality else {}
     regressions = _quality_regressions(
         before_quality=before_quality,
         after_quality=after_quality,
@@ -1847,6 +1914,10 @@ def _verify_ingestion_commit(
     )
     unsupported = tuple(readback["unsupported"]) + tuple(after_quality["unsupported"])
     warnings: list[str] = []
+    if before_quality is None:
+        warnings.append(
+            "pre-commit quality baseline unavailable; quality regression comparison skipped"
+        )
     status = "ok"
     ok = True
     detail = None

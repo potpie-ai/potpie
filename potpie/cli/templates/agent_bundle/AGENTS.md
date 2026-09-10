@@ -35,6 +35,10 @@ potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
 ```
 
+`graph mutation-template` is an unscoped, offline schema helper. It accepts
+`--pot <origin>:<name>` for uniform command invocation, but ignores the selector
+and does not resolve or validate it. Select the actual target on `graph propose`.
+
 `resolve` is the first read (intent inferred, triples across families);
 `record` the first write (one fix, decision or preference, no JSON file).
 Text output for reads; `--json` for `propose`, `commit`, `resource import` and

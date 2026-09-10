@@ -1,6 +1,6 @@
 ---
 name: potpie-resource-pdf
-version: "3"
+version: "4"
 description: "Use when the user asks to ingest a PDF (report, contract, paper, manual, slide export) into Potpie so agents can search and cite it. Teaches the extraction-script flow: resolve the document's identity, split on the PDF's own structure into sections and ~4k-char chunks, import with `potpie resource import`, write retrieval-grade section summaries, and link the document with DOCUMENTS claims. Chunk text never passes through the agent's own output."
 ---
 
@@ -9,8 +9,9 @@ description: "Use when the user asks to ingest a PDF (report, contract, paper, m
 An ingested document is split in two. The **bytes** become pot-scoped chunk
 files behind `potpie resource`; the **structure** becomes graph nodes — a
 `Document` owning one `DocumentSection` per real division, joined by
-`SECTION_OF`. Each section's summary becomes a claim and is the **only index
-into its chunks**: retrieval quality is exactly summary quality. Ingestion is
+`SECTION_OF`. Each section's summary becomes a claim and indexes its
+section for graph context. The resource index searches chunk text as well;
+summaries improve context quality but are not a prerequisite for text search. Ingestion is
 harness-led — you read the source, choose the sections, and write the
 summaries; Potpie validates, stores, and embeds. There is no Potpie-side
 parser or scanner for PDFs, and no scan command writes the graph for you.
@@ -82,9 +83,7 @@ Hard limits, enforced at import:
 | `content_hash` | script-computed digest of the section's text; if empty, every re-import treats the section as changed |
 
 Those caps compound: a five-chunk section holds up to 40,000 characters and is
-indexed by at most 2,000 of summary — roughly 20:1, and anything the summary
-does not name is reachable only *after* search has already landed on that
-section. Where the outline offers a finer level, take it; two small sections
+indexed by at most 2,000 of summary — roughly 20:1, and details absent from the summary require chunk-text retrieval. Where the outline offers a finer level, take it; two small sections
 index better than one at the ceiling.
 
 Pick section slugs by *meaning* (`limitation-of-liability`), never by deriving
@@ -136,7 +135,7 @@ reader = PdfReader(sys.argv[1])
 # 4. Write meta.json with summary "" for every section.
 ```
 
-## Step 3 — Summaries: the only index
+## Step 3 — Summaries for graph context
 
 The script splits; it cannot judge. You write every summary by reading the
 emitted chunk files (or `potpie resource get` after import). A summary is a
@@ -153,8 +152,8 @@ Large document: import immediately with summaries empty (`summary_pending`),
 then fill them in batches — edit `out/meta.json` and re-import the same
 `--doc`. A section whose content is unchanged keeps the summary it already has
 whenever the directory supplies none, so partial passes never blank earlier
-work. Content nobody summarized stays effectively invisible: there is no
-lexical fallback.
+work. Unsummarized chunks remain searchable through the resource index; write
+summaries so graph context also explains what each section covers.
 
 ## Step 4 — Import and read the report
 
@@ -174,7 +173,7 @@ it:
   reported issue and re-import.
 - `sections_added / kept / changed / removed` — `changed` is the re-summarize
   list on a refresh.
-- `summary_pending` — sections still invisible to semantic search.
+- `summary_pending` — sections that still need retrieval-grade graph summaries.
 - `recommended_next_action` — the one thing still missing, in order: a summary
   to write, a `DOCUMENTS` link when the document has none live (Step 5), or the
   retrieval check in Step 6.
@@ -225,14 +224,15 @@ batched `resource get` (several ids in one call; `--with-neighbors` covers a
 fact that spans a chunk boundary). `potpie resolve` and bare `potpie search`
 mix document sections with project memory the way a future agent will see them.
 
-If a phrase you know is in the document does not surface a section, run
-`potpie search "<phrase>" --include docs` — that narrows the envelope to
-documents alone and splits the two causes apart. A hit there but not in the
-bare search means the summary works and was simply outranked; nothing there
-means the summary is weak — rewrite it and re-import. To separate "the summary
-never named it" from "the text was never stored", `potpie graph read
---subgraph knowledge --view document_passages --query "<phrase>"` matches the
-chunk text itself and returns the chunk ids.
+For document questions, `potpie search "<question>" --include docs` searches
+both section summaries and indexed chunk text. `--include resources` searches
+text alone. Named `document_context` reads only the graph summaries;
+`document_passages` reads the chunk index and returns a snippet and fetch command.
+Use the returned chunk ids with `resource get` to verify the actual source.
+A weak candidate or an empty read is not proof the document answers the question.
+If known stored text cannot be retrieved, inspect `resource index status` before
+rewriting summaries or re-importing. An explicit `--query-threshold` is a semantic
+similarity filter and can exclude exact identifiers with weak embeddings.
 
 ## Report back
 

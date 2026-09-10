@@ -63,6 +63,7 @@ CREDENTIAL_REFUSED_STATUSES: Final[frozenset[int]] = frozenset({401, 403})
 #: applied once, here; every other code means "command/validation failure".
 _EXIT_BY_CODE: Final[dict[str, int]] = {
     "unavailable": EXIT_UNAVAILABLE,
+    "unknown_completion": EXIT_UNAVAILABLE,
     "not_implemented": EXIT_UNAVAILABLE,
     # The narrower unavailability codes belong in the table too, not just in the
     # `exit_code=` argument of whichever call site raises them. Left to the call
@@ -594,7 +595,8 @@ def _unreachable_host_hint(origin: str) -> str:
     Distinct from :func:`_qualify_hint`, which routes a bare ref around the
     unreachable host: once the ref says ``managed:api`` there is nowhere to
     route to, and repeating "target one host explicitly" would be advice the
-    user already followed. The only repair left is the host itself.
+    user already followed. Start with host repair; optional diagnostics may
+    separately suggest a confirmed pot on another origin.
     """
     from potpie.cli import hosts
 
@@ -604,6 +606,30 @@ def _unreachable_host_hint(origin: str) -> str:
             "or re-point it with 'potpie host set <url>'"
         )
     return "check backend/daemon readiness with 'potpie doctor'"
+
+
+def _alternative_pot_hint(origin: str, ref: str, hint: str) -> str:
+    """Supplement a failed explicit target with confirmed alternatives only.
+
+    This is diagnostic enumeration: it never changes the origin, and failure
+    to inspect another host must not replace the original targeting error.
+    """
+    from potpie.cli import hosts
+
+    if _state["host"] is not None:
+        return hint
+    try:
+        origins = hosts.configured_origins()
+    except Exception:  # noqa: BLE001 - optional diagnostics preserve the error
+        return hint
+    for other in origins:
+        if other == origin:
+            continue
+        found = _find_pot_in(other, ref)
+        if found is not None and not found.archived:
+            qualified = hosts.qualify(other, found.name)
+            hint += f"; '{qualified}' exists on the {other} host; to target it, pass '--pot {qualified}'"
+    return hint
 
 
 def _refuse_origin_with_no_host_behind_it(
@@ -730,7 +756,11 @@ def _resolve_match(
 
 
 def _find_pot_in(
-    origin: str, ref: str, *, unreachable_hint: str | None = None
+    origin: str,
+    ref: str,
+    *,
+    unreachable_hint: str | None = None,
+    suggest_alternatives: bool = False,
 ) -> _PotMatch | None:
     """The match for ``ref`` on ``origin``, or ``None``.
 
@@ -756,7 +786,11 @@ def _find_pot_in(
         fail(
             code="unavailable",
             message=f"Cannot use the {origin} host to resolve '{ref}': {exc}",
-            next_action=unreachable_hint,
+            next_action=(
+                _alternative_pot_hint(origin, ref, unreachable_hint)
+                if suggest_alternatives
+                else unreachable_hint
+            ),
         )
     try:
         pots = _list_pots(host)
@@ -776,7 +810,11 @@ def _find_pot_in(
         fail(
             code="unavailable",
             message=f"Cannot reach the {origin} host to resolve '{ref}': {exc}",
-            next_action=unreachable_hint,
+            next_action=(
+                _alternative_pot_hint(origin, ref, unreachable_hint)
+                if suggest_alternatives
+                else unreachable_hint
+            ),
         )
     for pot in pots:
         if ref in (pot.pot_id, pot.name):
@@ -792,7 +830,8 @@ def _find_pot_in(
 def _resolve_explicit_pot(explicit: str) -> str:
     """Resolve ``--pot`` / a pot ref, moving the command to the owning origin.
 
-    A qualified ``managed:api`` is unambiguous and searched only there. A bare
+    A qualified ``managed:api`` is resolved only there; failed resolution may
+    inspect other origins to suggest an explicit alternative. A bare
     ref prefers the current origin and only then looks elsewhere; matching on
     two origins is an error rather than a pick, because pot names are per-host
     labels and `default` very likely exists on both. Guessing would run the
@@ -821,13 +860,20 @@ def _resolve_explicit_pot(explicit: str) -> str:
         )
         hosts.set_current_origin(origin)
         found = _find_pot_in(
-            origin, ref, unreachable_hint=_unreachable_host_hint(origin)
+            origin,
+            ref,
+            unreachable_hint=_unreachable_host_hint(origin),
+            suggest_alternatives=True,
         )
         match = _resolve_match(
             [found] if found is not None else [],
             ref=ref,
             qualify_hint="qualify it, e.g. '--pot managed:<name>'",
-            list_hint=f"run 'potpie pot list --{origin}'",
+            list_hint=(
+                _alternative_pot_hint(origin, ref, f"run 'potpie pot list --{origin}'")
+                if found is None
+                else f"run 'potpie pot list --{origin}'"
+            ),
             not_found_message=f"No pot matching '{ref}' on the {origin} host.",
         )
         return match.pot_id

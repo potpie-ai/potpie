@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 import time
 from contextlib import contextmanager
@@ -562,10 +563,14 @@ def graph_read(
         None, "--view", help="View name within --subgraph, e.g. prior_occurrences"
     ),
     query: str = typer.Option(None, "--query"),
-    query_threshold: float = typer.Option(
-        0.70,
+    query_threshold: float | None = typer.Option(
+        None,
         "--query-threshold",
-        help="Minimum semantic similarity for --query matches (0.0-1.0).",
+        help=(
+            "Minimum semantic similarity (0.0-1.0). Passage reads require a "
+            "calibrated index and exclude hits without measured similarity. "
+            "Omit to use the view's default filtering."
+        ),
     ),
     scope: str = typer.Option(None, "--scope", help="key:value[,key:value]"),
     current: bool = typer.Option(
@@ -632,6 +637,10 @@ def graph_read(
             raise ValueError("--subgraph is required")
         if not view:
             raise ValueError("--view is required")
+        if direction is not None:
+            direction = direction.strip().lower()
+            if direction not in {"out", "in", "both"}:
+                raise ValueError("--direction must be one of: out, in, both")
         if "." in view:
             raise ValueError(
                 "graph read now requires --subgraph <name> --view <view>; "
@@ -1280,12 +1289,18 @@ def graph_mutation_template(
         "--kind",
         help=f"template kind: {' | '.join(sorted(_MUTATION_TEMPLATES))}",
     ),
+    pot: str | None = typer.Option(
+        None,
+        "--pot",
+        help="Accepted for uniform invocation; not resolved or validated (schema-only).",
+    ),
 ) -> None:
     """Print a schema-only mutation skeleton for `graph propose`.
 
     Pure schema helper: emits placeholders for the harness to fill from
     sources it has actually read. It never inspects the repository or infers
-    graph facts.
+    graph facts. This command is unscoped and needs no host connection.
+    An optional --pot is ignored: it is not resolved or validated.
     """
     with _graph_command("graph.mutation-template") as ctx:
         template = _MUTATION_TEMPLATES.get(kind.strip().lower())
@@ -1605,6 +1620,12 @@ def graph_commit(
             "regression is reported in verification.status and as a warning"
         ),
     ),
+    timeout: float = typer.Option(
+        None,
+        "--timeout",
+        envvar="POTPIE_GRAPH_COMMIT_TIMEOUT",
+        help="RPC deadline in seconds for commit and verification (default: 30); recovery polls are bounded separately",
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.commit") as ctx:
@@ -1613,11 +1634,26 @@ def graph_commit(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = host.graph_workbench.commit(
-            plan_id,
+        from potpie.cli import hosts
+        from potpie.cli.commit_recovery import commit_with_recovery
+
+        selector = shlex.quote(f"{hosts.current_origin()}:{pot_id}")
+        quoted_plan = shlex.quote(plan_id)
+        history_command = (
+            f"potpie --json graph history --plan {quoted_plan} --pot {selector}"
+        )
+        retry_command = (
+            f"potpie --json graph commit {quoted_plan} --verify --pot {selector}"
+        )
+        result = commit_with_recovery(
+            host.graph_workbench,
+            plan_id=plan_id,
             pot_id=pot_id,
             approved_by=approved_by,
             verify=verify,
+            timeout=timeout,
+            history_command=history_command,
+            retry_command=retry_command,
         )
         _emit_graph_result(
             ctx,
@@ -3227,8 +3263,11 @@ def _emit_read(
     human_prefix: str | None = None,
     warnings: tuple[str, ...] = (),
 ) -> None:
+    warnings = warnings + tuple(getattr(result, "warnings", ()))
     normalized_format = _effective_read_format(result, format_)
     if normalized_format == "jsonl":
+        for warning in warnings:
+            typer.echo(f"! {warning}", err=True)
         rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
         if not rows:
             rows = _raw_item_rows(result)
@@ -3588,9 +3627,11 @@ def _resolve_time_bounds(
     return None, until_dt
 
 
-def _normalize_query_threshold(value: float) -> float:
+def _normalize_query_threshold(value: float | None) -> float | None:
+    if value is None:
+        return None
     threshold = float(value)
-    if threshold < 0.0 or threshold > 1.0:
+    if not 0.0 <= threshold <= 1.0:
         raise ValueError("--query-threshold must be between 0.0 and 1.0")
     return threshold
 
@@ -3788,6 +3829,10 @@ def _commit_human(result) -> str:
             lines.append(f"missing_claim_keys={list(verification.missing_claim_keys)}")
     if result.detail:
         lines.append(result.detail)
+    if result.recommended_next_action:
+        lines.append(f"next: {result.recommended_next_action}")
+    if verification is not None and verification.recommended_next_action:
+        lines.append(f"next: {verification.recommended_next_action}")
     return "\n".join(lines)
 
 

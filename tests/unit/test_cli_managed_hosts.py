@@ -653,3 +653,96 @@ def test_skills_install_stays_on_the_local_machine(registry, monkeypatch) -> Non
 
     assert result.exit_code == 0, result.output
     assert built == ["in_process"]
+
+
+@pytest.mark.parametrize("unreachable", [False, True])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_explicit_local_failure_suggests_confirmed_managed_pot(
+    registry, unreachable, json_output
+) -> None:
+    if unreachable:
+        registry[hosts.LOCAL].pots = _Pots([], raises=ConnectionError("offline"))
+    result = _run(
+        *(["--json"] if json_output else []), "graph", "catalog", "--pot", "local:api"
+    )
+    assert result.exit_code == (2 if unreachable else 1), result.output
+    assert "managed:api" in result.output
+    assert "--pot managed:api" in result.output
+    assert ("Cannot reach" if unreachable else "No pot matching") in result.output
+    if json_output:
+        assert json.loads(result.output)["error"]["code"] == (
+            "unavailable" if unreachable else "pot_not_found"
+        )
+    assert hosts.current_origin() == "local"
+    assert hosts.persisted_origin() == "local"
+    assert registry[hosts.MANAGED].pots.used == []
+
+
+@pytest.mark.parametrize("alternative", ["down", "missing", "archived", "unconfigured"])
+def test_explicit_origin_failure_does_not_invent_alternatives(
+    registry, monkeypatch, alternative
+) -> None:
+    registry[hosts.LOCAL].pots = _Pots([], raises=ConnectionError("local offline"))
+    if alternative == "down":
+        registry[hosts.MANAGED].pots = _Pots(
+            [], raises=ConnectionError("remote offline")
+        )
+    elif alternative == "missing":
+        registry[hosts.MANAGED].pots = _Pots([])
+    elif alternative == "archived":
+        registry[hosts.MANAGED].pots._pots[-1].archived = True
+    else:
+        monkeypatch.setattr(hosts, "managed_endpoint", lambda: None)
+        monkeypatch.setattr(
+            registry[hosts.MANAGED].pots,
+            "list_pots",
+            lambda: pytest.fail("unconfigured origin must not be queried"),
+        )
+    result = _run("--json", "graph", "catalog", "--pot", "local:api")
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert payload["error"]["code"] == "unavailable"
+    assert "local offline" in payload["error"]["message"]
+    assert "managed:api" not in result.output
+    assert "doctor" in payload["recommended_next_action"]
+
+
+def test_successful_explicit_target_does_not_probe_alternatives(registry, monkeypatch):
+    monkeypatch.setattr(
+        registry[hosts.MANAGED].pots,
+        "list_pots",
+        lambda: pytest.fail("successful targeting must not probe the other host"),
+    )
+    assert _common._resolve_explicit_pot("local:notes") == "pot_l2"
+
+
+def test_host_construction_failure_keeps_original_error_with_suggestion(
+    registry, monkeypatch
+):
+    def build(origin):
+        if origin == hosts.LOCAL:
+            raise RuntimeError("local backend unavailable")
+        return registry[origin]
+
+    monkeypatch.setattr(hosts, "build_host", build)
+    result = _run("--json", "graph", "catalog", "--pot", "local:api")
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert "Cannot use the local host" in payload["error"]["message"]
+    assert "managed:api" in payload["recommended_next_action"]
+
+
+def test_auth_refusal_does_not_probe_alternatives(registry, monkeypatch):
+    class Refused(Exception):
+        status_code = 401
+
+    registry[hosts.LOCAL].pots = _Pots([], raises=Refused("credential refused"))
+    monkeypatch.setattr(
+        registry[hosts.MANAGED].pots,
+        "list_pots",
+        lambda: pytest.fail("authentication errors should retain credential guidance"),
+    )
+    result = _run("--json", "graph", "catalog", "--pot", "local:api")
+    assert result.exit_code == 4, result.output
+    assert json.loads(result.output)["error"]["code"] == "auth_error"
+    assert "managed:api" not in result.output

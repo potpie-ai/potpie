@@ -27,7 +27,9 @@ from potpie.cli.telemetry.usage_events import (
 )
 from potpie_context_core.agent_context_port import (
     CONTEXT_INTENTS,
+    CONTEXT_INCLUDE_VALUES,
     READER_BACKED_INCLUDES,
+    unsupported_include_values,
 )
 from potpie_context_core.context_records import REQUIRED_DETAIL_KEYS
 from potpie_context_core.ports.agent_context import (
@@ -41,8 +43,10 @@ from potpie_context_core.source_references import RESOLVE_MODES
 # list in front of it reaches for the subgraph names it saw in `graph catalog`
 # and gets an unsupported_include back. Derived, so the help cannot drift from
 # what the orchestrator actually answers.
-_INCLUDE_HELP = "Comma-separated include families: " + ", ".join(
-    sorted(READER_BACKED_INCLUDES - {"raw_graph"})
+_INCLUDE_HELP = (
+    "Comma-separated include families: "
+    + ", ".join(sorted(READER_BACKED_INCLUDES - {"raw_graph"}))
+    + ". docs searches summaries and document text; resources searches text only."
 )
 _INTENT_HELP = "One of: " + ", ".join(sorted(CONTEXT_INTENTS))
 _RESOLVE_INTENT_HELP = (
@@ -69,7 +73,16 @@ _DETAIL_HELP = (
 def _split(value: str | None) -> tuple[str, ...]:
     if not value:
         return ()
-    return tuple(v.strip() for v in value.split(",") if v.strip())
+    values = tuple(v.strip() for v in value.split(",") if v.strip())
+    unknown = unsupported_include_values(list(values))
+    if unknown:
+        fail(
+            code="validation_error",
+            message=f"Unknown include families: {', '.join(unknown)}",
+            detail={"argument": "--include", "allowed": sorted(CONTEXT_INCLUDE_VALUES)},
+            next_action="Use --include docs for documents, or see --help for valid families.",
+        )
+    return values
 
 
 def _require_choice(
@@ -336,6 +349,10 @@ def _envelope_human(env) -> str:
     lines = [
         f"pot={env.pot_id} intent={intent} confidence={env.overall_confidence} items={len(env.items)}"
     ]
+    for family, metadata in env.metadata.get("readers", {}).items():
+        lines.extend(
+            f"  ! [{family}] {warning}" for warning in metadata.get("warnings", ())
+        )
     rows = _dedupe_items(env.items)
     shown = 0
     hidden = 0

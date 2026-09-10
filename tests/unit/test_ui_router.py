@@ -578,6 +578,22 @@ def test_a_refused_read_is_not_a_200(real_graph_client):
     assert "requires one of" in body["detail"]
 
 
+def test_an_unsupported_filter_is_not_a_200_either(real_graph_client):
+    """``admin.inspection_slice`` cannot filter by query; asking is a refusal."""
+    response = real_graph_client.get(
+        "/api/read",
+        params={"subgraph": "admin", "view": "inspection_slice", "query": "PMS"},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["ok"] is False
+    assert body["status"] == "unsupported_filter"
+    assert body["unsupported"][0]["name"] == "query"
+    assert body["unsupported"][0]["detail"]["supported_filters"] == ["source_ref"]
+    assert "does not support filter query" in body["detail"]
+
+
 def test_a_read_the_workbench_answers_is_still_a_200(real_graph_client):
     """The other half of the rule: an empty *answer* is an answer."""
     response = real_graph_client.get(

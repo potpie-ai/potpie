@@ -760,6 +760,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
             )
             if not card:
                 continue
+            claim_key = raw_props.get("claim_key")
             try:
                 # Keep embedding inside the try: a model error must degrade to
                 # "no vector enrichment", not abort the already-written edge.
@@ -775,6 +776,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
                               source_ref: $source_ref
                           }]->
                           (:Entity {group_id: $gid, entity_key: $to_key})
+                    WHERE $claim_key IS NULL OR r.claim_key = $claim_key
                     SET r.fact_embedding = vecf32($embedding),
                         r.embedding_model = $embedding_model,
                         r.embedding_dim = $embedding_dim
@@ -785,6 +787,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
                         "from_key": item.from_entity_key,
                         "to_key": item.to_entity_key,
                         "source_ref": source_ref,
+                        "claim_key": claim_key,
                         "embedding": embedding,
                         "embedding_model": getattr(self._embedder, "name", "unknown"),
                         "embedding_dim": int(

@@ -730,3 +730,76 @@ def test_record_help_names_the_required_detail_per_type():
     text = " ".join(result.stdout.split())
     for record_type, keys in REQUIRED_DETAIL_KEYS.items():
         assert f"{record_type}: {', '.join(keys) or 'none'}" in text
+
+
+@pytest.mark.parametrize("command", ["resolve", "search"])
+def test_unknown_include_is_a_validation_failure(command):
+    _common.set_host(_host())
+    result = CliRunner().invoke(_app(), [command, "rollback", "--include", "documents"])
+    assert result.exit_code == 1
+    assert "Unknown include families" in result.output
+    assert "--include docs" in result.output
+
+
+def test_passage_view_keeps_snippet_and_fetch_instruction_in_compact_output():
+    from potpie_context_core.ports.graph_service import GraphReadResult
+    from potpie_context_engine.application.services.graph_service import (
+        _normalize_read_item,
+    )
+    from potpie.cli.read_presenter import (
+        build_presentation_context,
+        render_items_bullets,
+    )
+
+    evidence = EvidenceItem(
+        include="resources",
+        candidate_key="potpie://res/runbook/recovery/0000",
+        score=0.8,
+        payload={
+            "kind": "resource_chunk",
+            "resource_id": "potpie://res/runbook/recovery/0000",
+            "snippet": "Rollback hold is 47 minutes.",
+            "label": "Recovery",
+            "source_ref": "fixture:runbook",
+            "fetch": "potpie resource get potpie://res/runbook/recovery/0000",
+            "retrieval": {"match_mode": "hybrid", "term_coverage": 1.0},
+        },
+        coverage_status="sparse",
+    )
+    result = GraphReadResult(
+        view="knowledge.document_passages",
+        subgraph="knowledge",
+        items=(_normalize_read_item(evidence),),
+    )
+    payload = result.to_dict()["items"][0]
+    assert payload["summary"] == "Rollback hold is 47 minutes."
+    assert payload["source_refs"] == ["fixture:runbook"]
+    assert payload["fetch"].startswith("potpie resource get ")
+    ctx = build_presentation_context(
+        result, format_="auto", sort="auto", dedupe="auto", event_limit=5
+    )
+    text = render_items_bullets(result, [payload], ctx)
+    assert "[ResourceChunk]" in text
+    assert "Rollback hold is 47 minutes." in text
+    assert "fetch: potpie resource get" in text
+
+
+def test_invalid_traversal_direction_fails_before_host_resolution():
+    from potpie.cli.main import app
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--json",
+            "graph",
+            "read",
+            "--subgraph",
+            "infra_topology",
+            "--view",
+            "service_neighborhood",
+            "--direction",
+            "sideways",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--direction must be one of: out, in, both" in result.output

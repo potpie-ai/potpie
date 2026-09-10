@@ -20,6 +20,7 @@ import json
 import re
 from typing import Any
 
+from potpie_context_core.definition_query import definition_subject
 from potpie_context_core.ontology import (
     PUBLIC_RECORD_TYPES,
     advertised_include_families,
@@ -27,6 +28,7 @@ from potpie_context_core.ontology import (
 
 CONTEXT_INTENTS: frozenset[str] = frozenset(
     {
+        "definition",
         "feature",
         "debugging",
         "review",
@@ -86,6 +88,7 @@ PLANNED_INCLUDES: frozenset[str] = CONTEXT_INCLUDE_VALUES - READER_BACKED_INCLUD
 FALLBACK_ONLY_INCLUDES: frozenset[str] = PLANNED_INCLUDES
 
 DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
+    "definition": ("docs", "resources", "features", "infra_topology"),
     "feature": (
         "coding_preferences",
         "features",
@@ -118,6 +121,13 @@ DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
 }
 
 CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {
+    "definition": {
+        "intent": "definition",
+        "include": list(DEFAULT_INTENT_INCLUDES["definition"]),
+        "mode": "fast",
+        "source_policy": "references_only",
+        "when": "When looking up an acronym expansion and its supporting documentation.",
+    },
     "feature": {
         "intent": "feature",
         "include": list(DEFAULT_INTENT_INCLUDES["feature"]),
@@ -310,6 +320,8 @@ def infer_context_intent(task: str | None) -> str:
     text = (task or "").strip().lower()
     if not text:
         return "unknown"
+    if definition_subject(text):
+        return "definition"
     for intent, pattern in _INTENT_SIGNAL_PATTERNS:
         if pattern.search(text):
             return intent

@@ -85,3 +85,23 @@ def test_caller_metadata_survives_the_stamp() -> None:
     )
 
     assert graph.requests[0].metadata == {"mode": "deep", "intent_source": "inferred"}
+
+
+def test_explicit_document_filter_includes_passage_evidence():
+    service, graph = _service()
+    service.resolve(ResolveRequest(pot_id="p", task="PMS full form", include=("docs",)))
+    assert graph.requests[-1].include == ("docs", "resources")
+    service.resolve(
+        ResolveRequest(pot_id="p", task="PMS full form", include=("resources",))
+    )
+    assert graph.requests[-1].include == ("resources",)
+
+
+def test_document_filter_normalizes_case_and_avoids_duplicate_readers():
+    service, graph = _service()
+    service.resolve(
+        ResolveRequest(
+            pot_id="p", task="PMS full form", include=(" DOCS ", "RESOURCES", "docs")
+        )
+    )
+    assert graph.requests[-1].include == ("docs", "resources")

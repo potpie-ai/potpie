@@ -199,6 +199,7 @@ def render_items_bullets(
         "view": getattr(result, "view", None),
         "backed": getattr(result, "backed", None),
         "unsupported": getattr(result, "unsupported", ()),
+        "coverage": getattr(result, "coverage", ()),
     }
     quality = getattr(result, "quality", {}) or {}
     lines = _items_header_lines(payload, len(items), quality)
@@ -302,8 +303,19 @@ def _items_header_lines(
 ) -> list[str]:
     lines = [
         f"view={payload.get('view')} backed={payload.get('backed')} "
-        f"items={item_count} quality={quality.get('status')}"
+        f"items={item_count} quality={quality.get('status')} "
+        f"confidence={quality.get('confidence', 'unknown')}"
     ]
+    for report in payload.get("coverage", ()):
+        metadata = report.get("metadata", {})
+        if "query_threshold" in metadata:
+            threshold = metadata["query_threshold"]
+            lines.append(
+                f"match={metadata.get('match_mode')} "
+                f"query_threshold={threshold if threshold is not None else 'auto'} "
+                f"filter={metadata.get('threshold_mode')} "
+                f"similarity_calibrated={metadata.get('similarity_calibrated')}"
+            )
     if quality.get("status") == "unsupported":
         reason = quality.get("reason") or "unsupported_filter"
         names = ", ".join(
@@ -375,6 +387,8 @@ def _item_bullet_lines(
     refs = _string_list(item.get("source_refs"))
     if refs:
         lines.append(f"    refs: {', '.join(refs)}")
+    if item.get("fetch"):
+        lines.append(f"    fetch: {item['fetch']}")
     claim = item.get("claim")
     if ctx.detail == "full" and isinstance(claim, Mapping):
         claim_parts = [
