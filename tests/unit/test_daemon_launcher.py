@@ -776,7 +776,7 @@ def test_start_treats_a_dead_pid_as_stale_and_proceeds(
     assert result["url"] == url
 
 
-def test_breakaway_refused_falls_back_to_a_detached_child(
+def test_breakaway_refused_falls_back_to_a_windowless_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A job without JOB_OBJECT_LIMIT_BREAKAWAY_OK refuses the whole CreateProcess
@@ -798,7 +798,27 @@ def test_breakaway_refused_falls_back_to_a_detached_child(
     assert len(flags_seen) == 2
     assert flags_seen[0] & launcher._WIN_CREATE_BREAKAWAY_FROM_JOB
     assert not flags_seen[1] & launcher._WIN_CREATE_BREAKAWAY_FROM_JOB
-    assert flags_seen[1] & launcher._WIN_DETACHED_PROCESS
+    for flags in flags_seen:
+        assert flags & launcher._WIN_CREATE_NO_WINDOW
+        assert flags & launcher._WIN_CREATE_NEW_PROCESS_GROUP
+        assert not flags & 0x00000008  # DETACHED_PROCESS cancels CREATE_NO_WINDOW
+
+
+def test_windows_daemon_launch_is_windowless_and_breaks_away(monkeypatch) -> None:
+    monkeypatch.setattr(launcher.os, "name", "nt")
+    calls = []
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda argv, **kwargs: calls.append((argv, kwargs)))
+
+    launcher._spawn_daemon(stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+
+    argv, kwargs = calls[0]
+    assert argv == [sys.executable, "-m", "potpie.daemon.main"]
+    assert kwargs["creationflags"] == (
+        launcher._WIN_CREATE_NO_WINDOW
+        | launcher._WIN_CREATE_NEW_PROCESS_GROUP
+        | launcher._WIN_CREATE_BREAKAWAY_FROM_JOB
+    )
+    assert kwargs["stdin"] == subprocess.DEVNULL
 
 
 def test_any_other_refused_spawn_is_a_start_error(

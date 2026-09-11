@@ -142,6 +142,16 @@ def test_the_launch_is_detached_and_marked() -> None:
         assert kwargs["start_new_session"] is True
 
 
+def test_windows_flusher_does_not_create_a_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spool.os, "name", "nt")
+
+    _, kwargs = spool.launch_command()
+
+    assert kwargs["creationflags"] == 0x08000000 | 0x00000200
+    assert not kwargs["creationflags"] & 0x00000008  # DETACHED_PROCESS
+    assert "start_new_session" not in kwargs
+
+
 def test_the_first_append_schedules_one_exit_spawn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

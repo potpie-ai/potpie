@@ -167,8 +167,10 @@ def launch_command() -> tuple[list[str], dict[str, Any]]:
         "env": {**os.environ, FLUSHER_ENV: "1"},
     }
     if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
-            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        # Keep Python's venv redirector and its child windowless as well. A
+        # DETACHED_PROCESS parent has no console for the child to inherit.
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
         )
     else:
         kwargs["start_new_session"] = True

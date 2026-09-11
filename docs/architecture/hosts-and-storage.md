@@ -103,7 +103,7 @@ The explorer is served by a local daemon even when it displays a managed pot. It
 
 ## Compatibility and unfinished surfaces
 
-**Resource import is currently incompatible across these two checkouts.** This Potpie CLI reads a local extraction directory and sends `files=`. Pie's managed `ResourcesSurface.import_dir` still requires `source_dir=` on the server. The CLI converts an old-host keyword refusal into `resource_import.inline_files` unavailability. Upgrade the managed adapter and aligned dependencies before using the current CLI to upload remotely; mounting a directory alone does not fix the keyword mismatch.
+**Resource import uploads inline contents.** This Potpie CLI reads a local extraction directory and sends `files=`. Pie's managed `ResourcesSurface.import_dir` forwards those contents to the engine for staging and validation; service-side jobs can alternatively supply `source_dir=`. Exactly one form is required. Older deployed adapters still reject `files`, which the CLI reports as `resource_import.inline_files` unavailability. Rebuild and deploy the updated managed service before retrying; the currently pinned dependencies support inline import already. Mounting a directory alone does not fix an old adapter's keyword mismatch.
 
 Managed `ledger` and `nudge` calls return unsupported results; they do not run hosted connector ingestion. Server resource indexing is process-local and needs explicit care with multiple replicas/shared filesystems. Snapshot import/export uses host-side paths. These limits remain separate from basic graph reads and propose/commit support.
 
@@ -117,4 +117,4 @@ Run `potpie host list`, `potpie --host managed pot list`, `potpie --host managed
 | [Local composition](../../potpie/context-engine/src/potpie_context_engine/bootstrap/host_wiring.py) | Local backend, stores, resources and graph runtime |
 | [UI routes](../../potpie/daemon/http/ui/router.py), [UI auth](../../potpie/daemon/http/ui/auth.py) | Explorer routing and browser handoff |
 | [Managed authorization](../../../pie/services/context-graph/src/pie_context_graph/application/authorization.py) | Deny-by-default pot access |
-| [Managed resources](../../../pie/services/context-graph/src/pie_context_graph/application/surfaces/resources.py), [CLI import](../../potpie/cli/commands/resource.py) | Observed import contract mismatch |
+| [Managed resources](../../../pie/services/context-graph/src/pie_context_graph/application/surfaces/resources.py), [CLI import](../../potpie/cli/commands/resource.py) | Inline resource upload and legacy host compatibility |

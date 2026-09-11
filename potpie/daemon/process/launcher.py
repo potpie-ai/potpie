@@ -54,7 +54,7 @@ _ERROR_ACCESS_DENIED: Final[int] = 5
 
 #: The ``CreateProcess`` flags, by value: ``subprocess`` only defines the names
 #: on Windows, and the spawn fallback below has to be testable elsewhere.
-_WIN_DETACHED_PROCESS: Final[int] = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_WIN_CREATE_NO_WINDOW: Final[int] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 _WIN_CREATE_NEW_PROCESS_GROUP: Final[int] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
 _WIN_CREATE_BREAKAWAY_FROM_JOB: Final[int] = getattr(
     subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000
@@ -242,21 +242,26 @@ def _spawn_daemon(**popen_kwargs) -> subprocess.Popen:
     ``PermissionError`` instead of starting. Falling back to a merely detached
     child keeps the daemon running; it then shares the job's fate, which is
     still a running daemon for as long as the host that started it is.
+
+    Use a windowless console rather than DETACHED_PROCESS: a detached Python
+    venv redirector or daemon can spawn console children that allocate a new
+    visible console. CREATE_NO_WINDOW lets them inherit a windowless one.
+    Do not combine the flags: Windows ignores CREATE_NO_WINDOW in that case.
     """
     argv = [sys.executable, "-m", _DAEMON_ENTRYPOINT]
     if os.name != "nt":
         return subprocess.Popen(argv, start_new_session=True, **popen_kwargs)
-    detached = _WIN_DETACHED_PROCESS | _WIN_CREATE_NEW_PROCESS_GROUP
+    background = _WIN_CREATE_NO_WINDOW | _WIN_CREATE_NEW_PROCESS_GROUP
     try:
         return subprocess.Popen(
             argv,
-            creationflags=detached | _WIN_CREATE_BREAKAWAY_FROM_JOB,
+            creationflags=background | _WIN_CREATE_BREAKAWAY_FROM_JOB,
             **popen_kwargs,
         )
     except OSError as exc:
         if getattr(exc, "winerror", None) != _ERROR_ACCESS_DENIED:
             raise
-        return subprocess.Popen(argv, creationflags=detached, **popen_kwargs)
+        return subprocess.Popen(argv, creationflags=background, **popen_kwargs)
 
 
 def _read_discovery(disc_file: pathlib.Path) -> tuple[dict | None, str | None]:
