@@ -5,10 +5,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import pytest
+from potpie_context_engine.outcomes import DomainError
 
 import potpie.cli.telemetry.product_analytics as product_analytics
 from potpie.cli.auth import auth_commands, github_commands
-from potpie.cli.commands import _common, bootstrap, query
+from potpie.cli.commands import _common, query
 from potpie.cli.telemetry.context import TelemetryContext
 from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
 from potpie.cli.telemetry.usage_events import (
@@ -117,25 +118,81 @@ def test_usage_event_accepts_extra_low_cardinality_properties(
     assert event.properties["view"] == "recent_changes.timeline"
 
 
-def test_context_activation_also_records_usage(fake_sink: _FakeSink) -> None:
-    query._capture_context_activation(command="search", item_count=2)
+def test_context_result_also_records_usage(fake_sink: _FakeSink) -> None:
+    query._capture_context_result(command="search", item_count=2, confidence="medium")
 
     assert [event.name for event in fake_sink.events] == [
-        "cli_onboarding_first_use_command_succeeded",
-        "cli_onboarding_first_context_result_returned",
+        "cli_onboarding_context_result_returned",
         "cli_usage_command_succeeded",
     ]
+    assert fake_sink.events[0].properties["result_kind"] == "non_empty"
+    assert fake_sink.events[0].properties["confidence"] == "medium"
     assert fake_sink.events[-1].properties["command"] == "search"
     assert fake_sink.events[-1].properties["result_kind"] == "context_result"
     assert fake_sink.events[-1].properties["item_count"] == 2
 
 
 def test_host_status_activation_does_not_record_usage(fake_sink: _FakeSink) -> None:
-    bootstrap._capture_host_status_activation()
+    with _common.activation_command_outcome(
+        command="status", result_kind="status_result"
+    ):
+        pass
 
     assert [event.name for event in fake_sink.events] == [
-        "cli_onboarding_first_use_command_succeeded"
+        "cli_onboarding_activation_command_outcome"
     ]
+    event = fake_sink.events[0]
+    assert event.properties["outcome"] == "succeeded"
+    assert event.properties["result_kind"] == "status_result"
+    assert isinstance(event.properties["duration_ms"], int)
+
+
+def test_expected_activation_failure_is_bounded_and_private(
+    fake_sink: _FakeSink,
+) -> None:
+    raw_error = "private repository /Users/example/secret was unavailable"
+
+    with pytest.raises(_common.EngineClientError):
+        with _common.activation_command_outcome(
+            command="resolve", result_kind="context_result"
+        ):
+            raise _common.EngineClientError(
+                DomainError(code="private_dynamic_code", message=raw_error)
+            )
+
+    assert len(fake_sink.events) == 1
+    event = fake_sink.events[0]
+    assert event.properties["outcome"] == "expected_failed"
+    assert event.properties["failure_category"] == "validation"
+    assert raw_error not in repr(event.properties)
+    assert "private_dynamic_code" not in repr(event.properties)
+
+
+def test_activation_cancellation_is_recorded_without_raw_details(
+    fake_sink: _FakeSink,
+) -> None:
+    with pytest.raises(KeyboardInterrupt):
+        with _common.activation_command_outcome(
+            command="search", result_kind="context_result"
+        ):
+            raise KeyboardInterrupt
+
+    assert len(fake_sink.events) == 1
+    event = fake_sink.events[0]
+    assert event.properties["outcome"] == "cancelled"
+    assert event.properties["failure_category"] == "cancellation"
+
+
+def test_unexpected_activation_failure_stays_out_of_product_analytics(
+    fake_sink: _FakeSink,
+) -> None:
+    with pytest.raises(RuntimeError):
+        with _common.activation_command_outcome(
+            command="status", result_kind="status_result"
+        ):
+            raise RuntimeError("private unexpected failure")
+
+    assert fake_sink.events == []
 
 
 def test_github_repos_records_usage_after_success(

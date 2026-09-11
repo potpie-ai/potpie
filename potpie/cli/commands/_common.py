@@ -22,22 +22,22 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Final, Iterator, Mapping, NoReturn, Sequence
+from typing import Any, Callable, Final, Iterator, Literal, Mapping, NoReturn, Sequence
 
 import click
 import typer
-
-from potpie.cli.repo_location import (
-    current_git_remote as shared_current_git_remote,
-    normalize_repo_ref as shared_normalize_repo_ref,
-    repo_identity_key,
-)
 from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
     PotNotFound,
 )
+
 from potpie.auth.ports.credentials import CredentialStore
+from potpie.cli.repo_location import (
+    current_git_remote as shared_current_git_remote,
+    normalize_repo_ref as shared_normalize_repo_ref,
+    repo_identity_key,
+)
 
 # --- exit codes (cli-flow.md output contract) -------------------------------
 EXIT_OK = 0
@@ -73,6 +73,14 @@ class CliCancellationExit(typer.Exit):
     def __init__(self, outcome: CliCancellation) -> None:
         super().__init__(code=outcome.exit_code)
         self.outcome = outcome
+
+
+class CliExpectedFailureExit(typer.Exit):
+    """Rendered expected failure retaining its stable machine-readable code."""
+
+    def __init__(self, *, error_code: str, exit_code: int) -> None:
+        super().__init__(code=exit_code)
+        self.error_code = error_code
 
 
 _state: dict[str, Any] = {
@@ -259,12 +267,12 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
     selector = _context_selector(explicit_pot)
     mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "daemon").strip().lower()
     if mode != "in_process":
+        from potpie.config.local_paths import (
+            default_home,
+        )
         from potpie.daemon.discovery import (
             DaemonDiscoveryError,
             load_daemon_connection,
-        )
-        from potpie.config.local_paths import (
-            default_home,
         )
 
         home = Path(os.getenv("CONTEXT_ENGINE_HOME") or default_home()).resolve()
@@ -344,6 +352,95 @@ def run_engine_operation(awaitable):
     if not getattr(outcome, "ok", False):
         raise EngineClientError(outcome.error)
     return outcome.value
+
+
+@contextmanager
+def activation_command_outcome(
+    *,
+    command: Literal["resolve", "search", "status"],
+    result_kind: Literal["context_result", "status_result"],
+) -> Iterator[None]:
+    """Capture one controlled terminal outcome for an activation command."""
+
+    from potpie.cli.telemetry.onboarding_events import (
+        capture_activation_command_outcome,
+    )
+
+    started_at = time.perf_counter()
+
+    def capture(
+        outcome: Literal["succeeded", "expected_failed", "cancelled"],
+        *,
+        failure_category: str | None = None,
+    ) -> None:
+        capture_activation_command_outcome(
+            command=command,
+            outcome=outcome,
+            result_kind=result_kind,
+            duration_ms=int(max((time.perf_counter() - started_at) * 1000.0, 0.0)),
+            failure_category=failure_category,
+        )
+
+    try:
+        yield
+    except (CliCancellation, typer.Abort, click.Abort, KeyboardInterrupt, EOFError):
+        capture("cancelled", failure_category="cancellation")
+        raise
+    except CliExpectedFailureExit as exc:
+        capture(
+            "expected_failed",
+            failure_category=_activation_cli_failure_category(exc.error_code),
+        )
+        raise
+    except (
+        EngineClientError,
+        CapabilityNotImplemented,
+        ContextEngineDisabled,
+        PotNotFound,
+        ValueError,
+    ) as exc:
+        capture(
+            "expected_failed",
+            failure_category=_activation_failure_category(exc),
+        )
+        raise
+    else:
+        capture("succeeded")
+
+
+def _activation_failure_category(exc: BaseException) -> str:
+    if isinstance(exc, EngineClientError):
+        error = exc.error
+        if str(getattr(error, "code", "")) == "not_implemented":
+            return "not_implemented"
+        category = str(getattr(error, "category", "dependency"))
+        return {
+            "authentication": "authentication",
+            "authorization": "authorization",
+            "dependency": "dependency",
+            "domain": "validation",
+            "engine_lifecycle": "unavailable",
+            "selection": "selection",
+        }.get(category, "dependency")
+    if isinstance(exc, CapabilityNotImplemented):
+        return "not_implemented"
+    if isinstance(exc, ContextEngineDisabled):
+        return "unavailable"
+    if isinstance(exc, PotNotFound):
+        return "selection"
+    return "validation"
+
+
+def _activation_cli_failure_category(error_code: str) -> str:
+    if error_code in {"ambiguous_pot", "no_active_pot", "pot_not_found"}:
+        return "selection"
+    if error_code == "not_implemented":
+        return "not_implemented"
+    if error_code in {"unavailable", "daemon_discovery_unavailable"}:
+        return "unavailable"
+    if "auth" in error_code:
+        return "authentication"
+    return "validation"
 
 
 def confirm_destructive_operation(
@@ -485,7 +582,7 @@ def fail(
             hint=detail if isinstance(detail, str) else None,
             next_action=next_action,
         )
-    raise typer.Exit(code=exit_code)
+    raise CliExpectedFailureExit(error_code=code, exit_code=exit_code)
 
 
 def cancel(
@@ -1250,6 +1347,7 @@ __all__ = [
     "EXIT_OK",
     "EXIT_UNAVAILABLE",
     "EXIT_VALIDATION",
+    "activation_command_outcome",
     "bootstrap_output_flags_from_argv",
     "confirm_destructive_operation",
     "contract",
