@@ -8,14 +8,26 @@ repository or decide what prose means for you.
 
 ## Quick Start
 
-```bash
-potpie status
-potpie resolve "<task>"
-```
+Run one discovery pass shared by all relevant skills. Load applicable skills
+together, then run independent reads concurrently:
 
-`potpie status` is the one health check (daemon, pot, counts, open findings);
-every read header repeats the pot. Once a header has named it, pass
-`--pot local:<name>` on later calls.
+- `potpie resolve "<task>"` for broad context.
+- For code work, `potpie graph read --subgraph decisions --view preferences_for_scope --repo current --limit 12`, without `--query`.
+- When the task explicitly names an entity whose canonical key is unknown,
+  `potpie graph search-entities "<entity name>" --limit 10`, untyped.
+
+Reuse current reads and hook context for the same task, pot, and scope. Skip
+branches that do not apply. Use concurrent tool calls for short lookups; local
+file discovery can run alongside them. Run `potpie status` concurrently if a
+health check is needed. Use a known explicit pot selector on all calls; resolve
+ambiguous routing before scoped retrieval and check returned pot IDs before
+combining results. Once known, pass `--pot local:<name>` or `managed:<name>`.
+
+Follow returned keys with a needed neighborhood/named view, and returned chunk
+IDs with batched `resource get`. Run these follow-ups concurrently once inputs
+are known. For a direct entity question, lookup then neighborhood may suffice;
+for ordered history with known scope, the timeline can run immediately. Stop
+expanding when the task's evidence and applicable constraints are covered.
 
 ## Graph Surface
 
@@ -36,14 +48,19 @@ potpie --json graph commit <plan_id> --verify
 `--pot <origin>:<name>` for uniform command invocation, but ignores the selector
 and does not resolve or validate it. Select the actual target on `graph propose`.
 
-`resolve` is the first read (intent inferred, triples across families);
-`record` the first write (one fix, decision or preference, no JSON file).
-Text output for reads; `--json` for `propose`, `commit`, `resource import` and
-anything parsed. `potpie graph catalog` (text) is for an unknown-view error or
-a rejected op, not a preamble; `graph describe --examples` has no mutation
-example — the payload shape is `mutation-template`. `commit --verify` prints
-the plan id, readback and quality status; `graph history --plan <plan_id>` is
-for later inspection.
+`resolve` supplies broad context (intent inferred, triples across families).
+Before ingestion, read `potpie graph catalog --profile full` and the ontology
+selection guidance in `potpie-graph`. Choose entity types and predicates from
+the source meaning before choosing a writer: prescriptions are preferences;
+implemented behavior, dependencies, decisions, and events have their own shapes.
+Use `record` for a supported structured learning; topology and features use
+semantic plans even for one fact. `feature_note` and other free-form notes do
+not substitute for those typed relationships. Templates show payload shape,
+not the full ontology. Reuse the discovered contract throughout the task.
+Text output for reads; `--json` for parsed catalog data, `propose`, `commit`,
+and `resource import`. `graph describe --examples` carries read examples only.
+`commit --verify` checks persistence and quality; also read the intended graph
+family to verify the selected representation.
 
 ## Report Back
 
@@ -81,7 +98,7 @@ inferred, and never add an edge just to make the picture connected.
 ## Writing
 
 Reuse the keys your reads returned; resolve identity with `graph search-entities`
-(untyped) only before linking to a node no read has shown you. Write
+(untyped) before linking to a node no read has shown you. Write
 retrieval-grade descriptions: include symptoms, synonyms, scope,
 environment, service, source refs, and the words a future searcher would type.
 

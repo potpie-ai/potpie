@@ -1,6 +1,6 @@
 ---
 name: potpie-cli
-version: "7"
+version: "9"
 description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, search, graph workbench reads/writes, resource (document payload) commands, and pot scope behavior."
 ---
 
@@ -105,7 +105,18 @@ potpie search "query" --include decisions,features
 potpie record --type <fix|decision|preference|bug_pattern|verification> --summary "<…>" --detail <key>=<value> --scope service:<name>
 ```
 
-`resolve` is the first read for a task: the intent is inferred from the task
+Use one shared discovery pass across skills: run `resolve` concurrently with
+scope-only `preferences_for_scope --repo current` for code work and untyped
+`graph search-entities` for explicitly named entities whose keys are unknown.
+Reuse current results and hook context for the same task, pot, and scope. Run
+`status` alongside discovery if health needs checking; resolve ambiguous pot
+routing first and check pot IDs before combining results. Use returned keys for
+focused views and batch returned chunk IDs into `resource get`; those follow-ups
+can run concurrently once inputs are known. Stop when evidence and constraints
+are covered. Load the relevant use-case skills together; do not repeat resolve
+for each skill.
+
+`resolve` is the broad discovery read: the intent is inferred from the task
 text when `--intent` is omitted, and the reply is a bounded envelope of
 `subject PREDICATE object · fact` rows across families with a `+N more` footer.
 `search` is the follow-up for a known phrase; its query is positional — there
@@ -149,8 +160,10 @@ potpie --json graph quality summary
 
 One rule for `--json`: text for reads, `--json` for `propose`, `commit`,
 `resource import`, and anything a script parses. `catalog --task` is accepted
-and ignored, and the text catalog (under 1 KB) already lists views and
-mutation ops. `describe --examples` renders only with `--json` and carries
+and ignored. Before ingestion, `graph catalog --profile full` exposes all public
+entity types, descriptions, identities, predicates, and allowed endpoints;
+`--profile read` stays compact for read-view discovery. Use the full ontology
+and the selection guidance in `potpie-graph` before choosing a write shape. `describe --examples` renders only with `--json` and carries
 read examples only; the write payload shape is `mutation-template`.
 `commit --verify` prints the plan id, readback and quality status, so
 `graph history --plan <plan_id>` is for later inspection.

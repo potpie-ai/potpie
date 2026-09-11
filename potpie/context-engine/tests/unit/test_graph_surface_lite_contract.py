@@ -65,6 +65,24 @@ def test_catalog_truth_classes(service) -> None:
     assert "preference" in cat["truth_classes"]
 
 
+def test_catalog_exposes_modeling_guidance_from_the_public_ontology(service) -> None:
+    from potpie_context_core.ontology import EDGE_TYPES, ENTITY_TYPES
+
+    cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
+    entities = {entity["label"]: entity for entity in cat["entity_types"]}
+    predicates = {predicate["name"]: predicate for predicate in cat["predicates"]}
+    assert set(entities) == {name for name, spec in ENTITY_TYPES.items() if spec.public}
+    assert set(predicates) == {name for name, spec in EDGE_TYPES.items() if spec.public}
+    for name, entity in entities.items():
+        assert entity["description"] == ENTITY_TYPES[name].description
+        assert entity["identity_policy"] == ENTITY_TYPES[name].identity_policy
+    for name, predicate in predicates.items():
+        spec = EDGE_TYPES[name]
+        assert predicate["description"] == spec.description
+        assert predicate["allowed_pairs"] == [list(pair) for pair in spec.allowed_pairs]
+        assert predicate["required_properties"] == sorted(spec.required_properties)
+
+
 def test_catalog_op_partitions_are_honest(service) -> None:
     cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
     # Only applicable ops are advertised as mutation_operations.

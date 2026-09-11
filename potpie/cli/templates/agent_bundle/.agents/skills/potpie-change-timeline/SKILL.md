@@ -1,6 +1,6 @@
 ---
 name: potpie-change-timeline
-version: "2"
+version: "3"
 description: "Use when an agent needs recent or historical change context: what changed recently, regressions, merged PRs, tickets, docs, incidents, deployments, releases, and source-history ingestion."
 ---
 
@@ -11,6 +11,17 @@ regression, or when ingesting source history from GitHub, Linear, Jira, docs, or
 deployment records.
 
 ## Fast Path
+
+Share one discovery pass with other skills; reuse current reads and hook context
+for the same task, pot, and scope instead of repeating resolve. The full timeline
+read below can run concurrently with resolve when the requested time window and
+scope are already known. For a pure ordered-history request, the timeline alone
+may suffice. An untyped `search-entities` lookup for a named entity with an
+unknown key can run alongside broad discovery; only an entity-scoped timeline
+must wait for that key. For code changes, scoped preferences are independent too.
+Use a known explicit pot selector; resolve ambiguous routing first and check
+returned pot IDs before combining results. Stop when the requested history and
+supporting evidence are covered.
 
 A pot is the project boundary and can contain multiple repos, so do not narrow
 to the current repo unless the user asks. Take the window from the question and

@@ -1,6 +1,6 @@
 ---
 name: potpie-debug-memory
-version: "2"
+version: "3"
 description: "Use while debugging or troubleshooting failures, flaky tests, incidents, production alerts, CI failures, local dev setup issues, repeated bugs, prior fixes, failed attempts, and verification history."
 ---
 
@@ -11,18 +11,27 @@ failed attempts can guide the investigation.
 
 ## Fast Path
 
+Share one discovery pass across relevant skills; reuse current reads and hook
+context for the same task, pot, and scope instead of repeating resolve. Run
+resolve alongside scoped preferences for code work and an untyped
+`search-entities` lookup when the task names a service whose key is unknown.
+Use a known explicit pot selector; resolve ambiguous routing first and check
+returned pot IDs before combining results. Local file discovery can run alongside
+these reads. Use returned keys for later scoped reads rather than guessing.
+
 Search by symptom, not just component name: exact error text, failing test,
-command, environment, service, dependency, and synonyms. One call first — the
-intent is inferred from words like *why / broken / stale / failing / error*, so
-prior bugs, the timeline and infra all come back as triples:
+command, environment, service, dependency, and synonyms. The shared resolve call
+infers intent from words like *why / broken / stale / failing / error* and returns
+prior bugs, the timeline and infra as triples:
 
 ```bash
 potpie resolve "<symptom in the user's words, plus the exact error text>"
 ```
 
 Runbooks and their recovery steps live in ingested documents, which
-`prior_occurrences` never returns. Ask for them in the same call, or read the
-matching section and fetch its text in one batched call:
+`prior_occurrences` never returns. Choose the includes for the initial resolve
+call rather than running both resolve examples. If it lacks document evidence,
+read a matching section, then fetch returned chunk IDs in one batched call:
 
 ```bash
 potpie resolve "<symptom>" --include prior_bugs,docs,timeline
@@ -41,7 +50,9 @@ potpie graph read --subgraph debugging --view prior_occurrences --query "<expand
 
 If no service is known, omit `--scope`. Pass `--pot local:<name>` once a
 header has named the pot. Read infra (`service_neighborhood --depth 2
---direction both`, no `--environment`) only if the cause is still open.
+--direction both`, no `--environment`) only if the cause is still open. Once
+keys and chunk IDs are available, run needed focused reads and resource fetches
+concurrently. Stop expanding when evidence is sufficient for the investigation.
 
 ## Apply Results
 

@@ -1,6 +1,6 @@
 ---
 name: potpie-resource-markdown
-version: "4"
+version: "5"
 description: "Use when the user asks to ingest a markdown or HTML document — an exported doc, wiki or Confluence page, web page, runbook, spec, or RFC — into Potpie so agents can search and cite it. Teaches the extraction-script flow: split on the heading tree into sections and ~4k-char chunks, import with `potpie resource import`, write retrieval-grade section summaries, and link the document with DOCUMENTS claims. Chunk text never passes through the agent's own output."
 ---
 
@@ -22,6 +22,13 @@ belongs in the baseline flow (`potpie-repo-baseline`), not in chunk storage.
 Ingest when the payload lives *outside* the tree — a web page, a wiki or
 Confluence export, a vendor doc, a spec handed over as a file — or when the
 user explicitly wants the document searchable as durable project memory.
+
+Before deriving graph facts from this document, inspect
+`potpie --json graph catalog --profile full --pot <pot>` and follow
+[ontology selection](../potpie-graph/SKILL.md#ontology-selection). Resource import
+owns document structure; facts stated in the document need their own supported
+entity types and relations. Do not turn behavior or architecture into preferences
+or substitute generic notes for typed facts.
 
 ## Two rules that are never broken
 

@@ -2132,6 +2132,52 @@ def test_graph_catalog_human_output_flags_unavailable_admin_commands() -> None:
     assert "import (unavailable)" in output
 
 
+@pytest.mark.parametrize("format_", ["auto", "table"])
+def test_full_catalog_exposes_host_ontology_for_ingestion(format_) -> None:
+    from potpie_context_core.ontology import EDGE_TYPES, ENTITY_TYPES
+    from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+        InMemoryGraphBackend,
+    )
+    from potpie_context_engine.application.services.graph_service import (
+        DefaultGraphService,
+    )
+
+    service = DefaultGraphService(backend=InMemoryGraphBackend())
+
+    class CatalogGraph(_Graph):
+        def catalog(self, request):
+            return service.catalog(request)
+
+    _common.set_host(_Host(CatalogGraph()))
+    _common.set_json(False)
+    result = CliRunner().invoke(
+        graph.graph_app, ["catalog", "--profile", "full", "--format", format_]
+    )
+    assert result.exit_code == 0, result.output
+    output = " ".join(_plain_cli_output(result.output).split())
+    for spec in ENTITY_TYPES.values():
+        if spec.public:
+            assert spec.label in output
+            assert " ".join(spec.identity_policy.split()) in output
+            assert " ".join(spec.description.split()) in output
+    for spec in EDGE_TYPES.values():
+        if spec.public:
+            assert spec.edge_type in output
+            assert " ".join(spec.description.split()) in output
+            for subject, object_ in spec.allowed_pairs:
+                assert f"{subject} -> {object_}" in output
+
+
+def test_read_catalog_stays_compact_and_points_writers_to_full_catalog() -> None:
+    _common.set_host(_Host(_Graph()))
+    _common.set_json(False)
+    result = CliRunner().invoke(graph.graph_app, ["catalog", "--profile", "read"])
+    assert result.exit_code == 0
+    output = " ".join(_plain_cli_output(result.output).split())
+    assert "graph catalog --profile full" in output
+    assert "allowed subject -> object" not in output
+
+
 def test_graph_catalog_task_ranks_relevant_views() -> None:
     _common.set_json(True)
     _common.set_host(_Host(_Graph()))

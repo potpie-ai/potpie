@@ -44,6 +44,7 @@ from potpie.cli.commands._common import (
     pot_scope_info,
     resolve_pot_id,
 )
+from potpie.cli.catalog_presenter import render_catalog
 from potpie.cli.read_presenter import (
     build_presentation_context,
     prepare_items,
@@ -545,7 +546,7 @@ def graph_catalog(
         support = _admin_command_support(host) if "admin_commands" in payload else {}
         if support:
             payload["admin_command_support"] = support
-        human = _catalog_human(payload, format_=format_)
+        human = render_catalog(payload, format_=format_)
         _emit_graph_result(
             ctx,
             payload,
@@ -3119,58 +3120,6 @@ def _compact_catalog_ranking(entry: Mapping[str, Any], *, rank: int) -> dict[str
     if reason:
         out["reason"] = reason
     return out
-
-
-def _catalog_human(payload: Mapping[str, Any], *, format_: str) -> str:
-    mode = (format_ or "auto").strip().lower()
-    if mode not in {"auto", "table"}:
-        raise ValueError("--format must be one of: auto, table")
-    if mode == "table" or payload.get("profile") == "read":
-        lines = [
-            f"graph catalog profile={payload.get('profile', 'full')} "
-            f"match={payload.get('match_mode')}"
-        ]
-        task = payload.get("task")
-        if task:
-            lines.append(f"task={task}")
-        rankings = payload.get("task_ranking") or ()
-        if rankings:
-            lines.append("rank | score | view | reason")
-            lines.append("--- | --- | --- | ---")
-            for entry in rankings[:8]:
-                reason = str(entry.get("reason") or "")
-                lines.append(
-                    f"{entry.get('rank')} | {entry.get('score')} | "
-                    f"{entry.get('view')} | {reason}"
-                )
-        lines.append("view | backed | filters")
-        lines.append("--- | --- | ---")
-        for view in payload.get("views", ()):
-            filters = ", ".join(view.get("supported_filters") or ()) or "-"
-            lines.append(
-                f"{view.get('name')} | {str(bool(view.get('backed'))).lower()} | {filters}"
-            )
-        return "\n".join(lines)
-
-    lines = [
-        f"graph contract v2 / ontology {ONTOLOGY_VERSION} "
-        f"(data-plane={payload['data_plane_graph_contract_version']}, match={payload['match_mode']})",
-        f"commands: {', '.join(payload['commands'])}",
-        f"views: {', '.join(v['name'] for v in payload['views'])}",
-        f"mutation ops: {', '.join(payload['mutation_operations'])}",
-        f"review-required: {', '.join(payload['review_required_operations'])}",
-        f"deferred: {', '.join(payload['deferred_operations'])}",
-    ]
-    support = payload.get("admin_command_support")
-    if isinstance(support, Mapping) and support:
-        lines.append(
-            "admin: "
-            + ", ".join(
-                command if support[command] else f"{command} (unavailable)"
-                for command in sorted(support)
-            )
-        )
-    return "\n".join(lines)
 
 
 def _emit_graph_read(

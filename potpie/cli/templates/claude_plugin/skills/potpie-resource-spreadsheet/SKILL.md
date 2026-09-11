@@ -1,6 +1,6 @@
 ---
 name: potpie-resource-spreadsheet
-version: "4"
+version: "5"
 description: "Use when the user asks to ingest a spreadsheet or CSV (cost report, inventory, tracker, export) into Potpie so agents can search and cite it. Teaches the extraction-script flow: one section per sheet, header-repeated row chunks, `potpie resource import`, summaries that carry the key figures, and — critically — deriving the durable facts as graph claims with chunk-id evidence, because chunked rows retrieve badly as text. Chunk text never passes through the agent's own output."
 ---
 
@@ -19,6 +19,13 @@ queries badly: an ingest can look successful and silently answer nothing. The
 *claims* must carry the derived facts — totals, key figures, per-entity
 numbers, anomalies — with the chunks as backing evidence (Step 5). Skipping
 that step is the most common way a spreadsheet ingest fails.
+
+Before deriving graph facts from this document, inspect
+`potpie --json graph catalog --profile full --pot <pot>` and follow
+[ontology selection](../potpie-graph/SKILL.md#ontology-selection). Resource import
+owns document structure; facts stated in the document need their own supported
+entity types and relations. Do not turn behavior or architecture into preferences
+or substitute generic notes for typed facts.
 
 ## Two rules that are never broken
 

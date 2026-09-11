@@ -1,6 +1,6 @@
 ---
 name: potpie-resource-pdf
-version: "4"
+version: "5"
 description: "Use when the user asks to ingest a PDF (report, contract, paper, manual, slide export) into Potpie so agents can search and cite it. Teaches the extraction-script flow: resolve the document's identity, split on the PDF's own structure into sections and ~4k-char chunks, import with `potpie resource import`, write retrieval-grade section summaries, and link the document with DOCUMENTS claims. Chunk text never passes through the agent's own output."
 ---
 
@@ -15,6 +15,13 @@ summaries improve context quality but are not a prerequisite for text search. In
 harness-led — you read the source, choose the sections, and write the
 summaries; Potpie validates, stores, and embeds. There is no Potpie-side
 parser or scanner for PDFs, and no scan command writes the graph for you.
+
+Before deriving graph facts from this document, inspect
+`potpie --json graph catalog --profile full --pot <pot>` and follow
+[ontology selection](../potpie-graph/SKILL.md#ontology-selection). Resource import
+owns document structure; facts stated in the document need their own supported
+entity types and relations. Do not turn behavior or architecture into preferences
+or substitute generic notes for typed facts.
 
 ## Two rules that are never broken
 

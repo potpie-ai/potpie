@@ -1,6 +1,6 @@
 ---
 name: potpie-project-preferences
-version: "2"
+version: "4"
 description: "Use before writing, modifying, reviewing, refactoring, or testing code so repo/project preferences surface: error handling, file structure, frameworks, logging, dependency choices, testing, security, API style, and naming. Also use after code work when a reusable project preference should be recorded."
 ---
 
@@ -11,26 +11,35 @@ work instead of being rediscovered from code.
 
 ## Fast Path
 
-Two reads, in this order. Every read header names the pot; once you know it,
-pass `--pot local:<name>` on later calls.
+Run the two independent reads below concurrently as part of one shared
+discovery pass. Reuse current results from another skill or hook for the same
+task, pot, and scope; loading this skill does not repeat resolve. Use a known
+explicit pot selector on all calls and check returned pot IDs before combining
+results. Resolve ambiguous routing first.
 
-1. One bounded context call — decisions, features, infra and prior bugs as
-   `subject PREDICATE object` triples:
+- One bounded context call — decisions, features, infra and prior bugs as
+  `subject PREDICATE object` triples:
 
 ```bash
 potpie resolve "<the task in the user's words>"
 ```
 
-2. Preferences by scope, with **no `--query`**. Preferences are constraints,
+- Preferences by scope, with **no `--query`**. Preferences are constraints,
    not search hits: this view applies an absolute 0.7 similarity floor to a
    query, which a task sentence rarely clears, and `resolve` applies the same
    floor to the task text, so it lists a preference only on a near-verbatim
-   match. This read is not optional.
+   match. Scoped preferences are required; skip the call only when equivalent
+   current scoped results are already available.
 
 ```bash
 potpie graph read --subgraph decisions --view preferences_for_scope --repo current --limit 12
 potpie graph read --subgraph decisions --view preferences_for_scope --scope service:<service>,path:<path-or-dir> --limit 12
 ```
+
+Use the repo read immediately; the service/path command is an alternative when
+those scopes are known, or a refinement when repo results leave a gap. If the
+task names an entity whose key is unknown, run untyped `search-entities` alongside
+the initial reads; use its returned key for dependent scope refinements.
 
 `--repo current` takes the repo key from the working tree; spelled by hand it
 is `repo:<host>/<org>/<name>` (`repo:github.com/acme-corp/acme-shop`). A scope
@@ -68,7 +77,11 @@ than the sentence "file beats directory beats service beats repo".
 ## Record A Preference
 
 Record only reusable, explicit preferences that are likely to matter again. Do
-not turn one-off implementation choices into project policy.
+not turn one-off implementation choices into project policy. Current behavior,
+architecture, and dependency usage are facts even when described by a user.
+For those, decisions with rationale, or events, follow
+[ontology selection](../potpie-graph/SKILL.md#ontology-selection) and choose the
+appropriate entity/relation instead of recording a preference.
 
 One preference is one call — no JSON file, no plan:
 

@@ -1,6 +1,6 @@
 ---
 name: "potpie-graph"
-version: "8"
+version: "10"
 description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions, fetching ingested document chunks with `potpie resource get`, and responding to nudges."
 ---
 
@@ -16,17 +16,22 @@ Text output for reads; `--json` for `propose`, `commit`, `resource import`,
 and anything you parse. `graph describe --examples` renders only with `--json`
 and shows read commands only: the write payload shape is `graph mutation-template`.
 
-## 1. Start with the read
+## 1. Select scope without delaying discovery
 
-No status or contract preamble. `potpie status` is the one health check, and
-every read header names the pot (`potpie graph status` repeats the counts).
+When health needs checking, run `potpie status` alongside independent reads;
+`potpie graph status` repeats the counts. Every read header names the pot.
+Use a known explicit pot selector on all calls. If routing is unresolved,
+resolve it before scoped retrieval; otherwise check that returned pot IDs agree
+before combining results. Once selected, keep the pot fixed through discovery.
 Without `--pot`, a command resolves the pot from the repo you are in (its
 registration), then the active pot (`*` in `potpie pot list`, which a repo
 mapping outranks). `graph read` prints `pot=<name> (<id>)`, `resolve` and
 `search` the id: when it is not the pot you expect, pass `--pot local:<name>`.
 `potpie graph catalog --profile read` (text) lists views and match mode, the
-full text catalog adds mutation ops; use it after an unknown-view error or a
-rejected op — `--task` is accepted and ignored. Text `potpie graph describe
+full catalog exposes entity types, descriptions, canonical identities, predicates,
+and allowed endpoints. Before ingestion, inspect `graph catalog --profile full`
+and reuse it through the task; `--profile read` is only a read-view index.
+Use `--json` when parsing the catalog. `--task` is accepted and ignored. Text `potpie graph describe
 <subgraph> --view <view>` prints a view's filters when a read is refused for a
 missing input.
 
@@ -34,7 +39,35 @@ Once a header has named the pot, pass `--pot local:<name>` (or
 `managed:<name>`): a bare name is checked on both origins whenever a managed
 host is configured, one round trip per command.
 
-## 2. Read — `resolve` first, then one named view
+## 2. Read — one shared discovery pass
+
+Load relevant use-case skills together and share results across them. A newly
+loaded skill does not restart discovery. Reuse earlier reads and hook-injected
+context when they cover the same task, pot, and scope and are still current.
+
+Run independent reads concurrently using tool-call parallelism:
+
+- `resolve` once for the task's broad context.
+- For code work, scope-only `preferences_for_scope --repo current`, with no
+  `--query`. It does not depend on resolve; omit only when equivalent current
+  scoped preferences are already available.
+- For an entity explicitly named in the task whose canonical key is unknown,
+  one untyped `search-entities` lookup per needed identity, alongside resolve.
+  Skip this branch when no entity is named or its key is already known.
+
+Start with roughly three memory calls, batching additional independent identity
+lookups only as needed. Targeted local file discovery can run alongside them.
+Use concurrent calls for these short reads; reserve subagents for substantial,
+independent source investigations. Inspect every result, including failures.
+
+Then follow the evidence: use returned keys for a neighborhood or named view,
+and batch returned chunk IDs into `resource get`. Those follow-ups can run
+concurrently once their inputs are known. Use a symptom or timeline read when
+coverage is missing or the task requires a full ordered list. Stop expanding
+when the task's evidence and applicable constraints are covered. Keep unknown
+key → neighborhood and document hit → chunk fetch dependencies sequential.
+
+Broad discovery and phrase follow-up examples:
 
 ```bash
 potpie resolve "<the task in the user's words>"
@@ -138,24 +171,74 @@ metadata; a full list is not evidence that the question was answered. Never pass
 
 ## 3. Resolve identity — `graph search-entities`
 
-Read with the obvious key first; the header says `items=0` when it is wrong.
-Search on a miss, and **before** asserting against an entity no read has shown
-you — untyped, because a wrong `--type` guess returns nothing (check the catalog rather than guessing; `Adapter` is an entity type, while
-a dependency or implementation file may use another type):
+Reuse a canonical key already returned by a read. When the task names an entity
+whose key is unknown, search concurrently with broad discovery, before a scoped
+read; do not guess a key and wait for an empty neighborhood. For a direct
+entity question, search then read its neighborhood; broad resolve is optional
+when it adds no useful context. Also resolve identity **before** asserting
+against an entity no read has shown you. Search untyped because a wrong `--type`
+guess returns nothing (`Adapter` is a type; a dependency or file may differ):
 
 ```bash
 potpie graph search-entities "payments api" --limit 10
 potpie graph search-entities "github issue 881" --source-ref <github-pr-or-issue-ref> --limit 10
 ```
 
-Reuse the returned `key`. `--type` is the PascalCase entity type (`Service`,
+Reuse the returned `key`. When candidates are ambiguous, inspect JSON with
+`--supporting-claims 2` for summaries and evidence before choosing an anchor.
+An empty scoped read can mean missing relations, not a wrong key.
+`--type` is the PascalCase entity type (`Service`,
 not `service`); the wrong case also returns nothing. Inventing a near-duplicate
 key (`service:payments` vs `service:local:payments-api`) fragments the graph
 and breaks future reads.
 
-## 4. Write — `record` for one learning, a plan for a batch
+## 4. Write — classify the knowledge, then choose the writer
 
-One fix, decision, or preference is one call, no JSON file:
+Before ingestion or a new kind of graph write, inspect the destination's full
+ontology and read the selection guidance below:
+
+```bash
+potpie --json graph catalog --profile full --pot <pot>
+```
+
+Reuse the contract while the destination/version is unchanged. Choose the most
+specific supported entity and predicate for each source claim; do not force a
+source to populate every type. Templates illustrate payload shapes, not the
+limits of the ontology. When a template lacks the relationship you need, compose
+it from the catalog's allowed endpoints instead of substituting a preference.
+
+### Ontology selection
+
+Keep three choices separate: entity/relation type (what the claim means), truth
+class (how it is known), and write command (how to store it). A fact stated by a
+user is not automatically a preference. Split a passage into separate factual,
+decision, and policy claims only when the source supports each one.
+
+| Source meaning | Candidate graph representation; verify endpoints in the catalog |
+|---|---|
+| Current behavior or capability | `Feature`, linked from repo/service by `PROVIDES`, with supported `IMPLEMENTED_IN` links to repo/service/`CodeAsset` |
+| Runtime structure, integrations, API or config | `Service`, `Environment`, `DataStore`, `Dependency`, `APIContract`, `Adapter`, `ConfigVariable`, `DeploymentTarget`, `Cluster`; select supported topology predicates |
+| Ownership or team membership | `Team`/`Person`, `OWNED_BY`/`MEMBER_OF` |
+| An explicit choice and its rationale | `Decision`, `DECIDED`, and supported `AFFECTS` links |
+| Explicit reusable guidance about future work | `Preference`/`Policy`, `POLICY_APPLIES_TO`; preserve the prescription and its source |
+| Failure, attempted remedy, observed outcome | `BugPattern`, `Fix`, verification `Activity`; distinguish `REPRODUCES`, `RESOLVED`, `ATTEMPTED_FIX_FAILED`, `VERIFIED` |
+| Something happened at a source time | Timeline `Activity`, actor/scope links and `Period` as supported; use an event template |
+| Source document or runbook | `Document`/`DocumentSection`, resource import for text, `SECTION_OF`/`DOCUMENTS` for structure and coverage; model facts stated inside it separately |
+
+For example, “the worker uses Redis” is a topology fact; “we chose Redis to
+reduce latency” is a decision; “all workers must use Redis” is a policy only
+when the source actually prescribes it. “The reconciler exports CSV to S3”
+describes a capability, not a logging preference merely because it mentions
+an audit log. Do not infer a prescription from implementation alone.
+
+`record` is a convenience for supported learning shapes, not the full ontology.
+`feature_note`, `service_note`, `workflow`, `runbook_note`, `integration_note`,
+`incident_summary`, `investigation`, `diagnostic_signal`, and `doc_reference`
+are free-form records: they do not create the corresponding feature, topology,
+or event relationships. Use semantic plans for those facts even for one claim.
+Use notes for supplemental context and `graph inbox` for unresolved candidates.
+
+One structured fix, decision, or preference can use one call, no JSON file:
 
 ```bash
 potpie record --type fix --summary "<symptom → fix>" --detail root_cause="<cause>" --detail fix_steps="<step>" --scope service:<name>
@@ -171,7 +254,7 @@ is a `record_id` and the mutation count. `fix`, `bug_pattern` and `decision`
 keys are minted from the whole summary and a `preference` key from its
 `prescription`, so keep both short and lead with the distinctive words.
 
-Everything else — topology, timeline events, features, multi-op batches — is a
+Topology, timeline events, features, and multi-op batches use a
 **semantic** plan (never raw graph CRUD): `propose` creates a server-held plan,
 `commit` applies exactly that `plan_id`.
 
@@ -332,7 +415,8 @@ hook never reasons — you do.
   decide*, not an auto-write. Decide the truth class, reuse the keys your reads
   returned, write a retrieval-grade `description`, then `potpie record` (one
   fix, decision or preference) or `graph propose` and `graph commit --verify`
-  (a batch). If the learning is useful but uncertain, create a
+  (structured facts or a batch). Apply the ontology selection above first.
+  If the learning is useful but uncertain, create a
   `graph inbox add` item instead. If nothing durable was learned, do nothing.
 
 Writes are idempotent by `idempotency_key`, so a nudge-driven capture you've already

@@ -1,7 +1,7 @@
 ---
 name: graph-mutation-plan
 description: Cookbook for composing an apply_graph_mutations plan — stable entity_key patterns, the canonical label/edge vocabulary, evidence/invalidation/confidence discipline, and a worked example. Load this when building a non-trivial mutation plan.
-version: "1.0.0"
+version: "1.1.0"
 tags: [mutation, graph, ontology, reference]
 ---
 
@@ -31,16 +31,12 @@ the given `pot_id` — never reference another pot.
 Use these so re-ingestion (and a later live webhook for a backfilled artifact)
 upserts the same node:
 
-| Artifact | Key pattern |
-|---|---|
-| Repository | `github:repo:<owner>/<repo>` |
-| Pull request | `github:pr:<owner>/<repo>:<n>` |
-| Issue | `github:issue:<owner>/<repo>:<n>` |
-| Module / package | `module:<repo>:<dotted.path>` |
-| Feature | `feature:<repo>:<slug>` |
-| External ticket / issue | `ticket:<source>:<identifier>` |
-| Activity (timeline) | `timeline:activity:<verb>:<short_hex>` |
-| Period bucket | `timeline:period:daily:<pot_id>:<YYYY-MM-DD>` |
+Use the exact key prefixes from the canonical ingestion ontology in your
+instructions and reuse identities found by graph reads. PRs and issues are
+`Activity` entities with source identifiers, e.g.
+`activity:github:pr:<owner>/<repo>:<n>`; implementation paths use `CodeAsset`,
+e.g. `code:<repo>:<path>`. Provider references such as `github:pr:...` are
+evidence refs, not a substitute for a canonical entity key.
 
 When no pattern fits, mint a deterministic key from stable identifiers in the
 source (never a random id, never a timestamp), so the same fact re-keys the
@@ -53,17 +49,18 @@ Always give an entity at least one canonical label — never only generic
 automatically (entities → `Document` / `Observation`, edges → `RELATED_TO`), so
 prefer a canonical type when one fits.
 
-**Entity labels** (topology — source of truth is `domain/ontology.py`):
-Repository, Service, Environment, DataStore, Cluster, Team, Person. Plus the
-work/knowledge types the playbooks reference: Activity, Feature, Decision, Fix,
-BugPattern, Incident, DiagnosticSignal, Module, Document.
+The complete public entity/predicate vocabulary is generated from
+`potpie_context_core.ontology` and supplied in your instructions. Use its
+allowed endpoint pairs and exact prefixes instead of a remembered subset.
+Capabilities use `Feature` with supported `PROVIDES`/`IMPLEMENTED_IN` links;
+dependencies use topology relations; choices with rationale use `Decision`;
+only explicit future-facing prescriptions use `Preference`/`Policy`.
 
-**Edge types**: DEFINED_IN (Service→Repository), DEPLOYED_TO
-(Service→Environment), DEPENDS_ON (Service→Service), USES (Service→DataStore),
-HOSTED_ON (Environment→Cluster), OWNED_BY (Service/Repository→Team/Person),
-MEMBER_OF (Person→Team). For completed work, an Activity carries PERFORMED (→
-the actor), TOUCHED (→ the modules/features it changed), and IN_PERIOD (→ the
-period bucket). Use RELATED_TO only when nothing canonical fits.
+For completed work, `PERFORMED` points from actor to `Activity`, `TOUCHED`
+points from activity to the affected scope, and `IN_PERIOD` points from activity
+to `Period`. Preserve failed remedies separately from successful fixes. When
+the source does not support a specific relationship, defer the candidate instead
+of inventing policy or defaulting to a generic association.
 
 ## Discipline
 
@@ -77,6 +74,9 @@ period bucket). Use RELATED_TO only when nothing canonical fits.
 
 ## Worked example — a merged PR that fixes a bug
 
+The example assumes the actor, implementation file, and bug keys were already
+resolved by reads.
+
 ```json
 {
   "summary": "PR #482 fixes the retry-storm in the billing worker",
@@ -86,7 +86,7 @@ period bucket). Use RELATED_TO only when nothing canonical fits.
     "source_description": "github pull_request merged"
   }],
   "entity_upserts": [
-    {"entity_key": "timeline:activity:merged:9f3a1c",
+    {"entity_key": "activity:github:pr:o/r:482",
      "labels": ["Activity"],
      "properties": {"verb": "merged", "verb_class": "code", "title": "Merge PR #482"}},
     {"entity_key": "fix:billing:retry-storm",
@@ -94,11 +94,11 @@ period bucket). Use RELATED_TO only when nothing canonical fits.
   ],
   "edge_upserts": [
     {"edge_type": "PERFORMED", "from_entity_key": "person:github:alice",
-     "to_entity_key": "timeline:activity:merged:9f3a1c"},
-    {"edge_type": "TOUCHED", "from_entity_key": "timeline:activity:merged:9f3a1c",
-     "to_entity_key": "module:o/r:billing.worker"},
+     "to_entity_key": "activity:github:pr:o/r:482"},
+    {"edge_type": "TOUCHED", "from_entity_key": "activity:github:pr:o/r:482",
+     "to_entity_key": "code:o/r:billing/worker.py"},
     {"edge_type": "RESOLVED", "from_entity_key": "fix:billing:retry-storm",
-     "to_entity_key": "bug:billing:retry-storm"}
+     "to_entity_key": "bug_pattern:billing:retry-storm"}
   ],
   "evidence": [{"kind": "pull_request", "ref": "github:pr:o/r:482"}],
   "confidence": 0.9,

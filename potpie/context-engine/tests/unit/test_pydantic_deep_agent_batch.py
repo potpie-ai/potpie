@@ -87,6 +87,24 @@ def test_compose_instructions_includes_playbooks_for_batch_kinds() -> None:
     assert "context-graph ingestion agent" in text
 
 
+def test_compose_instructions_exposes_the_full_public_ingestion_ontology() -> None:
+    from potpie_context_core.ontology import EDGE_TYPES, ENTITY_TYPES
+
+    agent = PydanticDeepReconciliationAgent()
+    ctx = BatchAgentContext(
+        batch_id="b1", pot_id="pot-1", repo_name="o/r", events=[_event("e1")]
+    )
+    text = agent._compose_instructions(ctx)
+    for label, spec in ENTITY_TYPES.items():
+        if spec.public:
+            assert f"{label} | {spec.key_prefix}: | {spec.description}" in text
+    for name, spec in EDGE_TYPES.items():
+        if spec.public:
+            assert f"{name} | " in text
+            for subject, object_ in spec.allowed_pairs:
+                assert f"{subject} -> {object_}" in text
+
+
 def test_compose_instructions_dedupes_repeated_event_kinds() -> None:
     pytest.importorskip("pydantic_deep")
     agent = PydanticDeepReconciliationAgent()

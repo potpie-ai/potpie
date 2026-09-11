@@ -1,6 +1,6 @@
 ---
 name: potpie-repo-baseline
-version: "2"
+version: "3"
 description: "Use when establishing, refreshing, or deeply understanding a repository's baseline memory in Potpie: purpose, application type, features, services/modules, environments, deploy shape, dependencies, API contracts, datastores, integrations, ownership, and explicit preferences. The harness reads authored and code-adjacent sources, then writes graph workbench mutations."
 ---
 
@@ -25,7 +25,13 @@ ingest or scan — and sets the repo-local default pot; add
 Every later read repeats the pot in its header, so do not pre-read `pot info`,
 `source list` or `graph status`.
 
-2. Take the write shapes from the templates, not from contract discovery:
+2. Inspect the full destination ontology and classify the source claims with
+   [ontology selection](../potpie-graph/SKILL.md#ontology-selection), then take
+   payload shapes from templates:
+
+```bash
+potpie --json graph catalog --profile full --pot <pot>
+```
 
 ```bash
 potpie graph mutation-template --kind repo-baseline
@@ -33,10 +39,11 @@ potpie graph mutation-template --kind feature
 potpie graph mutation-template --kind infra-snapshot
 ```
 
-The templates carry the entity keys, predicates and required properties;
-`propose` validates the rest and names any rejected op by index. Run the text
-`potpie graph catalog` only if `propose` rejects an operation you believed the
-contract allowed. `graph describe --examples` has no mutation example.
+The catalog supplies the complete public vocabulary and allowed endpoints;
+templates are examples, not ontology coverage. Reuse the catalog through the
+task, including for relationships absent from templates. `propose` validates
+the shape but cannot decide whether a fact was misclassified as a preference.
+`graph describe --examples` has no mutation example.
 
 3. Create todos for the baseline lanes: docs/product, repo map,
    runtime/deploy, API/data/integrations, preferences/workflows, synthesis,

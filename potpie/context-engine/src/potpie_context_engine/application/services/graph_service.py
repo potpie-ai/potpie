@@ -858,6 +858,7 @@ def _catalog_entity_types(definition: GraphDefinition) -> list[dict]:
         out.append(
             {
                 "label": label,
+                "description": spec.description,
                 "key_prefix": spec.key_prefix,
                 "identity_policy": spec.identity_policy,
                 "category": spec.category,
@@ -875,8 +876,10 @@ def _catalog_predicates(definition: GraphDefinition) -> list[dict]:
         out.append(
             {
                 "name": name,
+                "description": spec.description,
                 "category": spec.category,
                 "allowed_pairs": [list(pair) for pair in spec.allowed_pairs],
+                "required_properties": sorted(spec.required_properties),
                 "singleton": spec.singleton,
             }
         )

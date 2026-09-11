@@ -1,6 +1,6 @@
 ---
 name: potpie-infra-architecture
-version: "2"
+version: "3"
 description: "Use for project infra and architecture context: environments, adapters, runtime configuration, deployments, service dependencies, datastores, API contracts, ownership, incidents, and dependency blast radius."
 ---
 
@@ -12,15 +12,26 @@ changes.
 
 ## Fast Path
 
-Start from the service, environment, adapter, or dependency named by the task.
-One call returns the topology as environment-qualified triples
-(`service USES datastore`, `DEPLOYED_TO`, `OWNED_BY`, `DEFINED_IN`):
+Share one discovery pass with other skills; reuse current reads and hook context
+for the same task, pot, and scope. Run broad resolve and an untyped entity lookup
+concurrently when the task names a service, environment, adapter, or dependency
+whose canonical key is unknown. Skip the lookup when a key is already known.
+For code changes, scoped preferences can run alongside both. Use a known
+explicit pot selector; resolve ambiguous routing before scoped retrieval and
+check returned pot IDs before combining results.
+
+Broad context and conditional identity lookup:
 
 ```bash
 potpie resolve "<the task, naming the service>"
+potpie graph search-entities "<named service env adapter dependency>" --limit 10
 ```
 
-Then the neighborhood read, with the obvious key and **no `--environment`**:
+Use the returned canonical service key for a neighborhood when the task needs
+relationships or resolve leaves a gap; do not guess an anchor. For a direct
+entity question, identity lookup then neighborhood can suffice without resolve.
+The `service:<service-name>` below stands for that returned key. Start with
+**no `--environment`**:
 
 ```bash
 potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:<service-name> --depth 2 --direction both --limit 20
@@ -34,22 +45,19 @@ answers "talks to nothing". To exclude other environments, keep them explicitly:
 potpie graph read --subgraph infra_topology --view service_neighborhood --scope service:<service-name>,include_unqualified_environment:true --environment <env> --depth 2 --direction both --limit 20
 ```
 
-The read header says `items=0` when the key is wrong; only then search:
-
-```bash
-potpie graph search-entities "<service env adapter dependency>" --limit 10
-```
-
-The read shape is always `--depth 2 --direction both`; `--direction` is
-`out`, `in` or `both`, and any other spelling returns no rows instead of an
-error. For everything the graph holds about one service — decisions,
-preferences, timeline and features beside the topology — one flat list:
+An empty neighborhood can mean missing relations, not a wrong key. Start with
+`--depth 2 --direction both`; `--direction` accepts `out`, `in` or `both`.
+Alternatively, for everything the graph holds about one service — decisions,
+preferences, timeline and features beside the topology — use one flat list:
 
 ```bash
 potpie graph neighborhood --entity service:<service-name> --detail summary --limit 20
 ```
 
-Pass `--pot local:<name>` once a header has named the pot.
+Choose the neighborhood that answers the question; do not automatically run
+both. Fetch already-discovered document chunks concurrently with neighborhood
+reads, and stop expanding once the required evidence is covered. Pass
+`--pot local:<name>` (or `managed:<name>`) once the pot is known.
 
 ## Apply Results
 

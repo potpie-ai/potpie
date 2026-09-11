@@ -1,6 +1,6 @@
 ---
 name: potpie-source-ingestion
-version: "3"
+version: "4"
 description: "Use when the user explicitly asks to ingest, refresh, or deeply understand a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness performs todo-driven discovery, uses local/GitHub/integration tools and read-only subagents when available, builds evidence-backed semantic mutations, and writes through graph propose/verified commit. Document payloads (PDF, spreadsheet, markdown/HTML) route through the per-format potpie-resource-* skills and `potpie resource import`."
 ---
 
@@ -49,10 +49,18 @@ calls once the pot is known.
 potpie source add repo . --pot <pot-id-or-name>
 ```
 
-4. Take the write shapes from the templates for the families you expect to
-   write. `graph describe --examples` carries read examples only (and only
-   with `--json`); the payload shape, keys, predicates and required
-   properties are in the template:
+4. Inspect the full destination ontology before selecting mutation shapes:
+
+```bash
+potpie --json graph catalog --profile full --pot <pot>
+```
+
+Read the [ontology selection guidance](../potpie-graph/SKILL.md#ontology-selection)
+to distinguish facts, decisions, policies, events, and source material. Reuse
+this catalog during the task; `--profile read` omits the ontology. Select from
+all supported entities and predicates, then use templates for payload shape.
+The templates are examples, not an exhaustive list of relationships.
+`graph describe --examples` carries read examples only.
 
 ```bash
 potpie graph mutation-template --kind repo-baseline
@@ -155,9 +163,14 @@ exhaustive pagination unless the user explicitly asks for full history.
 
 Before writing, build a compact matrix:
 
-| Candidate | Graph family | Source refs | Authority | Truth class | Confidence | Action |
+| Candidate | Entity types + predicate + direction | Source refs | Authority | Truth class | Confidence | Action |
 |---|---|---|---|---|---|---|
-| Feature/service/dependency/etc. | features/infra/etc. | file, PR, doc, issue | authoritative_code, repository_metadata, external_system, user_statement, agent_observation | authoritative_fact, source_observation, agent_claim, preference, timeline_event | 0.0-1.0 | commit / inbox / skip |
+| Worker uses Redis | Service → USES → DataStore | file/doc locator | authoritative_code | authoritative_fact | 0.95 | commit / inbox / skip |
+
+Select type/predicate from the inspected catalog and record the intended read
+that should retrieve the fact. Classify meaning independently of authority:
+a source-backed behavior is not a preference, and `feature_note` is not a
+substitute for a `Feature` with its supported relations.
 
 Guidelines:
 
@@ -188,8 +201,8 @@ review-required correction flow; do not create near-duplicate entities.
 Author semantic mutation JSON from the `graph mutation-template` skeletons
 printed in Phase 0; `propose` validates against the live contract and names
 every rejected operation by index. Omit `graph_contract_version` from the
-payload. Run the text `potpie graph catalog` only when an operation you
-believed the contract allowed is rejected.
+payload. Use the full catalog inspected in Phase 0 for relationships absent
+from the templates. Refresh it if the destination or contract changes.
 
 ```bash
 potpie --json graph propose --file mutation.json
@@ -231,6 +244,11 @@ potpie --json graph quality conflicting-claims --limit 20
 potpie --json graph quality orphan-entities --limit 20
 ```
 
+Verify the selected representation as well as persistence: read each affected
+family and confirm the intended typed relationships and evidence. A valid plan
+or passing quality report cannot establish that factual prose belongs under
+`POLICY_APPLIES_TO`. If a fact is stored but absent from its intended read,
+inspect its type, relation, and scope before adding another claim.
 If the verified commit misses expected facts, fix the mutation or record an inbox item.
 Report what was ingested, what was skipped, and what remains uncertain.
 
