@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hmac
+import logging
 import os
 import secrets
 import signal
@@ -47,6 +48,8 @@ from potpie.runtime.protocol import (
 from potpie.runtime.resource_manager import AuthenticationError
 from potpie.runtime.transport import RuntimeEndpoint
 from potpie_context_engine import Failure, Success
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +284,13 @@ class CanonicalDaemonRuntime:
         try:
             response, status = await self._execute(typed_request)
         except Exception:
+            logger.exception(
+                "daemon operation failed",
+                extra={
+                    "operation": typed_request.operation.value,
+                    "request_id": typed_request.request_id,
+                },
+            )
             response = _failure_response(
                 typed_request,
                 DaemonInternalError(

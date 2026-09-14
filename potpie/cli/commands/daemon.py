@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any, NoReturn
 
 import typer
@@ -16,6 +17,13 @@ from potpie.daemon.lifecycle import Daemon, DaemonStartError, DaemonStopError
 
 daemon_app = typer.Typer(help="Local daemon lifecycle (recovery tools).")
 
+_WINDOWS_DAEMON_NEXT = (
+    "Inspect the daemon log with 'potpie daemon logs'. "
+    "If Ladybug native load fails, run scripts/verify_windows_cli.ps1 "
+    "(OpenSSL bootstrap / python.org CPython). "
+    "Fallback: set CONTEXT_ENGINE_HOST_MODE=in_process."
+)
+
 
 def _detached_daemon() -> Daemon:
     return Daemon(in_process=False)
@@ -27,9 +35,24 @@ def _start(daemon: Daemon) -> dict[str, int | str]:
     except DaemonStartError as exc:
         fail(
             code="daemon_start_failed",
-            message=str(exc),
-            detail=(str(exc.log_path) if exc.log_path else None),
-            next_action="inspect the daemon log with 'potpie daemon logs'",
+            message=str(exc) or "daemon did not become ready",
+            detail=(str(exc.log_path) if getattr(exc, "log_path", None) else None),
+            next_action=(
+                _WINDOWS_DAEMON_NEXT
+                if sys.platform == "win32"
+                else "inspect the daemon log with 'potpie daemon logs'"
+            ),
+            exit_code=EXIT_UNAVAILABLE,
+        )
+    except Exception as exc:  # noqa: BLE001 — never surface Unexpected internal error
+        fail(
+            code="daemon_start_failed",
+            message=f"daemon start failed: {type(exc).__name__}: {exc}",
+            next_action=(
+                _WINDOWS_DAEMON_NEXT
+                if sys.platform == "win32"
+                else "inspect the daemon log with 'potpie daemon logs'"
+            ),
             exit_code=EXIT_UNAVAILABLE,
         )
 
@@ -44,12 +67,27 @@ def _restart(daemon: Daemon) -> dict[str, int | str]:
         fail(
             code="daemon_start_failed",
             message=str(exc),
-            detail=(str(exc.log_path) if exc.log_path else None),
-            next_action="inspect the daemon log with 'potpie daemon logs'",
+            detail=(str(exc.log_path) if getattr(exc, "log_path", None) else None),
+            next_action=(
+                _WINDOWS_DAEMON_NEXT
+                if sys.platform == "win32"
+                else "inspect the daemon log with 'potpie daemon logs'"
+            ),
             exit_code=EXIT_UNAVAILABLE,
         )
     except DaemonStopError as exc:
         _fail_stop(exc)
+    except Exception as exc:  # noqa: BLE001
+        fail(
+            code="daemon_start_failed",
+            message=f"daemon restart failed: {type(exc).__name__}: {exc}",
+            next_action=(
+                _WINDOWS_DAEMON_NEXT
+                if sys.platform == "win32"
+                else "inspect the daemon log with 'potpie daemon logs'"
+            ),
+            exit_code=EXIT_UNAVAILABLE,
+        )
 
 
 def _fail_stop(exc: DaemonStopError) -> NoReturn:

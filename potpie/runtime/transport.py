@@ -57,7 +57,7 @@ class HttpDaemonTransport:
         *,
         endpoint: RuntimeEndpoint,
         bearer_token: str,
-        timeout_s: float = 30.0,
+        timeout_s: float = 180.0,
     ) -> None:
         if not bearer_token:
             raise ValueError("daemon bearer token must not be empty")

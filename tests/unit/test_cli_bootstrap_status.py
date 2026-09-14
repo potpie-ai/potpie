@@ -40,8 +40,15 @@ from potpie.pots.contracts import (
 runner = CliRunner()
 
 
-def test_setup_plan_defaults_to_local_lite_backend() -> None:
-    assert SetupPlan().backend == "falkordb_lite"
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [("win32", "ladybug"), ("darwin", "falkordb_lite"), ("linux", "falkordb_lite")],
+)
+def test_setup_plan_defaults_to_platform_backend(
+    monkeypatch: pytest.MonkeyPatch, platform: str, expected: str
+) -> None:
+    monkeypatch.setattr("sys.platform", platform)
+    assert SetupPlan().backend == expected
 
 
 @dataclass(frozen=True)
@@ -377,6 +384,30 @@ def test_default_host_mode_rejects_invalid_env(monkeypatch: pytest.MonkeyPatch) 
 
     with pytest.raises(ValueError, match="CONTEXT_ENGINE_HOST_MODE"):
         default_host_mode()
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [
+        ("win32", "in_process"),
+        ("darwin", "daemon"),
+        ("linux", "daemon"),
+    ],
+)
+def test_default_host_mode_is_platform_aware(
+    monkeypatch: pytest.MonkeyPatch, platform: str, expected: str
+) -> None:
+    monkeypatch.delenv("CONTEXT_ENGINE_HOST_MODE", raising=False)
+    monkeypatch.setattr("sys.platform", platform)
+    assert default_host_mode() == expected
+
+
+def test_default_host_mode_env_overrides_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "daemon")
+    monkeypatch.setattr("sys.platform", "win32")
+    assert default_host_mode() == "daemon"
 
 
 def test_setup_dry_run_preview(monkeypatch: pytest.MonkeyPatch) -> None:
