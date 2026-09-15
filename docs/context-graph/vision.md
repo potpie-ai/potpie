@@ -59,7 +59,7 @@ flowchart LR
   cg_claims --> cg_analytics
 ```
 
-The full vocabulary — 24 entity types, 25 public predicates plus a `RELATED_TO`
+The full vocabulary — 27 entity types, 31 public predicates plus a `RELATED_TO`
 fallback, 7 truth classes — is owned by [ontology.md](./ontology.md). PRs, commits,
 issues, incidents, and deployments all collapse to a single timeline `Activity`
 entity; an entity exists only if an edge needs it as an endpoint.
@@ -170,7 +170,7 @@ Concretely, the live contract constants are:
 | Constant | Value | Meaning |
 |---|---|---|
 | `GRAPH_CONTRACT_VERSION` | `v1.5` | the data plane (what's shipped) |
-| `ONTOLOGY_VERSION` | `2026-06-graph` | the catalog/vocabulary version |
+| `ONTOLOGY_VERSION` | `2026-09-graph` | the catalog/vocabulary version |
 | `GRAPH_WORKBENCH_CONTRACT_VERSION` | `v2` | **only** the workbench *envelope* version string — not a separate, unshipped product |
 
 So "v2" survives solely as the envelope version on workbench responses. What ships:

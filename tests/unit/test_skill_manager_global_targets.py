@@ -23,6 +23,7 @@ EXPECTED_CATALOG = {
     "potpie-project-preferences": "1",
     "potpie-repo-baseline": "1",
     "potpie-source-ingestion": "1",
+    "potpie-provenance": "1",
 }
 
 

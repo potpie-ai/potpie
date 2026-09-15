@@ -100,7 +100,7 @@ Example infra write:
 }
 ```
 
-preference|policy|bug_pattern|fix|verification|decision|doc_reference|workflow|runbook_note|incident_summary|investigation|diagnostic_signal|service_note|feature_note|integration_note
+preference|policy|bug_pattern|fix|verification|decision|doc_reference|workflow|runbook_note|incident_summary|investigation|diagnostic_signal|service_note|feature_note|integration_note|prompt_turn|spec_requirement|generation_link
 
 ## Ingestion Boundary
 

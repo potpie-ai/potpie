@@ -454,7 +454,7 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         "first-class code endpoint instead of a free-form path property.",
         identity_class=IdentityClass.SLUG_ALIAS,
         key_prefix="code",
-        identity_policy="code:<repo-or-service>:<path-or-symbol>",
+        identity_policy="code:<repo-or-service>:<path-or-symbol>[:lN-lM-<hash8>]",
         fact_family="code",
         source_of_truth=SOT_CODE,
         freshness_ttl_hours=WEEK,
@@ -624,6 +624,58 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         },
         text_patterns=(r"\bdecision\b", r"\b(ADR|architecture decision)\b"),
         property_signatures=("rationale", "alternatives_rejected"),
+    ),
+    # --- Generation provenance (chat → spec → code) ---------------------
+    # Full prompt/spec bodies live in SQLite (`~/.potpie/lineage/`); the
+    # graph holds hashed keys and provenance edges only. Not timeline
+    # ``Activity`` (would spam recent-changes) and not ``Feature``/``Decision``.
+    "GenerationSession": _e(
+        "GenerationSession",
+        "provenance",
+        "One harness conversation that produced generated code or specs. "
+        "Graphiti's saga analogue. Key: session:<harness>:<id>.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="session",
+        identity_policy="session:<harness>:<id>",
+        fact_family="provenance",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        text_patterns=(r"\b(generation|chat)\s+session\b",),
+        property_signatures=("harness", "session_id"),
+    ),
+    "PromptTurn": _e(
+        "PromptTurn",
+        "provenance",
+        "One user or assistant message that produced a spec or code span. "
+        "Hash in the graph; full body in the SQLite lineage store.",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="prompt",
+        identity_policy="prompt:<hash>",
+        fact_family="provenance",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        text_patterns=(r"\bprompt\b", r"\bchat\s+turn\b"),
+        property_signatures=("role", "harness"),
+    ),
+    "SpecRequirement": _e(
+        "SpecRequirement",
+        "provenance",
+        "A draft or final requirement extracted from chat. Distinct from "
+        "Feature (product capability) and Decision (ADR). Replace with "
+        "supersede_claim — not singleton auto-supersede.",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="spec",
+        identity_policy="spec:<hash>",
+        fact_family="provenance",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        lifecycle=("draft", "final", "superseded"),
+        lifecycle_transitions={
+            "draft": ("final", "superseded"),
+            "final": ("superseded",),
+        },
+        text_patterns=(r"\bspec(ification)?\b", r"\brequirement\b"),
+        property_signatures=("status", "title"),
     ),
     # --- Generic fail-open fallbacks (soft-fail downgrade targets) ----------
     # The agent reconciliation path coerces unrecognized output onto these
@@ -937,6 +989,65 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         ],
         category="memory",
         source_inferred=("Decision",),
+    ),
+    # --- Generation provenance ---------------------------------------------
+    # Distinct from IMPLEMENTED_IN (Feature → code). None of these are
+    # singleton; replace a spec with supersede_claim.
+    "IN_SESSION": _x(
+        "IN_SESSION",
+        "A prompt turn belongs to a generation session.",
+        [("PromptTurn", "GenerationSession")],
+        category="provenance",
+        source_inferred=("PromptTurn",),
+        target_inferred=("GenerationSession",),
+    ),
+    "GENERATED_FROM": _x(
+        "GENERATED_FROM",
+        "Code or a spec was generated from a prompt turn.",
+        [
+            ("CodeAsset", "PromptTurn"),
+            ("SpecRequirement", "PromptTurn"),
+        ],
+        category="provenance",
+        target_inferred=("PromptTurn",),
+    ),
+    "DERIVED_FROM": _x(
+        "DERIVED_FROM",
+        "A spec was derived from an earlier spec or from a prompt.",
+        [
+            ("SpecRequirement", "SpecRequirement"),
+            ("SpecRequirement", "PromptTurn"),
+        ],
+        category="provenance",
+        source_inferred=("SpecRequirement",),
+    ),
+    "IMPLEMENTS": _x(
+        "IMPLEMENTS",
+        "A code span implements a chat spec requirement. Distinct from "
+        "IMPLEMENTED_IN, which links a Feature to the code that provides it.",
+        [("CodeAsset", "SpecRequirement")],
+        category="provenance",
+        source_inferred=("CodeAsset",),
+        target_inferred=("SpecRequirement",),
+    ),
+    "MODIFIES": _x(
+        "MODIFIES",
+        "A prompt turn modified a code span (the edit that landed).",
+        [("PromptTurn", "CodeAsset")],
+        category="provenance",
+        source_inferred=("PromptTurn",),
+        target_inferred=("CodeAsset",),
+    ),
+    "USED_CONTEXT": _x(
+        "USED_CONTEXT",
+        "A prompt turn was shown a code span, document, or spec as context.",
+        [
+            ("PromptTurn", "CodeAsset"),
+            ("PromptTurn", "Document"),
+            ("PromptTurn", "SpecRequirement"),
+        ],
+        category="provenance",
+        source_inferred=("PromptTurn",),
     ),
     # --- Generic fail-open fallback (soft-fail downgrade target) ------------
     # Unrecognized agent-emitted edge types coerce onto this wildcard edge
@@ -1655,6 +1766,30 @@ RECORD_TYPES: dict[str, RecordTypeSpec] = {
         emits_predicate=None,
         payload_schema=None,
         reader_include="docs",  # planned reader
+    ),
+    "prompt_turn": RecordTypeSpec(
+        record_type="prompt_turn",
+        description="A harness prompt turn; body stored off-graph, hash on-graph.",
+        anchor_label="PromptTurn",
+        emits_predicate="IN_SESSION",
+        payload_schema="prompt_turn",
+        reader_include="generation_lineage",
+    ),
+    "spec_requirement": RecordTypeSpec(
+        record_type="spec_requirement",
+        description="A draft or final requirement derived from a prompt turn.",
+        anchor_label="SpecRequirement",
+        emits_predicate="GENERATED_FROM",
+        payload_schema="spec_requirement",
+        reader_include="generation_lineage",
+    ),
+    "generation_link": RecordTypeSpec(
+        record_type="generation_link",
+        description="A code span generated from a prompt (and optionally a spec).",
+        anchor_label="CodeAsset",
+        emits_predicate="GENERATED_FROM",
+        payload_schema="generation_link",
+        reader_include="generation_lineage",
     ),
 }
 

@@ -40,13 +40,13 @@ for the full command surface see [`cli-flow.md`](./cli-flow.md).
 
 ```mermaid
 flowchart TB
-  ont_e["ENTITY_TYPES<br/>(24 labels)"]
-  ont_p["EDGE_TYPES<br/>(25 public + RELATED_TO)"]
+  ont_e["ENTITY_TYPES<br/>(27 labels)"]
+  ont_p["EDGE_TYPES<br/>(31 public + RELATED_TO)"]
   ont_r["RECORD_TYPES"]
   ont_c["graph_contract.py<br/>versions / truth / ops / authorities"]
 
   ont_views["Derived views<br/>identity registry · singleton registry={OWNED_BY}<br/>classifier tables · fact-family policy"]
-  ont_wb["Workbench contract<br/>8 subgraphs · 9 views"]
+  ont_wb["Workbench contract<br/>9 subgraphs · 10 views"]
   ont_out["graph catalog / describe / status"]
   ont_guard{{"import-time coherence guards<br/>(coherence.py)"}}
 
@@ -69,7 +69,7 @@ from those rows at import.
 
 ## 1. The three catalogs
 
-### 1.1 `ENTITY_TYPES` — 24 labels
+### 1.1 `ENTITY_TYPES` — 27 labels
 
 Each `EntityTypeSpec` row carries category, description, identity
 (`identity_class`, `key_prefix`, `identity_policy`, `authoritative_source`),
@@ -87,6 +87,7 @@ it as an endpoint.**
 | People | `Team`, `Person` | |
 | Timeline | `Activity` (`is_activity=True`), `Period` | |
 | Memory tier | `Preference`, `Policy`, `BugPattern`, `Fix`, `Decision` | |
+| Provenance | `GenerationSession`, `PromptTurn`, `SpecRequirement` | chat → spec → code; full bodies live in SQLite, hashes on the graph |
 | Generic fail-open fallbacks (`public=False`) | `Document`, `Observation`, `QualityIssue` | not advertised to agents; downgrade targets |
 
 **`Activity` is the single timeline collapse point.** PRs, commits, issues,
@@ -96,7 +97,7 @@ as one `Activity` entity (key prefix `activity`). There is no `PullRequest`,
 `Capability`, `Runbook`, or `Investigation` label; any doc or skill that names
 those is stale.
 
-### 1.2 `EDGE_TYPES` — 25 public predicates + `RELATED_TO`
+### 1.2 `EDGE_TYPES` — 31 public predicates + `RELATED_TO`
 
 Each `EdgeTypeSpec` declares `allowed_pairs`, `category`,
 `required_properties`, `singleton`, `predicate_family`, `exclusive_family`, and
@@ -112,9 +113,10 @@ legacy code-graph labels.
 | people | 1 | `MEMBER_OF` |
 | timeline | 5 | `TOUCHED`, `PERFORMED`, `AUTHORED`, `IN_PERIOD`, `MENTIONS` |
 | memory | 7 | `POLICY_APPLIES_TO`, `REPRODUCES`, `RESOLVED`, `ATTEMPTED_FIX_FAILED`, `VERIFIED`, `DECIDED`, `AFFECTS` |
+| provenance | 6 | `IN_SESSION`, `GENERATED_FROM`, `DERIVED_FROM`, `IMPLEMENTS`, `MODIFIES`, `USED_CONTEXT` |
 | generic | 1 | `RELATED_TO` (`public=False` catch-all) |
 
-That is 25 agent-facing predicates plus the `RELATED_TO` fallback = **26 keys**
+That is 31 agent-facing predicates plus the `RELATED_TO` fallback = **32 keys**
 total. `RELATED_TO` is the universal downgrade target and rides the same
 canonical `:RELATES_TO` storage edge as every other predicate (the storage edge
 is a single relationship type; the predicate name lives in its `name` property —
@@ -127,10 +129,15 @@ during supersession, deliberately kept out of agent-facing `EDGE_TYPES`.
 **The timeline is read-time, not stored.** There are deliberately **no**
 `TRIGGERED_BY` / `PRECEDED_BY` / `HOTSPOT` edges; ordering, windowing, and
 correlation are queries over `valid_at` (= `occurred_at`), not stored temporal
-edges. Predicate names like `FIXES`, `CAUSED`, `IMPLEMENTS`, `CALLS`,
+edges. Predicate names like `FIXES`, `CAUSED`, `CALLS`,
 `AFFECTED_BY`, `MATCHES_PATTERN`, or `HAS_ROOT_CAUSE` that appear in older docs
 **do not exist** — use the memory predicates above (`REPRODUCES`, `RESOLVED`,
 `ATTEMPTED_FIX_FAILED`, `VERIFIED`) for the bug/fix lifecycle.
+
+`IMPLEMENTS` **does exist** as a provenance edge: `CodeAsset → SpecRequirement`
+(which chat spec this span implements). It is **not** a synonym of
+`IMPLEMENTED_IN` (`Feature →` code). Replace a spec with `supersede_claim`;
+do not treat `IMPLEMENTS` as a singleton.
 
 ### 1.3 `RECORD_TYPES`
 
@@ -145,6 +152,9 @@ reader_include`.
 | `fix` | `Fix` | `RESOLVED` | `prior_bugs` |
 | `verification` | (fix) | `VERIFIED` | `prior_bugs` |
 | `decision` | `Decision` | `DECIDED` (+ `AFFECTS`) | `decisions` |
+| `prompt_turn` | `PromptTurn` | `IN_SESSION` | `generation_lineage` |
+| `spec_requirement` | `SpecRequirement` | `GENERATED_FROM` | `generation_lineage` |
+| `generation_link` | `CodeAsset` | `GENERATED_FROM` (+ `IMPLEMENTS`, `MODIFIES`) | `generation_lineage` |
 | *(any other)* | `Document` / `Observation` | — | — (free-form, no schema/reader) |
 
 `STRUCTURAL_INCLUDES = {features, infra_topology, timeline, owners, raw_graph}`
@@ -184,11 +194,11 @@ This module is the single contract home.
 | Constant | Value |
 |---|---|
 | `GRAPH_CONTRACT_VERSION` | `"v1.5"` |
-| `ONTOLOGY_VERSION` | `"2026-06-graph"` |
+| `ONTOLOGY_VERSION` | `"2026-09-graph"` |
 | `SUPPORTED_GRAPH_CONTRACT_VERSIONS` | `{"v1.5"}` |
 | workbench envelope `graph_contract_version` | `"v2"` (mirrors the same `ontology_version`) |
 
-The ontology version is `2026-06-graph` — **not** `2026-06-graph-v2`. The `"v2"`
+The ontology version is `2026-09-graph` — **not** `2026-09-graph-v2`. The `"v2"`
 in the workbench envelope is purely the envelope's contract-version string; the
 data plane is v1.5.
 
@@ -405,7 +415,7 @@ or inbox items (full quality flow in [`writing.md`](./writing.md)).
   "request_id": "req:01JY...",
   "pot_id": "local/default",
   "graph_contract_version": "v2",
-  "ontology_version": "2026-06-graph",
+  "ontology_version": "2026-09-graph",
   "subgraph_versions": { "_global": 137 },
   "result": {},
   "warnings": [],
@@ -415,7 +425,7 @@ or inbox items (full quality flow in [`writing.md`](./writing.md)).
 }
 ```
 
-Note `ontology_version` is `2026-06-graph` and `subgraph_versions` is the coarse
+Note `ontology_version` is `2026-09-graph` and `subgraph_versions` is the coarse
 `{"_global": <total pot claim count>}` token — there are **no** real
 per-subgraph versions (the concurrency model is owned by
 [`writing.md`](./writing.md)).

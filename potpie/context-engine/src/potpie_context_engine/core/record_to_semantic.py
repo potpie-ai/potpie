@@ -308,6 +308,157 @@ def _build_operation(
             )
         return ops
 
+    if record_type == "prompt_turn":
+        prompt = {
+            "key": _str(details.get("prompt_key")) or f"prompt:{_slug(source_id)}",
+            "type": "PromptTurn",
+            "description": summary,
+            "properties": {
+                "record_type": record_type,
+                "harness": _str(details.get("harness")) or "unknown",
+                "role": _str(details.get("role")) or "user",
+            },
+        }
+        session = {
+            "key": _str(details.get("session_key")) or "session:unknown:default",
+            "type": "GenerationSession",
+            "properties": {
+                "harness": _str(details.get("harness")) or "unknown",
+                "session_id": _str(details.get("session_id")) or "default",
+            },
+        }
+        ops = [
+            {
+                **base,
+                "op": "assert_claim",
+                "subgraph": "provenance",
+                "predicate": "IN_SESSION",
+                "truth": "agent_claim",
+                "subject": prompt,
+                "object": session,
+                "description": summary,
+            }
+        ]
+        for ctx in _as_list(details.get("used_context_keys")):
+            ops.append(
+                {
+                    **base,
+                    "op": "assert_claim",
+                    "subgraph": "provenance",
+                    "predicate": "USED_CONTEXT",
+                    "truth": "agent_claim",
+                    "subject": prompt,
+                    "object": _entity_ref_for_key(ctx, definition=definition),
+                    "description": summary,
+                }
+            )
+        return ops
+
+    if record_type == "spec_requirement":
+        spec_ent = {
+            "key": _str(details.get("spec_key")) or f"spec:{_slug(source_id)}",
+            "type": "SpecRequirement",
+            "description": summary,
+            "properties": {
+                "record_type": record_type,
+                "status": _str(details.get("status")) or "draft",
+                "title": _str(details.get("title")) or summary,
+            },
+        }
+        ops = []
+        prompt_key = _str(details.get("prompt_key"))
+        if prompt_key:
+            ops.append(
+                {
+                    **base,
+                    "op": "assert_claim",
+                    "subgraph": "provenance",
+                    "predicate": "GENERATED_FROM",
+                    "truth": "agent_claim",
+                    "subject": spec_ent,
+                    "object": {"key": prompt_key, "type": "PromptTurn"},
+                    "description": summary,
+                }
+            )
+        derived = _str(details.get("derived_from_key"))
+        if derived:
+            ops.append(
+                {
+                    **base,
+                    "op": "assert_claim",
+                    "subgraph": "provenance",
+                    "predicate": "DERIVED_FROM",
+                    "truth": "agent_claim",
+                    "subject": spec_ent,
+                    "object": _entity_ref_for_key(derived, definition=definition),
+                    "description": summary,
+                }
+            )
+        if ops:
+            return ops
+        return {
+            **base,
+            "op": "assert_claim",
+            "subgraph": "provenance",
+            "predicate": "RELATED_TO",
+            "truth": "agent_claim",
+            "subject": spec_ent,
+            "object": target,
+            "description": summary,
+        }
+
+    if record_type == "generation_link":
+        code = {
+            "key": _str(details.get("code_asset_key")) or f"code:{_slug(source_id)}",
+            "type": "CodeAsset",
+            "description": summary,
+            "properties": {
+                "record_type": record_type,
+                "path": _str(details.get("path")),
+                "line_start": details.get("line_start"),
+                "line_end": details.get("line_end"),
+            },
+        }
+        prompt_key = _str(details.get("prompt_key")) or f"prompt:{_slug(source_id)}"
+        prompt = {"key": prompt_key, "type": "PromptTurn"}
+        ops = [
+            {
+                **base,
+                "op": "assert_claim",
+                "subgraph": "provenance",
+                "predicate": "GENERATED_FROM",
+                "truth": "agent_claim",
+                "subject": code,
+                "object": prompt,
+                "description": summary,
+            },
+            {
+                **base,
+                "op": "assert_claim",
+                "subgraph": "provenance",
+                "predicate": "MODIFIES",
+                "truth": "agent_claim",
+                "subject": prompt,
+                "object": code,
+                "description": summary,
+            },
+        ]
+        spec_key = _str(details.get("spec_key"))
+        if spec_key:
+            ops.append(
+                {
+                    **base,
+                    "op": "assert_claim",
+                    "subgraph": "provenance",
+                    "predicate": "IMPLEMENTS",
+                    "truth": "agent_claim",
+                    "subject": code,
+                    "object": {"key": spec_key, "type": "SpecRequirement"},
+                    "description": summary,
+                }
+            )
+        return ops
+
     # Free-form record (no structured schema): a generic association from a
     # Document/Observation anchor to the scope target. RELATED_TO accepts any
     # endpoints, so it always lands and surfaces via raw_graph.

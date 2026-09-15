@@ -413,3 +413,41 @@ def test_subprocess_non_deploy_bash_does_not_call_potpie(tmp_path: Path) -> None
     )
     assert proc.returncode == 0
     assert "SHOULD-NOT-APPEAR" not in proc.stdout
+
+
+def test_prompt_of_reads_common_shapes() -> None:
+    assert adapter.prompt_of({"prompt": "add retries"}) == "add retries"
+    assert adapter.prompt_of({"prompt_text": "hello"}) == "hello"
+    assert adapter.prompt_of({}) is None
+
+
+def test_build_lineage_argv_remember_prompt() -> None:
+    argv = adapter.build_lineage_argv(
+        "potpie",
+        session="sess-1",
+        harness="claude",
+        remember_prompt=True,
+        prompt_file="/tmp/p.txt",
+        pot="demo",
+    )
+    assert argv[:4] == ["potpie", "--json", "lineage", "capture"]
+    assert "--remember-prompt" in argv
+    assert "--fail-open" in argv
+    assert "--prompt-file" in argv and "/tmp/p.txt" in argv
+    assert "--session" in argv and "sess-1" in argv
+
+
+def test_post_edit_never_blocks_when_potpie_fails(tmp_path: Path) -> None:
+    binary = tmp_path / "potpie"
+    binary.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    binary.chmod(0o755)
+    target = tmp_path / "foo.py"
+    target.write_text("x = 1\n" * 20, encoding="utf-8")
+    proc = _run_adapter(
+        ["--event", "post_edit", "--potpie-bin", str(binary)],
+        stdin=json.dumps(
+            {"session_id": "s1", "tool_input": {"file_path": str(target)}}
+        ),
+    )
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""

@@ -184,22 +184,23 @@ baking the ontology into prose. The discipline it teaches (full read mechanics i
 plugin: `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` declare
 it, and it carries its own copy of the 7 plugin skills under `skills/`.
 
-### Five model-free lifecycle hooks
+### Seven model-free lifecycle hooks
 
-`hooks/hooks.json` wires five lifecycle hook entries to one thin, fail-safe
+`hooks/hooks.json` wires lifecycle hook entries to one thin, fail-safe
 adapter, `hooks/potpie_nudge.py`:
 
 | Harness event | Matcher | Adapter event |
 |---|---|---|
 | `SessionStart` | — | `session_start` |
+| `UserPromptSubmit` | — | `user_prompt` → `potpie lineage capture --remember-prompt` (fail-open) |
 | `PreToolUse` | `Write\|Edit\|MultiEdit\|NotebookEdit` | `pre_edit` |
 | `PreToolUse` | `Bash` | `bash_pre` → `pre_deploy` (only on deploy markers) |
+| `PostToolUse` | `Write\|Edit\|MultiEdit\|NotebookEdit` | `post_edit` → `potpie lineage capture` (fail-open; never blocks the edit) |
 | `PostToolUse` | `Bash` | `bash_post` → `test_failed` / `test_passed` (only on test markers) |
 | `Stop` | — | `stop` |
 
-The hook **never reasons.** It maps the harness event to a `NudgeEvent`, shells
-`potpie --json graph nudge`, and renders the result as Claude
-`hookSpecificOutput.additionalContext` (or a `systemMessage` at `Stop`). Any
+The hook **never reasons.** Nudge events map to `potpie --json graph nudge`.
+Lineage events map to `potpie --json lineage capture` and stay silent. Any
 error, missing binary, or unparseable payload → exit 0 with no output. The nudge
 trigger model, the executor, and dedup are owned by
 [ingestion-nudge.md](./ingestion-nudge.md).

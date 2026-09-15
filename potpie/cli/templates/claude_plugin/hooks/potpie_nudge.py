@@ -30,6 +30,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 from typing import Any
 
 # Nudge events understood by `potpie graph nudge` (must match potpie_context_engine.domain.nudge.NudgeEvent).
@@ -192,6 +194,74 @@ def file_path_of(payload: dict[str, Any]) -> str | None:
         "path",
     )
     return str(value) if value else None
+
+
+def prompt_of(payload: dict[str, Any]) -> str | None:
+    value = _first(payload, "prompt", "prompt_text", "user_prompt", "message")
+    return str(value) if value else None
+
+
+def snippet_of(payload: dict[str, Any]) -> str | None:
+    value = _first(
+        payload,
+        "tool_input.new_string",
+        "tool_input.content",
+        "toolInput.new_string",
+        "toolInput.content",
+    )
+    return str(value) if value else None
+
+
+def infer_line_range(path: str | None, snippet: str | None) -> str | None:
+    if not path:
+        return None
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if snippet:
+        idx = text.find(snippet)
+        if idx >= 0:
+            start = text[:idx].count("\n") + 1
+            end = start + snippet.count("\n")
+            return f"{start}-{max(end, start)}"
+    n = len(text.splitlines()) or 1
+    return f"1-{n}"
+
+
+def build_lineage_argv(
+    potpie_bin: str,
+    *,
+    session: str,
+    harness: str,
+    remember_prompt: bool = False,
+    prompt_file: str | None = None,
+    path: str | None = None,
+    lines: str | None = None,
+    pot: str | None = None,
+) -> list[str]:
+    argv = [
+        potpie_bin,
+        "--json",
+        "lineage",
+        "capture",
+        "--session",
+        session,
+        "--harness",
+        harness,
+        "--fail-open",
+    ]
+    if remember_prompt:
+        argv.append("--remember-prompt")
+    if prompt_file:
+        argv += ["--prompt-file", prompt_file]
+    if path:
+        argv += ["--path", path]
+    if lines:
+        argv += ["--lines", lines]
+    if pot:
+        argv += ["--pot", pot]
+    return argv
 
 
 def command_of(payload: dict[str, Any]) -> str | None:
@@ -449,8 +519,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--event",
         required=True,
-        help="hook hint: session_start|pre_edit|bash_pre|bash_post|stop "
-        "(or a direct nudge event)",
+        help="hook hint: session_start|pre_edit|bash_pre|bash_post|stop|"
+        "user_prompt|post_edit (or a direct nudge event)",
     )
     parser.add_argument("--pot", default=os.environ.get("POTPIE_POT"))
     parser.add_argument("--limit", type=int, default=None)
@@ -463,6 +533,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         payload = _read_stdin_payload()
+        hint = str(args.event or "").strip()
+        if hint in {"user_prompt", "post_edit"}:
+            return _run_lineage_capture(args, payload, hint)
+
         nudge_event, fields = resolve_nudge_event(args.event, payload)
         if nudge_event is None:
             _debug(f"no nudge for hint={args.event!r}; staying silent")
@@ -510,6 +584,82 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except Exception as exc:  # noqa: BLE001 - a hook must never break the session
         _debug(f"unexpected error: {exc!r}")
+        return 0
+
+
+def _run_lineage_capture(args: Any, payload: dict[str, Any], hint: str) -> int:
+    """Fail-open lineage capture. Never blocks Write/Edit or prompt submit."""
+    binary = shutil.which(args.potpie_bin) or args.potpie_bin
+    if shutil.which(args.potpie_bin) is None and not os.path.exists(binary):
+        _debug(f"potpie binary {args.potpie_bin!r} not found; staying silent")
+        return 0
+    session = session_id_of(payload)
+    harness = str(getattr(args, "harness", None) or "claude")
+    prompt_file = None
+    try:
+        if hint == "user_prompt":
+            prompt = prompt_of(payload)
+            if not prompt:
+                _debug("user_prompt with empty prompt; staying silent")
+                return 0
+            handle = tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                suffix=".prompt",
+                delete=False,
+            )
+            try:
+                handle.write(prompt)
+                handle.close()
+                prompt_file = handle.name
+                cmd = build_lineage_argv(
+                    binary,
+                    session=session,
+                    harness=harness,
+                    remember_prompt=True,
+                    prompt_file=prompt_file,
+                    pot=args.pot,
+                )
+                _debug(f"lineage: {' '.join(cmd)}")
+                subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=float(os.environ.get("POTPIE_HOOK_TIMEOUT", "15")),
+                    check=False,
+                )
+            finally:
+                if prompt_file:
+                    try:
+                        os.unlink(prompt_file)
+                    except OSError:
+                        pass
+            return 0
+
+        path = file_path_of(payload)
+        if not path:
+            _debug("post_edit with no path; staying silent")
+            return 0
+        lines = infer_line_range(path, snippet_of(payload))
+        cmd = build_lineage_argv(
+            binary,
+            session=session,
+            harness=harness,
+            path=path,
+            lines=lines,
+            pot=args.pot,
+        )
+        _debug(f"lineage: {' '.join(cmd)}")
+        subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=float(os.environ.get("POTPIE_HOOK_TIMEOUT", "15")),
+            check=False,
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        _debug(f"lineage capture failed open: {exc!r}")
         return 0
 
 
