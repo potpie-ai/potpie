@@ -12,6 +12,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Iterable
 
+from potpie.skills.errors import InvalidSkillsInstallPathError
+
 _MANAGED_MARKER_RE = re.compile(
     r"<!-- (?:context-engine|potpie)-start -->.*?<!-- (?:context-engine|potpie)-end -->",
     re.DOTALL,
@@ -44,7 +46,9 @@ def resolve_install_root(path: str | Path) -> Path:
     """Prefer the nearest git repo root; otherwise install into the given path."""
     target = Path(path).resolve()
     if target.is_file():
-        raise ValueError(f"Expected a directory path, got file: {target}")
+        raise InvalidSkillsInstallPathError(
+            f"Expected a directory path, got file: {target}"
+        )
     for candidate in (target, *target.parents):
         if (candidate / ".git").exists():
             return candidate

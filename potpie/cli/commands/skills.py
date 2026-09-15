@@ -10,10 +10,10 @@ import typer
 
 from potpie.cli.commands._common import contract, emit, get_skill_service
 from potpie.cli.telemetry.onboarding_events import (
-    capture_project_binding_event,
+    agent_skills_failure_kind,
+    capture_agent_skills_install_outcome,
     elapsed_ms,
     now_ms,
-    sanitized_failure_kind,
 )
 
 skills_app = typer.Typer(help="CLI-managed agent skills.")
@@ -53,11 +53,6 @@ def skills_install(
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
         started_ms = now_ms()
-        capture_project_binding_event(
-            "cli_onboarding_agent_skills_install_started",
-            entrypoint="direct_command",
-            properties={"agent": agent, "scope": effective_scope},
-        )
         try:
             res = get_skill_service().install(
                 agent=agent,
@@ -65,27 +60,31 @@ def skills_install(
                 path=path,
                 scope=effective_scope,
             )
-        except Exception as exc:  # noqa: BLE001
-            capture_project_binding_event(
-                "cli_onboarding_agent_skills_install_failed",
+        except (KeyboardInterrupt, EOFError):
+            capture_agent_skills_install_outcome(
+                agent=agent,
                 entrypoint="direct_command",
-                properties={
-                    "agent": agent,
-                    "scope": effective_scope,
-                    "failure_kind": sanitized_failure_kind(exc),
-                    "duration_ms": elapsed_ms(started_ms),
-                },
+                scope=effective_scope,
+                outcome="cancelled",
+                duration_ms=elapsed_ms(started_ms),
             )
             raise
-        capture_project_binding_event(
-            "cli_onboarding_agent_skills_install_completed",
+        except Exception as exc:  # noqa: BLE001
+            capture_agent_skills_install_outcome(
+                agent=agent,
+                entrypoint="direct_command",
+                scope=effective_scope,
+                outcome="failed",
+                duration_ms=elapsed_ms(started_ms),
+                failure_kind=agent_skills_failure_kind(exc),
+            )
+            raise
+        capture_agent_skills_install_outcome(
+            agent=res.agent,
             entrypoint="direct_command",
-            properties={
-                "agent": res.agent,
-                "scope": effective_scope,
-                "changed_count": len(res.changed),
-                "duration_ms": elapsed_ms(started_ms),
-            },
+            scope=effective_scope,
+            outcome="installed" if res.changed else "already_installed",
+            duration_ms=elapsed_ms(started_ms),
         )
         emit(
             {
