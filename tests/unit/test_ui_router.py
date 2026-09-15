@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import potpie.cli.telemetry.product_analytics as product_analytics
+from potpie.cli.telemetry import product_analytics
 from potpie.cli.telemetry.context import TelemetryContext
 from potpie.daemon.http.ui.router import (
     _caption,
