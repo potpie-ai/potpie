@@ -184,7 +184,10 @@ def test_activation_event_marks_context_results(fake_sink: _FakeSink) -> None:
             "filesystem",
         ),
         (ValueError("No install target registered for agent 'other'"), "unexpected"),
-        (ValueError("Expected a directory path, got file: /private/repo"), "unexpected"),
+        (
+            ValueError("Expected a directory path, got file: /private/repo"),
+            "unexpected",
+        ),
         (ValueError("other validation failure"), "unexpected"),
         (PermissionError("denied"), "permission_denied"),
         (OSError("disk unavailable"), "filesystem"),
