@@ -15,6 +15,7 @@ from potpie.cli.telemetry.onboarding_events import (
     elapsed_ms,
     now_ms,
 )
+from potpie.cli.telemetry.usage_events import capture_usage_command_succeeded
 
 skills_app = typer.Typer(help="CLI-managed agent skills.")
 
@@ -86,6 +87,11 @@ def skills_install(
             outcome="installed" if res.changed else "already_installed",
             duration_ms=elapsed_ms(started_ms),
         )
+        capture_usage_command_succeeded(
+            command="skills install",
+            result_kind="skills_result",
+            item_count=len(res.changed),
+        )
         emit(
             {
                 "agent": res.agent,
@@ -110,6 +116,11 @@ def skills_update(
         effective_scope = _effective_scope(scope=scope, path=path)
         res = get_skill_service().update(
             agent=agent, all_=all_, path=path, scope=effective_scope
+        )
+        capture_usage_command_succeeded(
+            command="skills update",
+            result_kind="skills_result",
+            item_count=len(res.changed),
         )
         emit(
             {
@@ -144,6 +155,11 @@ def skills_remove(
             all_=all_,
             path=path,
             scope=effective_scope,
+        )
+        capture_usage_command_succeeded(
+            command="skills remove",
+            result_kind="skills_result",
+            item_count=len(res.changed),
         )
         emit(
             {

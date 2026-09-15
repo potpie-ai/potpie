@@ -385,15 +385,12 @@ def test_direct_skills_install_emits_one_canonical_outcome_per_command(
 
     assert first.exit_code == 0, first.output
     assert second.exit_code == 0, second.output
-    assert [event.name for event in fake_sink.events] == [
-        "cli_onboarding_agent_skills_install_outcome",
-        "cli_onboarding_agent_skills_install_outcome",
-    ]
     outcomes = [
         event
         for event in fake_sink.events
         if event.name == "cli_onboarding_agent_skills_install_outcome"
     ]
+    assert len(outcomes) == 2
     assert [event.properties["outcome"] for event in outcomes] == [
         "installed",
         "already_installed",
@@ -467,7 +464,14 @@ def test_direct_skills_install_skips_canonical_events_for_non_activation_agents(
     )
 
     assert result.exit_code == 0, result.output
-    assert fake_sink.events == []
+    assert [
+        event
+        for event in fake_sink.events
+        if event.name == "cli_onboarding_agent_skills_install_outcome"
+    ] == []
+    assert [event.name for event in fake_sink.events] == [
+        "cli_usage_command_succeeded",
+    ]
 
 
 def test_direct_skills_install_drops_canonical_events_for_invalid_agent_failure(

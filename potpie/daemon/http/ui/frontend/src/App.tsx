@@ -132,7 +132,7 @@ export default function App() {
     localStorage.setItem(SIDEBAR_W_KEY, String(SIDEBAR_W_DEFAULT));
   };
 
-  const loadPot = useCallback(async (potId: string) => {
+  const loadPot = useCallback(async (potId: string): Promise<boolean> => {
     const requestId = ++loadRequestRef.current;
     const isCurrent = () => requestId === loadRequestRef.current;
     setBusy(true);
@@ -141,14 +141,16 @@ export default function App() {
     setResults([]);
     try {
       const [st, g] = await Promise.all([api.status(potId), api.graph(potId)]);
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       setStatus(st);
       setData({ nodes: g.nodes, edges: g.edges });
+      return true;
     } catch (e: any) {
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       setError(e?.message || String(e));
       setData(EMPTY);
       setStatus(null);
+      return false;
     } finally {
       if (isCurrent()) setBusy(false);
     }
@@ -166,7 +168,12 @@ export default function App() {
         const active =
           requestedRef?.id || p.active?.id || p.pots.find((x) => x.active)?.id || null;
         setActiveId(active);
-        if (active) await loadPot(active);
+        if (active) {
+          const graphOk = await loadPot(active);
+          if (graphOk) api.reportSession(true);
+        } else {
+          api.reportSession(false);
+        }
       } catch (e: any) {
         setError(e?.message || String(e));
       }
