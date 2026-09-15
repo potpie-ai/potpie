@@ -22,6 +22,7 @@ from potpie.skills.contracts import (
     SkillOperationResult,
     SkillStatus,
 )
+from potpie.skills.errors import UnknownAgentTargetError
 from potpie.skills.installer import (
     validate_packaged_skill_command_snippets,
 )
@@ -37,7 +38,7 @@ class DefaultSkillManager:
     def _target(self, agent: str) -> AgentTargetPort:
         target = self.targets.get(agent)
         if target is None:
-            raise ValueError(
+            raise UnknownAgentTargetError(
                 f"No install target registered for agent '{agent}'. "
                 f"Known: {', '.join(sorted(self.targets)) or '(none)'}."
             )

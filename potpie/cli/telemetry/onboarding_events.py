@@ -8,6 +8,8 @@ from typing import Iterator
 
 from potpie_context_engine.core.lifecycle import FAILED, SetupPlan, StepResult
 
+from potpie.skills.errors import InvalidSkillsInstallPathError, UnknownAgentTargetError
+
 from .product_analytics import AnalyticsValue, capture_event
 
 _CURRENT_SETUP_RUN_ID: ContextVar[str | None] = ContextVar(
@@ -344,12 +346,10 @@ def agent_skills_failure_kind(exc: BaseException) -> str:
         return "permission_denied"
     if isinstance(exc, OSError):
         return "filesystem"
-    if isinstance(exc, ValueError):
-        message = str(exc)
-        if "Expected a directory path" in message:
-            return "filesystem"
-        if "No install target registered for agent" in message:
-            return "invalid_agent"
+    if isinstance(exc, InvalidSkillsInstallPathError):
+        return "filesystem"
+    if isinstance(exc, UnknownAgentTargetError):
+        return "invalid_agent"
     return "unexpected"
 
 

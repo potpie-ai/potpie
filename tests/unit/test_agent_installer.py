@@ -8,6 +8,7 @@ import pytest
 
 import potpie.skills.installer as agent_installer
 from potpie.skills.catalog import catalog_by_id
+from potpie.skills.errors import InvalidSkillsInstallPathError, UnknownAgentTargetError
 from potpie.skills.installer import (
     install_agent_bundle,
     install_global_agent_instructions,
@@ -29,6 +30,19 @@ def test_resolve_install_root_prefers_git_repo(tmp_path: Path) -> None:
     (repo / ".git").mkdir()
 
     assert resolve_install_root(nested) == repo
+
+
+def test_resolve_install_root_uses_a_typed_error_for_file_paths(tmp_path: Path) -> None:
+    file_path = tmp_path / "not-a-directory"
+    file_path.touch()
+
+    with pytest.raises(InvalidSkillsInstallPathError):
+        resolve_install_root(file_path)
+
+
+def test_skill_manager_uses_a_typed_error_for_unknown_agent_targets() -> None:
+    with pytest.raises(UnknownAgentTargetError):
+        DefaultSkillManager().install(agent="missing")
 
 
 def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:

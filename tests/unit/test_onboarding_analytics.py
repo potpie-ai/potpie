@@ -28,6 +28,7 @@ from potpie.cli.telemetry.product_analytics import (
     set_product_analytics_sink,
 )
 from potpie.runtime.composition import build_local_runtime
+from potpie.skills.errors import InvalidSkillsInstallPathError, UnknownAgentTargetError
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
@@ -177,11 +178,13 @@ def test_activation_event_marks_context_results(fake_sink: _FakeSink) -> None:
 @pytest.mark.parametrize(
     ("exc", "expected"),
     [
-        (ValueError("No install target registered for agent 'other'"), "invalid_agent"),
+        (UnknownAgentTargetError("agent name changed"), "invalid_agent"),
         (
-            ValueError("Expected a directory path, got file: /private/repo"),
+            InvalidSkillsInstallPathError("path validation text changed"),
             "filesystem",
         ),
+        (ValueError("No install target registered for agent 'other'"), "unexpected"),
+        (ValueError("Expected a directory path, got file: /private/repo"), "unexpected"),
         (ValueError("other validation failure"), "unexpected"),
         (PermissionError("denied"), "permission_denied"),
         (OSError("disk unavailable"), "filesystem"),
@@ -314,7 +317,7 @@ def test_direct_skills_install_drops_canonical_events_for_invalid_agent_failure(
     _common.set_runtime(
         SimpleNamespace(
             skills=_InstallSkills(
-                error=ValueError("No install target registered for agent 'default'")
+                error=UnknownAgentTargetError("install target is unavailable")
             )
         )
     )
