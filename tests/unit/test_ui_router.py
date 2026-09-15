@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import potpie.cli.telemetry.product_analytics as product_analytics
+from potpie.cli.telemetry.context import TelemetryContext
 from potpie.daemon.http.ui.router import (
     _caption,
     _node_type,
@@ -18,6 +22,9 @@ from potpie_context_engine.core.ports.graph.inspection import (
     GraphNode,
     GraphSlice,
 )
+
+if TYPE_CHECKING:
+    from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
 
 
 def test_node_type_prefers_canonical_key_prefix_over_stray_label() -> None:
@@ -134,10 +141,6 @@ def test_pots_api_includes_counts_for_selector() -> None:
 def test_ui_session_beacon_records_usage_without_sensitive_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import potpie.cli.telemetry.product_analytics as product_analytics
-    from potpie.cli.telemetry.context import TelemetryContext
-    from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
-
     class _Sink:
         events: list[ProductAnalyticsEvent] = []
 
@@ -193,9 +196,6 @@ def test_ui_session_beacon_records_usage_without_sensitive_payload(
 def test_pots_list_does_not_record_ui_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import potpie.cli.telemetry.product_analytics as product_analytics
-    from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
-
     class _Sink:
         events: list[ProductAnalyticsEvent] = []
 
