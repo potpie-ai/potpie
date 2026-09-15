@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event session_start"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event user_prompt"
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event pre_edit"
+      },
+      {
+        "matcher": "Shell",
+        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event bash_pre"
+      }
+    ],
+    "postToolUse": [
+      {
+        "matcher": "Shell",
+        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event bash_post"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event post_edit"
+      }
+    ],
+    "stop": [
+      {
+        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event stop"
+      }
+    ]
+  }
+}

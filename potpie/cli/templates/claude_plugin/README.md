@@ -51,7 +51,8 @@ problem can never block your session.
 `hooks/potpie_nudge.py` and replacing `${CLAUDE_PLUGIN_ROOT}` with the directory
 path. See `hooks/hooks.json` for the exact event→command mapping.
 
-`potpie install --agent claude-plugin` drops this whole directory into your repo.
+`potpie skills install --agent claude-plugin --scope project --path .` drops this
+whole directory into your repo under `.claude/potpie-plugin/`.
 
 ## Skills
 
@@ -61,11 +62,13 @@ source ingestion. Skills run in-session on your subscription.
 
 ## Other harnesses
 
-The same adapter works for Codex and Cursor via `--harness codex|cursor`; their hook
-systems differ, so wire them per their docs to invoke
-`python3 potpie_nudge.py --harness <name> --event <hint>`. The adapter's payload
-accessors already tolerate common key shapes (`session_id`, `tool_input.file_path`,
-`tool_input.command`).
+The same adapter works for Codex and Cursor via `--harness codex|cursor`.
+
+- **Cursor:** `potpie skills install --agent cursor --scope project --path .` → `.cursor/hooks.json` + `.cursor/hooks/potpie_nudge.py`
+- **Codex:** `potpie skills install --agent codex --scope project --path .` → `.codex/hooks.json` + `.codex/hooks/potpie_nudge.py`
+
+Enable hooks in the harness settings. The adapter tolerates common payload shapes
+(`session_id`, `file_path`, `filePath`, `tool_input.file_path`, `prompt`, `content`).
 
 ## Debugging
 

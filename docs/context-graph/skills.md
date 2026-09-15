@@ -205,6 +205,19 @@ error, missing binary, or unparseable payload → exit 0 with no output. The nud
 trigger model, the executor, and dedup are owned by
 [ingestion-nudge.md](./ingestion-nudge.md).
 
+### Cursor and Codex hooks
+
+The same `potpie_nudge.py` adapter ships for other harnesses:
+
+| Install | Files |
+|---|---|
+| `potpie skills install --agent cursor --scope project --path .` | `.cursor/hooks.json`, `.cursor/hooks/potpie_nudge.py` |
+| `potpie skills install --agent codex --scope project --path .` | `.codex/hooks.json`, `.codex/hooks/potpie_nudge.py` |
+
+Cursor maps `beforeSubmitPrompt` → prompt capture and `afterFileEdit` → span
+capture. Nudge inject uses Cursor JSON (`additional_context` / `followup_message`).
+Enable hooks in the harness settings after install.
+
 ### The agent's half of the loop
 
 `potpie-graph` → "Responding To Nudges" teaches what to do with an injected

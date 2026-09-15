@@ -67,6 +67,8 @@ def test_file_path_and_command_accessors_tolerate_shapes() -> None:
     assert adapter.file_path_of({"tool_input": {"file_path": "a.py"}}) == "a.py"
     assert adapter.file_path_of({"toolInput": {"file_path": "b.py"}}) == "b.py"
     assert adapter.file_path_of({"path": "c.py"}) == "c.py"
+    assert adapter.file_path_of({"filePath": "d.py"}) == "d.py"
+    assert adapter.file_path_of({"edits": [{"file_path": "e.py"}]}) == "e.py"
     assert adapter.file_path_of({}) is None
     assert adapter.command_of({"tool_input": {"command": "ls"}}) == "ls"
     assert adapter.command_of({"command": "pwd"}) == "pwd"
@@ -304,6 +306,22 @@ def test_render_output_stop_uses_system_message() -> None:
     parsed = json.loads(out)
     assert parsed["systemMessage"] == "capture learnings"
     assert "hookSpecificOutput" not in parsed
+
+
+def test_render_cursor_output_additional_context_and_stop() -> None:
+    out, code = adapter.render_cursor_output(
+        "pre_edit",
+        {"ok": True, "silent": False, "inject_context": "PREF: use retries"},
+    )
+    assert code == 0
+    parsed = json.loads(out)
+    assert "retries" in parsed["additional_context"]
+
+    stop_out, _ = adapter.render_cursor_output(
+        "stop",
+        {"ok": True, "silent": False, "instruction": "capture provenance"},
+    )
+    assert json.loads(stop_out)["followup_message"] == "capture provenance"
 
 
 def test_hook_event_name_authoritative_then_fallback() -> None:

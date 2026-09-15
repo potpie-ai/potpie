@@ -172,10 +172,22 @@ def _first(payload: dict[str, Any], *paths: str) -> Any:
 
 
 def session_id_of(payload: dict[str, Any]) -> str:
-    value = _first(payload, "session_id", "sessionId", "conversation_id", "session.id")
+    value = _first(
+        payload,
+        "session_id",
+        "sessionId",
+        "conversation_id",
+        "conversationId",
+        "session.id",
+    )
     if value:
         return str(value)
-    env = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("POTPIE_SESSION_ID")
+    env = (
+        os.environ.get("CLAUDE_SESSION_ID")
+        or os.environ.get("CURSOR_SESSION_ID")
+        or os.environ.get("CODEX_SESSION_ID")
+        or os.environ.get("POTPIE_SESSION_ID")
+    )
     return env or "default"
 
 
@@ -189,15 +201,39 @@ def file_path_of(payload: dict[str, Any]) -> str | None:
         "tool_input.file_path",
         "tool_input.path",
         "toolInput.file_path",
+        "toolInput.path",
         "params.file_path",
         "file_path",
+        "filePath",
         "path",
+        "edit.file_path",
+        "edit.filePath",
+        "edit.path",
     )
-    return str(value) if value else None
+    if value:
+        return str(value)
+    edits = payload.get("edits")
+    if isinstance(edits, list) and edits:
+        first = edits[0]
+        if isinstance(first, dict):
+            edit_path = first.get("file_path") or first.get("filePath") or first.get("path")
+            if edit_path:
+                return str(edit_path)
+    return None
 
 
 def prompt_of(payload: dict[str, Any]) -> str | None:
-    value = _first(payload, "prompt", "prompt_text", "user_prompt", "message")
+    value = _first(
+        payload,
+        "prompt",
+        "prompt_text",
+        "user_prompt",
+        "user_message",
+        "userMessage",
+        "message",
+        "content",
+        "text",
+    )
     return str(value) if value else None
 
 
@@ -464,6 +500,22 @@ def build_argv(
     return argv
 
 
+def render_cursor_output(event_hint: str, nudge_result: Any) -> tuple[str, int]:
+    """Shape a nudge result into Cursor hook JSON. Always exit 0 (never block)."""
+    if not isinstance(nudge_result, dict):
+        return "", 0
+    if isinstance(nudge_result.get("result"), dict):
+        nudge_result = nudge_result["result"]
+    if not nudge_result.get("ok") or nudge_result.get("silent"):
+        return "", 0
+    text = nudge_result.get("inject_context") or nudge_result.get("instruction")
+    if not text:
+        return "", 0
+    if event_hint == "stop":
+        return json.dumps({"followup_message": str(text)}), 0
+    return json.dumps({"additional_context": str(text)}), 0
+
+
 def render_output(claude_event: str, nudge_result: Any) -> tuple[str, int]:
     """Shape a nudge result into harness hook output. Always exit 0 (never block)."""
     if not isinstance(nudge_result, dict):
@@ -574,8 +626,12 @@ def main(argv: list[str] | None = None) -> int:
             _debug(f"unparseable nudge output: {proc.stdout[:200]!r}")
             return 0
 
-        claude_event = hook_event_name_of(payload, nudge_event)
-        out, code = render_output(claude_event, result)
+        harness = str(args.harness or "claude").strip().lower()
+        if harness in {"cursor", "codex"}:
+            out, code = render_cursor_output(hint, result)
+        else:
+            claude_event = hook_event_name_of(payload, nudge_event)
+            out, code = render_output(claude_event, result)
         if out:
             sys.stdout.write(out)
         return code

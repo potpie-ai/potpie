@@ -163,6 +163,18 @@ Use these repo-local skills under `.agents/skills/`:
   issues, tickets, runbooks, logs, and web links.
 - `potpie-graph` - graph CLI contract: status/catalog/describe/read/search,
   propose/commit/history, inbox, quality, and nudge handling.
+- `potpie-provenance` - record which prompt/spec produced a code span; answer
+  "why was this line written?" with `potpie why` or `graph read provenance.lineage`.
 - `potpie-cli` - CLI setup, pot/source commands, graph commands, and
   troubleshooting, including pot scope and setup failures.
+
+## Lineage hooks (Cursor / Codex)
+
+`potpie skills install --agent cursor --scope project --path .` (or `--agent codex`)
+lays down `.cursor/hooks.json` or `.codex/hooks.json` plus the shared
+`potpie_nudge.py` adapter. Hooks fail-open: they remember prompts, link edits to
+lineage, and inject graph nudges without blocking the session. Enable hooks in the
+harness settings after install. Claude Code uses
+`potpie skills install --agent claude-plugin --scope project --path .` instead.
+Spec text still requires the agent to follow `potpie-provenance` at Stop.
 <!-- potpie-end -->
