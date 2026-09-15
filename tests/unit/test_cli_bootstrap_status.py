@@ -15,6 +15,9 @@ from typer.testing import CliRunner
 from potpie.cli import main as cli_main
 from potpie.cli.commands import _common, bootstrap
 from potpie.cli.commands._common import EXIT_DEGRADED
+from potpie.cli.telemetry import product_analytics
+from potpie.cli.telemetry.context import TelemetryContext
+from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
 from potpie.runtime.composition import default_host_mode
 from potpie_context_engine.core.lifecycle import (
     DONE,
@@ -58,6 +61,44 @@ class _FakeSetupMetrics:
         attributes: dict[str, Union[str, bool]] | None = None,
     ) -> None:
         self.calls.append(_MetricCall(name, {} if attributes is None else attributes))
+
+
+@dataclass
+class _FakeProductSink:
+    events: list[ProductAnalyticsEvent]
+
+    def capture(self, event: ProductAnalyticsEvent) -> None:
+        self.events.append(event)
+
+
+def _install_product_sink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[ProductAnalyticsEvent]:
+    events: list[ProductAnalyticsEvent] = []
+    monkeypatch.setattr(product_analytics, "_sink", _FakeProductSink(events))
+    monkeypatch.setattr(
+        product_analytics,
+        "configure_product_analytics",
+        lambda _settings: None,
+    )
+    monkeypatch.setattr(
+        product_analytics,
+        "current_telemetry_context",
+        lambda: TelemetryContext(
+            anonymous_install_id="install_123",
+            invocation_id="invoke_456",
+            daemon_session_id="daemon_123",
+            environment="staging",
+            command="status",
+            subcommand=None,
+            output_mode="text",
+            cli_version="0.1.0",
+            python_version="3.13.0",
+            os="darwin",
+            arch="arm64",
+        ),
+    )
+    return events
 
 
 def _patch_local_setup_host(
@@ -140,6 +181,48 @@ def test_status_default_emits_host_report(monkeypatch: pytest.MonkeyPatch) -> No
     assert 'potpie resolve "<task>"' in result.stdout
     mock_host.graph.data_plane_status.assert_called_once_with("foo-pot")
     mock_host.skills.nudge.assert_called_once_with(agent="claude")
+
+
+def test_status_uses_canonical_activation_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = StatusReport(
+        pot_id="foo-pot",
+        profile="local",
+        daemon_up=True,
+        active_pot="foo-pot",
+        backend_ready=True,
+        data_plane={"counts": {"nodes": 3}},
+    )
+    mock_host = MagicMock()
+    _configure_status_host(mock_host, report)
+    captured: list[dict[str, str]] = []
+
+    class _CaptureOutcome:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    def _activation_outcome(**properties):
+        captured.append(properties)
+        return _CaptureOutcome()
+
+    _common.set_runtime(mock_host)
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "activation_command_outcome",
+        _activation_outcome,
+    )
+
+    result = runner.invoke(cli_main.app, ["status"])
+
+    assert result.exit_code == 0, result.stdout
+    assert captured == [{"command": "status", "result_kind": "status_result"}]
 
 
 def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -228,6 +311,26 @@ def test_status_verify_points_to_auth_status() -> None:
     payload = json.loads(result.stdout)
     assert payload["code"] == "validation_error"
     assert "potpie auth status --verify" in payload["recommended_next_action"]
+
+
+def test_status_verify_emits_expected_failure_activation_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _install_product_sink(monkeypatch)
+
+    result = runner.invoke(cli_main.app, ["status", "--verify"])
+
+    assert result.exit_code == 1, result.stdout
+    outcome_events = [
+        event
+        for event in events
+        if event.name == "cli_onboarding_activation_command_outcome"
+    ]
+    assert len(outcome_events) == 1
+    assert outcome_events[0].properties["command"] == "status"
+    assert outcome_events[0].properties["outcome"] == "expected_failed"
+    assert outcome_events[0].properties["result_kind"] == "status_result"
+    assert outcome_events[0].properties["failure_category"] == "validation"
 
 
 def test_doctor_json_includes_backend_readiness(
@@ -436,6 +539,119 @@ def test_setup_degraded_report_preserves_exit_code_and_emits_metrics(
             {"step": "backend.provision", "state": "failed", "hard": True},
         ),
     ]
+
+
+def test_setup_interrupt_emits_cancelled_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_host = MagicMock()
+    mock_host.profile = "local"
+    mock_host.backend.profile = "falkordb"
+    mock_host.daemon.in_process = False
+    captured: list[tuple[str, str, bool]] = []
+
+    def _interrupt_setup(_setup, _plan, **kwargs) -> None:
+        kwargs["observer"].step_started(step="backend.provision", hard=True)
+        raise KeyboardInterrupt
+
+    def _capture_incomplete(
+        *,
+        plan: SetupPlan,
+        incomplete_kind: str,
+        duration_ms: int,
+        failure_stage: str,
+        dry_run: bool = False,
+    ) -> None:
+        del plan, duration_ms
+        captured.append((incomplete_kind, failure_stage, dry_run))
+
+    _patch_local_setup_host(monkeypatch, mock_host)
+    monkeypatch.setattr(
+        bootstrap.setup_ux,
+        "run_setup_plain",
+        _interrupt_setup,
+    )
+    monkeypatch.setattr(
+        "potpie.cli.ui.setup_ux.rich_enabled",
+        lambda **_k: False,
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "capture_setup_incomplete",
+        _capture_incomplete,
+    )
+
+    result = runner.invoke(cli_main.app, ["setup", "--yes"])
+
+    assert result.exit_code == 130
+    assert captured == [("cancelled", "backend.provision", False)]
+
+
+def _capture_setup_incomplete_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, str, bool]]:
+    captured: list[tuple[str, str, bool]] = []
+
+    def _capture_incomplete(
+        *,
+        plan: SetupPlan,
+        incomplete_kind: str,
+        duration_ms: int,
+        failure_stage: str,
+        dry_run: bool = False,
+    ) -> None:
+        del plan, duration_ms
+        captured.append((incomplete_kind, failure_stage, dry_run))
+
+    monkeypatch.setattr(bootstrap, "capture_setup_incomplete", _capture_incomplete)
+    return captured
+
+
+def test_setup_dry_run_interrupt_during_preview_emits_cancelled_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_host = MagicMock()
+    mock_host.profile = "local"
+    mock_host.backend.profile = "falkordb"
+    mock_host.daemon.in_process = True
+    mock_host.setup.preview.side_effect = KeyboardInterrupt
+    captured = _capture_setup_incomplete_calls(monkeypatch)
+
+    _patch_local_setup_host(monkeypatch, mock_host)
+    monkeypatch.setattr(
+        "potpie.cli.ui.setup_ux.rich_enabled",
+        lambda **_k: False,
+    )
+
+    result = runner.invoke(cli_main.app, ["setup", "--dry-run"])
+
+    assert result.exit_code == 130
+    assert captured == [("cancelled", "setup_execution", True)]
+    mock_host.setup.run.assert_not_called()
+
+
+def test_setup_dry_run_interrupt_during_daemon_status_emits_cancelled_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_host = MagicMock()
+    mock_host.profile = "local"
+    mock_host.backend.profile = "falkordb"
+    mock_host.daemon.in_process = False
+    mock_host.daemon.status.side_effect = KeyboardInterrupt
+    captured = _capture_setup_incomplete_calls(monkeypatch)
+
+    _patch_local_setup_host(monkeypatch, mock_host)
+    monkeypatch.setattr(
+        "potpie.cli.ui.setup_ux.rich_enabled",
+        lambda **_k: False,
+    )
+
+    result = runner.invoke(cli_main.app, ["setup", "--dry-run"])
+
+    assert result.exit_code == 130
+    assert captured == [("cancelled", "setup_execution", True)]
+    mock_host.setup.preview.assert_not_called()
+    mock_host.setup.run.assert_not_called()
 
 
 def test_doctor_emits_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
