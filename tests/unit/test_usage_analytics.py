@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 import potpie.cli.telemetry.product_analytics as product_analytics
 from potpie.cli.auth import auth_commands, github_commands
-from potpie.cli.commands import _common, bootstrap, pots, query, skills
+from potpie.cli.commands import _common, pots, query, skills
 from potpie.cli.telemetry.context import TelemetryContext
 from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
 from potpie.cli.telemetry.usage_events import (
