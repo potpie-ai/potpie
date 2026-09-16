@@ -400,9 +400,43 @@ def _cursor_bundle_remap(rel_path: Path) -> Path | None:
     remapped = _remap_skills_path(rel_path, ".cursor/skills")
     if remapped is not None:
         return remapped
-    if rel_path.as_posix() == "AGENTS.md":
+    posix = rel_path.as_posix()
+    if posix == "AGENTS.md" or posix.startswith(".cursor/"):
         return rel_path
     return None
+
+
+def _codex_bundle_remap(rel_path: Path) -> Path | None:
+    remapped = _remap_skills_path(rel_path, ".agents/skills")
+    if remapped is not None:
+        return remapped
+    posix = rel_path.as_posix()
+    if posix == "AGENTS.md" or posix.startswith(".codex/"):
+        return rel_path
+    return None
+
+
+def _hook_adapter_source_text() -> str:
+    src = resources.files("potpie.cli").joinpath(
+        "templates", "claude_plugin", "hooks", "potpie_nudge.py"
+    )
+    return src.read_text(encoding="utf-8")
+
+
+def _install_hook_adapter(
+    install_root: Path,
+    hooks_dir: str,
+    result: InstallResult,
+    *,
+    force: bool,
+) -> None:
+    """Copy the shared nudge/lineage adapter into a harness hooks directory."""
+    content = _hook_adapter_source_text()
+    out_path = Path(hooks_dir) / "hooks" / "potpie_nudge.py"
+    _install_file(install_root, out_path, content, result, force=force)
+    target = install_root / out_path
+    if target.exists():
+        target.chmod(target.stat().st_mode | 0o755)
 
 
 def _opencode_bundle_remap(rel_path: Path) -> Path | None:
@@ -484,10 +518,11 @@ def install_agent_bundle(
 ) -> InstallResult:
     """Install agent bundle files into the nearest git repo root under *path*.
 
-    - ``default`` / ``codex``: ``AGENTS.md`` + ``.agents/skills/``
+    - ``default``: ``AGENTS.md`` + ``.agents/skills/``
+    - ``codex``: ``AGENTS.md`` + ``.agents/skills/`` + ``.codex/hooks/``
     - ``claude``: ``CLAUDE.md`` (+ ``.claude/`` when present in bundle)
     - ``claude-plugin``: the Claude Code plugin under ``.claude/potpie-plugin/``
-    - ``cursor``: ``AGENTS.md`` + ``.cursor/skills/``
+    - ``cursor``: ``AGENTS.md`` + ``.cursor/skills/`` + ``.cursor/hooks/``
     - ``opencode``: ``.opencode/skills/``
     """
     root = resolve_install_root(path)
@@ -525,10 +560,27 @@ def install_agent_bundle(
             result,
             force=force,
             include=lambda rel: (
-                rel.as_posix() == "AGENTS.md" or _include_selected_skills(rel, selected)
+                rel.as_posix() == "AGENTS.md"
+                or rel.as_posix().startswith(".cursor/")
+                or _include_selected_skills(rel, selected)
             ),
             remap=_cursor_bundle_remap,
         )
+        _install_hook_adapter(root, ".cursor", result, force=force)
+    elif normalized == "codex":
+        _install_bundle(
+            root,
+            "agent_bundle",
+            result,
+            force=force,
+            include=lambda rel: (
+                rel.as_posix() == "AGENTS.md"
+                or rel.as_posix().startswith(".codex/")
+                or _include_selected_skills(rel, selected)
+            ),
+            remap=_codex_bundle_remap,
+        )
+        _install_hook_adapter(root, ".codex", result, force=force)
     elif normalized == "opencode":
         _install_bundle(
             root,

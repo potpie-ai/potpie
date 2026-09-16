@@ -59,7 +59,7 @@ flowchart LR
   cg_claims --> cg_analytics
 ```
 
-The full vocabulary — 24 entity types, 25 public predicates plus a `RELATED_TO`
+The full vocabulary — 27 entity types, 31 public predicates plus a `RELATED_TO`
 fallback, 7 truth classes — is owned by [ontology.md](./ontology.md). PRs, commits,
 issues, incidents, and deployments all collapse to a single timeline `Activity`
 entity; an entity exists only if an edge needs it as an endpoint.
@@ -151,7 +151,7 @@ local `default` pot. **Cross-pot federation is an explicit anti-goal.**
 | Concept | Meaning |
 |---|---|
 | **Pot** | Unit of isolation and tenancy; `pot_id` is the storage `group_id`. A pot lives in the local daemon or (roadmap) a managed backend; the CLI addresses both through the same pot surface. First local setup creates the active `default` pot. |
-| **Entity** | A stable project object — e.g. a `Service`, `Feature`, `Decision`, `Dependency`, `Person`/`Team`, or a timeline `Activity` (PRs/commits/issues/incidents/deployments collapse here). One of 24 catalog types; minted only when an edge needs it as an endpoint. |
+| **Entity** | A stable project object — e.g. a `Service`, `Feature`, `Decision`, `Dependency`, `Person`/`Team`, or a timeline `Activity` (PRs/commits/issues/incidents/deployments collapse here). One of 27 catalog types; minted only when an edge needs it as an endpoint. |
 | **Claim** | A canonical, sourced, time-stamped fact about an entity or relationship, carrying a truth class and provenance. The single source of truth. |
 | **Source ref** | A pointer back to evidence: file path, PR, ticket, doc URL, or deploy. The graph holds the ref, not the payload. |
 | **Semantic mutation** | An agent-facing structured write proposal (flat ops over a small DSL) that validates and lowers into graph writes. |
@@ -170,7 +170,7 @@ Concretely, the live contract constants are:
 | Constant | Value | Meaning |
 |---|---|---|
 | `GRAPH_CONTRACT_VERSION` | `v1.5` | the data plane (what's shipped) |
-| `ONTOLOGY_VERSION` | `2026-06-graph` | the catalog/vocabulary version |
+| `ONTOLOGY_VERSION` | `2026-09-graph` | the catalog/vocabulary version |
 | `GRAPH_WORKBENCH_CONTRACT_VERSION` | `v2` | **only** the workbench *envelope* version string — not a separate, unshipped product |
 
 So "v2" survives solely as the envelope version on workbench responses. What ships:
@@ -218,7 +218,7 @@ learnings (`graph propose` → `graph commit --verify`). See
 ## See also
 
 - [architecture.md](./architecture.md) — hexagonal layers, composition roots, the daemon, backends.
-- [ontology.md](./ontology.md) — the 24 entities / 26 predicate keys / truth classes / contract constants.
+- [ontology.md](./ontology.md) — the 27 entities / 31 public predicates plus `RELATED_TO` / truth classes / contract constants.
 - [querying.md](./querying.md) — the two read altitudes, the read trunk, ranking, retrieval cards.
 - [writing.md](./writing.md) — the semantic DSL, propose→commit, the legacy `mutate` wrapper, inbox.
 - [ingestion-nudge.md](./ingestion-nudge.md) — how raw events arrive, the two ledgers, the nudge model.
