@@ -465,6 +465,7 @@ class GraphRuntime:
         approved_by: str | None = None,
         verify: bool = False,
         recover_stale: bool = False,
+        defer_verification: bool = False,
     ):
         result = self.workbench.commit(
             plan_id,
@@ -472,6 +473,7 @@ class GraphRuntime:
             approved_by=approved_by,
             verify=verify,
             recover_stale=recover_stale,
+            defer_verification=defer_verification,
         )
         self._notify(
             "graph.commit",
@@ -484,6 +486,12 @@ class GraphRuntime:
             },
         )
         return result
+
+    def commit_status(self, plan_id: str, *, pot_id: str):
+        return self.workbench.commit_status(plan_id, pot_id=pot_id)
+
+    def verify_commit(self, plan_id: str, *, pot_id: str):
+        return self.workbench.verify_commit(plan_id, pot_id=pot_id)
 
     def history(self, **kwargs):
         return self.workbench.history(**kwargs)
@@ -593,6 +601,7 @@ class GraphRuntime:
         approved_by: str | None = None,
         verify: bool = False,
         recover_stale: bool = False,
+        defer_verification: bool = False,
     ):
         result = await _async_call(
             self.workbench,
@@ -602,6 +611,7 @@ class GraphRuntime:
             approved_by=approved_by,
             verify=verify,
             recover_stale=recover_stale,
+            defer_verification=defer_verification,
         )
         self._notify(
             "graph.commit",
@@ -614,6 +624,16 @@ class GraphRuntime:
             },
         )
         return result
+
+    async def commit_status_async(self, plan_id: str, *, pot_id: str):
+        return await _async_call(
+            self.workbench, "commit_status", plan_id, pot_id=pot_id
+        )
+
+    async def verify_commit_async(self, plan_id: str, *, pot_id: str):
+        return await _async_call(
+            self.workbench, "verify_commit", plan_id, pot_id=pot_id
+        )
 
     async def history_async(self, **kwargs):
         return await _async_call(self.workbench, "history", **kwargs)
