@@ -410,6 +410,7 @@ def create_context_router(
             surface=surface,
             client_name=client_name,
             auth_method="api_key",
+            trust_tier="trusted",
         )
 
     @router.post(

@@ -38,6 +38,7 @@ from potpie_context_engine.core.graph_contract import (
     is_known_op,
     is_source_authority,
     is_supported_contract_version,
+    is_trust_tier,
     is_truth_class,
     normalize_entity_key,
 )
@@ -227,6 +228,12 @@ def _validate_op(
     # 3. truth class (default applied downstream; only validate when present)
     if op.truth is not None and not is_truth_class(op.truth):
         err("bad_truth_class", f"unknown truth class {op.truth!r}")
+
+    if op.origin_trust is not None and not is_trust_tier(op.origin_trust):
+        err(
+            "bad_origin_trust",
+            f"unknown origin trust {op.origin_trust!r}",
+        )
 
     # 4. confidence range
     if op.confidence is not None and not (0.0 <= op.confidence <= 1.0):

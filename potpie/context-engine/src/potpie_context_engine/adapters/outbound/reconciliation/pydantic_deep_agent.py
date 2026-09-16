@@ -36,6 +36,10 @@ from potpie_context_engine.core.event_playbooks import (
     playbooks_enable_planner,
     render_playbooks_section,
 )
+from potpie_context_engine.core.graph_contract import (
+    DEFAULT_TRUST_TIER,
+    is_trust_tier,
+)
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.domain.ports.agent_checkpoint_store import (
     AgentCheckpointStorePort,
@@ -238,6 +242,18 @@ def _skills_enabled_for(ctx: BatchAgentContext) -> bool:
     return any(not is_default_playbook(pb) for pb in _playbooks_for_events(ctx.events))
 
 
+def _origin_trust_from_event(ev: ContextEvent) -> str:
+    payload = ev.payload if isinstance(ev.payload, dict) else {}
+    raw = payload.get("origin_trust")
+    if is_trust_tier(raw):
+        return str(raw)
+    actor = getattr(ev, "actor", None)
+    actor_tier = getattr(actor, "trust_tier", None) if actor is not None else None
+    if is_trust_tier(actor_tier):
+        return str(actor_tier)
+    return DEFAULT_TRUST_TIER
+
+
 def _provenance_from_event(ev: ContextEvent, *, agent_name: str) -> ProvenanceContext:
     actor = getattr(ev, "actor", None)
     return ProvenanceContext(
@@ -250,6 +266,7 @@ def _provenance_from_event(ev: ContextEvent, *, agent_name: str) -> ProvenanceCo
         actor_surface=actor.surface if actor else None,
         actor_client_name=actor.client_name if actor else None,
         actor_auth_method=actor.auth_method if actor else None,
+        origin_trust=_origin_trust_from_event(ev),
     )
 
 

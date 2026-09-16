@@ -132,6 +132,36 @@ def test_missing_description_warns_not_rejects() -> None:
     assert any(i.code == "missing_description" and not i.is_error for i in plan.issues)
 
 
+def test_bad_origin_trust_rejected() -> None:
+    plan = validate_semantic_request(_req(_link(origin_trust="superuser")))
+    assert any(i.code == "bad_origin_trust" for i in plan.errors)
+
+
+def test_lowering_caps_self_declared_trusted_origin() -> None:
+    req = _req(_link(origin_trust="trusted"))
+    plan = validate_semantic_request(req)
+    lower_semantic_request(req, plan)
+    assert plan.batch.edge_upserts[0].properties["origin_trust"] == "unknown"
+
+
+def test_lowering_uses_write_context_origin_trust() -> None:
+    from dataclasses import replace
+
+    req = replace(_req(_link()), origin_trust="trusted")
+    plan = validate_semantic_request(req)
+    lower_semantic_request(req, plan)
+    assert plan.batch.edge_upserts[0].properties["origin_trust"] == "trusted"
+
+
+def test_lowering_allows_downgrade_from_trusted_context() -> None:
+    from dataclasses import replace
+
+    req = replace(_req(_link(origin_trust="external")), origin_trust="trusted")
+    plan = validate_semantic_request(req)
+    lower_semantic_request(req, plan)
+    assert plan.batch.edge_upserts[0].properties["origin_trust"] == "external"
+
+
 def test_bad_confidence_rejected() -> None:
     plan = validate_semantic_request(_req(_link(confidence=1.5)))
     assert any(i.code == "bad_confidence" for i in plan.errors)
@@ -421,9 +451,11 @@ def test_lowering_produces_batch_with_metadata() -> None:
         "graph_contract_version",
         "ontology_version",
         "fact",
+        "origin_trust",
     ):
         assert key in props, key
     assert props["truth"] == "source_observation"
+    assert props["origin_trust"] == "unknown"
     assert props["evidence_strength"] == "deterministic"  # truth→strength map
     assert props["graph_contract_version"] == GRAPH_CONTRACT_VERSION
     assert props["ontology_version"] == ONTOLOGY_VERSION

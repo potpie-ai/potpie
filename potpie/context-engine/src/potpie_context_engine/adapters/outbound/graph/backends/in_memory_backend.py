@@ -46,7 +46,10 @@ from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
 from potpie_context_engine.core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
+from potpie_context_engine.core.graph_contract import (
+    evidence_strength_for_truth,
+    origin_trust_or_default,
+)
 from potpie_context_engine.core.graph_entity_summary import (
     merge_entity_display_properties,
     normalize_entity_properties,
@@ -220,6 +223,7 @@ class _Mutation:
             evidence=_evidence_tuple(props.get("evidence")),
             graph_contract_version=_coerce_str(props.get("graph_contract_version")),
             ontology_version=_coerce_str(props.get("ontology_version")),
+            origin_trust=origin_trust_or_default(_coerce_str(props.get("origin_trust"))),
         )
         # Embed the retrieval card on write (R1/R2) so reads use a real vector.
         if self.embedder is not None and row.fact_embedding is None:
@@ -898,6 +902,7 @@ def _row_to_dict(row: ClaimRow) -> dict[str, Any]:
         "evidence": [dict(item) for item in row.evidence],
         "graph_contract_version": row.graph_contract_version,
         "ontology_version": row.ontology_version,
+        "origin_trust": row.origin_trust,
     }
 
 
@@ -931,6 +936,7 @@ def _row_from_dict(pot_id: str, raw: Mapping[str, Any]) -> ClaimRow:
         evidence=_evidence_tuple(raw.get("evidence")),
         graph_contract_version=_coerce_str(raw.get("graph_contract_version")),
         ontology_version=_coerce_str(raw.get("ontology_version")),
+        origin_trust=origin_trust_or_default(_coerce_str(raw.get("origin_trust"))),
     )
 
 

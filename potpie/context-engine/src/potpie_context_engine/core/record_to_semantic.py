@@ -29,6 +29,10 @@ from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
 )
+from potpie_context_engine.core.graph_contract import (
+    TrustTier,
+    is_trust_tier,
+)
 from potpie_context_engine.core.identity import (
     _slugify,
 )  # deterministic slug; reused for keys
@@ -69,11 +73,16 @@ def record_to_semantic_request(
         harness=_opt(request.metadata.get("harness")),
         user=_opt(request.metadata.get("user")),
     )
+    raw_trust = request.metadata.get("origin_trust")
+    origin_trust = (
+        str(raw_trust) if is_trust_tier(raw_trust) else TrustTier.trusted.value
+    )
     return SemanticMutationRequest(
         pot_id=request.pot_id,
         operations=tuple(SemanticMutation.parse(op) for op in op_payloads),
         idempotency_key=request.idempotency_key or source_id,
         created_by=actor,
+        origin_trust=origin_trust,
         allow_review_required=True,
         approved_by=_APPROVED_BY,
     )
