@@ -281,6 +281,28 @@ def trust_tier_from_github_author_association(value: str | None) -> str:
     return TrustTier.unknown.value
 
 
+_TRUSTED_ACTOR_AUTH_METHODS: frozenset[str] = frozenset(
+    {"api_key", "session", "system"}
+)
+
+
+def origin_trust_from_actor(
+    *,
+    trust_tier: str | None = None,
+    auth_method: str | None = None,
+) -> str:
+    """Write-context trust from an authenticated actor, never from caller JSON.
+
+    An explicit ``trust_tier`` wins. Otherwise api_key/session/system principals
+    are ``trusted``; every other auth method is ``unknown``.
+    """
+    if is_trust_tier(trust_tier):
+        return str(trust_tier)
+    if (auth_method or "").strip() in _TRUSTED_ACTOR_AUTH_METHODS:
+        return TrustTier.trusted.value
+    return DEFAULT_TRUST_TIER
+
+
 def resolve_origin_trust(
     *,
     declared: str | None = None,
@@ -514,6 +536,7 @@ __all__ = [
     "most_conservative_origin_trust",
     "normalize_entity_key",
     "normalize_key_prefix",
+    "origin_trust_from_actor",
     "origin_trust_or_default",
     "render_untrusted_data_fence",
     "resolve_origin_trust",

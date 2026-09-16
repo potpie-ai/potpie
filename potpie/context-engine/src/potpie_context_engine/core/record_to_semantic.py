@@ -30,8 +30,8 @@ from potpie_context_engine.core.definition import (
     GraphDefinition,
 )
 from potpie_context_engine.core.graph_contract import (
-    TrustTier,
     is_trust_tier,
+    resolve_origin_trust,
 )
 from potpie_context_engine.core.identity import (
     _slugify,
@@ -73,9 +73,10 @@ def record_to_semantic_request(
         harness=_opt(request.metadata.get("harness")),
         user=_opt(request.metadata.get("user")),
     )
-    raw_trust = request.metadata.get("origin_trust")
-    origin_trust = (
-        str(raw_trust) if is_trust_tier(raw_trust) else TrustTier.unknown.value
+    raw_declared = request.metadata.get("origin_trust")
+    origin_trust = resolve_origin_trust(
+        declared=str(raw_declared) if is_trust_tier(raw_declared) else None,
+        context=request.origin_trust,
     )
     return SemanticMutationRequest(
         pot_id=request.pot_id,

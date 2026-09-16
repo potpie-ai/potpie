@@ -36,6 +36,7 @@ from potpie_context_engine.domain.ingestion_event_models import (
     EventReceipt,
     IngestionSubmissionRequest,
 )
+from potpie_context_engine.core.graph_contract import origin_trust_from_actor
 from potpie_context_engine.core.ports.agent_context import RecordRequest
 from potpie_context_engine.domain.ports.batch_repository import BatchRepositoryPort
 from potpie_context_engine.domain.ports.context_graph_job_queue import (
@@ -291,6 +292,10 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
         details = _mapping_payload(record.get("details") or {}, "record.details")
         source_refs = _string_tuple(record.get("source_refs") or request.artifact_refs)
         actor = request.actor
+        write_context_trust = origin_trust_from_actor(
+            trust_tier=actor.trust_tier if actor is not None else None,
+            auth_method=actor.auth_method if actor is not None else None,
+        )
         metadata = {
             "surface": request.source_channel,
             "source_system": request.source_system,
@@ -315,6 +320,7 @@ class DefaultIngestionSubmissionService(IngestionSubmissionService):
                 scope=scope,
                 source_refs=source_refs,
                 idempotency_key=request.idempotency_key or request.source_id,
+                origin_trust=write_context_trust,
                 metadata=metadata,
             )
         )

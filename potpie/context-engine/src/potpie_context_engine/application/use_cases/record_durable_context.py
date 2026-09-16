@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Mapping
 
 from potpie_context_engine.core.actor import Actor
-from potpie_context_engine.core.graph_contract import TrustTier, origin_trust_or_default
+from potpie_context_engine.core.graph_contract import origin_trust_from_actor
 from potpie_context_engine.core.agent_context_port import (
     build_context_record_source_id,
     normalize_record_type,
@@ -87,14 +87,8 @@ def record_durable_context(
         source_refs=source_refs,
         idempotency_key=idempotency_key,
     )
-    origin_trust = origin_trust_or_default(
-        actor.trust_tier
-        if actor.trust_tier
-        else (
-            TrustTier.trusted.value
-            if actor.auth_method in {"api_key", "session", "system"}
-            else TrustTier.unknown.value
-        )
+    origin_trust = origin_trust_from_actor(
+        trust_tier=actor.trust_tier, auth_method=actor.auth_method
     )
     req = IngestionSubmissionRequest(
         pot_id=pot_id,

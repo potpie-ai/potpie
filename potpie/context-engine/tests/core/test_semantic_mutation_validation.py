@@ -762,7 +762,7 @@ def test_record_to_semantic_defaults_origin_trust_unknown() -> None:
     )
     assert req.origin_trust == "unknown"
 
-    trusted = record_to_semantic_request(
+    spoofed = record_to_semantic_request(
         RecordRequest(
             pot_id="p",
             record_type="note",
@@ -772,4 +772,30 @@ def test_record_to_semantic_defaults_origin_trust_unknown() -> None:
         record_type="note",
         source_id="src-2",
     )
-    assert trusted.origin_trust == "trusted"
+    assert spoofed.origin_trust == "unknown"
+
+    authenticated = record_to_semantic_request(
+        RecordRequest(
+            pot_id="p",
+            record_type="note",
+            summary="hello",
+            origin_trust="trusted",
+            metadata={"origin_trust": "trusted"},
+        ),
+        record_type="note",
+        source_id="src-3",
+    )
+    assert authenticated.origin_trust == "trusted"
+
+    lowered = record_to_semantic_request(
+        RecordRequest(
+            pot_id="p",
+            record_type="note",
+            summary="hello",
+            origin_trust="trusted",
+            metadata={"origin_trust": "external"},
+        ),
+        record_type="note",
+        source_id="src-4",
+    )
+    assert lowered.origin_trust == "external"
