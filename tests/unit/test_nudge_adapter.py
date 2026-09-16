@@ -483,6 +483,54 @@ def test_post_edit_captures_each_edit_with_only_known_ranges(monkeypatch) -> Non
     assert [cmd[cmd.index("--lines") + 1] for cmd in calls] == ["2-3", "7-8"]
 
 
+def test_normalize_apply_patch_command_into_per_file_edits() -> None:
+    payload = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": """apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: src/a.py
+@@ -10,2 +10,3 @@
+ old
+-removed
++added
+*** Add File: src/new.py
++new file
+*** End Patch
+PATCH""",
+        },
+    }
+
+    edits = adapter._normalize_edit_payloads(payload)
+
+    assert edits == [
+        {"path": "src/a.py", "line_start": 10, "line_end": 12},
+        {"path": "src/new.py", "line_start": 1, "line_end": 1},
+    ]
+
+
+def test_lineage_capture_handles_bash_patch_and_structured_edits(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(adapter.shutil, "which", lambda _name: "/usr/bin/potpie")
+    monkeypatch.setattr(adapter.subprocess, "run", fake_run)
+    args = types.SimpleNamespace(potpie_bin="potpie", pot=None, harness="codex")
+    payload = {
+        "tool_input": {
+            "command": "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: a.py\n@@ -2,1 +2,2 @@\n+x\n*** End Patch\nPATCH",
+        },
+        "tool_response": {"edits": [{"path": "b.py", "line_start": 4, "line_end": 5}]},
+    }
+
+    assert adapter._run_lineage_capture(args, payload, "bash_post") == 0
+    assert [cmd[cmd.index("--path") + 1] for cmd in calls] == ["a.py", "b.py"]
+    assert [cmd[cmd.index("--lines") + 1] for cmd in calls] == ["2-3", "4-5"]
+
+
 def test_infer_line_range_does_not_fall_back_to_full_file(tmp_path: Path) -> None:
     path = tmp_path / "edited.py"
     path.write_text("one\ntwo\nthree\n", encoding="utf-8")

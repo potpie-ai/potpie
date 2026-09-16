@@ -1162,6 +1162,36 @@ class TestNewUseCaseReaders:
 
 
 class TestGenerationLineageReader:
+    def test_until_bound_excludes_rows_without_valid_at(self) -> None:
+        until = _NOW
+        rows = [
+            replace(
+                _row(
+                    predicate="GENERATED_FROM",
+                    subject_key="code:repo:unknown-time",
+                    object_key="prompt:unknown-time",
+                ),
+                valid_at=None,
+            ),
+            _row(
+                predicate="GENERATED_FROM",
+                subject_key="code:repo:at-until",
+                object_key="prompt:at-until",
+                valid_at=until,
+            ),
+        ]
+
+        class Query:
+            def find_claims(self, filter_):
+                return rows
+
+        reader = GenerationLineageReader(claim_query=Query(), ranker=RankingService())
+        response = reader.read(ReadRequest(pot_id="pot-1", until=until, max_items=10))
+
+        assert [item.candidate.payload["subject_key"] for item in response.items] == [
+            "code:repo:at-until"
+        ]
+
     def test_temporal_bounds_are_propagated_and_enforced_inclusively(self) -> None:
         since = _NOW - timedelta(days=3)
         until = _NOW + timedelta(days=3)

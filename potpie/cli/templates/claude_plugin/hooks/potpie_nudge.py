@@ -322,6 +322,117 @@ def _edit_snippet(edit: dict[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+_PATCH_FILE_RE = re.compile(
+    r"^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(?P<path>.+?)\s*$"
+)
+_PATCH_HUNK_RE = re.compile(
+    r"^@@\s+-\d+(?:,\d+)?\s+\+(?P<start>\d+)(?:,(?P<count>\d+))?\s+@@"
+)
+
+
+def _apply_patch_edits(command: str) -> list[dict[str, Any]]:
+    """Extract one line-span edit record per file from an apply_patch command."""
+    records: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    def flush() -> None:
+        nonlocal current
+        if current is None:
+            return
+        start = current.get("line_start")
+        end = current.get("line_end")
+        if start is None and current.get("add_lines", 0):
+            start, end = 1, current["add_lines"]
+        if start is not None:
+            records.append(
+                {
+                    "path": current["path"],
+                    "line_start": start,
+                    "line_end": end or start,
+                }
+            )
+        current = None
+
+    for line in command.splitlines():
+        file_match = _PATCH_FILE_RE.match(line)
+        if file_match:
+            flush()
+            current = {"path": file_match.group("path"), "add_lines": 0}
+            continue
+        if current is None:
+            continue
+        hunk_match = _PATCH_HUNK_RE.match(line)
+        if hunk_match:
+            start = int(hunk_match.group("start"))
+            count = int(hunk_match.group("count") or "1")
+            end = start + max(count, 1) - 1
+            current["line_start"] = (
+                start
+                if current.get("line_start") is None
+                else min(current["line_start"], start)
+            )
+            current["line_end"] = max(current.get("line_end") or end, end)
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            current["add_lines"] += 1
+    flush()
+    return records
+
+
+def _nested_edits(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    edits: list[dict[str, Any]] = []
+    for key in (
+        "edits",
+        "tool_input.edits",
+        "toolInput.edits",
+        "tool_response.edits",
+        "toolResponse.edits",
+    ):
+        node: Any = payload
+        for part in key.split("."):
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(part)
+        if isinstance(node, list):
+            edits.extend(edit for edit in node if isinstance(edit, dict))
+    return edits
+
+
+def _normalize_edit_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize hook payloads into per-file records for lineage capture."""
+    edits: list[dict[str, Any]] = []
+    command = command_of(payload)
+    if command:
+        edits.extend(_apply_patch_edits(command))
+        # Some Bash wrappers pass the structured edit list as JSON in command.
+        try:
+            decoded = json.loads(command)
+        except (TypeError, ValueError):
+            decoded = None
+        if isinstance(decoded, dict):
+            edits.extend(_nested_edits(decoded))
+        elif isinstance(decoded, list):
+            edits.extend(edit for edit in decoded if isinstance(edit, dict))
+    edits.extend(_nested_edits(payload))
+    if not edits and (_edit_path(payload) or file_path_of(payload)):
+        edits.append(payload)
+
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for edit in edits:
+        path = _edit_path(edit) or file_path_of(edit)
+        if not path:
+            continue
+        record = dict(edit)
+        record["path"] = path
+        key = (path, _line_range_of_edit(record), _edit_snippet(record))
+        if key not in seen:
+            normalized.append(record)
+            seen.add(key)
+    return normalized
+
+
 def prompt_of(payload: dict[str, Any]) -> str | None:
     value = _first(
         payload,
@@ -685,8 +796,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload = _read_stdin_payload()
         hint = str(args.event or "").strip()
-        if hint in {"user_prompt", "post_edit"}:
+        if hint == "user_prompt":
             return _run_lineage_capture(args, payload, hint)
+        if hint in {"post_edit", "bash_post"}:
+            capture_code = _run_lineage_capture(args, payload, hint)
+            if hint == "post_edit":
+                return capture_code
 
         nudge_event, fields = resolve_nudge_event(args.event, payload)
         if nudge_event is None:
@@ -791,11 +906,7 @@ def _run_lineage_capture(args: Any, payload: dict[str, Any], hint: str) -> int:
                         pass
             return 0
 
-        edits = payload.get("edits")
-        if isinstance(edits, list):
-            edit_payloads = [edit for edit in edits if isinstance(edit, dict)]
-        else:
-            edit_payloads = [payload]
+        edit_payloads = _normalize_edit_payloads(payload)
         if not edit_payloads:
             _debug("post_edit with no edits; staying silent")
             return 0

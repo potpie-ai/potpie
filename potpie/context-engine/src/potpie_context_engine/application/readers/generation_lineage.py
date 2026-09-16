@@ -144,7 +144,7 @@ def _row_in_window(row: ClaimRow, req: ReadRequest) -> bool:
     """Apply the inclusive valid_at window defensively after backend reads."""
     if req.since is not None and (row.valid_at is None or row.valid_at < req.since):
         return False
-    if req.until is not None and row.valid_at is not None and row.valid_at > req.until:
+    if req.until is not None and (row.valid_at is None or row.valid_at > req.until):
         return False
     return True
 
