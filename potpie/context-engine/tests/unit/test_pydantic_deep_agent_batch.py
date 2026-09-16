@@ -179,3 +179,34 @@ def test_run_batch_timeout_mirrors_sentry_metric(
 
     assert out.ok is False
     assert ("ce.agent.timeout_total", 1, {"result": "timeout"}) in counts
+
+
+def test_origin_trust_from_event_caps_payload_to_actor() -> None:
+    from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+        _origin_trust_from_event,
+    )
+    from potpie_context_engine.core.actor import Actor
+
+    spoofed = _event("e-spoof")
+    spoofed.payload = {"origin_trust": "trusted"}
+    assert _origin_trust_from_event(spoofed) == "unknown"
+
+    github = _event("e-gh")
+    github.payload = {"origin_trust": "trusted"}
+    github.actor = Actor(
+        user_id="webhook:github:1",
+        surface="webhook",
+        auth_method="webhook_signature",
+        trust_tier="trusted",
+    )
+    assert _origin_trust_from_event(github) == "trusted"
+
+    first_timer = _event("e-ft")
+    first_timer.payload = {"origin_trust": "trusted"}
+    first_timer.actor = Actor(
+        user_id="webhook:github:2",
+        surface="webhook",
+        auth_method="webhook_signature",
+        trust_tier="external",
+    )
+    assert _origin_trust_from_event(first_timer) == "external"

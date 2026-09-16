@@ -57,6 +57,7 @@ _RESERVED_EDGE_PROPERTY_KEYS: frozenset[str] = frozenset(
         "fact",
         "fact_embedding",
         "confidence",
+        "origin_trust",
         "valid_at",
     }
 )

@@ -236,6 +236,26 @@ There is no `reconcile_snapshot` op — it survives only as a stale comment in
 and the per-field `{field, authoritative, allowed_claims, review_required}` JSON,
 are not in code; `describe` returns flat `{authority, strength, description}`.)
 
+### 3.5 Origin trust — 3
+
+`TrustTier`: `trusted`, `external`, `unknown`. Default `unknown`.
+`UNTRUSTED_TRUST_TIERS` = `{external, unknown}`.
+
+This is authorship authentication, not epistemic confidence and not evidence
+artifact type:
+
+| Axis | Answers |
+|---|---|
+| `TruthClass` | How is this fact known? |
+| `SourceAuthority` | What kind of evidence artifact is cited? |
+| `TrustTier` | Was the content author authenticated as a project member? |
+
+GitHub `author_association` maps `OWNER` / `MEMBER` / `COLLABORATOR` to
+`trusted`, `CONTRIBUTOR` / `FIRST_TIME_CONTRIBUTOR` / `FIRST_TIMER` / `NONE` to
+`external`, and a missing value to `unknown`. Authenticated
+`POST /context/record` writes are `trusted`. Agents cannot self-declare
+`trusted`; the write boundary is the ceiling.
+
 ## 4. Evidence model
 
 Two coupled vocabularies map truth class onto rank strength and onto an
@@ -283,6 +303,15 @@ weighted **arithmetic** mean (`semantic_similarity` 1.3, `strength` 1.2,
 [`querying.md`](./querying.md). The single read-result shape carries only an
 envelope-level `overall_confidence` (a coverage rollup) — there is **no**
 per-claim "confidence" trust score on reads.
+
+Origin trust is a separate axis. `TrustTier` (`trusted` / `external` /
+`unknown`) records whether the *author* of the ingested content was
+authenticated, not how confident the claim is. It lives as a first-class
+`origin_trust` field on `ClaimRow`, next to `truth`. Missing values default to
+`unknown`. Egress fences `external` and `unknown` claim text so a coding agent
+cannot treat third-party PR bodies as indistinguishable project memory. This
+does not change the rule above: per-claim numeric confidence is still not
+surfaced on reads.
 
 ## 6. Identity keys, minting & the environment qualifier
 

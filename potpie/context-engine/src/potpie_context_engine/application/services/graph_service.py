@@ -51,6 +51,8 @@ from potpie_context_engine.core.graph_contract import (
     REVIEW_REQUIRED_OPS,
     SOURCE_AUTHORITIES,
     TRUTH_CLASSES,
+    most_conservative_origin_trust,
+    origin_trust_or_default,
 )
 from potpie_context_engine.core.graph_entity_summary import normalize_entity_properties
 from potpie_context_engine.core.graph_views import (
@@ -1151,6 +1153,10 @@ def _normalize_read_item(
             "relations": [dict(rel) for rel in relations],
             "source_refs": list(source_refs),
             "truth": _first_truth(relations) or _str_or_none(payload.get("truth")),
+            "origin_trust": most_conservative_origin_trust(
+                [rel.get("origin_trust") for rel in relations]
+                + [origin_trust_or_default(payload.get("origin_trust"))]
+            ),
             "coverage_status": item.coverage_status,
             "breakdown": dict(item.breakdown),
         }
@@ -1185,6 +1191,7 @@ def _normalize_read_item(
         "relations": [],
         "source_refs": list(source_refs),
         "truth": _str_or_none(payload.get("truth")),
+        "origin_trust": origin_trust_or_default(payload.get("origin_trust")),
         "coverage_status": item.coverage_status,
         "breakdown": dict(item.breakdown),
     }
@@ -1204,6 +1211,7 @@ def _normalize_read_relation(rel: Mapping[str, Any]) -> dict[str, Any]:
         "fact": rel.get("fact"),
         "source_refs": list(_string_tuple(rel.get("source_refs"))),
         "truth": rel.get("truth"),
+        "origin_trust": origin_trust_or_default(rel.get("origin_trust")),
         "environment": rel.get("environment"),
         "valid_at": rel.get("valid_at"),
         "valid_until": rel.get("valid_until"),
@@ -1596,6 +1604,9 @@ def _assemble_inline_relation_items(
                 score=top.score,
                 coverage_status=top.coverage_status,
                 breakdown=dict(top.breakdown),
+                origin_trust=most_conservative_origin_trust(
+                    [rel.get("origin_trust") for rel in relations]
+                ),
                 payload={
                     "entity": {
                         "key": entity_key,
@@ -1661,6 +1672,7 @@ def _relation_payload(
         "source_refs": list(payload.get("source_refs") or []),
         "source_system": payload.get("source_system"),
         "truth": payload.get("truth"),
+        "origin_trust": origin_trust_or_default(payload.get("origin_trust")),
         "environment": payload.get("environment"),
         "valid_at": payload.get("valid_at"),
         "valid_until": payload.get("valid_until"),

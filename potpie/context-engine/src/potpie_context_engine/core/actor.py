@@ -36,6 +36,7 @@ class Actor:
     surface: ActorSurface
     client_name: str | None = None
     auth_method: ActorAuthMethod = "api_key"
+    trust_tier: str | None = None
 
     def to_properties(self) -> dict[str, Any]:
         """Render as Neo4j ``actor_*`` properties (skip empties)."""
@@ -46,6 +47,8 @@ class Actor:
         }
         if self.client_name:
             out["actor_client_name"] = self.client_name
+        if self.trust_tier:
+            out["actor_trust_tier"] = self.trust_tier
         return out
 
     def to_payload(self) -> dict[str, Any]:
@@ -55,6 +58,7 @@ class Actor:
             "surface": self.surface,
             "client_name": self.client_name,
             "auth_method": self.auth_method,
+            "trust_tier": self.trust_tier,
         }
 
 
