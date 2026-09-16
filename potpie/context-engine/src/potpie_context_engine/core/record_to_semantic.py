@@ -75,7 +75,7 @@ def record_to_semantic_request(
     )
     raw_trust = request.metadata.get("origin_trust")
     origin_trust = (
-        str(raw_trust) if is_trust_tier(raw_trust) else TrustTier.trusted.value
+        str(raw_trust) if is_trust_tier(raw_trust) else TrustTier.unknown.value
     )
     return SemanticMutationRequest(
         pot_id=request.pot_id,

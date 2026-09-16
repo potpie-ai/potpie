@@ -1155,7 +1155,7 @@ def _normalize_read_item(
             "truth": _first_truth(relations) or _str_or_none(payload.get("truth")),
             "origin_trust": most_conservative_origin_trust(
                 [rel.get("origin_trust") for rel in relations]
-                + [payload.get("origin_trust")]
+                + [origin_trust_or_default(payload.get("origin_trust"))]
             ),
             "coverage_status": item.coverage_status,
             "breakdown": dict(item.breakdown),

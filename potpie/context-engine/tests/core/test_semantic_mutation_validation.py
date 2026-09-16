@@ -749,3 +749,27 @@ def test_lowering_merge_duplicate_entities_writes_merge_record() -> None:
     assert edge.properties["merge_external_ids"]["losing"]["source"].endswith("v1.yaml")
     assert plan.batch.invalidations == []
     assert plan.accepted_ops[0].claim_keys
+
+
+def test_record_to_semantic_defaults_origin_trust_unknown() -> None:
+    from potpie_context_engine.core.ports.agent_context import RecordRequest
+    from potpie_context_engine.core.record_to_semantic import record_to_semantic_request
+
+    req = record_to_semantic_request(
+        RecordRequest(pot_id="p", record_type="note", summary="hello"),
+        record_type="note",
+        source_id="src-1",
+    )
+    assert req.origin_trust == "unknown"
+
+    trusted = record_to_semantic_request(
+        RecordRequest(
+            pot_id="p",
+            record_type="note",
+            summary="hello",
+            metadata={"origin_trust": "trusted"},
+        ),
+        record_type="note",
+        source_id="src-2",
+    )
+    assert trusted.origin_trust == "trusted"

@@ -26,6 +26,7 @@ import cycle.
 from __future__ import annotations
 
 import hashlib
+import re
 from enum import StrEnum
 
 # --- Versions ---------------------------------------------------------------
@@ -308,16 +309,12 @@ def most_conservative_origin_trust(
 ) -> str:
     """Fail-safe rollup: ``external`` beats ``unknown`` beats ``trusted``.
 
-    Missing values are ignored so a trusted relation is not downgraded just
-    because a sibling payload omitted the field. An empty input is ``unknown``.
+    Missing or invalid values count as ``unknown`` so an omitted field never
+    grants implicit trust next to a trusted sibling.
     """
-    tiers = [
-        origin_trust_or_default(value)
-        for value in values
-        if value is not None and str(value).strip()
-    ]
-    if not tiers:
+    if not values:
         return DEFAULT_TRUST_TIER
+    tiers = [origin_trust_or_default(value) for value in values]
     if TrustTier.external.value in tiers:
         return TrustTier.external.value
     if TrustTier.unknown.value in tiers:
@@ -325,10 +322,18 @@ def most_conservative_origin_trust(
     return TrustTier.trusted.value
 
 
+_EMBEDDED_FENCE_RE = re.compile(r"-----(BEGIN|END)\s+UNTRUSTED", re.IGNORECASE)
+
+
+def _escape_embedded_fence_markers(text: str) -> str:
+    """Break marker-shaped substrings so they cannot close the wrapper."""
+    return _EMBEDDED_FENCE_RE.sub(r"----- \1 UNTRUSTED", text)
+
+
 def render_untrusted_data_fence(label: str, text: str) -> str:
     """Wrap attacker-influenceable text in the shared UNTRUSTED DATA fence."""
     marker = (label or "DATA").strip().upper() or "DATA"
-    body = text if text is not None else ""
+    body = _escape_embedded_fence_markers(text if text is not None else "")
     return (
         f"{UNTRUSTED_FENCE_PREAMBLE}\n"
         f"-----BEGIN UNTRUSTED {marker}-----\n"

@@ -49,6 +49,7 @@ from potpie_context_engine.core.reconciliation_validation import (
 from potpie_context_engine.core.graph_contract import (
     evidence_strength_for_truth,
     origin_trust_or_default,
+    resolve_origin_trust,
 )
 from potpie_context_engine.core.graph_entity_summary import (
     merge_entity_display_properties,
@@ -123,6 +124,7 @@ class _Mutation:
                 validated_plan,
                 expected_pot_id=expected_pot_id,
                 mutation_id=mutation_id,
+                provenance_context=provenance_context,
             ),
             on_completed=self._notify,
         )
@@ -146,8 +148,12 @@ class _Mutation:
         *,
         expected_pot_id: str,
         mutation_id: str,
+        provenance_context: ProvenanceContext | None = None,
     ) -> MutationResult:
         summary = MutationSummary()
+        cap = (
+            provenance_context.origin_trust if provenance_context is not None else None
+        )
         for ent in plan.entity_upserts:
             self.store.set_entity_label(
                 pot_id=expected_pot_id, entity_key=ent.entity_key, labels=ent.labels
@@ -165,6 +171,11 @@ class _Mutation:
             )
             summary.entity_upserts_applied += 1
         for edge in plan.edge_upserts:
+            declared = edge.properties.get("origin_trust")
+            edge.properties["origin_trust"] = resolve_origin_trust(
+                declared=declared if isinstance(declared, str) else None,
+                context=cap,
+            )
             self._upsert_claim_row(
                 self._build_claim_row(
                     edge,
