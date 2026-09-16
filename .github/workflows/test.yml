@@ -188,6 +188,21 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      protocol-falkordb:
+        image: falkordb/falkordb:v4.16.0
+        ports: ["6380:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      protocol-neo4j:
+        image: neo4j:5.26-community
+        env:
+          NEO4J_AUTH: neo4j/protocol-test
+        ports: ["7687:7687"]
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p protocol-test 'RETURN 1'"
+          --health-interval 10s --health-timeout 10s --health-retries 20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -213,6 +228,10 @@ jobs:
         env:
           POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
           ENV: "development"
+          PROTOCOL_TEST_FALKORDB_URL: redis://127.0.0.1:6380
+          PROTOCOL_TEST_NEO4J_URI: bolt://127.0.0.1:7687
+          PROTOCOL_TEST_NEO4J_USERNAME: neo4j
+          PROTOCOL_TEST_NEO4J_PASSWORD: protocol-test
         run: uv run --project . pytest tests -m "not premerge_journey"
 
   premerge-cli-journey:

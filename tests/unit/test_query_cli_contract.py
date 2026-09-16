@@ -30,6 +30,7 @@ faked, and only in the one test that needs the store to refuse.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 import typer
@@ -117,6 +118,7 @@ class _Host:
     def __init__(self) -> None:
         self.pots = _Pots()
         self.agent_context = _AgentContext()
+        self.graph = SimpleNamespace(catalog=lambda request: SimpleNamespace(views=()))
 
 
 def _app() -> typer.Typer:
@@ -733,12 +735,41 @@ def test_record_help_names_the_required_detail_per_type():
 
 
 @pytest.mark.parametrize("command", ["resolve", "search"])
-def test_unknown_include_is_a_validation_failure(command):
+@pytest.mark.parametrize("include", ["documents", "protocols"])
+def test_unknown_include_is_a_validation_failure(command, include):
     _common.set_host(_host())
-    result = CliRunner().invoke(_app(), [command, "rollback", "--include", "documents"])
+    result = CliRunner().invoke(_app(), [command, "rollback", "--include", include])
     assert result.exit_code == 1
     assert "Unknown include families" in result.output
     assert "--include docs" in result.output
+
+
+@pytest.mark.parametrize("command", ["resolve", "search"])
+def test_extension_include_uses_selected_hosts_catalog(command):
+    host = _host()
+    catalog_requests = []
+
+    def catalog(request):
+        catalog_requests.append(request)
+        return SimpleNamespace(views=({"v1_include": "protocols", "backed": True},))
+
+    host.graph.catalog = catalog
+    result = CliRunner().invoke(_app(), [command, "status 2", "--include", "protocols"])
+    assert result.exit_code == 0, result.output
+    assert [request.pot_id for request in catalog_requests] == ["p"]
+    assert host.agent_context.requests[0].include == ("protocols",)
+
+
+@pytest.mark.parametrize("command", ["resolve", "search"])
+def test_standard_include_does_not_fetch_catalog(command):
+    host = _host()
+
+    def unexpected_catalog(request):
+        pytest.fail("ordinary include must not add a catalog roundtrip")
+
+    host.graph.catalog = unexpected_catalog
+    result = CliRunner().invoke(_app(), [command, "rollback", "--include", "docs"])
+    assert result.exit_code == 0, result.output
 
 
 def test_passage_view_keeps_snippet_and_fetch_instruction_in_compact_output():

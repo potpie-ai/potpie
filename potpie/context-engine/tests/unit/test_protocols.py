@@ -2,10 +2,8 @@
 
 import json
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
-from potpie_context_core.api import build_graph_runtime
 from potpie_context_core.ports.agent_context import ResolveRequest
 from potpie_context_core.ports.graph_service import (
     GraphCatalogRequest,
@@ -13,97 +11,17 @@ from potpie_context_core.ports.graph_service import (
     GraphReadRequest,
 )
 from potpie_context_core.protocols import protocol_entity
+from tests.protocol_fixture import FIXTURE, large_operations, read, seeded_runtime
 
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
-from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
-    LocalJsonGraphPlanStore,
-)
 from potpie_context_engine.api import protocols_definition
-
-FIXTURE = json.loads(
-    (Path(__file__).parents[1] / "fixtures/protocols/fixture.json").read_text()
-)
 
 
 @pytest.fixture
 def runtime(tmp_path):
-    from potpie_context_engine.adapters.outbound.resources import LocalResourceStore
-    from potpie_context_engine.testing import write_import_directory
-
-    store = LocalResourceStore(home=tmp_path / "resources")
-    source = (Path(__file__).parents[1] / "fixtures/protocols/demo.md").read_text()
-    directory = write_import_directory(
-        tmp_path / "import",
-        [
-            {
-                "slug": "contract",
-                "title": "Synthetic Demo",
-                "summary": "Demo source contract",
-                "ordinal": 0,
-                "content_hash": FIXTURE["evidence"]["metadata"]["digest"],
-                "chunks": [{"label": "Demo definitions", "text": source}],
-            }
-        ],
-    )
-    store.import_dir(
-        pot_id="protocol-test",
-        slug=FIXTURE["source_ref"].split("/")[3],
-        source_dir=directory,
-    )
-    modbus = (Path(__file__).parents[1] / "fixtures/protocols/modbus-03.md").read_text()
-    directory = write_import_directory(
-        tmp_path / "modbus-import",
-        [
-            {
-                "slug": "contract",
-                "title": "Modbus 03",
-                "summary": "Normal function-03 PDU",
-                "ordinal": 0,
-                "content_hash": "modbus-03-v1",
-                "chunks": [{"label": "Normal PDU definitions", "text": modbus}],
-            }
-        ],
-    )
-    store.import_dir(
-        pot_id="protocol-test",
-        slug=FIXTURE["modbus_source_ref"].split("/")[3],
-        source_dir=directory,
-    )
-    backend = InMemoryGraphBackend()
-    runtime = build_graph_runtime(
-        backend=backend,
-        plan_store=LocalJsonGraphPlanStore(home=tmp_path),
-        definition=protocols_definition(),
-        resource_store=store,
-    )
-    proposal = runtime.workbench.propose(
-        {"operations": FIXTURE["operations"]}, pot_id="protocol-test"
-    )
-    assert proposal.ok, proposal.to_dict()
-    receipt = runtime.workbench.commit(
-        proposal.plan_id, pot_id="protocol-test", verify=True
-    )
-    assert receipt.ok, receipt.to_dict()
-    assert receipt.verification.ok, receipt.verification.to_dict()
-    assert receipt.verification.content_readback["checked_entities"]
-    return runtime
-
-
-def read(runtime, anchor="request", **kwargs):
-    scope = {"anchor_entity_key": FIXTURE["names"].get(anchor, anchor)}
-    scope.update(kwargs.pop("scope", {}))
-    return runtime.graph.read(
-        GraphReadRequest(
-            pot_id="protocol-test",
-            subgraph="protocols",
-            view="message_context",
-            scope=scope,
-            detail="full",
-            **kwargs,
-        )
-    )
+    return seeded_runtime(tmp_path, InMemoryGraphBackend())
 
 
 def test_full_read_keeps_order_types_evidence_and_compact_followup(runtime):
@@ -127,6 +45,41 @@ def test_full_read_keeps_order_types_evidence_and_compact_followup(runtime):
     assert read(
         runtime, anchor=compact["retrieval"]["scope"]["anchor_entity_key"]
     ).items
+
+
+def test_default_resolve_adds_no_protocol_calls_or_payload(tmp_path, monkeypatch):
+    from potpie_context_core.api import build_graph_runtime
+
+    from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+        LocalJsonGraphPlanStore,
+    )
+
+    backend = InMemoryGraphBackend()
+    enabled = seeded_runtime(tmp_path, backend)
+    disabled = build_graph_runtime(
+        backend=backend, plan_store=LocalJsonGraphPlanStore(home=tmp_path / "base")
+    )
+    calls = []
+    find_claims = backend.claim_query.find_claims
+
+    def counted(self, filter_):
+        calls.append(filter_)
+        return find_claims(filter_)
+
+    monkeypatch.setattr(type(backend.claim_query), "find_claims", counted)
+    request = ResolveRequest(
+        pot_id="protocol-test", task="Why is the unrelated worker failing?"
+    )
+    baseline = disabled.graph.resolve(request)
+    baseline_calls = list(calls)
+    calls.clear()
+    extended = enabled.graph.resolve(request)
+    assert baseline_calls and calls == baseline_calls
+    assert [item.payload for item in extended.items] == [
+        item.payload for item in baseline.items
+    ]
+    assert extended.coverage == baseline.coverage
+    assert not any(item.family == "protocols" for item in extended.items)
 
 
 def test_discovery_filters_anchor_routing_and_empty_is_unknown(runtime):
@@ -274,31 +227,6 @@ def test_modbus_03_request_and_response_are_distinct(runtime):
         "registers",
     ]
     assert response["fields"][2]["array_length_rule"] == "request.quantity"
-
-
-def large_operations():
-    import copy
-
-    definition, template = FIXTURE["large_template"]
-    operations = [definition]
-    for index in range(300):
-        op = copy.deepcopy(template)
-        op["object"] = protocol_entity(
-            "ProtocolField",
-            properties={
-                "message_key": definition["object"]["key"],
-                "path": f"field.{index:03}",
-                "ordinal": index,
-                "byte_offset": index,
-                "type": "uint8",
-            },
-            parent_name=definition["object"]["name"],
-        )
-        op["description"] = (
-            f"Synthetic large field {index} uint8 at byte offset {index}"
-        )
-        operations.append(op)
-    return operations
 
 
 def test_native_json_encoding_parity_and_arbitrary_properties_private(runtime):

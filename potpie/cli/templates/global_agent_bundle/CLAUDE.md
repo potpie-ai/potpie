@@ -1,24 +1,13 @@
 <!-- potpie-start -->
-Potpie is durable project memory: repo/source mappings, decisions, infra,
-changes, bugs, docs, and preferences for agents. Use it when it can materially
-help with repo context, decisions, architecture, bugs, or durable history.
-Do not run Potpie checks for simple Q&A or trivial edits. Share one discovery
-pass across relevant skills: run `potpie resolve "<task>"`, scope-only
-`potpie graph read --subgraph decisions --view preferences_for_scope --repo current`
-for code work (no `--query`), and untyped `potpie graph search-entities "<name>"`
-for named entities with unknown keys concurrently.
-Skip inapplicable branches and reuse current reads or hook context for the same
-task, pot, and scope. Run `potpie status` alongside reads if health needs checking.
-Use a known explicit pot selector; resolve ambiguous routing first and check pot
-IDs before combining results. Follow returned keys with needed neighborhoods or
-views and chunk IDs with batched `resource get`; parallelize those follow-ups
-once inputs are known. Stop when evidence and applicable constraints are covered.
-Before ingestion, inspect
-`potpie graph catalog --profile full` and follow `potpie-graph` ontology
-selection: classify facts, decisions, preferences, and events before choosing
-a writer. Use `record` for supported structured learnings and semantic plans
-for topology/features even for one fact. Record only durable learnings. When an answer used Potpie, show the `potpie`
-commands behind it verbatim (empty reads in one line) and draw a mermaid diagram
-only when the answer is a shape (`flowchart` for entities and edges, `timeline`
-for ordered events), never for a single fact or a list.
+Potpie is durable project memory: repo context, decisions, infra, bugs, docs,
+and preferences. Use it when relevant; skip simple Q&A and trivial edits.
+Follow `potpie-graph` for one shared discovery pass: reuse current context,
+resolve the task, read scoped preferences for code, and find unknown entity
+keys concurrently. Use `potpie status` only when health needs checking.
+Keep the selected pot explicit; resolve ambiguity before combining facts.
+Follow returned keys and fetch source chunks as needed. Before ingestion,
+inspect `potpie graph catalog --profile full` and follow the skill's ontology
+and write guidance. Record durable learnings only. Show commands used; draw
+diagrams only when they explain a shape. Detailed routing and recipes live in
+the skills.
 <!-- potpie-end -->

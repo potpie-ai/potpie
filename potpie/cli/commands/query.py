@@ -8,6 +8,19 @@ become new ``--intent`` / ``--include`` / ``--type`` values, never new commands.
 from __future__ import annotations
 
 import typer
+from potpie_context_core.agent_context_port import (
+    CONTEXT_INCLUDE_VALUES,
+    CONTEXT_INTENTS,
+    READER_BACKED_INCLUDES,
+)
+from potpie_context_core.context_records import REQUIRED_DETAIL_KEYS
+from potpie_context_core.ports.agent_context import (
+    RecordRequest,
+    ResolveRequest,
+    SearchRequest,
+)
+from potpie_context_core.ports.graph_service import GraphCatalogRequest
+from potpie_context_core.source_references import RESOLVE_MODES
 
 from potpie.cli.commands._common import (
     EXIT_VALIDATION,
@@ -25,19 +38,6 @@ from potpie.cli.telemetry.onboarding_events import (
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
-from potpie_context_core.agent_context_port import (
-    CONTEXT_INTENTS,
-    CONTEXT_INCLUDE_VALUES,
-    READER_BACKED_INCLUDES,
-    unsupported_include_values,
-)
-from potpie_context_core.context_records import REQUIRED_DETAIL_KEYS
-from potpie_context_core.ports.agent_context import (
-    RecordRequest,
-    ResolveRequest,
-    SearchRequest,
-)
-from potpie_context_core.source_references import RESOLVE_MODES
 
 # Spelled out in --help because the values are not guessable: an agent with no
 # list in front of it reaches for the subgraph names it saw in `graph catalog`
@@ -47,6 +47,7 @@ _INCLUDE_HELP = (
     "Comma-separated include families: "
     + ", ".join(sorted(READER_BACKED_INCLUDES - {"raw_graph"}))
     + ". docs searches summaries and document text; resources searches text only."
+    + " Enabled extensions may advertise additional families in graph catalog."
 )
 _INTENT_HELP = "One of: " + ", ".join(sorted(CONTEXT_INTENTS))
 _RESOLVE_INTENT_HELP = (
@@ -70,16 +71,27 @@ _DETAIL_HELP = (
 )
 
 
-def _split(value: str | None) -> tuple[str, ...]:
+def _split(value: str | None, *, host, pot_id: str) -> tuple[str, ...]:
     if not value:
         return ()
     values = tuple(v.strip() for v in value.split(",") if v.strip())
-    unknown = unsupported_include_values(list(values))
+    allowed = set(CONTEXT_INCLUDE_VALUES)
+    if set(values) - allowed:
+        # Extensions are selected by the serving host, including managed hosts
+        # whose settings need not match this client. Only extension/unknown
+        # includes need discovery; ordinary queries keep their existing cost.
+        catalog = host.graph.catalog(GraphCatalogRequest(pot_id=pot_id))
+        allowed.update(
+            include
+            for view in catalog.views
+            if view.get("backed") and isinstance(include := view.get("v1_include"), str)
+        )
+    unknown = sorted(set(values) - allowed)
     if unknown:
         fail(
             code="validation_error",
             message=f"Unknown include families: {', '.join(unknown)}",
-            detail={"argument": "--include", "allowed": sorted(CONTEXT_INCLUDE_VALUES)},
+            detail={"argument": "--include", "allowed": sorted(allowed)},
             next_action="Use --include docs for documents, or see --help for valid families.",
         )
     return values
@@ -191,7 +203,7 @@ def register(root: typer.Typer) -> None:
                     pot_id=pot_id,
                     task=task,
                     intent=intent,
-                    include=_split(include),
+                    include=_split(include, host=host, pot_id=pot_id),
                     mode=mode,
                 )
             )
@@ -231,7 +243,7 @@ def register(root: typer.Typer) -> None:
                 SearchRequest(
                     pot_id=pot_id,
                     query=query,
-                    include=_split(include),
+                    include=_split(include, host=host, pot_id=pot_id),
                     intent=intent,
                 )
             )
