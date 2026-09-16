@@ -1604,6 +1604,9 @@ def _assemble_inline_relation_items(
                 score=top.score,
                 coverage_status=top.coverage_status,
                 breakdown=dict(top.breakdown),
+                origin_trust=most_conservative_origin_trust(
+                    [rel.get("origin_trust") for rel in relations]
+                ),
                 payload={
                     "entity": {
                         "key": entity_key,
