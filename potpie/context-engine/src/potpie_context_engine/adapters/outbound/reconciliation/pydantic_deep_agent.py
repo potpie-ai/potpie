@@ -37,7 +37,8 @@ from potpie_context_engine.core.event_playbooks import (
     render_playbooks_section,
 )
 from potpie_context_engine.core.graph_contract import (
-    DEFAULT_TRUST_TIER,
+    origin_trust_from_actor,
+    resolve_origin_trust,
     is_trust_tier,
 )
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
@@ -245,13 +246,15 @@ def _skills_enabled_for(ctx: BatchAgentContext) -> bool:
 def _origin_trust_from_event(ev: ContextEvent) -> str:
     payload = ev.payload if isinstance(ev.payload, dict) else {}
     raw = payload.get("origin_trust")
-    if is_trust_tier(raw):
-        return str(raw)
     actor = getattr(ev, "actor", None)
-    actor_tier = getattr(actor, "trust_tier", None) if actor is not None else None
-    if is_trust_tier(actor_tier):
-        return str(actor_tier)
-    return DEFAULT_TRUST_TIER
+    context = origin_trust_from_actor(
+        trust_tier=getattr(actor, "trust_tier", None) if actor is not None else None,
+        auth_method=getattr(actor, "auth_method", None) if actor is not None else None,
+    )
+    return resolve_origin_trust(
+        declared=str(raw) if is_trust_tier(raw) else None,
+        context=context,
+    )
 
 
 def _provenance_from_event(ev: ContextEvent, *, agent_name: str) -> ProvenanceContext:

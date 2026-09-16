@@ -602,10 +602,12 @@ def create_context_router(
     )
     def post_events_reconcile(
         body: ContextEventHttpBody,
-        actor: Any = Depends(require_auth),
+        request: Request,
+        auth_user: Any = Depends(require_auth),
         container: IngestionServerContainer = Depends(get_container),
         db: Session = Depends(get_db),
     ):
+        actor = _resolve_actor(auth_user, request)
         _enforce(
             container,
             actor=actor,
@@ -631,6 +633,7 @@ def create_context_router(
             source_event_id=body.source_event_id,
             artifact_refs=tuple(body.artifact_refs),
             occurred_at=body.occurred_at,
+            actor=actor,
         )
         try:
             out = svc.submit(req)
