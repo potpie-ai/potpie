@@ -119,3 +119,11 @@ If the source may matter but the canonical update is uncertain, use
 
 Debug memory is harness-led: investigate and verify before writing. Do not use
 scanner-driven graph updates or record a bug/fix from filenames or logs alone.
+
+## Protocol definitions and codecs
+
+When the source or question concerns telegrams, message layouts, field/value
+meanings, revisions or decoder changes, check catalog for `protocols.message_context`
+and follow [the shared protocol reference](../potpie-graph/references/protocols.md).
+Use explicit protocol reads alongside existing Service/CodeAsset context. Preserve
+immutable source evidence and partial coverage; capabilities do not establish traffic.

@@ -100,6 +100,16 @@ class ResourceFacade:
         step further — it is the only one of the three that can be recomputed
         from the others.
         """
+        from .protocol_resources import protect_protocol_source
+
+        protect_protocol_source(
+            self.store,
+            self.claims,
+            pot_id=pot_id,
+            slug=slug,
+            files=files,
+            source_dir=source_dir,
+        )
         manifest = self.store.import_dir(
             pot_id=pot_id,
             slug=slug,
@@ -268,6 +278,9 @@ class ResourceFacade:
             if getattr(exc, "code", None) == RESOURCE_NOT_FOUND:
                 return ResourceDeleteResult(removed=False)
             raise
+        from .protocol_resources import protect_protocol_source
+
+        protect_protocol_source(self.store, self.claims, pot_id=pot_id, slug=slug)
         graph_result = None
         if self.graph is not None and sections:
             slugs = tuple(section.slug for section in sections)

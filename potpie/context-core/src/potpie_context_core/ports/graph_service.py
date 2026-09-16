@@ -97,6 +97,7 @@ class GraphCatalogResult:
     predicates: tuple[Mapping[str, Any], ...]
     match_mode: str = "lexical"
     source_authorities: tuple[str, ...] = ()
+    extensions: Mapping[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +105,7 @@ class GraphCatalogResult:
             "graph_contract_version": self.graph_contract_version,
             "ontology_version": self.ontology_version,
             "commands": list(self.commands),
+            "extensions": dict(self.extensions),
             "truth_classes": list(self.truth_classes),
             "mutation_operations": list(self.mutation_operations),
             "review_required_operations": list(self.review_required_operations),
@@ -358,6 +360,10 @@ def read_item_for_detail(
     item: Mapping[str, Any], *, detail: str, relations: str
 ) -> dict[str, Any]:
     payload = dict(item)
+    if payload.get("kind") == "protocol_message":
+        from potpie_context_core.protocol_read import protocol_item_for_detail
+
+        return protocol_item_for_detail(payload, detail=detail)
     relation_items = _relation_items(payload.get("relations"))
 
     if detail == "full":

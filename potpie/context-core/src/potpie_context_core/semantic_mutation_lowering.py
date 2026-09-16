@@ -69,6 +69,7 @@ def lower_semantic_request(
     plan: SemanticMutationPlan,
     *,
     definition: GraphDefinition | None = None,
+    claim_query=None,
 ) -> SemanticMutationPlan:
     """Lower the plan's accepted ops into ``plan.batch`` + ``plan.provenance``.
 
@@ -78,13 +79,13 @@ def lower_semantic_request(
     """
     token = _CURRENT_DEFINITION.set(definition or DEFAULT_GRAPH_DEFINITION)
     try:
-        return _lower_semantic_request(request, plan)
+        return _lower_semantic_request(request, plan, claim_query=claim_query)
     finally:
         _CURRENT_DEFINITION.reset(token)
 
 
 def _lower_semantic_request(
-    request: SemanticMutationRequest, plan: SemanticMutationPlan
+    request: SemanticMutationRequest, plan: SemanticMutationPlan, *, claim_query=None
 ) -> SemanticMutationPlan:
     batch = MutationBatch()
     provenance = _provenance_from_request(request)
@@ -100,6 +101,7 @@ def _lower_semantic_request(
             request=request,
             batch=batch,
             entity_by_key=entity_by_key,
+            claim_query=claim_query,
         )
         new_accepted.append(
             LoweredOperation(
@@ -131,6 +133,7 @@ def _lower_op(
     request: SemanticMutationRequest,
     batch: MutationBatch,
     entity_by_key: dict[str, EntityUpsert],
+    claim_query=None,
 ) -> list[str]:
     name = op.op
     if name == SemanticMutationOp.upsert_entity.value:
@@ -168,7 +171,12 @@ def _lower_op(
             entity_by_key=entity_by_key,
         )
     if name == SemanticMutationOp.patch_entity.value:
-        _lower_patch_entity(op, entity_by_key=entity_by_key)
+        _lower_patch_entity(
+            op,
+            entity_by_key=entity_by_key,
+            claim_query=claim_query,
+            pot_id=request.pot_id,
+        )
         return []
     if name == SemanticMutationOp.transition_state.value:
         return _lower_transition_state(
@@ -493,10 +501,47 @@ def _lower_patch_entity(
     op: SemanticMutation,
     *,
     entity_by_key: dict[str, EntityUpsert],
+    claim_query=None,
+    pot_id: str,
 ) -> None:
     if op.subject is None:
         return
     props = dict(op.patch)
+    if "protocols" in _CURRENT_DEFINITION.get().extensions:
+        from potpie_context_core.protocols import PREFIXES, normalize_properties
+
+        label = op.subject.type or _CURRENT_DEFINITION.get().entity_by_key_prefix.get(
+            op.subject.key.partition(":")[0]
+        )
+        if label in PREFIXES:
+            previous = entity_by_key.get(op.subject.key)
+            stored = (
+                dict(
+                    claim_query.entity_properties(
+                        pot_id=pot_id, entity_key=op.subject.key
+                    )
+                )
+                if claim_query is not None
+                else {}
+            )
+            if previous is not None:
+                stored.update(previous.properties)
+            corrections = normalize_properties(stored, label).get(
+                "correction_evidence", {}
+            )
+            corrections = dict(corrections) if isinstance(corrections, Mapping) else {}
+            evidence = [
+                {
+                    **dict(ev.metadata),
+                    "source_ref": ev.source_ref,
+                    "authority": ev.authority,
+                }
+                for ev in op.evidence
+            ]
+            props["correction_evidence"] = {
+                **corrections,
+                **{key: evidence for key in op.patch},
+            }
     if op.reason:
         props["last_patch_reason"] = op.reason
     if op.expected_entity_version:
@@ -688,7 +733,7 @@ def _claim_properties(
     fact = op.description or _synthesize_fact(subject_key, predicate, object_key)
     source_refs = [ev.source_ref for ev in op.evidence]
     evidence_dicts = [
-        {"source_ref": ev.source_ref, "authority": ev.authority, **dict(ev.metadata)}
+        {**dict(ev.metadata), "source_ref": ev.source_ref, "authority": ev.authority}
         for ev in op.evidence
     ]
     valid_at = _valid_at_for_claim(op, truth=truth)

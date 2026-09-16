@@ -462,3 +462,23 @@ def test_ledger_pull_does_not_write(tmp_path, monkeypatch):
         ResolveRequest(pot_id=pot.pot_id, include=("raw_graph",))
     )
     assert len(env.items) == 0
+
+
+def test_protocol_startup_opt_in_and_explicit_definition(monkeypatch, tmp_path):
+    from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION
+    from potpie_context_core.ports.graph_service import GraphCatalogRequest
+
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    monkeypatch.setenv("CONTEXT_ENGINE_PROTOCOLS_ENABLED", "true")
+    monkeypatch.setenv("CONTEXT_ENGINE_RESOURCE_INDEX", "none")
+    enabled = build_host_shell(backend=InMemoryGraphBackend())
+    assert enabled.graph.catalog(GraphCatalogRequest(pot_id="p")).extensions == {
+        "protocols": "1"
+    }
+    base = build_host_shell(
+        backend=InMemoryGraphBackend(), definition=DEFAULT_GRAPH_DEFINITION
+    )
+    assert "protocols" not in base.graph.backed_includes
+    monkeypatch.delenv("CONTEXT_ENGINE_PROTOCOLS_ENABLED")
+    disabled = build_host_shell(backend=InMemoryGraphBackend())
+    assert "protocols" not in disabled.graph.backed_includes

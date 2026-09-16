@@ -159,3 +159,21 @@ def test_post_setup_wizard_runs_skills_after_integrations(
     setup_ux.maybe_prompt_github_login(repo=repo, setup_agent="claude")
 
     assert calls == ["agents", "claude"]
+
+
+def test_graph_protocol_reference_installs_and_refreshes_with_skill(tmp_path):
+    from potpie_context_engine.adapters.outbound.skills.agent_installer import (
+        install_agent_bundle,
+    )
+
+    install_agent_bundle(tmp_path, skill_ids=["potpie-graph"], support_files=False)
+    skill = tmp_path / ".agents/skills/potpie-graph"
+    reference = skill / "references/protocols.md"
+    assert reference.exists()
+    assert "protocols.message_context" in reference.read_text()
+    reference.write_text("outdated")
+    install_agent_bundle(
+        tmp_path, skill_ids=["potpie-graph"], support_files=False, force=True
+    )
+    assert "protocols.message_context" in reference.read_text()
+    assert "references/protocols.md" in (skill / "SKILL.md").read_text()

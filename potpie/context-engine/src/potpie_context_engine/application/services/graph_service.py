@@ -55,6 +55,7 @@ from potpie_context_core.graph_views import (
     include_guess_guidance,
 )
 from potpie_context_core.graph_workbench_ontology import (
+    ExampleCommand,
     ViewContract,
     describe_contract,
     ontology_contract,
@@ -120,6 +121,7 @@ class DefaultGraphService:
     )
     validator: Callable[[SemanticMutationRequest], Any] | None = None
     lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None
+    resource_store: Any = None
     resource_index: Any = None
     """Backs the ``resources`` include family. ``None`` degrades it, labeled.
 
@@ -137,14 +139,18 @@ class DefaultGraphService:
             claim_query=self.backend.claim_query,
             reader_registry=self.definition.readers,
             resource_index=self.resource_index,
+            resource_store=self.resource_store,
         )
+        self._orchestrator.builder.view_by_include = self.definition.view_by_include
         if self.validator is None:
             self.validator = lambda request: validate_semantic_request(
-                request, definition=self.definition
+                request,
+                definition=self.definition,
+                claim_query=self.backend.claim_query,
             )
         if self.lowerer is None:
             self.lowerer = lambda request, plan: lower_semantic_request(
-                request, plan, definition=self.definition
+                request, plan, definition=self.definition, claim_query=self.backend.claim_query
             )
 
     @property
@@ -265,9 +271,16 @@ class DefaultGraphService:
             predicates=tuple(_catalog_predicates(self.definition)),
             match_mode=self._match_mode(),
             source_authorities=tuple(sorted(SOURCE_AUTHORITIES)),
+            extensions=dict(self.definition.extensions),
         )
 
     def describe(self, request: GraphDescribeRequest) -> dict[str, Any]:
+        payload = self._describe(request)
+        payload["ontology_version"] = self.definition.ontology_version
+        payload["extensions"] = dict(self.definition.extensions)
+        return payload
+
+    def _describe(self, request: GraphDescribeRequest) -> dict[str, Any]:
         # Service-routed (not CLI-local) so the answer always reflects this
         # build's ontology and errors cross the RPC boundary like every other
         # graph command.
@@ -418,6 +431,7 @@ class DefaultGraphService:
             since=request.since,
             until=request.until,
             max_items=request.limit,
+            detail=detail,
             freshness_preference=request.freshness_preference,
             include_invalidated=request.include_invalidated,
             source_refs=request.source_refs,
@@ -903,6 +917,7 @@ def _contract_from_view_spec(spec) -> ViewContract:
         subgraph=spec.subgraph,
         view=spec.view,
         purpose=spec.description,
+        result_shape=str(spec.extra.get("result_shape", "flat_claims")),
         when_to_use=(),
         v1_include=spec.v1_include,
         backed=spec.backed,
@@ -917,6 +932,9 @@ def _contract_from_view_spec(spec) -> ViewContract:
         supported_filters=supported,
         inline_relations=spec.inline_relations,
         traversal=spec.traversal,
+        examples=tuple(
+            ExampleCommand(**example) for example in spec.extra.get("examples", ())
+        ),
         extra=spec.extra,
     )
 
@@ -937,8 +955,21 @@ def _describe_definition_subgraph(
             "name": subgraph,
             "purpose": "Definition-provided graph views.",
             "when_to_use": [],
-            "entity_types": [],
-            "relation_types": [],
+            "entity_types": [
+                item
+                for item in _catalog_entity_types(definition)
+                if item["label"]
+                in {
+                    label
+                    for label, spec in definition.entity_types.items()
+                    if spec.category == subgraph
+                }
+            ],
+            "relation_types": [
+                item
+                for item in _catalog_predicates(definition)
+                if item["category"] == subgraph
+            ],
             "views": [
                 contract.to_dict(include_examples=include_examples)
                 for contract in contracts
@@ -1015,6 +1046,8 @@ def _unsupported_read_filters(
 ) -> tuple[dict[str, Any], ...]:
     supported = set(contract.supported_filters)
     requested = _requested_read_filters(request)
+    if not contract.extra.get("strict_query_filters"):
+        requested.discard("query_threshold")
     unsupported = sorted(name for name in requested if name not in supported)
     return tuple(
         {
@@ -1049,6 +1082,8 @@ def _requested_read_filters(request: GraphReadRequest) -> set[str]:
         requested.add("environment")
     if request.source_refs:
         requested.add("source_ref")
+    if request.query_threshold is not None:
+        requested.add("query_threshold")
     return requested
 
 
@@ -1199,6 +1234,10 @@ def _normalize_read_item(
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> dict[str, Any]:
     payload = dict(item.payload)
+    if payload.get("kind") == "protocol_message":
+        from potpie_context_core.protocol_read import protocol_read_item
+
+        return protocol_read_item(payload, score=item.score)
     if payload.get("kind") == "resource_chunk":
         from .resource_read_projection import resource_read_item
 

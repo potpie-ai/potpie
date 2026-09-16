@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -210,6 +211,7 @@ def render_items_bullets(
     limit = _effective_limit(ctx.event_limit, default=_DEFAULT_ITEM_LIMIT)
     for item in items[:limit]:
         lines.extend(_item_bullet_lines(item, ctx))
+        lines.extend(_protocol_lines(item, ctx))
     return "\n".join(lines)
 
 
@@ -262,6 +264,9 @@ def render_items_table(
             )
         row.append(_escape_table_cell(_relations_cell(item, ctx)))
         lines.append(" | ".join(str(cell) for cell in row))
+
+    for item in items[:limit]:
+        lines.extend(_protocol_lines(item, ctx))
 
     if ctx.relations == "full":
         for item in items[:limit]:
@@ -562,3 +567,27 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [v for v in value if isinstance(v, str) and v]
     return []
+
+
+def _protocol_lines(item: Mapping[str, Any], ctx: ReadPresentationContext) -> list[str]:
+    if item.get("kind") != "protocol_message":
+        return []
+    lines = [
+        "  protocol coverage: "
+        + json.dumps(item.get("coverage", {}), ensure_ascii=False)
+    ]
+    lines.append(
+        "  read details: " + json.dumps(item.get("retrieval", {}), ensure_ascii=False)
+    )
+    if ctx.detail == "full":
+        lines.append(
+            "  protocol: " + json.dumps(item.get("protocol", {}), ensure_ascii=False)
+        )
+        lines.append(
+            "  message: " + json.dumps(item.get("message", {}), ensure_ascii=False)
+        )
+        for field in item.get("fields", ()):
+            lines.append("  field: " + json.dumps(field, ensure_ascii=False))
+        for claim in item.get("claims", ()):
+            lines.append("  evidence: " + json.dumps(claim, ensure_ascii=False))
+    return lines

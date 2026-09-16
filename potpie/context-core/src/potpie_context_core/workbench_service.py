@@ -146,12 +146,14 @@ class GraphWorkbenchService:
         )
         self.validator = validator or (
             lambda request: validate_semantic_request(
-                request, definition=self.definition
+                request,
+                definition=self.definition,
+                claim_query=self.backend.claim_query,
             )
         )
         self.lowerer = lowerer or (
             lambda request, plan: lower_semantic_request(
-                request, plan, definition=self.definition
+                request, plan, definition=self.definition, claim_query=self.backend.claim_query
             )
         )
         self.default_plan_ttl_seconds = (
@@ -1899,6 +1901,13 @@ def _verify_ingestion_commit(
 ) -> GraphIngestionVerificationResult:
     claim_keys = _claim_keys_from_record(record)
     readback = _verification_readback(backend, pot_id=pot_id, claim_keys=claim_keys)
+    content_readback = {}
+    if "protocols" in definition.extensions:
+        from potpie_context_core.protocol_validation import protocol_content_readback
+
+        content_readback = protocol_content_readback(
+            backend, pot_id=pot_id, record=record
+        )
     after_quality = _verification_quality_snapshot(
         backend,
         pot_id=pot_id,
@@ -1923,7 +1932,12 @@ def _verify_ingestion_commit(
     detail = None
     recommended = None
 
-    if readback["missing_claim_keys"]:
+    if content_readback.get("mismatches"):
+        ok = False
+        status = "degraded"
+        detail = "protocol content readback differs from the committed extraction"
+        recommended = "Inspect content_readback and preserve conflicting extractions in graph inbox before repair."
+    elif readback["missing_claim_keys"]:
         ok = False
         status = "degraded"
         detail = "committed plan did not read back all expected claim keys"
@@ -1976,6 +1990,7 @@ def _verify_ingestion_commit(
         readback_claim_keys=tuple(readback["readback_claim_keys"]),
         missing_claim_keys=tuple(readback["missing_claim_keys"]),
         readback_count=int(readback["readback_count"]),
+        content_readback=content_readback,
         quality_status=str(after_quality["status"]),
         quality_counts=after_counts,
         quality_delta=deltas,

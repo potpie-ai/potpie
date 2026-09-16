@@ -204,6 +204,17 @@ class Neo4jClaimQueryStore:
             rec["key"]: tuple(lbl for lbl in (rec["labels"] or [])) for rec in records
         }
 
+    def entity_properties_many(
+        self, *, pot_id: str, entity_keys: Iterable[str]
+    ) -> dict[str, dict[str, Any]]:
+        keys = list(entity_keys)
+        if not keys:
+            return {}
+        query = "MATCH (e:Entity {group_id: $gid}) WHERE e.entity_key IN $keys RETURN e.entity_key AS key, properties(e) AS props"
+        with self._get_driver().session() as session:
+            records = list(session.run(query, gid=pot_id, keys=keys))
+        return {rec["key"]: dict(rec["props"]) for rec in records}
+
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
         driver = self._get_driver()
         with driver.session() as session:

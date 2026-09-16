@@ -316,6 +316,7 @@ class GraphIngestionVerificationResult:
     readback_claim_keys: tuple[str, ...] = ()
     missing_claim_keys: tuple[str, ...] = ()
     readback_count: int = 0
+    content_readback: Mapping[str, Any] = field(default_factory=dict)
     quality_status: str | None = None
     quality_counts: Mapping[str, int] = field(default_factory=dict)
     quality_delta: Mapping[str, int] = field(default_factory=dict)
@@ -337,6 +338,7 @@ class GraphIngestionVerificationResult:
             "readback_claim_keys": list(self.readback_claim_keys),
             "missing_claim_keys": list(self.missing_claim_keys),
             "readback_count": self.readback_count,
+            "content_readback": dict(self.content_readback),
             "quality_status": self.quality_status,
             "quality_counts": dict(self.quality_counts),
             "quality_delta": dict(self.quality_delta),

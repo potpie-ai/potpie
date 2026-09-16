@@ -219,6 +219,18 @@ class FalkorDBClaimQueryStore:
             for rec in _records_from_result(result)
         }
 
+    def entity_properties_many(
+        self, *, pot_id: str, entity_keys: Iterable[str]
+    ) -> dict[str, dict[str, Any]]:
+        keys = list(entity_keys)
+        if not keys:
+            return {}
+        query = "MATCH (e:Entity {group_id: $gid}) WHERE e.entity_key IN $keys RETURN e.entity_key AS key, properties(e) AS props"
+        records = _records_from_result(
+            self._get_graph().query(query, params={"gid": pot_id, "keys": keys})
+        )
+        return {rec["key"]: dict(rec["props"]) for rec in records}
+
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
         result = self._get_graph().query(
             _ENTITY_PROPERTIES_CYPHER,

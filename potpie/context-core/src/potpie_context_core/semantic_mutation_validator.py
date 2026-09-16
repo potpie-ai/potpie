@@ -90,6 +90,7 @@ def validate_semantic_request(
     request: SemanticMutationRequest,
     *,
     definition: GraphDefinition | None = None,
+    claim_query=None,
 ) -> SemanticMutationPlan:
     """Validate + risk-classify a parsed semantic mutation request.
 
@@ -99,7 +100,16 @@ def validate_semantic_request(
     """
     token = _CURRENT_DEFINITION.set(definition or DEFAULT_GRAPH_DEFINITION)
     try:
-        return _validate_semantic_request(request)
+        plan = _validate_semantic_request(request)
+        if "protocols" in _CURRENT_DEFINITION.get().extensions:
+            from potpie_context_core.protocol_validation import protocol_issues
+
+            extra_issues = protocol_issues(request, claim_query)
+            if extra_issues:
+                plan.issues = (*plan.issues, *extra_issues)
+                plan.decision = "rejected"
+                plan.ok = False
+        return plan
     finally:
         _CURRENT_DEFINITION.reset(token)
 

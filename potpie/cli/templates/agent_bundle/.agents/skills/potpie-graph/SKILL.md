@@ -1,6 +1,6 @@
 ---
 name: "potpie-graph"
-version: "10"
+version: "11"
 description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions, fetching ingested document chunks with `potpie resource get`, and responding to nudges."
 ---
 
@@ -15,6 +15,14 @@ repository or infer rich facts from prose for you.
 Text output for reads; `--json` for `propose`, `commit`, `resource import`,
 and anything you parse. `graph describe --examples` renders only with `--json`
 and shows read commands only: the write payload shape is `graph mutation-template`.
+
+## Protocol contracts and decoder questions
+
+For telegrams, message layouts, protocol revisions, field values or decoder
+changes, load [the shared protocol reference](references/protocols.md) after
+catalog confirms `protocols.message_context`. Use its explicit include/view;
+ordinary resolve recipes do not discover protocols automatically. The reference
+covers identity, sourced ingestion, compact follow-ups, corrections and coverage.
 
 ## 1. Select scope without delaying discovery
 

@@ -19,6 +19,7 @@ def build_graph_service(
     policy: GraphMutationPolicy,
     reconciliation_config: ReconciliationConfig | None = None,
     resource_index: Any = None,
+    resource_store: Any = None,
 ) -> DefaultGraphService:
     return DefaultGraphService(
         backend=backend,
@@ -31,6 +32,7 @@ def build_graph_service(
         # store: the ``resources`` family then answers ``match_mode="disabled"``
         # rather than disappearing from the contract.
         resource_index=resource_index,
+        **({"resource_store": resource_store} if resource_store is not None else {}),
     )
 
 

@@ -9,7 +9,7 @@ per F5. It is the only envelope shape.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterable, Mapping, Sequence
 
@@ -90,6 +90,7 @@ class EnvelopeBuilder:
     """Stateless service. Inject custom intent/include mappings via constructor."""
 
     additional_includes: frozenset[str] = frozenset()
+    view_by_include: Mapping[str, str] = field(default_factory=lambda: INCLUDE_TO_VIEW)
 
     def build(
         self,
@@ -168,7 +169,7 @@ class EnvelopeBuilder:
                     candidate_pool=int(resp.meta.get("candidate_pool", 0))
                     if isinstance(resp.meta.get("candidate_pool"), int)
                     else 0,
-                    graph_view=INCLUDE_TO_VIEW.get(inc),
+                    graph_view=self.view_by_include.get(inc),
                     # Only a family that measured it reports it; anything else
                     # stays None and is judged on coverage alone.
                     best_relevance=float(best_relevance)

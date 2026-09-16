@@ -1151,6 +1151,7 @@ def test_graph_bulk_apply_chunks_and_commits(tmp_path) -> None:
     assert body["verification"]["counts"] == {"claims": 3}
     assert len(workbench.propose_calls) == 2
     assert len(workbench.commit_calls) == 2
+    assert all(call[3] is True for call in workbench.commit_calls)
     assert len(workbench.propose_calls[0][0]["operations"]) == 2
     assert len(workbench.propose_calls[1][0]["operations"]) == 1
     assert workbench.propose_calls[0][0]["idempotency_key"] == "bulk:test:chunk-0001"
@@ -2824,3 +2825,46 @@ def test_graph_commit_verify_help_says_what_exits_nonzero() -> None:
     # land mid-sentence; drop them before looking for the phrase.
     text = " ".join(re.sub(r"[│╭╮╰╯─]", " ", _plain_cli_output(result.output)).split())
     assert "exits 1 only when a committed claim does not read back" in text
+
+
+def test_graph_bulk_verify_reports_content_loss_separately_from_committed_count(
+    tmp_path,
+) -> None:
+    _common.set_json(True)
+    verification = GraphIngestionVerificationResult(
+        ok=False,
+        status="degraded",
+        plan_id="mutation-plan:test",
+        pot_id="p",
+        content_readback={
+            "checked_entities": ["protocol_field:fixture"],
+            "mismatches": [
+                {
+                    "entity_key": "protocol_field:fixture",
+                    "properties": ["allowed_values"],
+                }
+            ],
+        },
+        detail="protocol content readback differs from the committed plan",
+    )
+    workbench = _Workbench(
+        proposal=_proposal(), commit_result=_commit_result(verification=verification)
+    )
+    _common.set_host(_Host(_Graph(), graph_workbench=workbench))
+    payload_file = tmp_path / "bulk.json"
+    payload_file.write_text(json.dumps(_bulk_mutation_payload(3)), encoding="utf-8")
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["bulk", "apply", "--file", str(payload_file), "--chunk-size", "2", "--verify"],
+    )
+    assert result.exit_code != 0
+    body = _assert_graph_envelope(
+        json.loads(result.output), "graph.bulk.apply", ok=False
+    )
+    body = json.loads(result.output)["error"]["detail"]
+    assert body["chunks_committed"] == 1
+    assert body["chunks_attempted"] == 1
+    assert body["chunks"][0]["commit"]["verification"]["content_readback"][
+        "mismatches"
+    ][0]["properties"] == ["allowed_values"]
+    assert body["issues"][0]["code"] == "verification_failed"

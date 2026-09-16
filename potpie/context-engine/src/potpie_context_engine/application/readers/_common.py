@@ -36,6 +36,7 @@ class ReadRequest:
     since: datetime | None = None
     until: datetime | None = None
     max_items: int = 12
+    detail: str = "compact"
     freshness_preference: str = "balanced"
     include_invalidated: bool = False
     source_refs: tuple[str, ...] = ()

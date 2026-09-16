@@ -7,6 +7,7 @@ from potpie_context_core.api import __all__ as _CORE_API
 from potpie_context_engine.application.readers._common import ReadRequest, ReadResponse
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
 from potpie_context_engine.composition import build_graph_service
+from potpie_context_engine.protocols import protocols_definition
 from potpie_context_engine.domain.ranking import (
     Candidate,
     RankedItem,
@@ -24,4 +25,5 @@ __all__ = [
     "ReadResponse",
     "TaskContext",
     "build_graph_service",
+    "protocols_definition",
 ]

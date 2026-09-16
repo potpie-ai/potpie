@@ -1717,7 +1717,7 @@ def graph_bulk_apply(
     verify: bool = typer.Option(
         False,
         "--verify",
-        help="include graph data-plane status after the run",
+        help="verify each committed chunk and include graph data-plane status after the run",
     ),
     manifest: str = typer.Option(
         None,
@@ -1835,9 +1835,21 @@ def graph_bulk_apply(
                 proposal.plan_id,
                 pot_id=pot_id,
                 approved_by=approved_by,
+                **({"verify": True} if verify else {}),
             )
             entry["commit"] = _bulk_commit_summary(commit)
-            entry["ok"] = bool(commit.ok)
+            verification = getattr(commit, "verification", None)
+            if verification is not None and not verification.ok:
+                ok = False
+                run["issues"].append(
+                    {
+                        "code": "verification_failed",
+                        "message": verification.detail or verification.status,
+                        "severity": "error",
+                        "chunk": index,
+                    }
+                )
+            entry["ok"] = bool(commit.ok) and (verification is None or verification.ok)
             entry["status"] = commit.status
             if commit.ok:
                 run["chunks_committed"] += 1
@@ -1856,7 +1868,7 @@ def graph_bulk_apply(
                 )
             run["chunks"].append(entry)
             _write_bulk_manifest(manifest, run)
-            if not commit.ok and not continue_on_error:
+            if not entry["ok"] and not continue_on_error:
                 break
 
         run["ok"] = ok
@@ -2861,6 +2873,9 @@ def _bulk_commit_summary(result) -> dict[str, Any]:
     }
     if result.diff:
         out["diff"] = result.diff.to_dict()
+    verification = getattr(result, "verification", None)
+    if verification is not None:
+        out["verification"] = verification.to_dict()
     return out
 
 

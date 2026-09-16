@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from potpie_context_core.ports.graph_service import GraphReadResult
 
 from potpie.cli.read_presenter import (
     ReadPresentationContext,
@@ -14,7 +15,6 @@ from potpie.cli.read_presenter import (
     render_items_table,
     render_timeline_table,
 )
-from potpie_context_core.ports.graph_service import GraphReadResult
 
 pytestmark = pytest.mark.unit
 
@@ -127,3 +127,58 @@ def test_render_items_table_handles_empty_rows() -> None:
     output = render_items_table([], ctx)
     assert "score | type | entity_key | summary | relations" in output
     assert "(no rows)" in output
+
+
+def test_protocol_human_output_preserves_layout_values_and_coverage():
+    from potpie_context_core.ports.graph_service import GraphReadResult
+
+    from potpie.cli.read_presenter import (
+        build_presentation_context,
+        prepare_items,
+        render_items_bullets,
+        render_items_table,
+    )
+
+    result = GraphReadResult(
+        view="protocols.message_context",
+        subgraph="protocols",
+        detail="full",
+        items=(
+            {
+                "kind": "protocol_message",
+                "entity_key": "protocol_message:example",
+                "entity_type": "ProtocolMessage",
+                "summary": "Synthetic request",
+                "coverage": {"status": "partial", "truncated": True},
+                "fields": [
+                    {
+                        "path": "header.Status",
+                        "ordinal": 0,
+                        "byte_offset": 0,
+                        "allowed_values": [
+                            {"raw_value": 2, "symbol": "BUSY"},
+                            {"raw_value": "2", "symbol": "TEXT"},
+                        ],
+                    },
+                    {"path": "payload.status", "ordinal": 1},
+                ],
+                "retrieval": {
+                    "subgraph": "protocols",
+                    "view": "message_context",
+                    "scope": {"anchor_entity_key": "protocol_message:example"},
+                },
+            },
+        ),
+    )
+    ctx = build_presentation_context(
+        result, format_="bullets", sort="score", dedupe="none", event_limit=None
+    )
+    items = prepare_items(result)
+    for text in (
+        render_items_bullets(result, items, ctx),
+        render_items_table(items, ctx, result=result),
+    ):
+        assert text.index("header.Status") < text.index("payload.status")
+        assert '"raw_value": 2' in text and '"raw_value": "2"' in text
+        assert '"truncated": true' in text
+        assert "read details:" in text

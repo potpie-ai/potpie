@@ -306,3 +306,11 @@ holds the evidence payload, not the conclusions.
 - Logs and transcripts can record diagnostic signals, investigations, fixes, and
   verifications. Keep raw logs out of descriptions except for short distinctive
   error text.
+
+## Protocol definitions and codecs
+
+When the source or question concerns telegrams, message layouts, field/value
+meanings, revisions or decoder changes, check catalog for `protocols.message_context`
+and follow [the shared protocol reference](../potpie-graph/references/protocols.md).
+Use explicit protocol reads alongside existing Service/CodeAsset context. Preserve
+immutable source evidence and partial coverage; capabilities do not establish traffic.

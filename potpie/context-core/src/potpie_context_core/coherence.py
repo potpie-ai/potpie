@@ -174,6 +174,7 @@ def _run_import_time_checks() -> None:
 def assert_runtime_coherence(
     *,
     reader_backed_includes: Iterable[str],
+    definition=None,
 ) -> None:
     """Confirm the runtime reader set matches the advertised contract.
 
@@ -191,7 +192,11 @@ def assert_runtime_coherence(
     from potpie_context_core.agent_context_port import READER_BACKED_INCLUDES
 
     runtime = frozenset(reader_backed_includes)
-    declared = READER_BACKED_INCLUDES
+    declared = (
+        frozenset(definition.readers)
+        if definition is not None
+        else READER_BACKED_INCLUDES
+    )
     parts: list[str] = []
     if runtime == declared:
         reader_error = ""

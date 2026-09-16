@@ -59,6 +59,7 @@ class ReadOrchestrator:
     ranker: RankingService = field(default_factory=RankingService)
     builder: EnvelopeBuilder = field(default_factory=EnvelopeBuilder)
     reader_registry: Mapping[str, GraphReaderSpec] = field(default_factory=dict)
+    resource_store: Any = None
     resource_index: ResourceIndexPort | None = None
     """Backs ``resources``. ``None`` wires the fail-closed ``none`` profile.
 
@@ -98,7 +99,10 @@ class ReadOrchestrator:
             if spec.factory is None:
                 continue
             self._routing[include] = _build_reader(
-                spec.factory, claim_query=cq, ranker=rk
+                spec.factory,
+                claim_query=cq,
+                ranker=rk,
+                resource_store=self.resource_store,
             )
         self.builder.additional_includes = frozenset(self.reader_registry)
 
@@ -119,6 +123,7 @@ class ReadOrchestrator:
         since: datetime | None = None,
         until: datetime | None = None,
         max_items: int = 12,
+        detail: str = "compact",
         freshness_preference: str = "balanced",
         include_invalidated: bool = False,
         source_refs: tuple[str, ...] = (),
@@ -138,6 +143,7 @@ class ReadOrchestrator:
             since=since,
             until=until,
             max_items=max_items,
+            detail=detail,
             freshness_preference=freshness_preference,
             include_invalidated=include_invalidated,
             source_refs=tuple(source_refs),
@@ -189,11 +195,23 @@ def _disabled_resource_index() -> ResourceIndexPort:
     )
 
 
-def _build_reader(factory: Any, *, claim_query: ClaimQueryPort, ranker: RankingService):
+def _build_reader(
+    factory: Any,
+    *,
+    claim_query: ClaimQueryPort,
+    ranker: RankingService,
+    resource_store=None,
+):
     if not callable(factory):
         if not callable(getattr(factory, "read", None)):
             raise TypeError("graph reader must be callable or expose read(request)")
         return factory
+    import inspect
+
+    if "resource_store" in inspect.signature(factory).parameters:
+        return factory(
+            claim_query=claim_query, ranker=ranker, resource_store=resource_store
+        )
     try:
         reader = factory(claim_query=claim_query, ranker=ranker)
     except TypeError:

@@ -122,3 +122,11 @@ environment, evidence when available, and a retrieval-grade description.
 Architecture capture is harness-led: inspect authoritative sources and write
 semantic facts. Do not use scanner-driven graph updates or infer topology from
 directory names, imports, or package files alone.
+
+## Protocol definitions and codecs
+
+When the source or question concerns telegrams, message layouts, field/value
+meanings, revisions or decoder changes, check catalog for `protocols.message_context`
+and follow [the shared protocol reference](../potpie-graph/references/protocols.md).
+Use explicit protocol reads alongside existing Service/CodeAsset context. Preserve
+immutable source evidence and partial coverage; capabilities do not establish traffic.

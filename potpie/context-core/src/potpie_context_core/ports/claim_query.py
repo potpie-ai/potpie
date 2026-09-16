@@ -131,3 +131,14 @@ __all__ = [
     "ClaimQueryPort",
     "ClaimRow",
 ]
+
+
+def entity_properties_many(
+    query: ClaimQueryPort, *, pot_id: str, entity_keys: Iterable[str]
+) -> Mapping[str, Mapping[str, Any]]:
+    """Bulk optional capability; legacy/custom ports retain their read contract."""
+    keys = tuple(dict.fromkeys(entity_keys))
+    bulk = getattr(query, "entity_properties_many", None)
+    if callable(bulk):
+        return bulk(pot_id=pot_id, entity_keys=keys)
+    return {key: query.entity_properties(pot_id=pot_id, entity_key=key) for key in keys}

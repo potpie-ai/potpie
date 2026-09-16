@@ -192,3 +192,11 @@ Do not infer baseline architecture from PR titles or issue status; change
 history and change-history facts belong in `potpie-change-timeline`.
 Local file inspection is allowed and expected, but the harness must read,
 interpret, and cite the evidence before writing semantic facts.
+
+## Protocol definitions and codecs
+
+When the source or question concerns telegrams, message layouts, field/value
+meanings, revisions or decoder changes, check catalog for `protocols.message_context`
+and follow [the shared protocol reference](../potpie-graph/references/protocols.md).
+Use explicit protocol reads alongside existing Service/CodeAsset context. Preserve
+immutable source evidence and partial coverage; capabilities do not establish traffic.
