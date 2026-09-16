@@ -30,7 +30,8 @@ potpie document ingest ./costs.xlsx --doc q1-costs --pot my-pot
 # With Docling (preferred when [documents] installed)
 potpie document ingest ./export.html --doc wiki-page --pot my-pot
 
-# Without Docling: stdlib HTML extractor (headings → sections)
+# Without Docling: base install uses the stdlib HTML extractor (headings → sections)
+potpie document ingest ./export.html --doc wiki-page --pot my-pot
 ```
 
 ## Multi-file batch
@@ -38,7 +39,8 @@ potpie document ingest ./export.html --doc wiki-page --pot my-pot
 ```bash
 POT=my-pot
 for f in docs/*.md; do
-  slug=$(basename "$f" .md | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+  stem=$(basename "$f" .md)
+  slug=$(printf '%s' "$stem" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
   potpie document ingest "$f" --doc "$slug" --pot "$POT"
 done
 ```

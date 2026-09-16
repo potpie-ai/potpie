@@ -84,9 +84,10 @@ pip install 'potpie[documents]'
 
 ### Phase 1 — Resolve inputs
 
-1. **Find files** — user path, workspace upload, or attachment. Supported:
-   `.md`, `.markdown`, `.txt`, `.pdf`, `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`,
-   `.bmp`, `.tif`, `.tiff`.
+1. **Find files** — user path, workspace upload, or attachment. Base install
+   supports `.md`, `.markdown`, `.txt`, `.html`, `.htm`. `potpie[documents]`
+   is required for `.pdf`, Office files (`.docx`, `.pptx`, `.xlsx`), and images
+   (`.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.bmp`, `.tif`, `.tiff`).
 2. **Choose `--doc` slug** — stable, short, descriptive (`payments-oncall`,
    `python-handbook`). One slug per logical document.
 3. **Multi-file** — ingest each file with its own `--doc` (or same doc + `--force`
