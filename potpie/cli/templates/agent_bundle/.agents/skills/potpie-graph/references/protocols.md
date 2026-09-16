@@ -28,7 +28,12 @@ recipes, automatic chat hints and nudges are unchanged.
 Full output contains ordered `fields`, exact typed `allowed_values`, field claims
 with source revision/digest and locator, message relationships, coverage and a
 follow-up descriptor. Integer 2, string "2", false, zero and missing properties
-are distinct. Ask for the relevant revision/message when a value is ambiguous.
+are distinct. For an unscoped value question, show the matching message/revision
+alternatives before asking the user to choose; a resource hit alone does not
+resolve that ambiguity. Inspect candidates even when their source chunk is
+shared. If the conversation already selected a message and revision, reuse and
+state that scope. Report absent or incomplete definitions as unknown rather than
+assigning another message's enum to them.
 `field_path` is exact and case-sensitive. Read a field anchor or refine to its
 path for large layouts. Never infer source completeness from a result count.
 Budgets: 2048 discovered claim rows, 12 returned messages, 128 total returned fields,
