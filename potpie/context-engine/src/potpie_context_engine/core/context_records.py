@@ -415,9 +415,7 @@ def _build_verification(
     )
 
 
-def _build_prompt_turn(
-    *, summary: str, details: Mapping[str, Any]
-) -> PromptTurnRecord:
+def _build_prompt_turn(*, summary: str, details: Mapping[str, Any]) -> PromptTurnRecord:
     del summary
     record_type = "prompt_turn"
     prompt_key = _require_non_empty_string(

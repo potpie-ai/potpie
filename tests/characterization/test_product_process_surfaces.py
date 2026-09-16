@@ -33,6 +33,7 @@ EXPECTED_CLI_COMMANDS = {
     "graph",
     "jira",
     "ledger",
+    "lineage",
     "linear",
     "login",
     "logout",
@@ -48,6 +49,7 @@ EXPECTED_CLI_COMMANDS = {
     "timeline",
     "ui",
     "use",
+    "why",
     "whoami",
 }
 

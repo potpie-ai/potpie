@@ -99,19 +99,35 @@ class GenerationLineageReader:
             "predicate_in": _PROVENANCE_PREDICATES,
             "include_invalidated": req.include_invalidated,
             "as_of": req.as_of,
+            "valid_at_after": req.since,
+            "valid_at_before": req.until,
             "source_ref_in": req.source_refs,
-            "limit": max(req.max_items * 8, 64),
+            # Path is not a ClaimQueryFilter axis, so collect the complete
+            # candidate set before applying the local path predicate and the
+            # reader's final max_items truncation.
+            "limit": None if path else max(req.max_items * 8, 64),
             "fact_query": req.query,
         }
-        rows = self.claim_query.find_claims(ClaimQueryFilter(**base))
+
+        def query_rows(filters: dict[str, Any]) -> list[ClaimRow]:
+            rows = self.claim_query.find_claims(ClaimQueryFilter(**filters))
+            # Vector-backed ports use a finite default when fact_query is set,
+            # even with limit=None. For path-scoped reads, merge an unranked
+            # lexical pass so a relevant path row cannot be hidden below that
+            # semantic top-k cap; the reader ranks after local filtering.
+            if path and req.query:
+                lexical_filters = {**filters, "fact_query": None}
+                rows.extend(
+                    self.claim_query.find_claims(ClaimQueryFilter(**lexical_filters))
+                )
+            return rows
+
+        rows = query_rows(base)
         if anchors:
-            extra = self.claim_query.find_claims(
-                ClaimQueryFilter(**base, subject_key_in=anchors)
-            )
-            extra += self.claim_query.find_claims(
-                ClaimQueryFilter(**base, object_key_in=anchors)
-            )
+            extra = query_rows({**base, "subject_key_in": anchors})
+            extra += query_rows({**base, "object_key_in": anchors})
             rows = extra or rows
+        rows = [row for row in rows if _row_in_window(row, req)]
         if path:
             rows = [
                 row
@@ -122,6 +138,15 @@ class GenerationLineageReader:
                 or path in str((row.properties or {}).get("file_path") or "")
             ]
         return dedupe_claim_rows(rows)
+
+
+def _row_in_window(row: ClaimRow, req: ReadRequest) -> bool:
+    """Apply the inclusive valid_at window defensively after backend reads."""
+    if req.since is not None and (row.valid_at is None or row.valid_at < req.since):
+        return False
+    if req.until is not None and row.valid_at is not None and row.valid_at > req.until:
+        return False
+    return True
 
 
 def _scope_path(scope: dict[str, Any]) -> str | None:

@@ -153,7 +153,7 @@ The 10 readers map one-to-one onto the 10 named views (§8):
 > `_INFRA_PREDICATES`). The table above documents what the reader reads.
 
 The vocabulary single source of truth is `domain/agent_context_port.py`: it owns
-`CONTEXT_INTENTS` (11), `READER_BACKED_INCLUDES` (9), `CONTEXT_INCLUDE_VALUES` (derived
+`CONTEXT_INTENTS` (11), `READER_BACKED_INCLUDES` (10), `CONTEXT_INCLUDE_VALUES` (derived
 from the ontology's `advertised_include_families()`), `PLANNED_INCLUDES`
 (advertised-but-unbacked → surfaced as `not_implemented`), `DEFAULT_INTENT_INCLUDES`, and
 `CONTEXT_RESOLVE_RECIPES`. `context_port_manifest()` is the stable agent-facing

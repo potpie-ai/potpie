@@ -9,6 +9,7 @@ instructions that humans and agents actually read.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from potpie_context_engine.core.agent_context_port import CONTEXT_RECORD_TYPES
 pytestmark = pytest.mark.unit
 
 TEMPLATES = Path(_clipkg.__file__).resolve().parent / "templates"
+CURSOR_HOOKS = TEMPLATES / "agent_bundle" / ".cursor" / "hooks.json"
+CODEX_HOOKS = TEMPLATES / "agent_bundle" / ".codex" / "hooks.json"
 MD_FILES = sorted(TEMPLATES.rglob("*.md"))
 
 # Stale include names from the pre-V1.5 templates. Underscored → unambiguous, so a
@@ -112,6 +115,29 @@ def test_agents_md_advertises_graph_surface() -> None:
         "graph history",
     ):
         assert verb in text, f"AGENTS.md missing `{verb}`"
+
+
+def test_provenance_docs_distinguish_cursor_and_codex_capture() -> None:
+    docs = [
+        (TEMPLATES / "agent_bundle" / "AGENTS.md").read_text(encoding="utf-8"),
+        (
+            TEMPLATES
+            / "agent_bundle"
+            / ".agents"
+            / "skills"
+            / "potpie-provenance"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8"),
+        (
+            TEMPLATES / "claude_plugin" / "skills" / "potpie-provenance" / "SKILL.md"
+        ).read_text(encoding="utf-8"),
+    ]
+    for text in docs:
+        assert "beforeSubmitPrompt" in text
+        assert "afterFileEdit" in text
+        assert "Codex" in text and "manual" in text.lower()
+        assert "spec_requirement" in text and "Stop" in text
+        assert "currently" in text.lower()
 
 
 def test_templates_do_not_advertise_v1_write_workflow() -> None:
@@ -433,3 +459,50 @@ def test_removed_connector_queue_commands_are_not_advertised() -> None:
             assert token not in lowered, (
                 f"{rel} still advertises removed connector queue command `{token}`"
             )
+
+
+def test_cursor_hook_commands_have_bounded_fail_open_timeouts() -> None:
+    config = json.loads(CURSOR_HOOKS.read_text(encoding="utf-8"))
+    commands = [entry for entries in config["hooks"].values() for entry in entries]
+    assert len(commands) == 7
+    for entry in commands:
+        assert isinstance(entry.get("timeout"), int)
+        assert entry["timeout"] > 0
+        assert "failClosed" not in entry
+
+
+def test_codex_hooks_use_nested_pascal_case_schema() -> None:
+    config = json.loads(CODEX_HOOKS.read_text(encoding="utf-8"))
+    assert "version" not in config
+    assert set(config["hooks"]) == {
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+    }
+
+    entries = []
+    for event, wrappers in config["hooks"].items():
+        for wrapper in wrappers:
+            for handler in wrapper["hooks"]:
+                assert handler["type"] == "command"
+                assert isinstance(handler.get("timeout"), int)
+                assert handler["timeout"] > 0
+                entries.append(
+                    (
+                        event,
+                        wrapper.get("matcher"),
+                        handler["command"].rsplit(" --event ", 1)[1],
+                    )
+                )
+
+    assert set(entries) == {
+        ("SessionStart", None, "session_start"),
+        ("UserPromptSubmit", None, "user_prompt"),
+        ("PreToolUse", "Write|Edit", "pre_edit"),
+        ("PreToolUse", "Bash", "bash_pre"),
+        ("PostToolUse", "Bash", "bash_post"),
+        ("PostToolUse", "Write|Edit", "post_edit"),
+        ("Stop", None, "stop"),
+    }

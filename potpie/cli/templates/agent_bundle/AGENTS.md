@@ -170,11 +170,15 @@ Use these repo-local skills under `.agents/skills/`:
 
 ## Lineage hooks (Cursor / Codex)
 
-`potpie skills install --agent cursor --scope project --path .` (or `--agent codex`)
-lays down `.cursor/hooks.json` or `.codex/hooks.json` plus the shared
-`potpie_nudge.py` adapter. Hooks fail-open: they remember prompts, link edits to
-lineage, and inject graph nudges without blocking the session. Enable hooks in the
-harness settings after install. Claude Code uses
+Cursor supports automatic provenance capture through `beforeSubmitPrompt` (remember
+the prompt) and `afterFileEdit` (link the edited span). These hooks use the shared
+fail-open adapter and do not block the prompt or edit workflow.
+
+Codex automation is not currently available from the checked-in hook template: its
+hook wiring is not yet a supported Codex configuration. For Codex, record prompt
+context and the plan manually, then record provenance again at Stop. At Stop, record
+the provenance `spec_requirement` separately from any code `generation_link`.
+Codex automation can be enabled only after the template adopts Codex's supported
+event names and nested `hooks` command schema. Claude Code uses
 `potpie skills install --agent claude-plugin --scope project --path .` instead.
-Spec text still requires the agent to follow `potpie-provenance` at Stop.
 <!-- potpie-end -->

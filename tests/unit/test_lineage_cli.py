@@ -9,9 +9,7 @@ from potpie.cli.commands import lineage
 
 def test_service_treats_resolve_pot_id_as_a_string(monkeypatch) -> None:
     monkeypatch.setattr(lineage, "get_root_runtime", lambda: object())
-    monkeypatch.setattr(
-        lineage, "resolve_pot_id", lambda host, pot: "acme/demo-pot-id"
-    )
+    monkeypatch.setattr(lineage, "resolve_pot_id", lambda host, pot: "acme/demo-pot-id")
     monkeypatch.setattr(lineage, "_graph_recorder", lambda pot: None)
     monkeypatch.setattr(
         lineage.LineageService,

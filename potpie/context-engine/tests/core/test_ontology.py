@@ -117,12 +117,8 @@ def test_implements_is_code_to_spec_not_feature() -> None:
     assert "IMPLEMENTS" in allowed_edge_types_between(
         ("CodeAsset",), ("SpecRequirement",)
     )
-    assert "IMPLEMENTS" not in allowed_edge_types_between(
-        ("Feature",), ("CodeAsset",)
-    )
-    assert "IMPLEMENTED_IN" in allowed_edge_types_between(
-        ("Feature",), ("CodeAsset",)
-    )
+    assert "IMPLEMENTS" not in allowed_edge_types_between(("Feature",), ("CodeAsset",))
+    assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("CodeAsset",))
 
 
 def test_feature_key_prefix_convention() -> None:

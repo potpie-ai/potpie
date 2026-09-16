@@ -94,6 +94,7 @@ def _attach_graph_claims(result: dict, *, pot: str | None, path: str) -> None:
         # Prefer attaching claim summaries onto SQLite matches by code_asset_key.
         by_key: dict[str, list[dict]] = {}
         compact_items: list[dict] = []
+
         def _row_from_item(raw: object) -> dict | None:
             if isinstance(raw, dict):
                 item = raw
@@ -233,7 +234,9 @@ def lineage_capture(
                 )
             else:
                 if not path:
-                    raise typer.BadParameter("--path is required unless --remember-prompt")
+                    raise typer.BadParameter(
+                        "--path is required unless --remember-prompt"
+                    )
                 parsed = parse_line_range(lines)
                 if parsed is None:
                     file_path = Path(path)

@@ -216,10 +216,110 @@ def file_path_of(payload: dict[str, Any]) -> str | None:
     if isinstance(edits, list) and edits:
         first = edits[0]
         if isinstance(first, dict):
-            edit_path = first.get("file_path") or first.get("filePath") or first.get("path")
+            edit_path = (
+                first.get("file_path") or first.get("filePath") or first.get("path")
+            )
             if edit_path:
                 return str(edit_path)
     return None
+
+
+def _edit_path(edit: dict[str, Any]) -> str | None:
+    value = _first(
+        edit,
+        "file_path",
+        "filePath",
+        "path",
+        "target_path",
+        "targetPath",
+    )
+    return str(value) if value else None
+
+
+def _line_number(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        number = int(value.strip())
+        return number if number > 0 else None
+    if isinstance(value, dict):
+        for key in ("line", "line_number", "lineNumber"):
+            number = _line_number(value.get(key))
+            if number is not None:
+                return number
+    return None
+
+
+def _line_range_of_edit(edit: dict[str, Any]) -> str | None:
+    for key in ("lines", "line_range", "lineRange"):
+        value = edit.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            start = next(
+                (
+                    _line_number(value.get(key))
+                    for key in ("start", "line_start", "start_line", "startLine")
+                ),
+                None,
+            )
+            end = next(
+                (
+                    _line_number(value.get(key))
+                    for key in ("end", "line_end", "end_line", "endLine")
+                ),
+                None,
+            )
+            if start is not None:
+                return f"{start}-{end or start}"
+    range_value = edit.get("range")
+    if isinstance(range_value, str) and range_value.strip():
+        return range_value.strip()
+    if isinstance(range_value, dict):
+        start = next(
+            (
+                _line_number(range_value.get(key))
+                for key in ("start", "line_start", "start_line", "startLine")
+            ),
+            None,
+        )
+        end = next(
+            (
+                _line_number(range_value.get(key))
+                for key in ("end", "line_end", "end_line", "endLine")
+            ),
+            None,
+        )
+        if start is not None:
+            return f"{start}-{end or start}"
+    start = next(
+        (
+            _line_number(edit.get(key))
+            for key in ("line_start", "start_line", "startLine")
+        ),
+        None,
+    )
+    end = next(
+        (_line_number(edit.get(key)) for key in ("line_end", "end_line", "endLine")),
+        None,
+    )
+    if start is not None:
+        return f"{start}-{end or start}"
+    return None
+
+
+def _edit_snippet(edit: dict[str, Any]) -> str | None:
+    value = _first(
+        edit,
+        "new_string",
+        "newString",
+        "replacement",
+        "snippet",
+        "content",
+    )
+    return str(value) if value else None
 
 
 def prompt_of(payload: dict[str, Any]) -> str | None:
@@ -249,7 +349,7 @@ def snippet_of(payload: dict[str, Any]) -> str | None:
 
 
 def infer_line_range(path: str | None, snippet: str | None) -> str | None:
-    if not path:
+    if not path or not snippet:
         return None
     try:
         text = Path(path).read_text(encoding="utf-8")
@@ -261,8 +361,7 @@ def infer_line_range(path: str | None, snippet: str | None) -> str | None:
             start = text[:idx].count("\n") + 1
             end = start + snippet.count("\n")
             return f"{start}-{max(end, start)}"
-    n = len(text.splitlines()) or 1
-    return f"1-{n}"
+    return None
 
 
 def build_lineage_argv(
@@ -692,27 +791,44 @@ def _run_lineage_capture(args: Any, payload: dict[str, Any], hint: str) -> int:
                         pass
             return 0
 
-        path = file_path_of(payload)
-        if not path:
-            _debug("post_edit with no path; staying silent")
+        edits = payload.get("edits")
+        if isinstance(edits, list):
+            edit_payloads = [edit for edit in edits if isinstance(edit, dict)]
+        else:
+            edit_payloads = [payload]
+        if not edit_payloads:
+            _debug("post_edit with no edits; staying silent")
             return 0
-        lines = infer_line_range(path, snippet_of(payload))
-        cmd = build_lineage_argv(
-            binary,
-            session=session,
-            harness=harness,
-            path=path,
-            lines=lines,
-            pot=args.pot,
-        )
-        _debug(f"lineage: {' '.join(cmd)}")
-        subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=float(os.environ.get("POTPIE_HOOK_TIMEOUT", "15")),
-            check=False,
-        )
+        captured = 0
+        for edit in edit_payloads:
+            path = _edit_path(edit) or file_path_of(edit)
+            if not path:
+                continue
+            lines = _line_range_of_edit(edit) or infer_line_range(
+                path, _edit_snippet(edit) or snippet_of(edit)
+            )
+            if not lines:
+                _debug(f"post_edit with no known range for {path!r}; skipping")
+                continue
+            cmd = build_lineage_argv(
+                binary,
+                session=session,
+                harness=harness,
+                path=path,
+                lines=lines,
+                pot=args.pot,
+            )
+            _debug(f"lineage: {' '.join(cmd)}")
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=float(os.environ.get("POTPIE_HOOK_TIMEOUT", "15")),
+                check=False,
+            )
+            captured += 1
+        if not captured:
+            _debug("post_edit had no captureable edits; staying silent")
         return 0
     except Exception as exc:  # noqa: BLE001
         _debug(f"lineage capture failed open: {exc!r}")

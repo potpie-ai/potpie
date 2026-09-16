@@ -151,7 +151,7 @@ local `default` pot. **Cross-pot federation is an explicit anti-goal.**
 | Concept | Meaning |
 |---|---|
 | **Pot** | Unit of isolation and tenancy; `pot_id` is the storage `group_id`. A pot lives in the local daemon or (roadmap) a managed backend; the CLI addresses both through the same pot surface. First local setup creates the active `default` pot. |
-| **Entity** | A stable project object — e.g. a `Service`, `Feature`, `Decision`, `Dependency`, `Person`/`Team`, or a timeline `Activity` (PRs/commits/issues/incidents/deployments collapse here). One of 24 catalog types; minted only when an edge needs it as an endpoint. |
+| **Entity** | A stable project object — e.g. a `Service`, `Feature`, `Decision`, `Dependency`, `Person`/`Team`, or a timeline `Activity` (PRs/commits/issues/incidents/deployments collapse here). One of 27 catalog types; minted only when an edge needs it as an endpoint. |
 | **Claim** | A canonical, sourced, time-stamped fact about an entity or relationship, carrying a truth class and provenance. The single source of truth. |
 | **Source ref** | A pointer back to evidence: file path, PR, ticket, doc URL, or deploy. The graph holds the ref, not the payload. |
 | **Semantic mutation** | An agent-facing structured write proposal (flat ops over a small DSL) that validates and lowers into graph writes. |
@@ -218,7 +218,7 @@ learnings (`graph propose` → `graph commit --verify`). See
 ## See also
 
 - [architecture.md](./architecture.md) — hexagonal layers, composition roots, the daemon, backends.
-- [ontology.md](./ontology.md) — the 24 entities / 26 predicate keys / truth classes / contract constants.
+- [ontology.md](./ontology.md) — the 27 entities / 31 public predicates plus `RELATED_TO` / truth classes / contract constants.
 - [querying.md](./querying.md) — the two read altitudes, the read trunk, ranking, retrieval cards.
 - [writing.md](./writing.md) — the semantic DSL, propose→commit, the legacy `mutate` wrapper, inbox.
 - [ingestion-nudge.md](./ingestion-nudge.md) — how raw events arrive, the two ledgers, the nudge model.

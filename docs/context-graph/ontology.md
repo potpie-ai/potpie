@@ -338,9 +338,9 @@ enforces `environment_filter` (default `qualified_only`; opt out with
 `WorkbenchOntologyContract` at import (then `assert_ontology_contract_coherent`).
 It is what `graph catalog`/`describe` return.
 
-### 7.1 Subgraphs — 8
+### 7.1 Subgraphs — 9
 
-`_SUBGRAPH_DEFINITIONS` are eight hand-authored slices:
+`_SUBGRAPH_DEFINITIONS` are nine hand-authored slices:
 
 | Subgraph | Covers |
 |---|---|
@@ -351,15 +351,16 @@ It is what `graph catalog`/`describe` return.
 | `features` | product capabilities and their implementations |
 | `code_topology` | code assets and ownership-by-path |
 | `knowledge` | documents and observations |
+| `provenance` | generated-code prompt, spec, and session lineage |
 | `admin` | exposes the full `tuple(ENTITY_TYPES)` / `tuple(EDGE_TYPES)` |
 
 There is **no** `project_map`, `operations`, `quality`, or `bugs` subgraph
 (`bugs` is the common mistake — the prior-occurrences view lives under
 **`debugging`**).
 
-### 7.2 Views — 9
+### 7.2 Views — 10
 
-`GRAPH_VIEWS` (`domain/graph_views.py`) defines nine `<subgraph>.<view>`
+`GRAPH_VIEWS` (`domain/graph_views.py`) defines ten `<subgraph>.<view>`
 contracts:
 
 | View | Result shape |
@@ -372,6 +373,7 @@ contracts:
 | `features.feature_context` | entity relations |
 | `code_topology.ownership_by_path` | flat claims |
 | `knowledge.document_context` | flat claims |
+| `provenance.lineage` | flat claims |
 | `admin.inspection_slice` | raw graph |
 
 There is no `features.implementation_map`, `changes_near_scope`, or

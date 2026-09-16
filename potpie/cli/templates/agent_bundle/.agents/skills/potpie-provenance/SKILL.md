@@ -50,8 +50,23 @@ potpie why path/to/file.py --lines 12-40
 potpie graph read --subgraph provenance --view lineage --scope path:path/to/file.py
 ```
 
-## Cursor / Codex
+## Cursor automatic capture
 
-Those harnesses have no UserPromptSubmit / PostToolUse Write hooks. Record
-manually at plan and Stop. Claude hooks store the latest prompt and link
-Write/Edit spans fail-open; they never block an edit.
+Cursor supports automatic capture through `beforeSubmitPrompt` (remember the
+prompt) and `afterFileEdit` (link the edited span to the latest prompt). The
+hooks are fail-open and never block the prompt or edit workflow.
+
+## Codex manual capture
+
+The checked-in Codex hook template is not currently a supported automatic-capture
+configuration. In Codex, record prompt context and the plan manually, then record
+provenance again at Stop. At Stop, record the provenance `spec_requirement`
+separately from any code `generation_link`.
+
+Codex automation can be enabled only after its template adopts the supported event
+names and nested `hooks` command schema.
+
+## Claude
+
+Claude hooks store the latest prompt and link Write/Edit spans fail-open; they
+never block an edit.

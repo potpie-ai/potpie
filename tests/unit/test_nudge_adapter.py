@@ -439,20 +439,55 @@ def test_prompt_of_reads_common_shapes() -> None:
     assert adapter.prompt_of({}) is None
 
 
-def test_build_lineage_argv_remember_prompt() -> None:
+def test_build_lineage_argv_remember_prompt(tmp_path: Path) -> None:
+    prompt_file = str(tmp_path / "prompt.txt")
     argv = adapter.build_lineage_argv(
         "potpie",
         session="sess-1",
         harness="claude",
         remember_prompt=True,
-        prompt_file="/tmp/p.txt",
+        prompt_file=prompt_file,
         pot="demo",
     )
     assert argv[:4] == ["potpie", "--json", "lineage", "capture"]
     assert "--remember-prompt" in argv
     assert "--fail-open" in argv
-    assert "--prompt-file" in argv and "/tmp/p.txt" in argv
+    assert "--prompt-file" in argv and prompt_file in argv
     assert "--session" in argv and "sess-1" in argv
+
+
+def test_post_edit_captures_each_edit_with_only_known_ranges(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(adapter.shutil, "which", lambda _name: "/usr/bin/potpie")
+    monkeypatch.setattr(adapter.subprocess, "run", fake_run)
+    args = types.SimpleNamespace(potpie_bin="potpie", pot=None, harness="claude")
+    payload = {
+        "edits": [
+            {"path": "a.py", "line_start": 2, "line_end": 3, "new_string": "x"},
+            {
+                "file_path": "b.py",
+                "range": {"start": 7, "end": 8},
+                "replacement": "y",
+            },
+            {"path": "unknown.py", "replacement": "no range"},
+        ]
+    }
+
+    assert adapter._run_lineage_capture(args, payload, "post_edit") == 0
+    assert [cmd[cmd.index("--path") + 1] for cmd in calls] == ["a.py", "b.py"]
+    assert [cmd[cmd.index("--lines") + 1] for cmd in calls] == ["2-3", "7-8"]
+
+
+def test_infer_line_range_does_not_fall_back_to_full_file(tmp_path: Path) -> None:
+    path = tmp_path / "edited.py"
+    path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    assert adapter.infer_line_range(str(path), "missing") is None
+    assert adapter.infer_line_range(str(path), None) is None
 
 
 def test_post_edit_never_blocks_when_potpie_fails(tmp_path: Path) -> None:

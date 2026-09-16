@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS spans (
 CREATE INDEX IF NOT EXISTS idx_spans_path ON spans(path, line_start, line_end);
 """
 
+_SQLITE_BUSY_TIMEOUT_SECONDS = 10.0
+_SQLITE_BUSY_TIMEOUT_MS = int(_SQLITE_BUSY_TIMEOUT_SECONDS * 1000)
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -86,8 +89,9 @@ class LineageStore:
         self._init()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=_SQLITE_BUSY_TIMEOUT_SECONDS)
         conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {_SQLITE_BUSY_TIMEOUT_MS}")
         return conn
 
     def _init(self) -> None:
@@ -222,7 +226,12 @@ class LineageStore:
 
 
 def _normalize_path(path: str) -> str:
-    return path.replace("\\", "/").strip()
+    return normalize_lineage_path(path)
+
+
+def normalize_lineage_path(path: str) -> str:
+    """Canonicalize separators and remove only an exact leading ``./``."""
+    return str(path).replace("\\", "/").strip().removeprefix("./")
 
 
 def payload_hash(text: str) -> str:
@@ -237,5 +246,6 @@ __all__ = [
     "LineageStore",
     "SpanHit",
     "default_lineage_db_path",
+    "normalize_lineage_path",
     "payload_hash",
 ]

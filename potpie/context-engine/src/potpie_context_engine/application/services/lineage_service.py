@@ -12,6 +12,7 @@ from potpie_context_engine.application.services.lineage_store import (
     LineageStore,
     SpanHit,
     default_lineage_db_path,
+    normalize_lineage_path,
 )
 from potpie_context_engine.core.identity import get_identity, mint_entity_key
 from potpie_context_engine.core.ports.claim_query import (
@@ -61,7 +62,7 @@ def mint_code_asset_key(
     line_end: int,
     span_text: str,
 ) -> str:
-    normalized = path.replace("\\", "/").lstrip("./")
+    normalized = normalize_lineage_path(path)
     return mint_entity_key(
         get_identity("CodeAsset"),
         name=f"l{line_start}-l{line_end}-{_span_hash8(span_text)}",
@@ -150,7 +151,7 @@ class LineageService:
         self.store.remember_prompt(session_key=session_key, prompt_hash=prompt_hash)
         graph_error = self._record(
             "prompt_turn",
-            summary=prompt[:240],
+            summary=prompt_key,
             details={
                 "prompt_key": prompt_key,
                 "session_key": session_key,
@@ -160,7 +161,7 @@ class LineageService:
             },
         )
         return {
-            "ok": True,
+            "ok": graph_error is None,
             "prompt_key": prompt_key,
             "prompt_hash": prompt_hash,
             "session_key": session_key,
@@ -187,12 +188,15 @@ class LineageService:
 
         prompt_key = None
         prompt_hash = None
+        graph_errors: list[str] = []
         if prompt and prompt.strip():
             remembered = self.remember_prompt(
                 prompt=prompt, harness=harness, session_id=session_id
             )
             prompt_key = remembered["prompt_key"]
             prompt_hash = remembered["prompt_hash"]
+            if remembered.get("graph_error"):
+                graph_errors.append(str(remembered["graph_error"]))
         else:
             prompt_hash = self.store.latest_prompt_hash(session_key)
             if prompt_hash:
@@ -204,15 +208,17 @@ class LineageService:
             spec_key = mint_spec_key(spec)
             spec_hash = spec_key.rsplit(":", 1)[-1]
             self.store.put_payload(hash_=spec_hash, kind="spec", text=spec)
-            self._record(
+            spec_error = self._record(
                 "spec_requirement",
-                summary=spec[:240],
+                summary=spec_key,
                 details={
                     "spec_key": spec_key,
                     "prompt_key": prompt_key,
                     "status": "draft",
                 },
             )
+            if spec_error:
+                graph_errors.append(spec_error)
 
         file_path = Path(path)
         text = span_text
@@ -225,7 +231,7 @@ class LineageService:
             line_end=line_end,
             span_text=text or f"{path}:{line_start}-{line_end}",
         )
-        normalized = path.replace("\\", "/")
+        normalized = normalize_lineage_path(path)
         self.store.put_span(
             path=normalized,
             line_start=line_start,
@@ -235,9 +241,8 @@ class LineageService:
             spec_hash=spec_hash,
             session_key=session_key,
         )
-        graph_error = None
         if prompt_key:
-            graph_error = self._record(
+            generation_error = self._record(
                 "generation_link",
                 summary=f"{normalized}:{line_start}-{line_end}",
                 details={
@@ -251,8 +256,11 @@ class LineageService:
                 },
                 scope={"repo": repo, "file_path": normalized},
             )
+            if generation_error:
+                graph_errors.append(generation_error)
+        graph_error = "; ".join(graph_errors) or None
         return {
-            "ok": True,
+            "ok": not graph_errors,
             "path": normalized,
             "line_start": line_start,
             "line_end": line_end,
@@ -283,7 +291,7 @@ class LineageService:
                     raise
         return {
             "ok": True,
-            "path": path.replace("\\", "/"),
+            "path": normalize_lineage_path(path),
             "line_start": line_start,
             "line_end": line_end,
             "matches": matches,
@@ -346,12 +354,23 @@ class LineageService:
         if self.record_graph is None:
             return None
         try:
-            self.record_graph(record_type, summary, dict(details), dict(scope or {}))
+            result = self.record_graph(
+                record_type, summary, dict(details), dict(scope or {})
+            )
+            accepted = getattr(result, "accepted", getattr(result, "ok", None))
+            detail = getattr(result, "detail", None) or getattr(result, "error", None)
+            if isinstance(result, Mapping):
+                accepted = result.get("accepted", result.get("ok", accepted))
+                detail = result.get("detail") or result.get("error") or detail
+            if accepted is False:
+                return f"{record_type}: {detail or 'graph write rejected'}"
+            if detail and accepted is not True:
+                return f"{record_type}: {detail}"
             return None
         except Exception as exc:  # noqa: BLE001 - capture must fail open
             logger.debug("lineage graph record failed: %s", exc)
             if self.fail_open:
-                return str(exc)
+                return f"{record_type}: {exc}"
             raise
 
 

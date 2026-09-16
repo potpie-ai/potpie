@@ -3,38 +3,45 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event session_start"
+        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event session_start",
+        "timeout": 15
       }
     ],
     "beforeSubmitPrompt": [
       {
-        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event user_prompt"
+        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event user_prompt",
+        "timeout": 15
       }
     ],
     "preToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit|NotebookEdit",
-        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event pre_edit"
+        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event pre_edit",
+        "timeout": 15
       },
       {
         "matcher": "Shell",
-        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event bash_pre"
+        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event bash_pre",
+        "timeout": 15
       }
     ],
     "postToolUse": [
       {
         "matcher": "Shell",
-        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event bash_post"
+        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event bash_post",
+        "timeout": 15
       }
     ],
     "afterFileEdit": [
       {
-        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event post_edit"
+        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event post_edit",
+        "timeout": 15
       }
     ],
     "stop": [
       {
-        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event stop"
+        "command": "python3 .cursor/hooks/potpie_nudge.py --harness cursor --event stop",
+        "timeout": 15
       }
     ]
   }

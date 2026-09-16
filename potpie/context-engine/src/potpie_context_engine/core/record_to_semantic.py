@@ -309,10 +309,12 @@ def _build_operation(
         return ops
 
     if record_type == "prompt_turn":
+        prompt_key = _str(details.get("prompt_key")) or f"prompt:{_slug(source_id)}"
+        prompt_description = prompt_key
         prompt = {
-            "key": _str(details.get("prompt_key")) or f"prompt:{_slug(source_id)}",
+            "key": prompt_key,
             "type": "PromptTurn",
-            "description": summary,
+            "description": prompt_description,
             "properties": {
                 "record_type": record_type,
                 "harness": _str(details.get("harness")) or "unknown",
@@ -336,7 +338,7 @@ def _build_operation(
                 "truth": "agent_claim",
                 "subject": prompt,
                 "object": session,
-                "description": summary,
+                "description": prompt_description,
             }
         ]
         for ctx in _as_list(details.get("used_context_keys")):
@@ -349,20 +351,22 @@ def _build_operation(
                     "truth": "agent_claim",
                     "subject": prompt,
                     "object": _entity_ref_for_key(ctx, definition=definition),
-                    "description": summary,
+                    "description": prompt_description,
                 }
             )
         return ops
 
     if record_type == "spec_requirement":
+        spec_key = _str(details.get("spec_key")) or f"spec:{_slug(source_id)}"
+        spec_description = spec_key
         spec_ent = {
-            "key": _str(details.get("spec_key")) or f"spec:{_slug(source_id)}",
+            "key": spec_key,
             "type": "SpecRequirement",
-            "description": summary,
+            "description": spec_description,
             "properties": {
                 "record_type": record_type,
                 "status": _str(details.get("status")) or "draft",
-                "title": _str(details.get("title")) or summary,
+                "title": _str(details.get("title")) or spec_key,
             },
         }
         ops = []
@@ -377,7 +381,7 @@ def _build_operation(
                     "truth": "agent_claim",
                     "subject": spec_ent,
                     "object": {"key": prompt_key, "type": "PromptTurn"},
-                    "description": summary,
+                    "description": spec_description,
                 }
             )
         derived = _str(details.get("derived_from_key"))
@@ -391,7 +395,7 @@ def _build_operation(
                     "truth": "agent_claim",
                     "subject": spec_ent,
                     "object": _entity_ref_for_key(derived, definition=definition),
-                    "description": summary,
+                    "description": spec_description,
                 }
             )
         if ops:
@@ -404,7 +408,7 @@ def _build_operation(
             "truth": "agent_claim",
             "subject": spec_ent,
             "object": target,
-            "description": summary,
+            "description": spec_description,
         }
 
     if record_type == "generation_link":

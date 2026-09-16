@@ -1,40 +1,80 @@
 {
-  "version": 1,
   "hooks": {
-    "sessionStart": [
+    "SessionStart": [
       {
-        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event session_start"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event session_start",
+            "timeout": 15
+          }
+        ]
       }
     ],
-    "beforeSubmitPrompt": [
+    "UserPromptSubmit": [
       {
-        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event user_prompt"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event user_prompt",
+            "timeout": 15
+          }
+        ]
       }
     ],
-    "preToolUse": [
+    "PreToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
-        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event pre_edit"
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event pre_edit",
+            "timeout": 15
+          }
+        ]
       },
       {
-        "matcher": "Shell",
-        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event bash_pre"
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event bash_pre",
+            "timeout": 15
+          }
+        ]
       }
     ],
-    "postToolUse": [
+    "PostToolUse": [
       {
-        "matcher": "Shell",
-        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event bash_post"
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event bash_post",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event post_edit",
+            "timeout": 15
+          }
+        ]
       }
     ],
-    "afterFileEdit": [
+    "Stop": [
       {
-        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event post_edit"
-      }
-    ],
-    "stop": [
-      {
-        "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event stop"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/potpie_nudge.py --harness codex --event stop",
+            "timeout": 15
+          }
+        ]
       }
     ]
   }

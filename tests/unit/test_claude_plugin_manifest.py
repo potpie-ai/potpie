@@ -76,7 +76,9 @@ def _all_hook_commands() -> list[str]:
 
 def test_every_hook_calls_the_adapter_via_plugin_root() -> None:
     commands = _all_hook_commands()
-    assert len(commands) == 7  # SessionStart, 2×PreToolUse, 2×PostToolUse, UserPromptSubmit, Stop
+    assert (
+        len(commands) == 7
+    )  # SessionStart, 2×PreToolUse, 2×PostToolUse, UserPromptSubmit, Stop
     for cmd in commands:
         assert "potpie_nudge.py" in cmd
         assert "${CLAUDE_PLUGIN_ROOT}" in cmd
