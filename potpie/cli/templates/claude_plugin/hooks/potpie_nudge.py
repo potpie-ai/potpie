@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -910,6 +911,9 @@ def _run_lineage_capture(args: Any, payload: dict[str, Any], hint: str) -> int:
         if not edit_payloads:
             _debug("post_edit with no edits; staying silent")
             return 0
+        batch_deadline = time.monotonic() + float(
+            os.environ.get("POTPIE_HOOK_TIMEOUT", "15")
+        )
         captured = 0
         for edit in edit_payloads:
             path = _edit_path(edit) or file_path_of(edit)
@@ -921,6 +925,10 @@ def _run_lineage_capture(args: Any, payload: dict[str, Any], hint: str) -> int:
             if not lines:
                 _debug(f"post_edit with no known range for {path!r}; skipping")
                 continue
+            remaining = batch_deadline - time.monotonic()
+            if remaining <= 0:
+                _debug("lineage batch deadline reached; stopping capture")
+                break
             cmd = build_lineage_argv(
                 binary,
                 session=session,
@@ -934,7 +942,7 @@ def _run_lineage_capture(args: Any, payload: dict[str, Any], hint: str) -> int:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=float(os.environ.get("POTPIE_HOOK_TIMEOUT", "15")),
+                timeout=remaining,
                 check=False,
             )
             captured += 1

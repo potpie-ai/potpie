@@ -531,6 +531,40 @@ def test_lineage_capture_handles_bash_patch_and_structured_edits(monkeypatch) ->
     assert [cmd[cmd.index("--lines") + 1] for cmd in calls] == ["2-3", "4-5"]
 
 
+def test_lineage_capture_uses_one_batch_deadline(monkeypatch) -> None:
+    calls: list[float] = []
+    now = [100.0]
+
+    def monotonic() -> float:
+        return now[0]
+
+    def fake_run(cmd, **kwargs):
+        calls.append(kwargs["timeout"])
+        if len(calls) == 1:
+            now[0] = 108.0
+        elif len(calls) == 2:
+            now[0] = 116.0
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        adapter, "time", types.SimpleNamespace(monotonic=monotonic), raising=False
+    )
+    monkeypatch.setenv("POTPIE_HOOK_TIMEOUT", "15")
+    monkeypatch.setattr(adapter.shutil, "which", lambda _name: "/usr/bin/potpie")
+    monkeypatch.setattr(adapter.subprocess, "run", fake_run)
+    args = types.SimpleNamespace(potpie_bin="potpie", pot=None, harness="claude")
+    payload = {
+        "edits": [
+            {"path": "a.py", "line_start": 1, "line_end": 1},
+            {"path": "b.py", "line_start": 2, "line_end": 2},
+            {"path": "c.py", "line_start": 3, "line_end": 3},
+        ]
+    }
+
+    assert adapter._run_lineage_capture(args, payload, "post_edit") == 0
+    assert calls == [15.0, 7.0]
+
+
 def test_infer_line_range_does_not_fall_back_to_full_file(tmp_path: Path) -> None:
     path = tmp_path / "edited.py"
     path.write_text("one\ntwo\nthree\n", encoding="utf-8")
