@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.identity import IdentityClass
 from potpie_context_core.ontology import EntityTypeSpec
 from potpie_context_core.ports.claim_query import ClaimRow
+from potpie_context_core.runtime import build_graph_runtime
 from potpie_context_core.workbench_service import (
     GraphWorkbenchService,
 )
@@ -30,6 +32,9 @@ class _UnusedPlanStore:
         raise AssertionError("plan store should not be used by quality tests")
 
     def list(self, **_kwargs):
+        raise AssertionError("plan store should not be used by quality tests")
+
+    def compare_and_set(self, *_args, **_kwargs):
         raise AssertionError("plan store should not be used by quality tests")
 
 
@@ -95,8 +100,13 @@ def test_quality_summary_aggregates_deep_report_counts() -> None:
     assert result.metrics["total_findings"] >= 1
 
 
-def test_quality_duplicate_candidates_are_read_only() -> None:
+@pytest.mark.parametrize("bulk_available", [True, False])
+def test_quality_duplicate_candidates_are_read_only(
+    monkeypatch: pytest.MonkeyPatch, bulk_available: bool
+) -> None:
     workbench, backend = _service()
+    if not bulk_available:
+        monkeypatch.setattr(type(backend.store), "entity_properties_many", None)
     backend.store.add(_row("DEPENDS_ON", "service:api-a", "service:db", claim_key="c1"))
     backend.store.add(_row("DEPENDS_ON", "service:api-b", "service:db", claim_key="c2"))
     backend.store.set_entity_label(
@@ -119,6 +129,77 @@ def test_quality_duplicate_candidates_are_read_only() -> None:
     assert result.findings[0].kind == "duplicate-candidate"
     assert set(result.findings[0].entity_keys) == {"service:api-a", "service:api-b"}
     assert len(backend.store.rows) == before
+
+
+@pytest.mark.parametrize("report", ["summary", "duplicate-candidates"])
+@pytest.mark.parametrize("through_runtime", [False, True])
+async def test_quality_batches_entity_metadata_for_large_graphs(
+    monkeypatch: pytest.MonkeyPatch, report: str, through_runtime: bool
+) -> None:
+    workbench, backend = _service()
+    keys = set()
+    for i in range(1000):
+        subject, object_ = f"service:api-{i}", f"service:db-{i}"
+        keys.update((subject, object_))
+        backend.store.add(_row("DEPENDS_ON", subject, object_, claim_key=f"c{i}"))
+    for key in ("service:api-0", "service:api-1"):
+        backend.store.set_entity_properties(
+            pot_id=POT, entity_key=key, properties={"name": "Payments API"}
+        )
+    backend.store.set_entity_properties(
+        pot_id="other", entity_key="service:db-0", properties={"name": "Payments API"}
+    )
+    calls = []
+    def bulk(*, pot_id, entity_keys):
+        calls.append((pot_id, set(entity_keys)))
+        return backend.store.entity_properties_many(pot_id=pot_id, entity_keys=entity_keys)
+
+    def single(*_args, **_kwargs):
+        pytest.fail("quality must not issue one database query per entity")
+
+    # Instrument the query port only; in-memory inspection hydrates its own
+    # nodes directly from the store without database round trips.
+    query = SimpleNamespace(
+        find_claims=backend.store.find_claims,
+        entity_labels=backend.store.entity_labels,
+        entity_properties=single,
+        entity_properties_many=bulk,
+    )
+    monkeypatch.setattr(type(backend), "claim_query", property(lambda _self: query))
+
+    if through_runtime:
+        runtime = build_graph_runtime(backend=backend, plan_store=_UnusedPlanStore())
+        result = await runtime.quality_async(pot_id=POT, report=report)
+    else:
+        result = workbench.quality(pot_id=POT, report=report)
+
+    assert calls == [(POT, keys)]
+    assert result.ok
+    if report == "summary":
+        assert result.metrics["quality_counts"]["duplicate_candidates"] == 1
+        assert result.metrics["counts"]["claims"] == 1000
+    else:
+        assert len(result.findings) == 1
+        assert set(result.findings[0].entity_keys) == {"service:api-0", "service:api-1"}
+    assert len(backend.store.rows) == 1000
+
+
+def test_quality_reports_unsupported_bulk_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workbench, backend = _service()
+    backend.store.add(_row("DEPENDS_ON", "service:api", "service:db", claim_key="c1"))
+
+    def unavailable(*_args, **_kwargs):
+        raise CapabilityNotImplemented("claim_query.entity_properties")
+
+    monkeypatch.setattr(type(backend.store), "entity_properties_many", unavailable)
+    result = workbench.quality(pot_id=POT, report="duplicate-candidates")
+
+    assert result.ok
+    assert result.status == "partial"
+    assert result.findings == ()
+    assert len(result.unsupported) == 1
 
 
 def test_quality_stale_and_low_confidence_find_source_backed_claims() -> None:
