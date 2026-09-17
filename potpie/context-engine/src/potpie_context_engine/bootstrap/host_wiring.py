@@ -214,10 +214,12 @@ def build_host_shell(
 
             from potpie_context_engine.protocols import protocols_definition
 
+            protocols_setting = (
+                os.environ.get("CONTEXT_ENGINE_PROTOCOLS_ENABLED", "").strip().lower()
+            )
             definition = (
                 protocols_definition()
-                if os.environ.get("CONTEXT_ENGINE_PROTOCOLS_ENABLED", "").lower()
-                in {"1", "true", "yes", "on"}
+                if (protocols_setting or "true") in {"1", "true", "yes", "on"}
                 else DEFAULT_GRAPH_DEFINITION
             )
         graph_runtime = build_graph_runtime(

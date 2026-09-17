@@ -464,21 +464,36 @@ def test_ledger_pull_does_not_write(tmp_path, monkeypatch):
     assert len(env.items) == 0
 
 
-def test_protocol_startup_opt_in_and_explicit_definition(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("setting", "expected"),
+    [
+        (None, True),
+        ("", True),
+        ("  ", True),
+        ("true", True),
+        (" True ", True),
+        ("false", False),
+        (" False ", False),
+        ("0", False),
+    ],
+)
+def test_protocol_startup_default_and_explicit_definition(
+    monkeypatch, tmp_path, setting, expected
+):
     from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION
     from potpie_context_core.ports.graph_service import GraphCatalogRequest
 
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
-    monkeypatch.setenv("CONTEXT_ENGINE_PROTOCOLS_ENABLED", "true")
+    if setting is None:
+        monkeypatch.delenv("CONTEXT_ENGINE_PROTOCOLS_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("CONTEXT_ENGINE_PROTOCOLS_ENABLED", setting)
     monkeypatch.setenv("CONTEXT_ENGINE_RESOURCE_INDEX", "none")
-    enabled = build_host_shell(backend=InMemoryGraphBackend())
-    assert enabled.graph.catalog(GraphCatalogRequest(pot_id="p")).extensions == {
-        "protocols": "1"
-    }
+    host = build_host_shell(backend=InMemoryGraphBackend())
+    catalog = host.graph.catalog(GraphCatalogRequest(pot_id="p"))
+    assert catalog.extensions == ({"protocols": "1"} if expected else {})
+    assert ("protocols" in host.graph.backed_includes) is expected
     base = build_host_shell(
         backend=InMemoryGraphBackend(), definition=DEFAULT_GRAPH_DEFINITION
     )
     assert "protocols" not in base.graph.backed_includes
-    monkeypatch.delenv("CONTEXT_ENGINE_PROTOCOLS_ENABLED")
-    disabled = build_host_shell(backend=InMemoryGraphBackend())
-    assert "protocols" not in disabled.graph.backed_includes

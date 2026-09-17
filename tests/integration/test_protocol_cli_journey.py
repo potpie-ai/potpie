@@ -27,7 +27,6 @@ def cli(tmp_path):
         "POTPIE_HARNESS_HOME": str(tmp_path / "harness"),
         "CONTEXT_ENGINE_HOST_MODE": "in_process",
         "CONTEXT_ENGINE_BACKEND": "embedded",
-        "CONTEXT_ENGINE_PROTOCOLS_ENABLED": "true",
         "CONTEXT_ENGINE_EMBEDDER": "none",
         "POTPIE_TELEMETRY_DISABLED": "1",
         "PYTHONPATH": os.pathsep.join(
@@ -41,6 +40,8 @@ def cli(tmp_path):
             )
         ),
     }
+    # Exercise startup without an opt-in, regardless of the developer's shell.
+    env.pop("CONTEXT_ENGINE_PROTOCOLS_ENABLED", None)
 
     def run(*args, code=0, human=False, envelope=False):
         command = [

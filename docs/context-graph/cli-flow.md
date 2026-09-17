@@ -690,6 +690,7 @@ through services and capability ports.
 | `GRAPH_DB_BACKEND` | legacy fallback selector (ingestion server default `neo4j`) |
 | `CONTEXT_ENGINE_HOST_MODE` | `daemon` (default) \| `in_process` |
 | `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder |
+| `CONTEXT_ENGINE_PROTOCOLS_ENABLED` | Defaults to `true`: protocol types and `protocols.message_context` are available without configuration; `false` disables the extension on the next local host start |
 | `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL` | downgrade-instead-of-fail validation |
 | `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED` | service-side LLM reconciliation (**default off**) |
 | `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | batch chunk size (default 20) |
