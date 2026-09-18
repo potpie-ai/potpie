@@ -111,7 +111,8 @@ def register(root: typer.Typer) -> None:
             "--daemon/--in-process",
             help=(
                 "Provision a real detached daemon. Defaults to "
-                "$CONTEXT_ENGINE_HOST_MODE or daemon."
+                "$CONTEXT_ENGINE_HOST_MODE, else in_process on Windows "
+                "and daemon elsewhere."
             ),
         ),
         embeddings: str = typer.Option(
@@ -454,7 +455,7 @@ def register(root: typer.Typer) -> None:
                     f"ledger: {get_ledger_service(host).status().binding} "
                     f"available={get_ledger_service(host).status().available}"
                     + (
-                        f"\nrepo: {repo_identity} → {effective_current_repo_pot}"
+                        f"\nrepo: {repo_identity} -> {effective_current_repo_pot}"
                         + (
                             f" (default={default_pot_id})"
                             if default_pot_id
