@@ -41,22 +41,28 @@ class LadybugAnalytics:
 
     def counts(self, pot_id: str) -> Mapping[str, int]:
         try:
-            crow = self._row(
-                """
+            crow = (
+                self._row(
+                    """
                 MATCH (c:Claim {group_id: $gid})
                 RETURN count(c) AS claims,
                        count(DISTINCT c.name) AS predicates,
                        count(CASE WHEN c.invalid_at IS NOT NULL THEN 1 END) AS invalidated
                 """,
-                pot_id,
-            ) or {}
-            erow = self._row(
-                """
+                    pot_id,
+                )
+                or {}
+            )
+            erow = (
+                self._row(
+                    """
                 MATCH (e:Entity {group_id: $gid})
                 RETURN count(e) AS entities
                 """,
-                pot_id,
-            ) or {}
+                    pot_id,
+                )
+                or {}
+            )
             return {
                 "claims": int(crow.get("claims") or 0),
                 "entities": int(erow.get("entities") or 0),
@@ -69,15 +75,18 @@ class LadybugAnalytics:
 
     def freshness(self, pot_id: str) -> Mapping[str, Any]:
         try:
-            row = self._row(
-                """
+            row = (
+                self._row(
+                    """
                 MATCH (c:Claim {group_id: $gid})
                 WHERE c.valid_at IS NOT NULL
                 RETURN min(c.valid_at) AS oldest, max(c.valid_at) AS newest,
                        count(c) AS stamped
                 """,
-                pot_id,
-            ) or {}
+                    pot_id,
+                )
+                or {}
+            )
             return {
                 "oldest": _iso_utc(row.get("oldest")),
                 "newest": _iso_utc(row.get("newest")),

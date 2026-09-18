@@ -37,10 +37,7 @@ class WindowsLadybugOperationHandler:
         self._backend = backend
 
     async def handle(self, request, *, authentication: object) -> ClientOutcome:
-        if (
-            sys.platform != "win32"
-            or request.operation is not EngineOperation.SEARCH
-        ):
+        if sys.platform != "win32" or request.operation is not EngineOperation.SEARCH:
             return await self._fallback.handle(
                 request,
                 authentication=authentication,

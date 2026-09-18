@@ -346,7 +346,9 @@ class LadybugGraphWriter(GraphWriterPort):
         conn = self._get_conn()
         n = 0
         for item in items:
-            labels = [str(x) for x in (item.labels or ()) if str(x) and str(x) != "Entity"]
+            labels = [
+                str(x) for x in (item.labels or ()) if str(x) and str(x) != "Entity"
+            ]
             name = str(item.properties.get("name") or item.entity_key)
             summary = str(item.properties.get("summary") or "")
             await asyncio.to_thread(
@@ -754,11 +756,7 @@ class LadybugGraphWriter(GraphWriterPort):
                 "pot_id": pot_id,
                 "group_id_nodes_before": before,
                 "group_id_nodes_remaining": remaining,
-                **(
-                    {}
-                    if remaining == 0
-                    else {"error": "group_id_reset_incomplete"}
-                ),
+                **({} if remaining == 0 else {"error": "group_id_reset_incomplete"}),
             }
 
         return await asyncio.to_thread(_reset)

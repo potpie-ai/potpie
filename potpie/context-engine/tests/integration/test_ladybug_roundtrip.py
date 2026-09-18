@@ -73,12 +73,8 @@ def test_write_read_vector_bfs_reset(ladybug_home) -> None:
     settings = _Settings(ladybug_home)
     embedder = _FakeEmbedder()
     provider = LadybugGraphProvider(settings)
-    writer = LadybugGraphWriter(
-        settings, conn_provider=provider, embedder=embedder
-    )
-    reader = LadybugClaimQueryStore(
-        settings, conn_provider=provider, embedder=embedder
-    )
+    writer = LadybugGraphWriter(settings, conn_provider=provider, embedder=embedder)
+    reader = LadybugClaimQueryStore(settings, conn_provider=provider, embedder=embedder)
     backend = LadybugGraphBackend(
         settings,
         writer=writer,
@@ -94,15 +90,9 @@ def test_write_read_vector_bfs_reset(ladybug_home) -> None:
         await writer.upsert_entities(
             pot,
             [
-                EntityUpsert(
-                    "service:web", ("Entity", "Service"), {"name": "web"}
-                ),
-                EntityUpsert(
-                    "service:auth", ("Entity", "Service"), {"name": "auth"}
-                ),
-                EntityUpsert(
-                    "service:db", ("Entity", "Service"), {"name": "db"}
-                ),
+                EntityUpsert("service:web", ("Entity", "Service"), {"name": "web"}),
+                EntityUpsert("service:auth", ("Entity", "Service"), {"name": "auth"}),
+                EntityUpsert("service:db", ("Entity", "Service"), {"name": "db"}),
             ],
             prov,
         )
@@ -154,9 +144,7 @@ def test_write_read_vector_bfs_reset(ladybug_home) -> None:
     assert scored[0].properties.get("semantic_similarity") is not None
     # Recall@5 vs cosine ground truth on stored embeddings.
     q = list(embedder.embed("auth login"))
-    lexical = reader.find_claims(
-        ClaimQueryFilter(pot_id=pot, include_invalidated=True)
-    )
+    lexical = reader.find_claims(ClaimQueryFilter(pot_id=pot, include_invalidated=True))
     ranked = sorted(
         (
             cosine_similarity(q, list(r.fact_embedding or [])),
@@ -212,9 +200,12 @@ def test_write_read_vector_bfs_reset(ladybug_home) -> None:
     # Claim-key invalidation must not interpret an entity key as a claim key.
     remaining_key = live[0].claim_key
     remaining_entity_key = live[0].subject_key
-    assert backend.mutation.invalidate(
-        pot_id=pot, claim_keys=[remaining_entity_key], reason="test"
-    ) == 0
+    assert (
+        backend.mutation.invalidate(
+            pot_id=pot, claim_keys=[remaining_entity_key], reason="test"
+        )
+        == 0
+    )
     assert reader.find_claims(
         ClaimQueryFilter(pot_id=pot, claim_key_in=(remaining_key,))
     )
@@ -227,9 +218,7 @@ def test_write_read_vector_bfs_reset(ladybug_home) -> None:
         conn_provider=provider2,
         embedder=embedder,
     )
-    writer2 = LadybugGraphWriter(
-        settings, conn_provider=provider2, embedder=embedder
-    )
+    writer2 = LadybugGraphWriter(settings, conn_provider=provider2, embedder=embedder)
     assert len(reader2.find_claims(ClaimQueryFilter(pot_id=pot))) >= 1
 
     final = asyncio.run(writer2.reset_pot(pot))

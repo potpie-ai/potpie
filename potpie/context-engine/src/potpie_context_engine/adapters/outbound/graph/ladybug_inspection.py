@@ -8,7 +8,10 @@ from potpie_context_engine.adapters.outbound.graph.ladybug_writer import (
     _records_from_result,
     build_ladybug_db,
 )
-from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimQueryPort
+from potpie_context_engine.core.ports.claim_query import (
+    ClaimQueryFilter,
+    ClaimQueryPort,
+)
 from potpie_context_engine.core.ports.graph.inspection import (
     GraphEdge,
     GraphNode,

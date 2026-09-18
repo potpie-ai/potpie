@@ -208,7 +208,9 @@ class LadybugClaimQueryStore:
                     )
                     return rows
             except Exception:
-                logger.debug("Ladybug vector query failed; cosine fallback", exc_info=True)
+                logger.debug(
+                    "Ladybug vector query failed; cosine fallback", exc_info=True
+                )
                 self._vector_ok = False
 
         rows = self._cosine_fallback(filter_, params, query_vec, limit)
@@ -314,11 +316,7 @@ class LadybugClaimQueryStore:
     def _label_ok(self, filter_: ClaimQueryFilter, row: ClaimRow) -> bool:
         labels = self.entity_labels(
             pot_id=filter_.pot_id,
-            entity_keys={
-                k
-                for k in (row.subject_key, row.object_key)
-                if k
-            },
+            entity_keys={k for k in (row.subject_key, row.object_key) if k},
         )
         if filter_.subject_label is not None and filter_.subject_label not in (
             labels.get(row.subject_key) or ()
