@@ -1,3 +1,8 @@
+---
+title: Ladybug Windows validation
+description: Win64 Ladybug defaults, OpenSSL bootstrap, in-process QA status, and known daemon search limits.
+---
+
 # Ladybug Windows validation
 
 LadybugDB (`ladybug` on PyPI) ships native `win_amd64` wheels and is the OSS
