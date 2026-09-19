@@ -25,6 +25,7 @@ constraints = [
     { name = "urllib3", specifier = ">=2.7.0" },
     { name = "httpcore2", specifier = ">=2.10.0" },
     { name = "httpx2", specifier = ">=2.12.0" },
+    { name = "anyio", specifier = ">=4.14.2" },
 ]
 
 [[package]]

@@ -144,4 +144,6 @@ constraint-dependencies = [
     "urllib3>=2.7.0",
     "httpx2>=2.12.0",
     "httpcore2>=2.10.0",
+    # CVE-2026-63374 / GHSA-82r6-8w77-94w6: floor at 4.14.2 (vulnerable: <=4.14.1).
+    "anyio>=4.14.2",
 ]
