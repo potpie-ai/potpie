@@ -23,9 +23,6 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name || inputs.tag }}
 
-      - name: Verify documentation release readiness
-        run: node scripts/check-docs-release-readiness.mjs
-
       - name: Select published stable release
         id: release
         env:
@@ -45,6 +42,12 @@ jobs:
           echo "skip=false" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Verify documentation release readiness
+        if: steps.release.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: node scripts/check-docs-release-readiness.mjs --tag "$TAG"
 
       - name: Mint Hub dispatch token
         id: hub_token
