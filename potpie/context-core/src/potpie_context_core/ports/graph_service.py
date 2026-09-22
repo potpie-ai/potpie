@@ -174,6 +174,8 @@ class GraphReadResult:
     as_of: datetime | None = None
     detail: str = "compact"
     relations: str = "summary"
+    effective_request: Mapping[str, Any] = field(default_factory=dict)
+    fallback_context: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         detail = normalize_read_detail(self.detail)
@@ -204,6 +206,10 @@ class GraphReadResult:
             "warnings": list(self.warnings),
             "as_of": self.as_of.isoformat() if self.as_of else None,
         }
+        if self.effective_request:
+            out["effective_request"] = dict(self.effective_request)
+        if self.fallback_context:
+            out["fallback_context"] = dict(self.fallback_context)
         if self.status:
             out["status"] = self.status
         if self.message:

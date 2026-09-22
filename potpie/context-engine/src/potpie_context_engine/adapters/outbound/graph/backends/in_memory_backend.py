@@ -507,6 +507,11 @@ class _Inspection:
         limit: int | None = None,
     ) -> GraphSlice:
         seen_nodes: dict[str, GraphNode] = {}
+        identity = (pot_id, entity_key)
+        if (identity in self.store.entity_label_index or identity in self.store.entity_property_index
+                or any(row.pot_id == pot_id and entity_key in (row.subject_key, row.object_key)
+                       for row in self.store.rows)):
+            seen_nodes[entity_key] = self._node(pot_id, entity_key)
         edges: list[GraphEdge] = []
         seen_edges: set[tuple[str, ...]] = set()
         frontier = {entity_key}

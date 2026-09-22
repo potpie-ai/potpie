@@ -722,6 +722,7 @@ def _resolve_match(
     qualify_hint: str,
     list_hint: str,
     not_found_message: str | None = None,
+    candidates: list[dict[str, str]] | None = None,
 ) -> _PotMatch:
     """Pick the one pot a ref means, or refuse with the reason it cannot.
 
@@ -749,7 +750,11 @@ def _resolve_match(
         )
     fail(
         code="pot_not_found",
-        message=not_found_message or f"No pot matching '{ref}'.",
+        message=(not_found_message or f"No pot matching '{ref}'.") + (
+            " Available choices: " + ", ".join(row["selector"] for row in candidates[:5])
+            if candidates else ""
+        ),
+        detail={"candidates": (candidates or [])[:5], "selected": None},
         next_action=list_hint,
     )
     raise AssertionError("unreachable")  # pragma: no cover - fail() exits
@@ -761,6 +766,7 @@ def _find_pot_in(
     *,
     unreachable_hint: str | None = None,
     suggest_alternatives: bool = False,
+    candidates_out: list[dict[str, str]] | None = None,
 ) -> _PotMatch | None:
     """The match for ``ref`` on ``origin``, or ``None``.
 
@@ -816,6 +822,11 @@ def _find_pot_in(
                 else unreachable_hint
             ),
         )
+    if candidates_out is not None:
+        candidates_out.extend(
+            {"selector": f"{origin}:{pot.name}", "pot_id": pot.pot_id}
+            for pot in pots if not getattr(pot, "archived", False)
+        )
     for pot in pots:
         if ref in (pot.pot_id, pot.name):
             return _PotMatch(
@@ -850,6 +861,7 @@ def _resolve_explicit_pot(explicit: str) -> str:
     """
     from potpie.cli import hosts
 
+    choices: list[dict[str, str]] = []
     origin, ref = hosts.split_ref(explicit)
     if ref is None:  # pragma: no cover - `explicit` is non-empty here
         ref = explicit
@@ -864,6 +876,7 @@ def _resolve_explicit_pot(explicit: str) -> str:
             ref,
             unreachable_hint=_unreachable_host_hint(origin),
             suggest_alternatives=True,
+            candidates_out=choices,
         )
         match = _resolve_match(
             [found] if found is not None else [],
@@ -875,6 +888,7 @@ def _resolve_explicit_pot(explicit: str) -> str:
                 else f"run 'potpie pot list --{origin}'"
             ),
             not_found_message=f"No pot matching '{ref}' on the {origin} host.",
+            candidates=choices,
         )
         return match.pot_id
 
@@ -884,6 +898,7 @@ def _resolve_explicit_pot(explicit: str) -> str:
         found = _find_pot_in(
             candidate,
             ref,
+            candidates_out=choices,
             unreachable_hint=(
                 _qualify_hint("--pot", candidate, ref)
                 if len(candidates) > 1
@@ -898,6 +913,7 @@ def _resolve_explicit_pot(explicit: str) -> str:
         ref=explicit,
         qualify_hint="qualify it, e.g. '--pot managed:<name>'",
         list_hint="run 'potpie pot list'",
+        candidates=choices,
     )
     hosts.set_current_origin(match.origin)
     return match.pot_id

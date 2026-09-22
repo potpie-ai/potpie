@@ -639,6 +639,7 @@ def test_skills_install_stays_on_the_local_machine(registry, monkeypatch) -> Non
                 installed = ()
                 missing = ()
                 outdated = ()
+                disabled = ()
 
             return _St()
 

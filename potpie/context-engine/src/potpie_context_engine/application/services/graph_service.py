@@ -272,7 +272,18 @@ class DefaultGraphService:
     # --- Graph Surface Lite -------------------------------------------------
     def catalog(self, request: GraphCatalogRequest) -> GraphCatalogResult:
         # ``task`` is accepted but ignored in V1.5 (V2 turns it into a ranker).
-        views = [spec.to_catalog_entry() for spec in self.definition.views.values()]
+        contracts = ontology_contract()
+        views = []
+        for spec in self.definition.views.values():
+            entry = spec.to_catalog_entry()
+            contract = contracts.view(spec.name) or _contract_from_view_spec(spec)
+            entry.update(
+                supported_filters=list(contract.supported_filters),
+                required_scope=list(contract.required_scope),
+                required_any_scope=list(contract.required_any_scope),
+                extra=dict(contract.extra),
+            )
+            views.append(entry)
         if request.subgraph:
             subgraph = request.subgraph.strip()
             known_subgraphs = sorted({str(v["subgraph"]) for v in views})
@@ -367,6 +378,14 @@ class DefaultGraphService:
         return payload
 
     def read(self, request: GraphReadRequest) -> GraphReadResult:
+        if request.limit <= 0:
+            raise ValueError("limit must be positive for a bounded read")
+        if request.query_threshold is not None and (
+            not 0 <= request.query_threshold <= 1
+        ):
+            raise ValueError("query_threshold must be between 0 and 1")
+        if request.since and request.until and request.since > request.until:
+            raise ValueError("since must not be after until")
         detail = normalize_read_detail(request.detail)
         relations = normalize_read_relations(request.relations)
         view_name = _qualified_view_name(
@@ -382,8 +401,24 @@ class DefaultGraphService:
             )
 
         unsupported = _unsupported_read_filters(request, contract)
+        if request.query_threshold is not None and not request.query and not any(
+            item["name"] == "query_threshold" for item in unsupported
+        ):
+            unsupported = (*unsupported, {"name": "query_threshold", "reason": "query_required"})
+        if (request.query and request.query_threshold is not None and spec.v1_include == "coding_preferences"
+                and self._match_mode() != "vector"):
+            unsupported = (*unsupported, {"name": "query_threshold", "reason": "semantic_similarity_unavailable"})
         missing = _missing_required_read_scope(request, contract)
+        from potpie_context_engine.application.services.read_results import (
+            effective_read_request, partial_read, supplemental_constraints,
+        )
+        unapplied = supplemental_constraints(request, contract, unsupported)
+        unsupported = tuple(item for item in unsupported if item["name"] not in unapplied)
         if unsupported or missing:
+            unsupported = (*unsupported, *(
+                {"name": name, "reason": "unsupported_filter", "detail": {"view": contract.name}}
+                for name in unapplied
+            ))
             # Both are refusals, not empty answers. An unsupported filter used
             # to come back ``ok=True`` with zero items, so a caller who passed
             # ``--query`` to a view that cannot filter by query saw the same
@@ -440,6 +475,14 @@ class DefaultGraphService:
                 relations=relations,
             )
 
+        requested = request
+        if unapplied:
+            request = dataclasses.replace(
+                request,
+                query_threshold=None if "query_threshold" in unapplied else request.query_threshold,
+                since=None if "since" in unapplied else request.since,
+                until=None if "until" in unapplied else request.until,
+            )
         subgraph_versions = self._subgraph_versions(request.pot_id)
         scope = dict(request.scope)
         if request.environment:
@@ -484,7 +527,7 @@ class DefaultGraphService:
                 any_predicate=spec.v1_include == _RAW_GRAPH_INCLUDE,
                 max_items=request.limit,
             )
-        return _read_result_from_envelope(
+        result = _read_result_from_envelope(
             enriched,
             contract=contract,
             match_mode=self._match_mode(),
@@ -499,6 +542,8 @@ class DefaultGraphService:
             relations=relations,
             definition=self.definition,
         )
+        result = dataclasses.replace(result, effective_request=effective_read_request(request))
+        return partial_read(result, requested, unapplied) if unapplied else result
 
     def search_entities(
         self, request: GraphEntitySearchRequest
@@ -697,7 +742,8 @@ class DefaultGraphService:
                 match_status = "exact_match" if candidates else "no_exact_match"
         else:
             matching_repositories = []
-            match_status = "possible_matches" if candidates else "no_matches"
+            exact_returned = any(candidate.key == exact_key for candidate in candidates)
+            match_status = "exact_match" if exact_returned else "possible_matches" if candidates else "no_matches"
         return GraphEntitySearchResult(
             entities=tuple(candidates[: request.limit]),
             match_mode=self._match_mode(),
@@ -1196,8 +1242,6 @@ def _unsupported_read_filters(
 ) -> tuple[dict[str, Any], ...]:
     supported = set(contract.supported_filters)
     requested = _requested_read_filters(request)
-    if not contract.extra.get("strict_query_filters"):
-        requested.discard("query_threshold")
     unsupported = sorted(name for name in requested if name not in supported)
     return tuple(
         {
@@ -1333,6 +1377,12 @@ def _read_result_from_envelope(
                 view_name=contract.name,
                 metadata={
                     **reader_metadata.get(report.include, {}),
+                    **({
+                        "projection_omitted": meta["projection_omitted"],
+                        "returned": len(items),
+                        "page_full": len(items) >= reader_metadata.get(report.include, {}).get("result_limit", len(items) + 1),
+                        **({"completeness": "truncated"} if meta["projection_omitted"] else {}),
+                    } if "projection_omitted" in meta else {}),
                     **{
                         key: meta[key]
                         for key in (
@@ -1400,7 +1450,10 @@ def _coverage_dict(
     return {
         "view": view_name,
         "status": report.status,
+        "completeness": metadata.get("completeness", "unknown"),
+        "page_status": report.status,
         "candidate_pool": report.candidate_pool,
+        "candidate_pool_unit": metadata.get("candidate_pool_unit", "reader_candidates"),
         "best_relevance": report.best_relevance,
         "metadata": dict(metadata),
     }
@@ -2053,6 +2106,7 @@ def _assemble_inline_relation_items(
         )
 
     items.sort(key=lambda item: item.score, reverse=True)
+    projected_count = len(items)
     if max_items is not None and max_items >= 0:
         items = items[:max_items]
     return dataclasses.replace(
@@ -2062,6 +2116,7 @@ def _assemble_inline_relation_items(
             **dict(env.metadata),
             "read_shape": "entity_relations",
             "inline_relation_count": sum(len(v) for v in relation_groups.values()),
+            "projection_omitted": projected_count - len(items),
         },
     )
 

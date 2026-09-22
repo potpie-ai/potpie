@@ -83,7 +83,10 @@ class CodingPreferencesReader:
         rows = self._query_within_scope(req, scoped_rows)
         candidates: list[Candidate] = []
         for row in rows:
-            if not row_matches_query(row, req.query, threshold=req.query_threshold):
+            if not row_matches_query(
+                row, req.query, threshold=req.query_threshold,
+                semantic_only=req.query_threshold is not None,
+            ):
                 continue
             rule_scope = _rule_scope(row)
             overlap = _scope_overlap(rule_scope, scope_keys)
@@ -107,6 +110,8 @@ class CodingPreferencesReader:
                 found=len(ranked), requested=req.max_items
             ),
             meta={
+                "ranking_omitted": max(0, len(candidates) - len(ranked)),
+                "candidate_pool_unit": "claims",
                 "candidate_pool": len(all_rows),
                 "scoped_candidate_pool": len(scoped_rows),
             },

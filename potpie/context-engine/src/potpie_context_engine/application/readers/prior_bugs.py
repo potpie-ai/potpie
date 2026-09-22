@@ -147,6 +147,8 @@ class PriorBugsReader:
                 found=len(ranked), requested=req.max_items
             ),
             meta={
+                "ranking_omitted": max(0, len(candidates) - len(ranked)),
+                "candidate_pool_unit": "claims",
                 "anchor_keys": list(anchor_keys),
                 "candidate_pool": len(rows),
             },

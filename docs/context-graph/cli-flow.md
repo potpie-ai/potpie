@@ -827,3 +827,39 @@ potpie graph commit <plan_id> --verify
 - [skills.md](./skills.md) — the skill catalog, install/drift, and the harness loop.
 - [resources.md](./resources.md) — where document payloads live and how `resource` ingests them.
 - [observability.md](./observability.md) — span names, logs, metrics, readiness.
+
+### Useful reads and partial results
+
+`features.feature_context` supports a bounded overview with no selector. It reads
+only the selected pot; `--repo current` narrows the request explicitly. The
+`effective_request` names the pot, scope, filters and limit that ran.
+
+Coverage distinguishes page fullness (legacy `status` and explicit `page_status`), measured relevance
+(`best_relevance`), and exhaustive coverage (`completeness`). A bounded backend pool
+has unknown completeness unless exhaustion is established. Known ranking and
+entity-projection cuts are disclosed separately; a claim candidate count is not
+a distinct-feature count. Increasing a limit can add context, but is not a cursor
+or a promise to continue an earlier page.
+
+A view's `extra.query_threshold` declares its metric and runtime requirements.
+An explicit semantic threshold requires a query. Preferences require a vector
+backend; passages require a calibrated similarity index. Other views do one
+bounded read with the unsupported threshold removed and return `ok: false`,
+`status: partial`, an empty requested `items` answer, and a separately labelled
+`fallback_context`. Scope, pot and other supported filters remain unchanged.
+The CLI exits nonzero while retaining that supplemental evidence in text/JSON.
+Thresholds are not probabilities.
+
+Debugging windows mean **bug occurrence time**. Claim validity, observation time,
+and fix time are separate clocks; current records do not reliably establish
+occurrence time. `prior_occurrences` therefore discloses unapplied bounds and
+separates any unwindowed symptom/fix context. `recent_changes.timeline` filters
+activity event time; it is a different question, not a substitute occurrence
+query. When occurrence filtering becomes supported, related fixes and
+verifications may predate the occurrence window.
+
+Identity search reports exact matches, possible matches and misses in both
+formats. An empty neighborhood distinguishes a missing key from a stored isolated
+entity, and an explicit filter can report `no_matching_relations`. A missing key
+is never replaced by a fuzzy candidate. Missing pot receipts reuse choices from
+the selected hosts' existing listings without choosing another target.

@@ -541,65 +541,86 @@ class LocalResourceStore:
     def _get_many_locked(
         self, *, pot_id: str, resource_ids: tuple[str, ...]
     ) -> tuple[Chunk, ...]:
-        manifests: dict[str, DocumentManifest] = {}
-        chunks: list[Chunk] = []
+        manifests = {}
+        return tuple(self._get_one_locked(pot_id, resource_id, manifests) for resource_id in resource_ids)
+
+    def get_batch(self, *, pot_id: str, resource_ids: tuple[str, ...], with_neighbors: bool = False):
+        from potpie_context_core.resource_reads import read_batch
+
+        pot_root = self._pot_root(pot_id)
+        documents = set()
         for resource_id in resource_ids:
-            resource = parse_resource_id(resource_id)
-            manifest_key = f"{resource.doc}@{resource.revision or 'current'}"
-            manifest = manifests.get(manifest_key)
-            if manifest is None:
-                # One meta.json read per document, however many chunks of it
-                # the batch asks for.
-                doc_root = self._pot_root(pot_id) / resource.doc
-                current = _load_manifest(doc_root, pot_id=pot_id, doc=resource.doc)
-                if current is None:
-                    raise chunk_not_found(resource_id)
-                if resource.revision is None and (
-                    current.revision > 1 or _has_revision_history(doc_root)
-                ):
-                    raise ResourceStoreError(
-                        RESOURCE_REVISION_AMBIGUOUS,
-                        f"unversioned resource id is ambiguous after {resource.doc!r} changed: {resource_id}",
-                        recommended_next_action=(
-                            "Use the immutable @revN id from resource list or search."
-                        ),
-                    )
-                revision_root = (
-                    doc_root
-                    if resource.revision in (None, current.revision)
-                    else doc_root / VERSIONS_DIRNAME / str(resource.revision)
-                )
-                manifest = _load_manifest(
-                    revision_root,
-                    pot_id=pot_id,
-                    doc=resource.doc,
-                )
-                if manifest is None:
-                    raise chunk_not_found(resource_id)
-                manifests[manifest_key] = manifest
-            ref = find_chunk_ref(manifest, section=resource.section, seq=resource.seq)
-            if ref is None:
-                raise chunk_not_found(resource_id)
-            current_root = self._pot_root(pot_id) / resource.doc
-            root = (
-                current_root
-                if resource.revision in (None, manifest.revision)
-                and _load_manifest(current_root, pot_id=pot_id, doc=resource.doc).revision == manifest.revision
-                else current_root / VERSIONS_DIRNAME / str(manifest.revision)
-            )
-            path = (
-                root
-                / resource.section
-                / chunk_filename(resource.seq)
-            )
             try:
-                text = _read_text(path)
-            except OSError as exc:
-                raise chunk_not_found(resource_id) from exc
-            chunks.append(
-                build_chunk(manifest=manifest, resource=resource, ref=ref, text=text)
+                documents.add(parse_resource_id(resource_id).doc)
+            except ResourceStoreError:
+                pass  # The ordered outcome records malformed ids too.
+        with _pot_lock(pot_root, exclusive=False), contextlib.ExitStack() as locks:
+            for doc in sorted(documents):
+                locks.enter_context(_document_lock(pot_root, doc))
+            manifests = {}
+
+            def read(resource_id):
+                return self._get_one_locked(pot_id, resource_id, manifests)
+
+            def sections(chunk):
+                return next(manifest.sections for manifest, _ in manifests.values()
+                            if manifest.doc == chunk.doc and manifest.revision == chunk.revision)
+
+            return read_batch(resource_ids, pot_id=pot_id, read=read, sections=sections, with_neighbors=with_neighbors)
+
+    def _get_one_locked(self, pot_id, resource_id, manifests):
+        from potpie_context_core.resource_reads import resource_choices
+
+        resource = parse_resource_id(resource_id)
+        manifest_key = f"{resource.doc}@{resource.revision or 'current'}"
+        cached = manifests.get(manifest_key)
+        manifest = cached[0] if cached else None
+        if manifest is None:
+            # One meta.json read per document, however many chunks of it
+            # the batch asks for.
+            doc_root = self._pot_root(pot_id) / resource.doc
+            current = _load_manifest(doc_root, pot_id=pot_id, doc=resource.doc)
+            if current is None:
+                raise chunk_not_found(resource_id)
+            if resource.revision is None and (
+                current.revision > 1 or _has_revision_history(doc_root)
+            ):
+                raise ResourceStoreError(
+                    RESOURCE_REVISION_AMBIGUOUS,
+                    f"unversioned resource id is ambiguous after {resource.doc!r} changed: {resource_id}",
+                    recommended_next_action="Choose an immutable candidate id for the intended revision.",
+                    detail=resource_choices(current, resource),
+                )
+            revision_root = (
+                doc_root
+                if resource.revision in (None, current.revision)
+                else doc_root / VERSIONS_DIRNAME / str(resource.revision)
             )
-        return tuple(chunks)
+            manifest = current if revision_root == doc_root else _load_manifest(
+                revision_root, pot_id=pot_id, doc=resource.doc,
+            )
+            if manifest is None:
+                error = chunk_not_found(resource_id)
+                error.detail = resource_choices(current, resource)
+                raise error
+            manifests[manifest_key] = (manifest, revision_root)
+            manifests[f"{resource.doc}@{manifest.revision}"] = (manifest, revision_root)
+        ref = find_chunk_ref(manifest, section=resource.section, seq=resource.seq)
+        if ref is None:
+            error = chunk_not_found(resource_id)
+            error.detail = resource_choices(manifest, resource)
+            raise error
+        root = manifests[manifest_key][1]
+        path = (
+            root
+            / resource.section
+            / chunk_filename(resource.seq)
+        )
+        try:
+            text = _read_text(path)
+        except OSError as exc:
+            raise chunk_not_found(resource_id) from exc
+        return build_chunk(manifest=manifest, resource=resource, ref=ref, text=text)
 
     def list(
         self,

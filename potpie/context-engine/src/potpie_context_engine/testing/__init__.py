@@ -249,7 +249,7 @@ class InMemoryResourceStore:
     _documents: dict[tuple[str, str], _StoredResource] = field(default_factory=dict)
     _versions: dict[tuple[str, str, int], _StoredResource] = field(default_factory=dict)
     _revision_counters: dict[tuple[str, str], int] = field(default_factory=dict)
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def import_dir(
         self,
@@ -362,6 +362,33 @@ class InMemoryResourceStore:
                     )
                 )
         return tuple(chunks)
+
+    def get_batch(self, *, pot_id: str, resource_ids: tuple[str, ...], with_neighbors: bool = False):
+        from potpie_context_core.resource_reads import read_batch, resource_choices
+        from potpie_context_core.ports.resource_store import ResourceStoreError
+
+        def read(resource_id):
+            try:
+                return self.get(pot_id=pot_id, resource_id=resource_id)
+            except ResourceStoreError as error:
+                try:
+                    resource = parse_resource_id(resource_id)
+                    stored = self._documents.get((pot_id, resource.doc))
+                    if stored:
+                        selected = self._versions.get((pot_id, resource.doc, resource.revision), stored)
+                        error.detail = resource_choices(selected.manifest, resource)
+                except ResourceStoreError:
+                    pass
+                raise
+
+        def sections(chunk):
+            stored = self._documents.get((pot_id, chunk.doc))
+            if stored.manifest.revision != chunk.revision:
+                stored = self._versions[(pot_id, chunk.doc, chunk.revision)]
+            return stored.manifest.sections
+
+        with self._lock:
+            return read_batch(resource_ids, pot_id=pot_id, read=read, sections=sections, with_neighbors=with_neighbors)
 
     def list(
         self,

@@ -97,7 +97,10 @@ class AgentEnvelope:
                 {
                     "include": report.include,
                     "status": report.status,
+                    "completeness": self.metadata.get("readers", {}).get(report.include, {}).get("completeness", "unknown"),
+                    "page_status": report.status,
                     "candidate_pool": report.candidate_pool,
+                    "candidate_pool_unit": self.metadata.get("readers", {}).get(report.include, {}).get("candidate_pool_unit", "reader_candidates"),
                     "graph_view": report.graph_view,
                     "best_relevance": report.best_relevance,
                 }

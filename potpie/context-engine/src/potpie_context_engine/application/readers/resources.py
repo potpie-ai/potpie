@@ -143,6 +143,8 @@ class ResourcesReader:
                 "match_mode": result.match_mode,
                 "profile": result.profile,
                 "candidate_pool": len(result.hits),
+                "candidate_pool_unit": "passages",
+                "ranking_omitted": max(0, len(hits) - len(ranked)),
                 "lexical_candidates": result.lexical_candidates,
                 "semantic_candidates": result.semantic_candidates,
                 "detail": result.detail,

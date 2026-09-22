@@ -15,6 +15,7 @@ each is a caller mistake, not an unavailable dependency.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
@@ -31,6 +32,10 @@ from potpie.cli.commands._common import (
 from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.ports.resource_store import (
     Chunk,
+    ResourceBatchResult,
+    ResourceStoreError,
+    RESOURCE_GET_MAX_IDS,
+    parse_resource_id,
     SectionManifest,
     format_resource_id,
     read_import_files,
@@ -167,7 +172,7 @@ def _host_predates_inline_import(exc: BaseException) -> bool:
 @resource_app.command("get")
 def resource_get(
     resource_ids: list[str] = typer.Argument(
-        ..., help="One or more potpie://res/<doc>/<section>/<seq> ids."
+        ..., help=f"One to {RESOURCE_GET_MAX_IDS} potpie://res/<doc>/<section>/<seq> ids."
     ),
     with_neighbors: bool = typer.Option(
         False,
@@ -181,28 +186,62 @@ def resource_get(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         requested = tuple(resource_ids)
-        chunks = host.resources.get(
+        result = host.resources.get(
             pot_id=pot_id, resource_ids=requested, with_neighbors=with_neighbors
         )
+        batch = result if isinstance(result, ResourceBatchResult) else None
+        chunks = batch.chunks if batch else result
+        resolved_roots = tuple(
+            outcome.resource_id for outcome in batch.outcomes if outcome.chunk_ids
+        ) if batch else requested
+        receipt = {}
+        if batch:
+            failures = [error for outcome in batch.outcomes for error in outcome.errors]
+            outcomes = [asdict(outcome) for outcome in batch.outcomes]
+            receipt = {
+                "ok": False, "status": batch.status,
+                "code": "resource_batch_partial" if chunks else failures[0]["code"],
+                "message": "Only failed ids need correction or follow-up." if chunks else failures[0]["message"],
+                "detail": failures[0].get("detail"),
+                "recommended_next_action": failures[0].get("recommended_next_action"),
+                "outcomes": outcomes,
+            }
         if is_json():
             emit(
                 {
+                    **receipt,
                     "requested": list(requested),
                     "with_neighbors": with_neighbors,
                     "count": len(chunks),
-                    "chunks": [_chunk_payload(row, requested) for row in chunks],
+                    "chunks": [_chunk_payload(row, resolved_roots) for row in chunks],
                 },
                 human="",
             )
+            if batch:
+                raise typer.Exit(code=1)
             return
+        if batch:
+            typer.echo(f"status={batch.status}; {len(chunks)} chunks returned. Only failed ids need follow-up.")
         # Deliberately not `emit`'s human block: this command's whole job is
         # returning stored text verbatim, and the shared formatter drops blank
         # lines and dims body copy, which would silently edit the evidence.
         for index, chunk in enumerate(chunks):
             if index:
                 typer.echo("")
-            typer.echo(_chunk_header(chunk, requested))
+            typer.echo(_chunk_header(chunk, resolved_roots))
             typer.echo(chunk.text)
+        if batch:
+            for outcome in receipt["outcomes"]:
+                typer.echo(f"\n{outcome['resource_id']}: {outcome['status']}")
+                for error in outcome["errors"]:
+                    typer.echo(f"  {error['code']}: {error['message']}")
+                    detail = error.get("detail")
+                    for candidate in detail.get("candidates", ()) if isinstance(detail, dict) else ():
+                        typer.echo(f"  candidate: {candidate['resource_id']}")
+                        if candidate.get("fetch_command"):
+                            typer.echo(f"    {candidate['fetch_command']}")
+                    typer.echo(f"  Next: {error['recommended_next_action']}")
+            raise typer.Exit(code=1)
 
 
 @resource_app.command("list")
@@ -681,6 +720,17 @@ def _section_payload(
     }
 
 
+def _is_requested_chunk(chunk: Chunk, requested: Sequence[str]) -> bool:
+    for resource_id in requested:
+        try:
+            parsed = parse_resource_id(resource_id)
+        except ResourceStoreError:
+            continue
+        if (parsed.doc, parsed.section, parsed.seq) == (chunk.doc, chunk.section, chunk.seq) and parsed.revision in (None, chunk.revision):
+            return True
+    return False
+
+
 def _chunk_payload(chunk: Chunk, requested: Sequence[str]) -> dict[str, Any]:
     return {
         "resource_id": chunk.resource_id,
@@ -694,7 +744,7 @@ def _chunk_payload(chunk: Chunk, requested: Sequence[str]) -> dict[str, Any]:
         "page": chunk.page,
         "offset": chunk.offset,
         # False marks a chunk pulled in by --with-neighbors.
-        "requested": chunk.resource_id in requested,
+        "requested": _is_requested_chunk(chunk, requested),
     }
 
 
@@ -752,7 +802,7 @@ def _list_human(payload: dict[str, Any]) -> str:
 
 
 def _chunk_header(chunk: Chunk, requested: Sequence[str]) -> str:
-    neighbor = "" if chunk.resource_id in requested else " [neighbor]"
+    neighbor = "" if _is_requested_chunk(chunk, requested) else " [neighbor]"
     page = f", page {chunk.page}" if chunk.page is not None else ""
     return (
         f"{chunk.resource_id}{neighbor}  "

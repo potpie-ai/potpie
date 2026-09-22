@@ -37,6 +37,7 @@ from potpie_context_core.ports.resource_store import (
     SectionManifest,
     format_resource_id,
     parse_resource_id,
+    ResourceBatchResult,
 )
 from potpie_context_core.resource_to_semantic import (
     RESOURCE_SUBGRAPH,
@@ -500,24 +501,53 @@ class ResourceFacade:
         return tuple(key for key in keys if key not in live)
 
     def get(
-        self,
-        *,
-        pot_id: str,
-        resource_ids: tuple[str, ...],
-        with_neighbors: bool = False,
-    ) -> tuple[Chunk, ...]:
-        """Resolve chunk ids to text, optionally with each one's neighbors.
+        self, *, pot_id: str, resource_ids: tuple[str, ...], with_neighbors: bool = False,
+    ) -> tuple[Chunk, ...] | ResourceBatchResult:
+        """One host read keeps successful roots and reports every failed id.
 
-        Neighbors are the chunks immediately before and after, within the same
-        section only — a section boundary is a real boundary, and reading past
-        it would hand back text the summary that led here does not describe.
-        Each chunk appears once, in reading order around the chunk that pulled
-        it in.
+        Native stores read under a document lock with cached manifests. Older
+        stores keep their existing all-success path; only failed reads use the
+        compatibility per-root collector, entirely inside this host call.
         """
-        ids = tuple(resource_ids)
-        if with_neighbors:
-            ids = self._with_neighbors(pot_id=pot_id, resource_ids=ids)
-        return self.store.get_many(pot_id=pot_id, resource_ids=ids)
+        from potpie_context_core.resource_reads import read_batch
+        from potpie_context_core.ports.resource_store import (
+            RESOURCE_GET_MAX_IDS, RESOURCE_BATCH_TOO_LARGE, RESOURCE_READ_BUDGET_EXCEEDED,
+        )
+
+        if len(resource_ids) > RESOURCE_GET_MAX_IDS:
+            raise ResourceStoreError(
+                RESOURCE_BATCH_TOO_LARGE,
+                f"Resource batches support at most {RESOURCE_GET_MAX_IDS} ids; received {len(resource_ids)}. No chunks were read.",
+                recommended_next_action=f"Split the original ids into batches of at most {RESOURCE_GET_MAX_IDS}.",
+            )
+        native = getattr(self.store, "get_batch", None)
+        if callable(native):
+            result = native(pot_id=pot_id, resource_ids=resource_ids, with_neighbors=with_neighbors)
+        else:
+            try:
+                ids = self._with_neighbors(pot_id=pot_id, resource_ids=resource_ids) if with_neighbors else resource_ids
+                return self.store.get_many(pot_id=pot_id, resource_ids=ids)
+            except ResourceStoreError:
+                remaining_calls = 64
+
+                def bounded_call(call, **kwargs):
+                    nonlocal remaining_calls
+                    if remaining_calls == 0:
+                        raise ResourceStoreError(
+                            RESOURCE_READ_BUDGET_EXCEEDED,
+                            "This id was not fully read: the legacy store's 64-call recovery budget was reached. Follow up only unresolved ids in a smaller batch.",
+                        )
+                    remaining_calls -= 1
+                    return call(**kwargs)
+
+                result = read_batch(
+                    resource_ids,
+                    pot_id=pot_id,
+                    read=lambda value: bounded_call(self.store.get, pot_id=pot_id, resource_id=value),
+                    sections=lambda chunk: bounded_call(self.store.list, pot_id=pot_id, slug=chunk.doc, revision=chunk.revision),
+                    with_neighbors=with_neighbors,
+                )
+        return result.chunks if result.status == "success" else result
 
     def list(
         self, *, pot_id: str, slug: str, section: str | None = None
@@ -802,10 +832,10 @@ class ResourceFacade:
     ) -> tuple[str, ...]:
         expanded: list[str] = []
         seen: set[str] = set()
-        sequences: dict[tuple[str, str], tuple[int, ...]] = {}
+        sequences: dict[tuple[str, str, int | None], tuple[int, ...]] = {}
         for resource_id in resource_ids:
             resource = parse_resource_id(resource_id)
-            key = (resource.doc, resource.section)
+            key = (resource.doc, resource.section, resource.revision)
             if key not in sequences:
                 sections = self.store.list(
                     pot_id=pot_id,

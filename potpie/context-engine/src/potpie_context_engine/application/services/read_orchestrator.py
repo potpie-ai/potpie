@@ -165,7 +165,19 @@ class ReadOrchestrator:
         for inc in resolved:
             reader = self._routing.get(inc)
             if reader is not None:
-                results.append(IncludeResult(include=inc, response=reader.read(req)))
+                response = reader.read(req)
+                response = replace(response, meta={
+                    "result_limit": req.max_items,
+                    "returned": len(response.items),
+                    "page_full": len(response.items) >= req.max_items,
+                    "candidate_pool_unit": "reader_candidates",
+                    **dict(response.meta),
+                    "completeness": (
+                        "truncated" if response.meta.get("ranking_omitted", 0) or response.meta.get("truncated")
+                        else response.meta.get("completeness", "unknown")
+                    ),
+                })
+                results.append(IncludeResult(include=inc, response=response))
             elif inc in CONTEXT_INCLUDE_VALUES:
                 # In the vocab but no reader yet → honest not-implemented.
                 extra_unsupported.append(

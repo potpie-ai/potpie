@@ -360,14 +360,17 @@ def row_matches_query(
     query: str | None,
     *,
     threshold: float | None = None,
+    semantic_only: bool = False,
 ) -> bool:
     """Return whether a row is relevant enough for an explicit graph-read query."""
     clean_query = _clean_query(query)
     if clean_query is None:
         return True
+    similarity = claim_semantic_similarity(row)
+    if semantic_only:
+        return similarity is not None and similarity >= (threshold if threshold is not None else QUERY_SIMILARITY_THRESHOLD)
     if _query_text_matches(row, clean_query):
         return True
-    similarity = claim_semantic_similarity(row)
     floor = QUERY_SIMILARITY_THRESHOLD if threshold is None else threshold
     return similarity is not None and similarity >= floor
 

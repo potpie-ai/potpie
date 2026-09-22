@@ -749,15 +749,12 @@ def test_read_rejects_query_on_a_view_that_cannot_filter_by_query(service) -> No
 
 
 def test_read_missing_scope_and_unsupported_filter_report_both(service) -> None:
-    # ``since`` is outside feature_context's contract and no anchoring scope
-    # was given. Missing scope stays the headline status (it is the harder
-    # blocker), but the unsupported filter is still named so one re-run fixes
-    # both.
+    # A non-browseable view still reports missing scope and unsupported filters together.
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            subgraph="features",
-            view="feature_context",
+            subgraph="infra_topology",
+            view="service_neighborhood",
             since=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
     )
@@ -796,8 +793,8 @@ def test_read_missing_required_scope_is_validation_failure(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            subgraph="features",
-            view="feature_context",
+            subgraph="infra_topology",
+            view="service_neighborhood",
             limit=5,
         )
     )

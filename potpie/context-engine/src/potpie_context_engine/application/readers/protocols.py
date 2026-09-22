@@ -325,6 +325,7 @@ class ProtocolsReader:
             status,
             {
                 "candidate_pool": len(candidates),
+                "candidate_pool_unit": "messages",
                 "returned_messages": len(items),
                 "truncated": truncated,
                 "source_coverage": "unknown" if not items else "see messages",

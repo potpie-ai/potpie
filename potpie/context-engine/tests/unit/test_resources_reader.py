@@ -460,3 +460,12 @@ def test_passage_view_preserves_threshold_and_evidence_diagnostics(threshold, co
     assert body["coverage"][0]["metadata"]["similarity_calibrated"] is True
     assert body["coverage"][0]["best_relevance"] == 0.1
     assert body["warnings"]
+
+
+def test_passage_limit_reports_known_omissions_in_passage_units():
+    rdr, index = reader(IndexSearchResult(profile="sqlite_hybrid", match_mode=MATCH_MODE_HYBRID,
+                                        hits=tuple(hit(i, similarity=0.9, lexical_rank=i + 1) for i in range(3))))
+    result = rdr.read(ReadRequest(pot_id="p", query="liability cap", max_items=1))
+    assert len(result.items) == 1 and len(index.calls) == 1
+    assert result.meta["candidate_pool_unit"] == "passages"
+    assert result.meta["ranking_omitted"] == 2

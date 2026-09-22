@@ -110,6 +110,8 @@ class TimelineReader:
                 found=len(ranked), requested=req.max_items
             ),
             meta={
+                "ranking_omitted": max(0, len(candidates) - len(ranked)),
+                "candidate_pool_unit": "claims",
                 "anchor_keys": list(anchor_keys),
                 "scope_filters": dict(scope_filters),
                 "window_after": window_after.isoformat() if window_after else None,

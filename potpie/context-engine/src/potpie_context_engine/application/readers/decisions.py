@@ -82,7 +82,11 @@ class DecisionsReader:
             coverage_status=coverage_status_from_count(
                 found=len(ranked), requested=req.max_items
             ),
-            meta={"anchor_keys": list(anchor_keys), "candidate_pool": len(rows)},
+            meta={
+                "ranking_omitted": max(0, len(candidates) - len(ranked)),
+                "candidate_pool_unit": "claims",
+                "anchor_keys": list(anchor_keys), "candidate_pool": len(rows),
+            },
         )
 
     def _rows(self, req: ReadRequest, *, anchor_keys: Iterable[str]) -> list[ClaimRow]:

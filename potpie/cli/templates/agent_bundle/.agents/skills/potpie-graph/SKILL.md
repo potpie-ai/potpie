@@ -1,6 +1,6 @@
 ---
 name: "potpie-graph"
-version: "12"
+version: "13"
 description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions, fetching ingested document chunks with `potpie resource get`, and responding to nudges."
 ---
 
@@ -176,6 +176,26 @@ holds a document together; `DOCUMENTS` points a document (or one section) at
 what it covers — assert it when reference material lands. New documents go
 through the per-format `potpie-resource-*` skills and `potpie resource import`;
 payloads never enter the graph.
+
+### Bounded and partial reads
+
+`features.feature_context` can browse the selected pot with no selector;
+`--repo current` narrows explicitly. Inspect coverage `completeness` for exhaustive
+coverage and `page_status` for page fullness. `candidate_pool` counts claims or
+reader candidates, not distinct features. Ranking/projection omissions and
+unknown completeness do not imply a supported continuation cursor.
+
+An unsupported semantic threshold or debugging occurrence window returns a
+partial response with the unsatisfied answer empty and useful context under
+`fallback_context`; it is not evidence that the requested threshold/window was
+met. Debugging occurrence time is not yet reliably recorded. Timeline filters
+activity event time, a different question. Catalog `extra.query_threshold`
+names each view's metric and runtime requirements.
+
+A mixed `resource get` batch keeps successful `chunks` and ordered `outcomes`,
+and exits nonzero. Follow up failed ids only. Neighbor `chunk_ids` retain the
+root's immutable revision; candidates from a missing-resource receipt are
+choices, never an automatically selected replacement.
 
 ### Query expansion
 

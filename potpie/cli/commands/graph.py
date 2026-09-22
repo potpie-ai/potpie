@@ -954,6 +954,11 @@ def graph_search_entities(
             )
             or "(no matching entities)"
         )
+        human = f"identity={payload.get('match_status', 'unknown')}\n" + human
+        if payload.get("match_status") == "possible_matches":
+            human += "\nCandidates only; confirm the canonical key before traversing."
+        if payload.get("more_results_available"):
+            human += "\nMore candidates exist within the searched pool; narrow the query or increase --limit."
         warnings = empty_pot_warnings(host, pot_id) if not payload["entities"] else ()
         _emit_graph_result(
             ctx,
@@ -1631,7 +1636,14 @@ def graph_neighborhood(
             limit=limit,
         )
         relations = [_neighborhood_relation(edge) for edge in sl.edges]
+        anchor_present = any(node.key == entity for node in sl.nodes)
+        identity_status = (
+            "exact" if relations else "missing" if not anchor_present
+            else "no_matching_relations" if predicates or normalized_direction != "both"
+            else "isolated"
+        )
         payload = {
+            "identity_status": identity_status,
             "entity_key": entity,
             "depth": depth,
             "direction": normalized_direction,
@@ -1660,6 +1672,9 @@ def graph_neighborhood(
                 }
                 for e in sl.edges
             ]
+        if identity_status == "missing":
+            from potpie_context_core.cli_commands import graph_search_entities_command
+            payload["recommended_next_action"] = graph_search_entities_command(entity, pot_id=pot_id)
         _emit_graph_result(
             ctx,
             payload,
@@ -3341,16 +3356,22 @@ def _neighborhood_human(payload: Mapping[str, Any]) -> str:
     relations = payload.get("relations") or ()
     lines = [
         (
-            f"entity={payload.get('entity_key')} relations={len(relations)} "
+            f"entity={payload.get('entity_key')} identity={payload.get('identity_status', 'unknown')} relations={len(relations)} "
             f"nodes={payload.get('node_count')} detail={payload.get('detail')}"
         )
     ]
+    if payload.get("recommended_next_action"):
+        lines.append(f"Next: {payload['recommended_next_action']}")
     for rel in list(relations)[:20]:
         if not isinstance(rel, Mapping):
             continue
         refs = ", ".join(_string_list(rel.get("source_refs"))) or "no-source-ref"
         fact = rel.get("fact") or f"{rel.get('from')} -> {rel.get('to')}"
         lines.append(f"  • {rel.get('predicate')} [{refs}] {fact}")
+    if len(relations) > 20:
+        lines.append(f"  … {len(relations) - 20} relations hidden; use --json for the returned slice.")
+    if payload.get("truncated"):
+        lines.append("Bounded neighborhood; completeness is unknown beyond this slice.")
     return "\n".join(lines)
 
 
@@ -3546,10 +3567,26 @@ def _emit_graph_read(
         event_limit=event_limit,
     )
     if payload.get("ok", True) is False:
+        if normalized_format == "jsonl" and not is_json():
+            # A refused/partial stream has one structured receipt, never prose
+            # or supplemental rows that could be mistaken for the answer.
+            typer.echo(json.dumps(with_adjustments(payload, adjustments), default=str))
+            raise typer.Exit(code=EXIT_VALIDATION)
         human = _error_message_from_result(payload)
+        fallback = payload.get("fallback_context")
+        if fallback:
+            from dataclasses import replace
+            human += "\n\n" + fallback["label"] + "\n" + _read_human(
+                replace(result, items=tuple(fallback.get("items", ())),
+                        coverage=tuple(fallback.get("coverage", ())),
+                        quality=fallback.get("quality", {}), ok=True,
+                        effective_request=fallback.get("effective_request", {}),
+                        fallback_context={}),
+                format_=normalized_format, sort=sort, dedupe=dedupe, event_limit=event_limit,
+            )
         if human_prefix:
             human = "\n".join((human_prefix, human))
-        _emit_graph_result(ctx, payload, human=human, warnings=warnings)
+        _emit_graph_result(ctx, payload, human=human, warnings=warnings, adjustments=adjustments)
         raise typer.Exit(code=EXIT_VALIDATION)
 
     if not is_json():
@@ -3972,6 +4009,27 @@ def _read_human(
     dedupe: str = "auto",
     event_limit: int | None = None,
 ) -> str:
+    body = _read_human_body(result, format_=format_, sort=sort, dedupe=dedupe, event_limit=event_limit)
+    effective = getattr(result, "effective_request", {})
+    lines = []
+    if effective:
+        scope = effective.get("scope") or "selected pot"
+        lines.append(f"scope={scope} limit={effective.get('limit')}")
+        if effective.get("since") or effective.get("until"):
+            lines.append(f"window={effective.get('since') or 'unbounded'} .. {effective.get('until') or 'unbounded'}")
+    for report in result.coverage:
+        meta = report.get("metadata", {})
+        if report.get("completeness") in {"truncated", "unknown"}:
+            lines.append(
+                f"Bounded result: completeness={report['completeness']} "
+                f"ranking_omitted={meta.get('ranking_omitted', 'unknown')} "
+                f"projection_omitted={meta.get('projection_omitted', 0)}. "
+                "Narrow the scope/query or increase --limit for more context; this is not a continuation."
+            )
+    return "\n".join([*lines, body])
+
+
+def _read_human_body(result, *, format_: str, sort: str, dedupe: str, event_limit: int | None) -> str:
     ctx = build_presentation_context(
         result,
         format_=format_,

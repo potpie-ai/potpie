@@ -68,6 +68,9 @@ RESOURCE_MANIFEST_INVALID = "resource_manifest_invalid"
 RESOURCE_SECTION_MISSING_CHUNK = "resource_section_missing_chunk"
 RESOURCE_TEXT_TOO_LARGE = "resource_text_too_large"
 RESOURCE_IMPORT_INVALID = "resource_import_invalid"
+RESOURCE_READ_BUDGET_EXCEEDED = "resource_read_budget_exceeded"
+RESOURCE_BATCH_TOO_LARGE = "resource_batch_too_large"
+RESOURCE_GET_MAX_IDS = 128
 
 #: Ceiling on the bytes one ``import`` may carry over the wire. Far above any
 #: real document (a chunk is capped at 8,000 chars and a section holds 1-5 of
@@ -97,7 +100,7 @@ class ResourceStoreError(ValueError):
         code: str,
         message: str,
         *,
-        detail: str | None = None,
+        detail: str | Mapping[str, Any] | None = None,
         recommended_next_action: str | None = None,
     ) -> None:
         self.code = code
@@ -476,6 +479,25 @@ def import_source(source_dir: Path | None, files: ImportFiles | None) -> Iterato
 # --- Port -------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class ResourceReadOutcome:
+    """One requested root; body ids are immutable and shared by neighbor roots."""
+
+    resource_id: str
+    status: str
+    chunk_ids: tuple[str, ...] = ()
+    errors: tuple[Mapping[str, Any], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceBatchResult:
+    """Partial read receipt. All-success facade reads retain their tuple shape."""
+
+    chunks: tuple[Chunk, ...]
+    outcomes: tuple[ResourceReadOutcome, ...]
+    status: str
+
+
 class ResourceStorePort(Protocol):
     """Pot-scoped storage for document payloads the graph only points at."""
 
@@ -585,6 +607,9 @@ __all__ = [
     "RESOURCE_CHUNK_TARGET_CHARS",
     "RESOURCE_CHUNK_TOO_LARGE",
     "RESOURCE_ID_INVALID",
+    "RESOURCE_GET_MAX_IDS",
+    "RESOURCE_BATCH_TOO_LARGE",
+    "RESOURCE_READ_BUDGET_EXCEEDED",
     "RESOURCE_IMPORT_INVALID",
     "RESOURCE_IMPORT_MAX_BYTES",
     "RESOURCE_LABEL_MAX_CHARS",
@@ -598,6 +623,8 @@ __all__ = [
     "RESOURCE_TEXT_TOO_LARGE",
     "RESOURCE_URI_PREFIX",
     "ResourceId",
+    "ResourceBatchResult",
+    "ResourceReadOutcome",
     "ResourceStoreError",
     "ResourceStorePort",
     "ResourceStoreStatus",

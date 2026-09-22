@@ -281,3 +281,27 @@ potpie pot reset --confirm && potpie resource list --doc q3-review              
 - [ontology.md](./ontology.md) — the entity/predicate catalog these changes land in.
 - [cli-flow.md](./cli-flow.md) — output contract, exit codes, destructive-command rules.
 - [vision.md](./vision.md) — "claims, not payloads"; [architecture.md](./architecture.md) — layers, pot scoping, extension points.
+
+### Partial chunk batches
+
+A `resource get` request accepts at most 128 ids, bounding per-request outcome
+output separately from backend recovery work. Larger requests are refused before
+store work with a split-batch action; no identity is dropped or substituted.
+One `resource get` host call retains successful chunks even when another root is
+missing, malformed, or revision-ambiguous. All-success responses preserve their
+existing shape. A failed or partial batch adds ordered `outcomes`, one per
+requested id (including duplicates), and keeps the successful `chunks` subset.
+`status: partial` means some text was returned; `status: error` means none was.
+Both exit 1 in the CLI. Correct/follow up only failed ids.
+
+Each outcome associates its root with immutable `chunk_ids`; overlapping
+neighbors share bodies. Neighbor manifests are keyed by document **and revision**,
+so old and current revisions can appear in the same batch without mixing text.
+Native local reads share manifest caches and document locks. Older store ports
+keep the all-success bulk path and collect failures within the same host call, capped at 64 additional store calls.
+Unresolved ids get `resource_read_budget_exceeded`; they are not reported missing.
+
+A missing section/chunk or ambiguous revision carries at most five actual choices
+from the manifest already loaded, including revision and pot-preserving fetch
+commands. Choices are suggestions only: a failed immutable revision is never
+replaced by the latest revision. Missing documents are not searched across pots.

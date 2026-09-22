@@ -691,14 +691,17 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
             "Use to learn what a repo/service does or to locate feature implementation anchors.",
         ),
         "result_shape": "entity_relations",
-        "required_any_scope": (
-            "scope",
-            "service",
-            "repo",
-            "anchor_entity_key",
-            "query",
+        "optional_scope": ("scope", "service", "repo", "anchor_entity_key", "query"),
+        "examples": (
+            ExampleCommand(
+                command="potpie graph read --subgraph features --view feature_context --limit 12",
+                description="Browse a bounded feature overview in the selected pot.",
+            ),
+            ExampleCommand(
+                command="potpie graph read --subgraph features --view feature_context --repo current --limit 12",
+                description="Explicitly narrow the feature overview to the current repository.",
+            ),
         ),
-        "optional_scope": ("scope", "service", "query"),
         "supported_filters": (
             "scope",
             "service",
@@ -973,6 +976,35 @@ def _view_contract(spec: GraphViewSpec) -> ViewContract:
         supported_filters = (*supported_filters, "source_ref")
     if spec.backed and "source_ref" not in optional_scope:
         optional_scope = (*optional_scope, "source_ref")
+    threshold = {
+        "supported": spec.v1_include in {"coding_preferences", "resources"},
+        "metric": (
+            "semantic_similarity" if spec.v1_include == "coding_preferences"
+            else "calibrated_semantic_similarity" if spec.v1_include == "resources"
+            else None
+        ),
+        "requires_query": True,
+        "requires_calibrated_index": spec.v1_include == "resources",
+        "requires_vector_backend": spec.v1_include == "coding_preferences",
+        "fallback": "separate_unfiltered_context",
+        "probability": False,
+    }
+    if threshold["supported"]:
+        supported_filters = (*supported_filters, "query_threshold")
+    extra = {"query_threshold": threshold, **dict(spec.extra)}
+    if spec.v1_include == "prior_bugs":
+        supported_filters = tuple(f for f in supported_filters if f not in {"since", "until", "time_window"})
+        optional_scope = tuple(f for f in optional_scope if f != "time_window")
+        extra["time_window"] = {
+            "supported": False,
+            "semantics": "occurrence_time",
+            "reason": "Occurrence timestamps are not reliably recorded; claim validity, fix time and observation time are not occurrence time.",
+            "related_context": "Fixes and verifications may predate a future supported occurrence window.",
+            "alternative_view": "recent_changes.timeline",
+            "alternative_semantics": "event_time, not bug occurrence time",
+        }
+    if spec.v1_include == "features":
+        extra["browse"] = {"scope": "selected_pot", "bounded": True, "unit": "entity_rows"}
     return ViewContract(
         name=spec.name,
         subgraph=spec.subgraph,
@@ -991,7 +1023,7 @@ def _view_contract(spec: GraphViewSpec) -> ViewContract:
         traversal=spec.traversal,
         examples=tuple(override.get("examples") or ()),
         keywords=tuple(override.get("keywords") or ()),
-        extra=dict(spec.extra),
+        extra=extra,
     )
 
 
