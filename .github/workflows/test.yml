@@ -21,6 +21,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch pinned conformance history
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t refs < <(
+            sed -nE \
+              's/^(spec_ref|implementation_ref|previous_record_ref|target_base_commit|target_pr_head_commit): ([0-9a-f]{40})$/\2/p' \
+              spec/conformance/*.md | sort -u
+          )
+          for ref in "${refs[@]}"; do
+            if ! git cat-file -e "${ref}^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "${ref}"
+            fi
+          done
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
