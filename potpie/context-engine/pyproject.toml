@@ -144,7 +144,5 @@ constraint-dependencies = [
     "urllib3>=2.7.0",
     "httpx2>=2.12.0",
     "httpcore2>=2.10.0",
-    # CVE-2026-85999 / CVE-2026-86000: ReDoS in soupsieve CSS parser
-    # (vulnerable: <2.9.0). Floor at 2.9.0.
     "soupsieve>=2.9.0",
 ]
