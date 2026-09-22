@@ -39,9 +39,11 @@ jobs:
           fi
           sha="$(git rev-list -n 1 "$TAG")"
           [ -n "$sha" ] || { echo "::error::Unable to resolve release tag $TAG"; exit 1; }
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          {
+            echo "skip=false"
+            echo "tag=$TAG"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Verify documentation release readiness
         if: steps.release.outputs.skip != 'true'
