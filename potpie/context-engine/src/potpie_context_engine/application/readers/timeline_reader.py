@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from potpie_context_engine.application.readers._common import (
@@ -39,8 +39,14 @@ from potpie_context_core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
     ClaimRow,
+    entity_properties_many,
 )
 from potpie_context_engine.domain.ranking import Candidate, RankingService
+from potpie_context_engine.application.search_identity import (
+    exact_identity,
+    exact_text_needles,
+    record_identity_matches,
+)
 
 
 _TIMELINE_PREDICATES: tuple[str, ...] = (
@@ -123,37 +129,36 @@ class TimelineReader:
     ) -> list[ClaimRow]:
         query_limit = max(req.max_items * 20, 200)
         anchor_keys = tuple(_timeline_anchor_keys(scope_filters))
+        identity = exact_identity(req.query)
+        # An identifier is a lookup key, not prose for the ANN.  Fetch the
+        # bounded scoped timeline first, then compare the hydrated activity.
+        fetch_req = dataclasses.replace(req, query=None) if identity else req
 
         if anchor_keys:
             # Push repo/service scope into the claim query so scoped reads are
             # not truncated by unrelated timeline edges in large pots.
             rows = _fetch_anchor_scoped_rows(
                 self.claim_query,
-                req=req,
+                req=fetch_req,
                 anchor_keys=anchor_keys,
-                limit=query_limit,
+                limit=None if identity else query_limit,
+                exact_text_in=exact_text_needles(identity) if identity else (),
             )
-            if _scope_needs_full_activity_groups(scope_filters):
-                rows = _expand_activity_group_edges(
-                    self.claim_query,
-                    req=req,
-                    seed_rows=rows,
-                    limit=query_limit,
-                )
         elif scope_filters:
             # Path-only scope cannot be indexed as a simple anchor key; fetch
             # provenance edges and post-filter activity groups by path overlap.
             rows = dedupe_claim_rows(
                 self.claim_query.find_claims(
                     ClaimQueryFilter(
-                        pot_id=req.pot_id,
+                        pot_id=fetch_req.pot_id,
                         predicate_in=("MENTIONS", "TOUCHED"),
-                        include_invalidated=req.include_invalidated,
-                        as_of=req.as_of,
-                        source_ref_in=req.source_refs,
+                        include_invalidated=fetch_req.include_invalidated,
+                        as_of=fetch_req.as_of,
+                        source_ref_in=fetch_req.source_refs,
                         subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
-                        limit=query_limit,
-                        fact_query=req.query,
+                        limit=None if identity else query_limit,
+                        fact_query=fetch_req.query,
+                        exact_text_in=exact_text_needles(identity) if identity else (),
                     )
                 )
             )
@@ -161,28 +166,50 @@ class TimelineReader:
             rows = dedupe_claim_rows(
                 self.claim_query.find_claims(
                     ClaimQueryFilter(
-                        pot_id=req.pot_id,
+                        pot_id=fetch_req.pot_id,
                         predicate_in=_TIMELINE_PREDICATES,
-                        include_invalidated=req.include_invalidated,
-                        as_of=req.as_of,
-                        source_ref_in=req.source_refs,
+                        include_invalidated=fetch_req.include_invalidated,
+                        as_of=fetch_req.as_of,
+                        source_ref_in=fetch_req.source_refs,
                         subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
                         # Timeline windows are source-event windows. Older rows may
                         # have occurred_at only in properties with valid_at set to
                         # ingestion time, so filter after hydration with
                         # _event_datetime().
-                        limit=query_limit,
-                        fact_query=req.query,
+                        limit=None if identity else query_limit,
+                        fact_query=fetch_req.query,
+                        exact_text_in=exact_text_needles(identity) if identity else (),
                     )
                 )
             )
 
+        if (scope_filters or req.source_refs) and rows:
+            rows = _expand_activity_group_edges(
+                self.claim_query,
+                req=req,
+                seed_rows=rows,
+            )
+
+        rows = _stamp_activity_event_times(
+            rows, claim_query=self.claim_query, pot_id=req.pot_id
+        )
         rows = _filter_window(
             rows,
             window_after=window_after,
             window_before=window_before,
         )
-        if req.query:
+        if identity:
+            rows = [
+                row
+                for row in rows
+                if record_identity_matches(
+                    identity,
+                    canonical_key=_activity_key(row),
+                    explicit_identity=(row.source_ref, row.source_refs, row.properties),
+                    description=(row.fact, row.description),
+                )
+            ]
+        elif req.query:
             # Pool-relative, not ``req.query_threshold``. Its former shared
             # default was an absolute 0.70 that no measured similarity in a real pot
             # reaches (see ``relative_relevance_floor``), and a task sentence
@@ -230,7 +257,8 @@ def _fetch_anchor_scoped_rows(
     *,
     req: ReadRequest,
     anchor_keys: tuple[str, ...],
-    limit: int,
+    limit: int | None,
+    exact_text_in: tuple[str, ...] = (),
 ) -> list[ClaimRow]:
     """Fetch timeline edges tied to repo/service anchors via the graph index."""
     common = {
@@ -241,6 +269,7 @@ def _fetch_anchor_scoped_rows(
         "subgraph_not_in": EXCLUDE_KNOWLEDGE_SUBGRAPH,
         "limit": limit,
         "fact_query": req.query,
+        "exact_text_in": exact_text_in,
     }
     mentioning = claim_query.find_claims(
         ClaimQueryFilter(
@@ -259,16 +288,11 @@ def _fetch_anchor_scoped_rows(
     return dedupe_claim_rows((*mentioning, *authored))
 
 
-def _scope_needs_full_activity_groups(scope_filters: Mapping[str, str]) -> bool:
-    return "file_path" in scope_filters or "path" in scope_filters
-
-
 def _expand_activity_group_edges(
     claim_query: ClaimQueryPort,
     *,
     req: ReadRequest,
     seed_rows: Iterable[ClaimRow],
-    limit: int,
 ) -> list[ClaimRow]:
     """Hydrate all timeline edges for activities matched by anchor-scoped seeds."""
     activity_keys = tuple({_activity_key(row) for row in seed_rows})
@@ -278,10 +302,15 @@ def _expand_activity_group_edges(
         "pot_id": req.pot_id,
         "include_invalidated": req.include_invalidated,
         "as_of": req.as_of,
-        "source_ref_in": req.source_refs,
+        # Source refs select the seed edge. Hydration then needs every edge for
+        # that Activity so its event time is independent of the selected route.
+        "source_ref_in": (),
         "subgraph_not_in": EXCLUDE_KNOWLEDGE_SUBGRAPH,
-        "limit": limit,
-        "fact_query": req.query,
+        # The scoped/source/query filters selected the seed Activities. Full
+        # group hydration must not reapply text ranking or truncate their
+        # linkage edges, because those edges carry scope and legacy event data.
+        "limit": None,
+        "fact_query": None,
     }
     as_subject = claim_query.find_claims(
         ClaimQueryFilter(
@@ -436,6 +465,41 @@ def _filter_window(
     return out
 
 
+def _stamp_activity_event_times(
+    rows: Iterable[ClaimRow], *, claim_query: ClaimQueryPort, pot_id: str
+) -> list[ClaimRow]:
+    """Give every linkage edge the Activity's explicit source event time.
+
+    Legacy graphs may have ``occurred_at`` on only one edge while later repo or
+    service links carry ingestion time in ``valid_at``.  Normalizing the group
+    before window filtering keeps route selection from changing the event date.
+    """
+    grouped, order = _group_activity_rows(rows)
+    activity_props = entity_properties_many(
+        claim_query, pot_id=pot_id, entity_keys=order
+    )
+    out: list[ClaimRow] = []
+    for activity_key in order:
+        group = grouped[activity_key]
+        node_event = _parse_event_datetime(
+            (activity_props.get(activity_key) or {}).get("occurred_at")
+        )
+        explicit = [
+            parsed
+            for row in group
+            if (parsed := _explicit_event_datetime(row)) is not None
+        ]
+        event_time = node_event or (min(explicit) if explicit else None)
+        for row in group:
+            if event_time is None:
+                out.append(row)
+                continue
+            props = dict(row.properties or {})
+            props["occurred_at"] = event_time.isoformat()
+            out.append(dataclasses.replace(row, properties=props))
+    return out
+
+
 def _dedupe_activity_rows(
     rows: Iterable[ClaimRow], *, anchor_keys: Iterable[str]
 ) -> list[ClaimRow]:
@@ -503,13 +567,26 @@ def _representative_activity_row(
 
 
 def _event_datetime(row: ClaimRow) -> datetime | None:
-    raw = row.properties.get("occurred_at")
-    if isinstance(raw, str) and raw.strip():
+    return _explicit_event_datetime(row) or _parse_event_datetime(row.valid_at)
+
+
+def _explicit_event_datetime(row: ClaimRow) -> datetime | None:
+    return _parse_event_datetime(row.properties.get("occurred_at"))
+
+
+def _parse_event_datetime(raw: Any) -> datetime | None:
+    if isinstance(raw, datetime):
+        parsed = raw
+    elif isinstance(raw, str) and raw.strip():
         try:
-            return datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
         except ValueError:
-            pass
-    return row.valid_at
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _event_time_iso(row: ClaimRow) -> str | None:

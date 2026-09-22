@@ -379,6 +379,184 @@ class TestCodingPreferencesReader:
         keys = {r.candidate.payload["subject_key"] for r in response.items}
         assert keys == {"preference:python-fastapi"}
 
+    def test_relation_target_scopes_rules_without_duplicate_code_scope(self) -> None:
+        store = InMemoryClaimQueryStore()
+        for subject, target in (
+            ("preference:pie", "repo:github.com/acme/pie"),
+            ("preference:potpie", "repo:github.com/acme/potpie"),
+            ("preference:shared", "scope:any"),
+        ):
+            store.add(
+                _row(
+                    predicate="POLICY_APPLIES_TO",
+                    subject_key=subject,
+                    object_key=target,
+                    fact=f"rule for {subject}",
+                )
+            )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "https://github.com/acme/pie.git"},
+                max_items=10,
+            )
+        )
+
+        keys = {item.candidate.payload["subject_key"] for item in response.items}
+        assert keys == {"preference:pie", "preference:shared"}
+
+    def test_service_folder_and_environment_are_all_required(self) -> None:
+        store = InMemoryClaimQueryStore()
+        for subject, target, environment in (
+            ("preference:match", "code:service:api:src/payments", "prod"),
+            ("preference:wrong-folder", "code:service:api:src/ledger", "prod"),
+            ("preference:wrong-service", "code:service:worker:src/payments", "prod"),
+            ("preference:wrong-env", "code:service:api:src/payments", "staging"),
+        ):
+            store.add(
+                _row(
+                    predicate="POLICY_APPLIES_TO",
+                    subject_key=subject,
+                    object_key=target,
+                    environment=environment,
+                    fact=subject,
+                )
+            )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={
+                    "service": "api",
+                    "path": "src/payments/client.py",
+                    "environment": "prod",
+                },
+                max_items=10,
+            )
+        )
+
+        assert [item.candidate.payload["subject_key"] for item in response.items] == [
+            "preference:match"
+        ]
+
+    def test_project_target_isolated_from_other_projects(self) -> None:
+        store = InMemoryClaimQueryStore()
+        for project in ("checkout", "billing"):
+            store.add(
+                _row(
+                    predicate="POLICY_APPLIES_TO",
+                    subject_key=f"preference:{project}",
+                    object_key=f"project:{project}",
+                    fact=f"{project} project preference",
+                )
+            )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(ReadRequest(pot_id="pot-1", scope={"project": "checkout"}, max_items=10))
+
+        assert [item.candidate.payload["subject_key"] for item in response.items] == [
+            "preference:checkout"
+        ]
+
+    def test_prefixed_and_plain_service_scopes_are_equivalent(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:payments",
+                object_key="service:payments",
+                fact="payments service preference",
+            )
+        )
+        reader = CodingPreferencesReader(claim_query=store, ranker=RankingService())
+
+        for service in ("payments", "service:payments"):
+            response = reader.read(
+                ReadRequest(pot_id="pot-1", scope={"service": service}, max_items=10)
+            )
+            assert [
+                item.candidate.payload["subject_key"] for item in response.items
+            ] == ["preference:payments"]
+
+    def test_scope_filter_runs_before_output_candidate_limit(self) -> None:
+        class RecordingStore(InMemoryClaimQueryStore):
+            def __init__(self):
+                super().__init__()
+                self.filters = []
+
+            def find_claims(self, filter_):
+                self.filters.append(filter_)
+                return super().find_claims(filter_)
+
+        store = RecordingStore()
+        for index in range(20):
+            store.add(
+                _row(
+                    predicate="POLICY_APPLIES_TO",
+                    subject_key=f"preference:unrelated-{index}",
+                    object_key=f"repo:github.com/acme/unrelated-{index}",
+                    fact="unrelated preference",
+                )
+            )
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:applicable",
+                object_key="repo:github.com/acme/pie",
+                fact="applicable preference beyond the old candidate cap",
+            )
+        )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/acme/pie"},
+                query="preference",
+                max_items=1,
+            )
+        )
+
+        assert response.items[0].candidate.payload["subject_key"] == (
+            "preference:applicable"
+        )
+        assert store.filters[0].fact_query is None
+        assert store.filters[0].limit is None
+        assert store.filters[1].fact_query == "preference"
+        assert store.filters[1].claim_key_in == (
+            "claim:POLICY_APPLIES_TO:preference:applicable:repo:github.com/acme/pie",
+        )
+
+    def test_unknown_missing_scope_is_not_guessed_to_be_shared(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:ambiguous",
+                object_key="scope:legacy-unknown",
+                fact="legacy rule with unknown applicability",
+            )
+        )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/acme/pie"},
+                max_items=10,
+            )
+        )
+
+        assert response.items == ()
+
 
 # ---------------------------------------------------------------------------
 # InfraTopologyReader (F1)
@@ -1683,3 +1861,52 @@ class TestPriorBugsReader:
         assert "DOCUMENTS" not in predicates
         assert {"REPRODUCES", "RESOLVED"} & predicates
         assert response.coverage_status != "empty"
+
+
+class TestInfraTopologyDepthDisclosure:
+    """The reader reports the walk it ran, so a capped depth is visible."""
+
+    def _store(self) -> InMemoryClaimQueryStore:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:web",
+                object_key="service:auth",
+                fact="web depends on auth",
+                evidence_strength="deterministic",
+                truth="source_observation",
+            )
+        )
+        return store
+
+    def test_depth_above_the_maximum_runs_at_the_maximum_and_says_so(self) -> None:
+        reader = InfraTopologyReader(claim_query=self._store(), ranker=RankingService())
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["web"]}, depth=100)
+        )
+        assert response.meta["requested_depth"] == 100
+        assert response.meta["effective_depth"] == 4
+        assert response.meta["max_depth"] == 4
+        assert response.meta["direction"] == "both"
+
+    def test_omitted_depth_reports_the_default_walk(self) -> None:
+        reader = InfraTopologyReader(claim_query=self._store(), ranker=RankingService())
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["web"]}, direction="out")
+        )
+        assert response.meta["requested_depth"] is None
+        assert response.meta["effective_depth"] == 2
+        assert response.meta["direction"] == "out"
+
+    def test_reader_bound_is_the_view_contracts_bound(self) -> None:
+        from potpie_context_core.graph_views import view_depth_bounds
+
+        reader = InfraTopologyReader(claim_query=self._store(), ranker=RankingService())
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["web"]}, depth=99)
+        )
+        assert view_depth_bounds("infra_topology.service_neighborhood") == (
+            2,
+            response.meta["effective_depth"],
+        )

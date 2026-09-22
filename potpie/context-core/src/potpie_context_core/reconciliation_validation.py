@@ -452,8 +452,8 @@ def _validate_invalidations(
 ) -> list[str]:
     errors: list[str] = []
     for item in items:
-        if not item.target_entity_key and not item.target_edge:
-            errors.append("invalidation must set target_entity_key or target_edge")
+        if not item.target_entity_key and not item.target_edge and not item.target_claim_keys:
+            errors.append("invalidation must set target_entity_key, target_edge or target_claim_keys")
         if item.target_edge:
             edge_type = item.target_edge[0]
             if edge_type not in definition.edge_types:

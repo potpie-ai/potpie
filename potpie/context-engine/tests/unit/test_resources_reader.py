@@ -98,7 +98,11 @@ def test_payload_carries_the_graph_keys_and_the_fetch_command():
     # Derived locally from the id — the whole reason the graph tie is free.
     assert payload["document_key"] == "document:q3-review"
     assert payload["section_key"] == "docsection:q3-review:liability"
-    assert payload["fetch"].endswith("potpie://res/q3-review/liability/0002")
+    # The fetch command keeps the pot the hit came from, so it still reads
+    # the right project when replayed from another checkout or active pot.
+    assert payload["fetch"] == (
+        "potpie resource get potpie://res/q3-review/liability/0002 --pot p"
+    )
     assert payload["retrieval"]["match_mode"] == MATCH_MODE_HYBRID
     assert payload["retrieval"]["lexical_rank"] == 2
     assert payload["retrieval"]["semantic_rank"] == 1

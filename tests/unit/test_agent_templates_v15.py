@@ -20,7 +20,9 @@ from potpie_context_core.agent_context_port import CONTEXT_RECORD_TYPES
 pytestmark = pytest.mark.unit
 
 TEMPLATES = Path(_clipkg.__file__).resolve().parent / "templates"
-MD_FILES = sorted(TEMPLATES.rglob("*.md"))
+MD_FILES = sorted(
+    path for path in TEMPLATES.rglob("*.md") if "references" not in path.parts
+)
 
 # Stale include names from the pre-V1.5 templates. Underscored → unambiguous, so a
 # bare-substring scan over the markdown has no false positives in prose.
@@ -52,7 +54,7 @@ _RECORD_ENUM_RE = re.compile(r"^[a-z_]+(?:\|[a-z_]+){3,}$", re.MULTILINE)
 
 def test_templates_exist() -> None:
     names = {p.name for p in MD_FILES}
-    assert {"AGENTS.md", "CLAUDE.md"} <= names
+    assert "POTPIE.md" in names
     assert any("potpie-graph" in p.as_posix() for p in MD_FILES)
     agent_skill_ids = {
         p.parent.name
@@ -100,7 +102,7 @@ def _read(name_fragment: str) -> str:
 
 
 def test_agents_md_advertises_graph_surface() -> None:
-    text = _read("agent_bundle/AGENTS.md")
+    text = _read("potpie-graph/SKILL.md")
     for verb in (
         "graph status",
         "graph catalog",
@@ -225,8 +227,9 @@ def test_graph_skill_present_in_each_harness_bundle() -> None:
     graph_skills = [
         p for p in MD_FILES if p.name == "SKILL.md" and "potpie-graph" in p.as_posix()
     ]
-    bundles = {p.relative_to(TEMPLATES).parts[0] for p in graph_skills}
-    assert {"agent_bundle", "claude_bundle", "claude_plugin"} <= bundles
+    assert graph_skills == [
+        TEMPLATES / "agent_bundle/.agents/skills/potpie-graph/SKILL.md"
+    ]
 
 
 def test_templates_require_retrieval_grade_descriptions() -> None:
@@ -246,17 +249,16 @@ def test_templates_document_nudge_handling() -> None:
 
 
 def test_agent_instructions_use_the_cli_graph_surface() -> None:
-    assert "potpie graph read" in _read("agent_bundle/AGENTS.md")
-    assert "potpie graph read" in _read("claude_bundle/CLAUDE.md")
+    assert "potpie graph read" in _read("routing/POTPIE.md")
     plugin_instructions = (
         "claude_plugin/commands/potpie-feature.md",
-        "claude_plugin/skills/potpie-change-timeline/SKILL.md",
-        "claude_plugin/skills/potpie-debug-memory/SKILL.md",
-        "claude_plugin/skills/potpie-graph/SKILL.md",
-        "claude_plugin/skills/potpie-infra-architecture/SKILL.md",
-        "claude_plugin/skills/potpie-project-preferences/SKILL.md",
-        "claude_plugin/skills/potpie-repo-baseline/SKILL.md",
-        "claude_plugin/skills/potpie-source-ingestion/SKILL.md",
+        "potpie-change-timeline/SKILL.md",
+        "potpie-debug-memory/SKILL.md",
+        "potpie-graph/SKILL.md",
+        "potpie-infra-architecture/SKILL.md",
+        "potpie-project-preferences/SKILL.md",
+        "potpie-repo-baseline/SKILL.md",
+        "potpie-source-ingestion/SKILL.md",
     )
     for path in plugin_instructions:
         assert "potpie graph read" in _read(path), path
@@ -509,8 +511,6 @@ def test_hosted_integration_ingestion_is_agent_led() -> None:
         "potpie-source-ingestion/SKILL.md",
         "potpie-change-timeline/SKILL.md",
         "potpie-graph/SKILL.md",
-        "AGENTS.md",
-        "CLAUDE.md",
     ):
         text = " ".join(_read(fragment).lower().split())
         assert "agent's integration tools/connectors" in text, (
@@ -550,17 +550,13 @@ _RESOURCE_SKILLS = (
 )
 
 
-def test_resource_skills_ship_in_both_bundles_and_match() -> None:
+def test_resource_skills_have_one_canonical_source() -> None:
     for skill_id in _RESOURCE_SKILLS:
-        plugin = TEMPLATES / "claude_plugin" / "skills" / skill_id / "SKILL.md"
         bundle = (
             TEMPLATES / "agent_bundle" / ".agents" / "skills" / skill_id / "SKILL.md"
         )
-        assert plugin.is_file(), f"{skill_id} missing from claude_plugin"
         assert bundle.is_file(), f"{skill_id} missing from agent_bundle"
-        assert plugin.read_text(encoding="utf-8") == bundle.read_text(
-            encoding="utf-8"
-        ), f"{skill_id} differs between claude_plugin and agent_bundle"
+        assert list(TEMPLATES.rglob(f"{skill_id}/SKILL.md")) == [bundle]
 
 
 @pytest.mark.parametrize("skill_id", _RESOURCE_SKILLS)
@@ -633,7 +629,7 @@ def test_templates_do_not_prescribe_a_threshold_the_views_ignore() -> None:
                     f"{rel} passes --query-threshold to a view that ignores it: {line}"
                 )
     graph = _read("potpie-graph/SKILL.md")
-    assert "honoured only by `preferences_for_scope`" in graph
+    assert "supported by preferences and passage reads" in graph
     assert "--direction out|in|both" in graph
     assert "graph neighborhood --entity" in graph
     for rel in ("potpie-debug-memory/SKILL.md", "potpie-change-timeline/SKILL.md"):

@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Mapping, TypeVar
 
 from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
     locked_json_store,
@@ -35,6 +35,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
     dump_store,
     load_store,
 )
+from potpie_context_core.errors import GraphMutationVersionConflict
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
 )
@@ -45,6 +46,7 @@ from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 from potpie_context_core.ports.graph.mutation import MutationExecutionState
+from potpie_context_core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_core.reconciliation import MutationBatch, MutationResult
 from potpie_context_core.reconciliation_config import ReconciliationConfig
 
@@ -69,6 +71,26 @@ class _EmbeddedMutation:
             expected_pot_id=expected_pot_id,
             provenance_context=provenance_context,
             reconciliation_config=reconciliation_config,
+        )
+
+    def current_version(self, pot_id: str) -> int:
+        return self.backend._current_version(pot_id)
+
+    def compare_and_apply(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
+        return self.backend._apply_once(
+            plan,
+            expected_pot_id=expected_pot_id,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
+            expected_version=expected_version,
         )
 
     async def apply_async(self, *args: Any, **kwargs: Any) -> MutationResult:
@@ -122,11 +144,46 @@ class _EmbeddedAnalytics:
 class _EmbeddedSnapshot:
     backend: "EmbeddedGraphBackend"
 
-    def export(self, **kwargs: Any):
-        return self.backend._inner.snapshot.export(**kwargs)
+    def export(self, *, pot_id: str, destination: str) -> SnapshotManifest:
+        payload = self.export_data(pot_id=pot_id)
+        with open(destination, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, sort_keys=True, separators=(",", ":"))
+        return SnapshotManifest(
+            pot_id=pot_id,
+            location=destination,
+            format_version="2",
+            entity_count=len(payload["entities"]),
+            claim_count=len(payload["claims"]),
+        )
 
-    def import_(self, **kwargs: Any):
-        return self.backend._transact(lambda inner: inner.snapshot.import_(**kwargs))
+    def export_data(self, *, pot_id: str) -> dict[str, Any]:
+        with locked_json_store(self.backend._path):
+            store, registry = self.backend._load_state()
+            inner = self.backend._transaction_backend(store, registry)
+            payload = inner.snapshot.export_data(pot_id=pot_id)
+            self.backend._adopt_state(store, registry)
+            self.backend._revisions = dict(inner.revisions)
+            return payload
+
+    def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
+        with open(source, encoding="utf-8") as fh:
+            payload = json.load(fh)
+        result = self.import_data(pot_id=pot_id, payload=payload)
+        return SnapshotManifest(
+            pot_id=result.pot_id,
+            location=source,
+            format_version=result.format_version,
+            entity_count=result.entity_count,
+            claim_count=result.claim_count,
+            metadata=result.metadata,
+        )
+
+    def import_data(
+        self, *, pot_id: str, payload: Mapping[str, Any]
+    ) -> SnapshotManifest:
+        return self.backend._transact(
+            lambda inner: inner.snapshot.import_data(pot_id=pot_id, payload=payload)
+        )
 
 
 @dataclass(slots=True)
@@ -146,6 +203,7 @@ class EmbeddedGraphBackend:
     _mutation: _EmbeddedMutation = field(init=False)
     _analytics: _EmbeddedAnalytics = field(init=False)
     _snapshot: _EmbeddedSnapshot = field(init=False)
+    _revisions: dict[str, int] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         loaded_store, loaded_registry = self._load_state()
@@ -158,6 +216,7 @@ class EmbeddedGraphBackend:
             embedder=self.embedder,
             definition=self.definition,
             execution_registry=registry,
+            revisions=dict(self._revisions),
         )
         self._mutation = _EmbeddedMutation(self)
         self._analytics = _EmbeddedAnalytics(self)
@@ -181,6 +240,12 @@ class EmbeddedGraphBackend:
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
+        raw_revisions = payload.get("graph_revisions") or {}
+        self._revisions = (
+            {str(key): int(value) for key, value in raw_revisions.items()}
+            if isinstance(raw_revisions, dict)
+            else {}
+        )
         return (
             load_store(payload),
             MutationExecutionRegistry(
@@ -192,10 +257,13 @@ class EmbeddedGraphBackend:
         self,
         store: InMemoryClaimQueryStore,
         registry: MutationExecutionRegistry,
+        *,
+        revisions: dict[str, int] | None = None,
     ) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
         payload = dump_store(store)
         payload["mutation_receipts"] = execution_receipts_to_json(registry.completed())
+        payload["graph_revisions"] = dict(revisions or self._revisions)
         tmp = self._path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
@@ -208,6 +276,7 @@ class EmbeddedGraphBackend:
         expected_pot_id: str,
         provenance_context: ProvenanceContext | None,
         reconciliation_config: ReconciliationConfig | None,
+        expected_version: int | None = None,
     ) -> MutationResult:
         mutation_id = (
             provenance_context.mutation_id if provenance_context is not None else None
@@ -224,6 +293,11 @@ class EmbeddedGraphBackend:
                     assert lookup.result is not None
                     self._adopt_state(store, registry)
                     return lookup.result
+            current = self._revisions.get(expected_pot_id, 0)
+            if expected_version is not None and current != expected_version:
+                raise GraphMutationVersionConflict(
+                    expected=expected_version, current=current
+                )
             inner = self._transaction_backend(store, registry)
             result = inner.mutation.apply(
                 plan,
@@ -231,9 +305,16 @@ class EmbeddedGraphBackend:
                 provenance_context=provenance_context,
                 reconciliation_config=reconciliation_config,
             )
-            self._write_state(inner.store, registry)
+            self._write_state(inner.store, registry, revisions=inner.revisions)
+            self._revisions = dict(inner.revisions)
             self._adopt_state(inner.store, registry)
             return result
+
+    def _current_version(self, pot_id: str) -> int:
+        with locked_json_store(self._path):
+            store, registry = self._load_state()
+            self._adopt_state(store, registry)
+            return self._revisions.get(pot_id, 0)
 
     def _transact(
         self,
@@ -245,7 +326,8 @@ class EmbeddedGraphBackend:
             store, registry = self._load_state()
             inner = self._transaction_backend(store, registry)
             result = operation(inner)
-            self._write_state(inner.store, registry)
+            self._write_state(inner.store, registry, revisions=inner.revisions)
+            self._revisions = dict(inner.revisions)
             self._adopt_state(inner.store, registry)
             return result
 
@@ -260,6 +342,7 @@ class EmbeddedGraphBackend:
             embedder=self.embedder,
             definition=self.definition,
             execution_registry=registry,
+            revisions=dict(self._revisions),
         )
 
     def _adopt_state(
@@ -269,6 +352,8 @@ class EmbeddedGraphBackend:
     ) -> None:
         _replace_store(self._inner.store, store, embedder=self.embedder)
         self._inner.execution_registry.replace_completed(registry.completed())
+        self._inner.revisions.clear()
+        self._inner.revisions.update(self._revisions)
 
     def _lookup_execution(
         self,

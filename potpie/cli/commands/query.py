@@ -7,20 +7,31 @@ become new ``--intent`` / ``--include`` / ``--type`` values, never new commands.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
+
 import typer
 from potpie_context_core.agent_context_port import (
     CONTEXT_INCLUDE_VALUES,
     CONTEXT_INTENTS,
     READER_BACKED_INCLUDES,
 )
-from potpie_context_core.context_records import REQUIRED_DETAIL_KEYS
+from potpie_context_core.context_records import (
+    REQUIRED_DETAIL_KEYS,
+    has_structured_schema,
+)
+from potpie_context_core.ontology import PUBLIC_RECORD_TYPES
 from potpie_context_core.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
     SearchRequest,
 )
 from potpie_context_core.ports.graph_service import GraphCatalogRequest
-from potpie_context_core.source_references import RESOLVE_MODES
+from potpie_context_core.source_references import (
+    RESOLVE_MODES,
+    evidence_review_warnings,
+)
+from potpie_context_core.vocabulary import close_candidates
 
 from potpie.cli.commands._common import (
     EXIT_VALIDATION,
@@ -60,9 +71,31 @@ _REQUIRED_DETAILS_HELP = "; ".join(
     f"{record_type}: {', '.join(keys) or 'none'}"
     for record_type, keys in REQUIRED_DETAIL_KEYS.items()
 )
+
+
+def _record_type_groups() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``(structured, free_form)`` public record types, from the catalog.
+
+    The help used to hand-write three examples and an ellipsis over a
+    fifteen-type vocabulary, so an agent could not discover ``policy`` or
+    ``runbook_note`` from the CLI at all. Deriving both groups from
+    ``RECORD_TYPES`` keeps the advertised set exactly the accepted set.
+    """
+    public = sorted(PUBLIC_RECORD_TYPES)
+    structured = tuple(rt for rt in public if has_structured_schema(rt))
+    free_form = tuple(rt for rt in public if not has_structured_schema(rt))
+    return structured, free_form
+
+
+_STRUCTURED_TYPES, _FREE_FORM_TYPES = _record_type_groups()
+_STRUCTURED_TYPES_HELP = "; ".join(
+    f"{record_type} (needs {', '.join(REQUIRED_DETAIL_KEYS.get(record_type, ())) or 'no detail'})"
+    for record_type in _STRUCTURED_TYPES
+)
 _TYPE_HELP = (
-    "Record type (fix, decision, preference, …). Required --detail per type — "
-    f"{_REQUIRED_DETAILS_HELP}."
+    "Record type. Structured, retrievable by their own reader — "
+    f"{_STRUCTURED_TYPES_HELP}. Free-form notes (summary plus any --detail): "
+    f"{', '.join(_FREE_FORM_TYPES)}."
 )
 _DETAIL_HELP = (
     "Structured field for --type, as key=value (repeatable; repeat a key to "
@@ -262,18 +295,16 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """context_record — write a durable project learning.
 
-        ``--detail`` is what makes the structured record types reachable. Two of
-        the three types this command's own ``--type`` help advertises validate a
-        field that lives nowhere else: ``decision`` requires ``rationale`` and
-        ``preference`` requires ``policy_kind``, so before this flag existed the
-        two headline uses were impossible to execute from the CLI at all — every
-        attempt came back as a validation error naming a field with no way to
-        supply it.
+        Structured types (fix, bug_pattern, decision, preference, policy,
+        verification) validate their required ``--detail`` keys and surface
+        through a dedicated reader; free-form types store the summary plus any
+        details as a note. ``--type`` help lists every accepted value.
         """
         with contract():
             # Refused before the pot is even resolved: this command *writes*, and
             # a blank type or summary is a durable row nothing can retrieve.
             type = require_text(type, argument="--type", example="--type fix")
+            type = _require_record_type(type)
             summary = require_text(
                 summary,
                 argument="--summary",
@@ -321,6 +352,40 @@ def register(root: typer.Typer) -> None:
                 raise typer.Exit(code=EXIT_VALIDATION)
 
 
+def _require_record_type(value: str) -> str:
+    """The canonical record type, or a refusal that shows how to fix it.
+
+    Case is folded quietly (``Fix`` is ``fix``; the canonical spelling is in
+    the receipt). Anything else is refused *here*, before a pot is resolved
+    or a host is asked, with a bounded list of valid types and one corrected
+    command carrying the required ``--detail`` keys — nothing is written.
+    """
+    cleaned = value.strip().lower()
+    if cleaned in PUBLIC_RECORD_TYPES:
+        return cleaned
+    candidates = list(close_candidates(cleaned, PUBLIC_RECORD_TYPES))
+    suggested = candidates[0] if candidates else "fix"
+    details = " ".join(
+        f"--detail {key}=<{key}>" for key in REQUIRED_DETAIL_KEYS.get(suggested, ())
+    )
+    template = f"potpie record --type {suggested} --summary '<summary>'"
+    if details:
+        template += f" {details}"
+    fail(
+        code="validation_error",
+        message=f"unknown --type {value!r}.",
+        detail={
+            "argument": "--type",
+            "requested": value,
+            "candidates": candidates,
+            "structured_types": list(_STRUCTURED_TYPES),
+            "free_form_types": list(_FREE_FORM_TYPES),
+            "corrected_template": template,
+        },
+        next_action=f"use one of: {', '.join(candidates)} — e.g. {template}",
+    )
+
+
 def _record_human(receipt) -> str:
     line = (
         f"{receipt.status}: {receipt.record_id} ({receipt.mutations_applied} mutations)"
@@ -361,6 +426,18 @@ def _envelope_human(env) -> str:
     lines = [
         f"pot={env.pot_id} intent={intent} confidence={env.overall_confidence} items={len(env.items)}"
     ]
+    metadata = dict(env.metadata or {})
+    searched = metadata.get("searched_families") or ()
+    if searched:
+        lines.append(f"searched={', '.join(searched)} match={metadata.get('match_status', 'unknown')}")
+    if metadata.get("more_results_available"):
+        lines.append("  … more results available; narrow the query or family")
+    if metadata.get("match_status") == "ambiguous_exact_match":
+        repos = metadata.get("matching_repositories") or ()
+        lines.append(f"  ! exact ID exists in multiple repositories: {', '.join(repos)}")
+    elif metadata.get("match_status") == "no_exact_match":
+        exact = metadata.get("exact_identifier") or {}
+        lines.append(f"  ! no exact match for {exact.get('display', 'the requested ID')}")
     for family, metadata in env.metadata.get("readers", {}).items():
         lines.extend(
             f"  ! [{family}] {warning}" for warning in metadata.get("warnings", ())
@@ -376,12 +453,43 @@ def _envelope_human(env) -> str:
             hidden += 1
             continue
         lines.append(f"  • [{', '.join(includes)}] {body}")
+        lines.extend(_human_detail_lines(item.payload))
+        lines.extend(
+            f"    ! {warning}" for warning in evidence_review_warnings(item.payload)
+        )
         shown += 1
     if hidden:
         lines.append(f"  … +{hidden} more (use --json)")
     for unsup in env.unsupported_includes:
         lines.append(f"  ! {unsup.name}: {unsup.reason}")
     return "\n".join(lines)
+
+
+def _human_detail_lines(payload) -> list[str]:
+    """Render the same bounded answer fields carried by JSON envelopes."""
+    details = payload.get("details")
+    if not isinstance(details, Mapping):
+        return []
+    lines: list[str] = []
+    for key, value in details.items():
+        if value is None or value == "" or value == []:
+            continue
+        rendered = (
+            json.dumps(value, ensure_ascii=False, sort_keys=True)
+            if isinstance(value, (Mapping, list, tuple))
+            else str(value)
+        )
+        lines.append(f"    {key}: {rendered}")
+    if details.get("omitted"):
+        lines.append(
+            "    fetch_more: use the item's source refs or an exact graph neighborhood read for complete stored details"
+        )
+    follow_ups = payload.get("follow_up_commands")
+    if isinstance(follow_ups, Mapping):
+        for name, command in follow_ups.items():
+            if command:
+                lines.append(f"    {name}: {command}")
+    return lines
 
 
 def _dedupe_items(items) -> list[tuple[list[str], object]]:

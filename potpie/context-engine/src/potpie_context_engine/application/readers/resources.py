@@ -31,6 +31,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Sequence
 
 from potpie_context_core.agent_envelope import relevance_confidence
+from potpie_context_core.cli_commands import resource_get_command
 from potpie_context_core.ports.resource_index import (
     LEXICAL_RANK_DECAY,
     MATCH_MODE_DISABLED,
@@ -121,7 +122,7 @@ class ResourcesReader:
             hits = _hits_clearing_relevance_floor(result.hits)
         ranked = rank_candidates(
             service=self.ranker,
-            candidates=[_candidate(hit, result) for hit in hits],
+            candidates=[_candidate(hit, result, pot_id=req.pot_id) for hit in hits],
             req=replace(req, max_items=0) if req.intent == "definition" else req,
         )
         if req.intent == "definition":
@@ -263,12 +264,12 @@ def _hits_clearing_relevance_floor(hits: Sequence[ChunkHit]) -> list[ChunkHit]:
     ]
 
 
-def _candidate(hit: ChunkHit, result: IndexSearchResult) -> Candidate:
+def _candidate(hit: ChunkHit, result: IndexSearchResult, *, pot_id: str) -> Candidate:
     return Candidate(
         # The chunk id is already globally unique and is what ``resource get``
         # takes, so it doubles as the candidate key with nothing invented.
         candidate_key=hit.resource_id,
-        payload=_payload(hit, result),
+        payload=_payload(hit, result, pot_id=pot_id),
         # Verbatim source text, quoted rather than paraphrased: the strongest
         # evidence class the ranker knows. Cross-family crowding is handled
         # once, by the envelope builder's rank demotion, rather than by
@@ -344,7 +345,7 @@ def _relevance(hit: ChunkHit, *, calibrated: bool = False) -> float | None:
     return (1.0 - SIMILARITY_BLEND) * ordinal + SIMILARITY_BLEND * hit.similarity
 
 
-def _payload(hit: ChunkHit, result: IndexSearchResult) -> dict[str, Any]:
+def _payload(hit: ChunkHit, result: IndexSearchResult, *, pot_id: str) -> dict[str, Any]:
     return {
         "kind": "resource_chunk",
         "resource_id": hit.resource_id,
@@ -375,8 +376,10 @@ def _payload(hit: ChunkHit, result: IndexSearchResult) -> dict[str, Any]:
             "term_coverage": hit.term_coverage,
         },
         # The next command, spelled out. ``snippet`` is a window; this is how
-        # the agent gets the passage.
-        "fetch": f"potpie resource get {hit.resource_id}",
+        # the agent gets the passage. It carries the pot the hit came from:
+        # replayed from another checkout, or after ``potpie use`` moved the
+        # active pot, the bare form fetched from the wrong project.
+        "fetch": resource_get_command(hit.resource_id, pot_id=pot_id),
     }
 
 

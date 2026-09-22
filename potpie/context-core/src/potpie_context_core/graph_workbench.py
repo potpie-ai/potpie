@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from potpie_context_core.adjustments import STATUS_ADJUSTED
 from potpie_context_core.graph_contract import ONTOLOGY_VERSION
 
 GRAPH_WORKBENCH_CONTRACT_VERSION = "v2"
@@ -139,6 +140,11 @@ class GraphCommandEnvelope:
     unsupported: tuple[GraphUnsupported, ...] = ()
     recommended_next_action: str | Mapping[str, Any] | None = None
     error: GraphCommandError | None = None
+    adjustments: tuple[Mapping[str, Any], ...] = ()
+    """Disclosed requested/effective changes the command applied before it
+    ran (``potpie_context_core.adjustments``). Serialized only when non-empty,
+    together with ``status="adjusted"``, so envelopes that adjusted nothing are
+    byte-identical to what consumers parsed before the field existed."""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -158,6 +164,9 @@ class GraphCommandEnvelope:
                 else self.recommended_next_action
             ),
         }
+        if self.adjustments:
+            out["status"] = STATUS_ADJUSTED
+            out["adjustments"] = [dict(item) for item in self.adjustments]
         if self.error is not None:
             out["error"] = self.error.to_dict()
         return out

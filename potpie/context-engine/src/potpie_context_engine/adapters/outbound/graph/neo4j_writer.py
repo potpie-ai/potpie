@@ -45,17 +45,28 @@ class Neo4jGraphWriter(GraphWriterPort):
         *,
         embedder: Any | None = None,
         definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
+        transaction: Any | None = None,
     ) -> None:
         self._settings = settings
         self._enabled = settings.is_enabled()
         self._embedder = embedder
         self._definition = definition
+        self._transaction = transaction
 
     def bind_definition(self, definition: GraphDefinition) -> Neo4jGraphWriter:
         return Neo4jGraphWriter(
             self._settings,
             embedder=self._embedder,
             definition=definition,
+            transaction=self._transaction,
+        )
+
+    def in_transaction(self, transaction: Any) -> Neo4jGraphWriter:
+        return Neo4jGraphWriter(
+            self._settings,
+            embedder=self._embedder,
+            definition=self._definition,
+            transaction=transaction,
         )
 
     @property
@@ -79,6 +90,8 @@ class Neo4jGraphWriter(GraphWriterPort):
         return AsyncGraphDatabase.driver(uri, auth=(user, password))
 
     async def _with_driver(self, fn: Callable[[Any], Coroutine[Any, Any, _T]]) -> _T:
+        if self._transaction is not None:
+            return await fn(_TransactionDriver(self._transaction))
         driver = self._new_driver()
         if driver is None:
             raise RuntimeError("neo4j_unavailable")
@@ -210,6 +223,27 @@ class Neo4jGraphWriter(GraphWriterPort):
         except Exception as exc:  # noqa: BLE001
             logger.warning("reset_pot failed: %s", exc)
             return {"ok": False, "error": str(exc)}
+
+
+class _TransactionSession:
+    """Let existing Cypher helpers share a caller-owned transaction."""
+
+    def __init__(self, transaction: Any) -> None:
+        self.transaction = transaction
+
+    async def __aenter__(self):
+        return self.transaction
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _TransactionDriver:
+    def __init__(self, transaction: Any) -> None:
+        self.transaction = transaction
+
+    def session(self):
+        return _TransactionSession(self.transaction)
 
 
 __all__ = ["GraphWriterPort", "Neo4jGraphWriter"]

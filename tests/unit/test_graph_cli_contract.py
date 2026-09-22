@@ -853,8 +853,8 @@ def test_graph_required_inputs_are_declared_in_help(
     [
         (["inspect", "service:web"], "inspection", "neighborhood"),
         (["neighborhood", "--entity", "service:web"], "inspection", "neighborhood"),
-        (["export", "out.json"], "snapshot", "export"),
-        (["import", "in.json"], "snapshot", "import_"),
+        (["export", "out.json"], "snapshot", "export_data"),
+        (["import", "in.json"], "snapshot", "import_data"),
     ],
 )
 def test_graph_capability_commands_precheck_backend_capabilities(
@@ -1757,14 +1757,18 @@ def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
     )
 
 
-def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
+def test_graph_read_rejects_conflicting_fully_qualified_view_before_service_call() -> None:
+    # A qualified --view that names a *different* subgraph than --subgraph is
+    # a conflict: both targets are named and nothing is read. (An agreeing or
+    # absent --subgraph is an exact alias and executes once; see
+    # test_read_adjustments_cli.py.)
     _common.set_json(True)
     graph_service = _Graph()
     _common.set_host(_Host(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
-        ["read", "--subgraph", "debugging", "--view", "debugging.prior_occurrences"],
+        ["read", "--subgraph", "decisions", "--view", "debugging.prior_occurrences"],
     )
 
     assert result.exit_code == 1
@@ -1772,7 +1776,11 @@ def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
     emitted = json.loads(result.output)
     _assert_graph_envelope(emitted, "graph.read", ok=False)
     assert emitted["error"]["code"] == "validation_error"
-    assert "--subgraph <name> --view <view>" in emitted["error"]["message"]
+    assert "'debugging'" in emitted["error"]["message"]
+    assert "'decisions'" in emitted["error"]["message"]
+    assert emitted["recommended_next_action"] == (
+        "potpie graph read --subgraph debugging --view prior_occurrences"
+    )
 
 
 def _timeline_env() -> GraphReadResult:
@@ -2230,6 +2238,7 @@ def test_graph_catalog_read_profile_returns_compact_contract() -> None:
         "required_any_scope",
         "supported_filters",
         "next_read",
+        "next_read_is_template",
     }
     assert body["task_ranking"][0]["rank"] == 1
     assert "reason" in body["task_ranking"][0]
@@ -2247,7 +2256,7 @@ def test_graph_catalog_table_format_uses_compact_human_output() -> None:
 
     assert result.exit_code == 0
     assert "graph catalog profile=read" in result.output
-    assert "view | backed | filters" in result.output
+    assert "view | backed | requires | filters" in result.output
 
 
 def test_graph_catalog_table_format_shows_task_ranking_context() -> None:
@@ -2492,9 +2501,16 @@ def test_graph_describe_returns_executable_view_contract() -> None:
     assert body["view"]["result_shape"] == "entity_relations"
     assert "REPRODUCES" in body["view"]["inline_relations"]
     assert body["view"]["examples"][0]["command"].startswith("potpie graph read")
-    assert (
-        emitted["recommended_next_action"]
-        == "Use `potpie graph read --subgraph debugging --view prior_occurrences --json` after choosing a scope."
+    # Examples are served by the host and cannot know the caller's pot; the
+    # CLI pins the selected one and says the values are illustrative.
+    assert body["view"]["examples"][0]["command"].endswith("--pot p")
+    assert body["view"]["examples"][0]["template"] is True
+    # The next read is templated over the view's own selector rule
+    # (prior_occurrences needs one of query/service/repo) and keeps the pot,
+    # instead of a bare command that fails on the missing selector.
+    assert emitted["recommended_next_action"] == (
+        "Fill the placeholders, then run `potpie graph read --subgraph debugging "
+        "--view prior_occurrences --query '<query>' --json --pot p`."
     )
     # The CLI is a thin client: the contract must be answered through the
     # service request, never a CLI-local domain call.

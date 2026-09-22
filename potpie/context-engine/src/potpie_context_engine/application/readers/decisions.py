@@ -8,7 +8,7 @@ and then expand to sibling decision impact claims.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from potpie_context_engine.application.readers._common import (
     EXCLUDE_KNOWLEDGE_SUBGRAPH,
@@ -24,6 +24,7 @@ from potpie_context_engine.application.readers._common import (
     row_in_anchor_set,
     scoped_entity_keys,
 )
+from potpie_context_engine.application.readers._details import entity_details
 from potpie_context_core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
@@ -48,6 +49,12 @@ class DecisionsReader:
             include_anchor_entity_key=True,
         )
         rows = self._rows(req, anchor_keys=anchor_keys)
+        details_by_key = entity_details(
+            self.claim_query,
+            pot_id=req.pot_id,
+            entity_keys=(row.subject_key for row in rows),
+            fields=("title", "status", "rationale", "alternatives_rejected"),
+        )
 
         candidates: list[Candidate] = []
         for row in rows:
@@ -57,7 +64,9 @@ class DecisionsReader:
             candidates.append(
                 Candidate(
                     candidate_key=claim_candidate_key(row),
-                    payload=_payload_from_row(row),
+                    payload=_payload_from_row(
+                        row, details=details_by_key.get(row.subject_key)
+                    ),
                     strength=row.evidence_strength,
                     valid_at=row.valid_at,
                     corroboration_count=claim_corroboration(row),
@@ -126,8 +135,13 @@ def _scope_overlap(row: ClaimRow, *, anchor_keys: Iterable[str]) -> float:
     return 0.0
 
 
-def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
-    return claim_payload(row, extra={"properties": dict(row.properties or {})})
+def _payload_from_row(
+    row: ClaimRow, *, details: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    extra: dict[str, Any] = {"properties": dict(row.properties or {})}
+    if details:
+        extra["details"] = dict(details)
+    return claim_payload(row, extra=extra)
 
 
 __all__ = ["DecisionsReader"]

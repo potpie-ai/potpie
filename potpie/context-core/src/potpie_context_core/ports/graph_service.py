@@ -253,6 +253,9 @@ class GraphEntitySearchResult:
     graph_contract_version: str
     ontology_version: str
     subgraph_versions: Mapping[str, int] = field(default_factory=dict)
+    match_status: str = "possible_matches"
+    more_results_available: bool = False
+    matching_repositories: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -261,6 +264,9 @@ class GraphEntitySearchResult:
             "ontology_version": self.ontology_version,
             "match_mode": self.match_mode,
             "subgraph_versions": dict(self.subgraph_versions),
+            "match_status": self.match_status,
+            "more_results_available": self.more_results_available,
+            "matching_repositories": list(self.matching_repositories),
             "entities": [
                 {
                     "key": c.key,
@@ -384,6 +390,12 @@ def read_item_for_detail(
                 "chunk_ids",
                 "fetch",
                 "retrieval",
+                "details",
+                "follow_up_commands",
+                # Kind-specific answer fields stay useful in compact output;
+                # readers already bound these values and disclose omissions.
+                "details",
+                "follow_up_commands",
                 "truth",
                 "coverage_status",
             )

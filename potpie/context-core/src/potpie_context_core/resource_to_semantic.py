@@ -93,6 +93,14 @@ class ResourceImportResult:
     the document is *about*, so it is findable by semantic luck alone.
     """
     index: IndexReport | None = None
+    review_required_claim_keys: tuple[str, ...] = ()
+    """Live conclusions whose cited source revision changed or disappeared.
+
+    The conclusions remain active.  This is an evidence lifecycle marker, not
+    an automatic rewrite of what the source was previously understood to say.
+    """
+    review_marker_errors: tuple[str, ...] = ()
+    """Failures that prevented one or more review markers from persisting."""
     """The third half of an import: the retrieval index over the bytes.
 
     ``None`` when no index was wired. Non-``None`` with
@@ -126,6 +134,8 @@ class ResourceDeleteResult:
 
     removed: bool
     graph: SemanticMutationResult | None = None
+    review_required_claim_keys: tuple[str, ...] = ()
+    review_marker_errors: tuple[str, ...] = ()
 
     @property
     def graph_retracted(self) -> bool:
@@ -234,7 +244,14 @@ def resource_import_to_semantic_request(
 
     for section in manifest.sections:
         evidence = [
-            {"source_ref": format_resource_id(manifest.doc, section.slug, ref.seq)}
+            {
+                "source_ref": format_resource_id(
+                    manifest.doc,
+                    section.slug,
+                    ref.seq,
+                    revision=manifest.revision,
+                )
+            }
             for ref in section.chunks
         ]
         ops.append(
@@ -265,6 +282,11 @@ def resource_import_to_semantic_request(
                 "object": document_ref,
                 "evidence": evidence,
                 "description": _section_description(manifest, section),
+                "extra": {
+                    "_claim_discriminator": (
+                        f"resource-section:{manifest.doc}:{section.slug}"
+                    )
+                },
             }
         )
 

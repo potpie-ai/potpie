@@ -201,3 +201,92 @@ def test_unknown_graph_view_error_carries_guidance() -> None:
     bare = UnknownGraphViewError("unknown")
     assert bare.detail is None
     assert bare.recommended_next_action is None
+
+
+# --- exact selector aliases (agent-experience audit, AX18) -------------------
+
+
+def test_resolve_view_selector_canonicalizes_case_with_disclosure() -> None:
+    from potpie_context_core.graph_views import resolve_view_selector
+
+    selector = resolve_view_selector("Decisions", "Preferences_For_Scope")
+    assert selector.resolved is True
+    assert selector.name == "decisions.preferences_for_scope"
+    assert [(a.field, a.reason) for a in selector.adjustments] == [
+        ("subgraph", "canonical_case"),
+        ("view", "canonical_case"),
+    ]
+
+
+def test_resolve_view_selector_accepts_an_agreeing_qualified_view() -> None:
+    from potpie_context_core.graph_views import resolve_view_selector
+
+    for subgraph in ("debugging", "DEBUGGING", None, ""):
+        selector = resolve_view_selector(subgraph, "debugging.prior_occurrences")
+        assert selector.name == "debugging.prior_occurrences", subgraph
+        assert selector.adjustments[0].reason == "canonical_alias"
+
+
+def test_resolve_view_selector_refuses_a_conflicting_qualified_view() -> None:
+    from potpie_context_core.graph_views import (
+        UnknownGraphViewError,
+        resolve_view_selector,
+    )
+
+    with pytest.raises(UnknownGraphViewError) as excinfo:
+        resolve_view_selector("decisions", "debugging.prior_occurrences")
+    assert "'debugging'" in str(excinfo.value)
+    assert "'decisions'" in str(excinfo.value)
+    assert excinfo.value.recommended_next_action == (
+        "potpie graph read --subgraph debugging --view prior_occurrences"
+    )
+
+
+@pytest.mark.parametrize(
+    ("subgraph", "view"),
+    [("knowledge", "docs"), ("docs", "document_context"), ("decisions", "decisions"), ("docs", "docs")],
+)
+def test_resolve_view_selector_promotes_exact_include_aliases(subgraph: str, view: str) -> None:
+    from potpie_context_core.graph_views import resolve_view_selector
+
+    selector = resolve_view_selector(subgraph, view)
+    assert selector.resolved is True
+    assert selector.adjustments[-1].reason == "canonical_alias"
+
+
+@pytest.mark.parametrize(
+    ("subgraph", "view"),
+    [
+        ("decisions", "preferences_for_scop"),  # near miss: never guessed
+        ("knowledge", "timeline"),  # valid view under the wrong subgraph
+        ("docs", "relevant"),  # include family plus garbage
+    ],
+)
+def test_resolve_view_selector_leaves_unsafe_pairs_unresolved(subgraph: str, view: str) -> None:
+    from potpie_context_core.graph_views import resolve_view_selector
+
+    selector = resolve_view_selector(subgraph, view)
+    assert selector.resolved is False
+    assert (selector.subgraph, selector.view) == (subgraph, view)
+    assert selector.adjustments == ()
+
+
+def test_resolve_subgraph_name_is_case_only() -> None:
+    from potpie_context_core.graph_views import resolve_subgraph_name
+
+    assert resolve_subgraph_name("Debugging")[0] == "debugging"
+    assert resolve_subgraph_name("docs") == ("docs", ())
+
+
+def test_neighborhood_view_advertises_its_depth_budget() -> None:
+    from potpie_context_core.graph_views import (
+        DEFAULT_TRAVERSAL_DEPTH,
+        MAX_TRAVERSAL_DEPTH,
+        view_depth_bounds,
+    )
+
+    assert view_depth_bounds("infra_topology.service_neighborhood") == (
+        DEFAULT_TRAVERSAL_DEPTH,
+        MAX_TRAVERSAL_DEPTH,
+    )
+    assert view_depth_bounds("recent_changes.timeline") is None

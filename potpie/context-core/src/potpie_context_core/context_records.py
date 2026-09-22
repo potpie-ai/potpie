@@ -74,6 +74,9 @@ class FixRecord:
     kind: str | None = None
     scope_kind: str | None = None
     attempted_failed_fixes: tuple[str, ...] = ()
+    incident_id: str | None = None
+    fix_id: str | None = None
+    bug_pattern_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +88,7 @@ class BugPatternRecord:
     summary: str
     scope_kind: str | None = None
     reproduction_steps: tuple[str, ...] = ()
+    bug_pattern_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,6 +314,13 @@ def _build_fix(*, summary: str, details: Mapping[str, Any]) -> FixRecord:
             "attempted_failed_fixes",
             record_type,
         ),
+        incident_id=_optional_string(
+            details.get("incident_id"), "incident_id", record_type
+        ),
+        fix_id=_optional_string(details.get("fix_id"), "fix_id", record_type),
+        bug_pattern_id=_optional_string(
+            details.get("bug_pattern_id"), "bug_pattern_id", record_type
+        ),
     )
 
 
@@ -331,7 +342,16 @@ def _build_bug_pattern(*, summary: str, details: Mapping[str, Any]) -> BugPatter
             "reproduction_steps",
             record_type,
         ),
+        bug_pattern_id=_optional_string(
+            details.get("bug_pattern_id"), "bug_pattern_id", record_type
+        ),
     )
+
+
+def _optional_string(value: object, field_name: str, record_type: str) -> str | None:
+    if value is None:
+        return None
+    return _require_non_empty_string(value, field_name, record_type)
 
 
 def _build_preference(*, summary: str, details: Mapping[str, Any]) -> PreferenceRecord:

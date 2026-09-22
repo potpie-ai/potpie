@@ -32,6 +32,7 @@ class SkillInfo:
     #: hand-edit or a half-written install. Distinct from an outdated
     #: ``installed_version``, which a version comparison can already see.
     drifted: bool = False
+    disabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +43,7 @@ class SkillStatus:
     installed: tuple[SkillInfo, ...] = ()
     missing: tuple[SkillInfo, ...] = ()
     outdated: tuple[SkillInfo, ...] = ()
+    disabled: tuple[SkillInfo, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +95,16 @@ class AgentTargetPort(Protocol):
         version — a version integer cannot see a truncated or edited file.
         """
         ...
+
+    def locally_modified(self, *, skill_id: str) -> bool:
+        """Whether the installed file differs from the last content we wrote."""
+        ...
+
+    def disabled(self) -> frozenset[str]:
+        """Skill ids intentionally removed from bundle sweeps."""
+        ...
+
+    def set_disabled(self, *, skill_id: str, disabled: bool) -> None: ...
 
     def install(
         self, *, skill_id: str, version: str, path: str | None = None

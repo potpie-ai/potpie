@@ -3,11 +3,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
-from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
-    InMemoryGraphBackend,
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.ports.pot_resolution import (
+    ResolvedPot,
+    ResolvedPotRepo,
 )
-from potpie_context_engine.application.services.graph_service import DefaultGraphService
+
 from potpie_context_engine.application.services.ingestion_submission_service import (
     DefaultIngestionSubmissionService,
 )
@@ -17,11 +18,7 @@ from potpie_context_engine.domain.ingestion_event_models import (
 from potpie_context_engine.domain.ingestion_kinds import (
     INGESTION_KIND_AGENT_RECONCILIATION,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
-from potpie_context_core.ports.pot_resolution import (
-    ResolvedPot,
-    ResolvedPotRepo,
-)
+from potpie_context_engine.testing import build_test_graph_runtime
 
 
 def _service(*, reconciliation_agent=None):
@@ -41,7 +38,7 @@ def _service(*, reconciliation_agent=None):
             )
         ],
     )
-    graph = DefaultGraphService(backend=InMemoryGraphBackend())
+    graph = build_test_graph_runtime().graph
     return graph, DefaultIngestionSubmissionService(
         settings=settings,
         pots=pots,

@@ -159,6 +159,7 @@ def test_build_backend_registers_falkordb_without_connecting() -> None:
         "semantic",
         "inspection",
         "analytics",
+        "snapshot",
     )
 
 
@@ -177,6 +178,7 @@ def test_build_backend_registers_falkordb_lite_without_connecting(profile) -> No
         "semantic",
         "inspection",
         "analytics",
+        "snapshot",
     )
 
 

@@ -234,22 +234,21 @@ and raises `CapabilityNotImplemented`.
 |---|---|---:|---|
 | `in_memory` | `InMemoryGraphBackend` | **6/6** | Conformance/reference; genuinely real (validates, MERGEs by identity, bitemporal invalidation, embeds on write); `dump_store`/`load_store`. |
 | `embedded` | `EmbeddedGraphBackend` | **6/6** (delegated) | OSS JSON-persisted fallback wrapping `in_memory`; persists to `<home>/graph.json` after each mutation (atomic tmp-replace). |
-| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **5/6** (no snapshot) | **The OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
-| `falkordb` | `FalkorDBGraphBackend` | **5/6** (no snapshot) | Full FalkorDB server over a redis URL; needs the optional `falkordb` client. |
-| `neo4j` | `Neo4jGraphBackend` | **4/6** (no inspection, no snapshot) | "Shape-first production target"; native relationship vector index. |
+| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **6/6** | **The OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
+| `falkordb` | `FalkorDBGraphBackend` | **6/6** | Full FalkorDB server over a redis URL; needs the optional `falkordb` client. |
+| `neo4j` | `Neo4jGraphBackend` | **5/6** (no inspection) | "Shape-first production target"; native relationship vector index. |
 | `postgres` / `chroma` / `hosted` | `StubGraphBackend` | **0/6** | Fail-closed seam: every port and `provision` raise `CapabilityNotImplemented("graph.<profile>.<cap>.<method>")`. Documented but unbuilt; `backend list` still shows them. |
 
 **Cross-profile gaps to internalize:**
 
 - Claim-key `mutation.invalidate` raises on **both** Neo4j and FalkorDB (that
   invalidation path is unbuilt there).
-- `snapshot` (export/import) is real only on `in_memory`/`embedded`.
+- `snapshot` (export/import) is implemented on `in_memory`, `embedded`, `falkordb_lite`, `falkordb`, and `neo4j`; see [snapshot workflow](snapshots.md).
 - `inspection` is real on `in_memory`/`embedded`/`falkordb` but **not** Neo4j.
-- Net effect: **FalkorDB is more complete than Neo4j** (5 vs 4 ports), and the
+- Net effect: **FalkorDB is more complete than Neo4j** (6 vs 5 ports), and the
   OSS default `falkordb_lite` is a first-class backend, not a stub.
 
-> **Roadmap (not yet wired):** `snapshot` on falkordb/neo4j; `inspection` on
-> neo4j; the `postgres`/`chroma`/`hosted` backends (all `StubGraphBackend`);
+> **Roadmap (not yet wired):** `inspection` on neo4j; the `postgres`/`chroma`/`hosted` backends (all `StubGraphBackend`);
 > claim-key `mutation.invalidate` on neo4j/falkordb.
 
 ## The shared engine room

@@ -47,6 +47,18 @@ def _ontology_lines(payload: Mapping[str, Any]) -> list[str]:
     return lines
 
 
+def _requirements_cell(view: Mapping[str, Any]) -> str:
+    """``all of a, b; one of c, d`` — the inputs a read refuses to run without."""
+    required = [str(v) for v in view.get("required_scope") or ()]
+    required_any = [str(v) for v in view.get("required_any_scope") or ()]
+    parts: list[str] = []
+    if required:
+        parts.append("all of " + ", ".join(required))
+    if required_any:
+        parts.append("one of " + ", ".join(required_any))
+    return "; ".join(parts) or "-"
+
+
 def render_catalog(payload: Mapping[str, Any], *, format_: str) -> str:
     mode = (format_ or "auto").strip().lower()
     if mode not in {"auto", "table"}:
@@ -71,12 +83,23 @@ def render_catalog(payload: Mapping[str, Any], *, format_: str) -> str:
                     f"{entry.get('rank')} | {entry.get('score')} | "
                     f"{entry.get('view')} | {reason}"
                 )
-        lines.append("view | backed | filters")
-        lines.append("--- | --- | ---")
+        lines.append("view | backed | requires | filters")
+        lines.append("--- | --- | --- | ---")
         for view in payload.get("views", ()):
             filters = ", ".join(view.get("supported_filters") or ()) or "-"
             lines.append(
-                f"{view.get('name')} | {str(bool(view.get('backed'))).lower()} | {filters}"
+                f"{view.get('name')} | {str(bool(view.get('backed'))).lower()} | "
+                f"{_requirements_cell(view)} | {filters}"
+            )
+        next_reads = [
+            str(view["next_read"])
+            for view in payload.get("views", ())
+            if view.get("next_read")
+        ]
+        if next_reads:
+            lines.append(
+                "next_read: <placeholders> mark inputs to substitute; "
+                "commands carry the selected --pot"
             )
         lines.extend(_ontology_lines(payload))
         return "\n".join(lines)

@@ -14,6 +14,7 @@ import sys
 import time
 from contextlib import contextmanager
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -43,6 +44,33 @@ from potpie.cli.commands._common import (
     pot_scope_human,
     pot_scope_info,
     resolve_pot_id,
+    set_json,
+)
+from potpie_context_core.adjustments import (
+    REASON_CANONICAL_ALIAS,
+    REASON_CANONICAL_CASE,
+    REASON_EXPLICIT_SINCE,
+    REASON_MACHINE_JSON,
+    REASON_MAXIMUM_SUPPORTED,
+    REASON_UNIT_ALIAS,
+    Adjustment,
+    adjustment_dicts,
+    adjustment_lines,
+    with_adjustments,
+)
+from potpie_context_core.cli_commands import (
+    append_pot,
+    graph_read_command,
+    is_template,
+)
+from potpie_context_core.vocabulary import (
+    local_claim_subgraphs,
+    local_entity_types,
+    local_predicates,
+    resolve_claim_subgraph,
+    resolve_entity_type,
+    resolve_predicate,
+    vocabulary_from_catalog,
 )
 from potpie.cli.catalog_presenter import render_catalog
 from potpie.cli.read_presenter import (
@@ -53,6 +81,7 @@ from potpie.cli.read_presenter import (
     render_timeline_events,
     render_timeline_table,
 )
+from potpie.cli.snapshot_io import local_path, read_snapshot, write_snapshot
 from potpie.cli.telemetry.product_analytics import AnalyticsValue
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
@@ -68,7 +97,13 @@ from potpie_context_core.graph_workbench import (
     GraphWorkbenchStatus,
 )
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_INTERNAL
-from potpie_context_core.graph_views import INCLUDE_TO_VIEW
+from potpie_context_core.graph_views import (
+    INCLUDE_TO_VIEW,
+    resolve_subgraph_name,
+    resolve_view_selector,
+    view_depth_bounds,
+)
+from potpie_context_core.graph_workbench_ontology import ontology_contract
 from potpie_context_core.ports.graph.analytics import RepairFinding
 from potpie_context_engine.domain.nudge import NUDGE_EVENT_HELP
 
@@ -386,6 +421,7 @@ def _emit_graph_result(
     warnings: tuple[str, ...] = (),
     unsupported: tuple[GraphUnsupported, ...] = (),
     recommended_next_action: str | None = None,
+    adjustments: tuple[Adjustment, ...] = (),
 ) -> None:
     result, versions, payload_warnings, payload_unsupported = (
         normalize_workbench_result(payload)
@@ -430,10 +466,11 @@ def _emit_graph_result(
             unsupported=merged_unsupported,
             recommended_next_action=recommended_next_action
             or payload.get("recommended_next_action"),
+            adjustments=adjustment_dicts(adjustments),
         )
     emit(
         _with_shared_error_keys(env.to_dict()),
-        human=_with_graph_warnings(human, merged_warnings),
+        human=_with_graph_warnings(human, merged_warnings, adjustments=adjustments),
     )
     if payload.get("ok", True) is False:
         # Through the shared table rather than a blanket 1: a workbench result
@@ -443,10 +480,20 @@ def _emit_graph_result(
         raise typer.Exit(code=exit_code_for(error_code))
 
 
-def _with_graph_warnings(human: str, warnings: tuple[str, ...]) -> str:
-    if not warnings:
-        return human
-    return "\n".join([human, *(f"! {warning}" for warning in warnings)])
+def _with_graph_warnings(
+    human: str,
+    warnings: tuple[str, ...],
+    *,
+    adjustments: tuple[Adjustment, ...] = (),
+) -> str:
+    """``human`` plus one ``~`` line per adjustment and one ``!`` per warning.
+
+    Adjustments come first because they describe what the result *is*
+    (depth-4 context, the canonical view); warnings describe what to do next.
+    """
+    lines = [human, *adjustment_lines(adjustments)]
+    lines.extend(f"! {warning}" for warning in warnings)
+    return "\n".join(lines)
 
 
 def _emit_inbox_result(ctx: _GraphCliCommandContext, result) -> None:
@@ -535,6 +582,16 @@ def graph_catalog(
     )
 
     with _graph_command("graph.catalog") as ctx:
+        adjustments: list[Adjustment] = []
+        # Presentation is decided locally, so it is decided before the host is
+        # asked for anything: an unknown --format used to fail only after the
+        # remote catalog had been fetched.
+        format_ = _preflight_machine_format(format_, adjustments)
+        profile = _preflight_catalog_profile(profile)
+        _preflight_catalog_format(format_)
+        if subgraph:
+            subgraph, subgraph_adjustments = resolve_subgraph_name(subgraph)
+            adjustments.extend(subgraph_adjustments)
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
@@ -542,7 +599,7 @@ def graph_catalog(
             GraphCatalogRequest(pot_id=pot_id, task=task, subgraph=subgraph)
         )
         payload = normalize_catalog_result(result.to_dict(), task=task)
-        payload = _catalog_payload_for_profile(payload, profile=profile)
+        payload = _catalog_payload_for_profile(payload, profile=profile, pot_id=pot_id)
         support = _admin_command_support(host) if "admin_commands" in payload else {}
         if support:
             payload["admin_command_support"] = support
@@ -552,6 +609,7 @@ def graph_catalog(
             payload,
             human=human,
             unsupported=_unsupported_admin_commands(host, support),
+            adjustments=tuple(adjustments),
         )
 
 
@@ -634,30 +692,44 @@ def graph_read(
     )
 
     with _graph_command("graph.read") as ctx:
-        if not subgraph:
-            raise ValueError("--subgraph is required")
+        adjustments: list[Adjustment] = []
+        # Everything decidable without the host is decided first — a bad
+        # --format, --detail or --limit must cost zero backend calls, and an
+        # accepted alias must cost exactly one.
+        format_, detail, relations, sort, dedupe = _preflight_read_presentation(
+            format_=format_,
+            detail=detail,
+            relations=relations,
+            sort=sort,
+            dedupe=dedupe,
+            adjustments=adjustments,
+        )
+        _require_positive_limit(limit)
         if not view:
             raise ValueError("--view is required")
+        if not subgraph and "." not in view:
+            raise ValueError("--subgraph is required")
+        selector = resolve_view_selector(subgraph, view)
+        adjustments.extend(selector.adjustments)
+        subgraph, view = selector.subgraph, selector.view
         if direction is not None:
             direction = direction.strip().lower()
             if direction not in {"out", "in", "both"}:
                 raise ValueError("--direction must be one of: out, in, both")
-        if "." in view:
-            raise ValueError(
-                "graph read now requires --subgraph <name> --view <view>; "
-                f"got fully-qualified view {view!r}"
-            )
-        host = get_host()
-        pot_id = resolve_pot_id(host, pot)
-        ctx.set_pot_id(pot_id)
-        del current  # pot resolution already considers the current working tree.
-        since_dt, until_dt = _resolve_time_bounds(
-            since=since, until=until, window=time_window
+        depth = _bounded_read_depth(
+            subgraph=subgraph, view=view, depth=depth, adjustments=adjustments
         )
+        bounds = _resolve_time_bounds(since=since, until=until, window=time_window)
+        adjustments.extend(bounds.adjustments)
+        since_dt, until_dt = bounds.since, bounds.until
         query_threshold = _normalize_query_threshold(query_threshold)
         parsed_scope = _parse_scope(scope)
         if repo:
             parsed_scope["repo"] = _resolve_repo_scope(repo)
+        host = get_host()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        del current  # pot resolution already considers the current working tree.
         effective_format = _effective_requested_format(
             subgraph=subgraph, view=view, requested=format_
         )
@@ -700,6 +772,7 @@ def graph_read(
             event_limit=limit,
             human_prefix=pot_scope_human(host, pot_id),
             warnings=_empty_read_warnings(host, pot_id, result),
+            adjustments=tuple(adjustments),
         )
 
 
@@ -746,12 +819,22 @@ def timeline_recent(
     )
 
     with contract():
+        adjustments: list[Adjustment] = []
+        format_, detail, relations, _sort, _dedupe = _preflight_read_presentation(
+            format_=format_,
+            detail=detail,
+            relations=relations,
+            sort="occurred_at",
+            dedupe="source_ref",
+            adjustments=adjustments,
+        )
+        _require_positive_limit(limit)
+        bounds = _resolve_time_bounds(since=since, until=until, window=time_window)
+        adjustments.extend(bounds.adjustments)
+        since_dt, until_dt = bounds.since, bounds.until
+        query_threshold = _normalize_query_threshold(query_threshold)
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
-        since_dt, until_dt = _resolve_time_bounds(
-            since=since, until=until, window=time_window
-        )
-        query_threshold = _normalize_query_threshold(query_threshold)
         scope = {"service": service} if service else {}
         read_limit = _service_limit_for_read(
             subgraph="recent_changes",
@@ -783,6 +866,7 @@ def timeline_recent(
             event_limit=limit,
             human_prefix=pot_scope_human(host, pot_id),
             warnings=_empty_read_warnings(host, pot_id, result),
+            adjustments=tuple(adjustments),
         )
 
 
@@ -822,15 +906,26 @@ def graph_search_entities(
     )
 
     with _graph_command("graph.search-entities") as ctx:
+        adjustments: list[Adjustment] = []
         effective_query = query or query_arg
         if not effective_query:
             raise ValueError("query is required")
         if supporting_claims < 0:
             raise ValueError("--supporting-claims must be >= 0")
+        _require_positive_limit(limit)
+        bounds = _resolve_time_bounds(since=since, until=until, window=None)
+        since_dt, until_dt = bounds.since, bounds.until
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
+        type_, predicate, subgraph = _canonical_search_vocabulary(
+            host,
+            pot_id,
+            type_=type_,
+            predicate=predicate,
+            subgraph=subgraph,
+            adjustments=adjustments,
+        )
         result = host.graph.search_entities(
             GraphEntitySearchRequest(
                 pot_id=pot_id,
@@ -870,6 +965,7 @@ def graph_search_entities(
             ),
             warnings=warnings,
             recommended_next_action=warnings[0] if warnings else None,
+            adjustments=tuple(adjustments),
         )
 
 
@@ -1318,13 +1414,15 @@ def graph_mutation_template(
                 request_id=ctx.request_id,
                 pot_id=ctx.pot_id,
                 result={"kind": kind, "template": template},
-                warnings=_legacy_warning(
-                    "graph.mutation-template", "graph.describe mutation examples"
-                ),
+                # No legacy warning here. The one this carried pointed at
+                # "graph.describe mutation examples", which does not exist:
+                # describe --examples renders *read* commands, and this
+                # skeleton is the only offline write shape there is.
                 recommended_next_action=(
-                    "Fill the placeholders, then `potpie graph propose --file "
-                    "<mutation.json> --json`; run `potpie graph describe <subgraph> "
-                    "--examples --json` for the backed examples."
+                    "Fill the placeholders from sources you have read, then "
+                    "`potpie graph propose --file <mutation.json> --json`; "
+                    "`potpie graph describe <subgraph> --json` shows the entity "
+                    "types and predicates the payload must use."
                 ),
             ).to_dict(),
             human=rendered,
@@ -1433,6 +1531,14 @@ def graph_describe(
             GraphDescribeRequest,
         )
 
+        adjustments: list[Adjustment] = []
+        if view:
+            selector = resolve_view_selector(subgraph, view)
+            adjustments.extend(selector.adjustments)
+            subgraph, view = selector.subgraph or subgraph, selector.view
+        elif subgraph:
+            subgraph, subgraph_adjustments = resolve_subgraph_name(subgraph)
+            adjustments.extend(subgraph_adjustments)
         _set_optional_pot(ctx, pot)
         payload = get_host().graph.describe(
             GraphDescribeRequest(
@@ -1441,18 +1547,34 @@ def graph_describe(
                 include_examples=examples,
             )
         )
+        _scope_describe_examples(payload, pot_id=ctx.pot_id)
         subgraph_name = payload["subgraph"]["name"]
-        described = payload["view"]["name"] if view else subgraph_name
-        described_view = described.split(".", 1)[1] if "." in described else described
+        if view:
+            view_payload = payload["view"]
+            next_read = graph_read_command(
+                subgraph_name,
+                str(view_payload.get("view") or view),
+                pot_id=ctx.pot_id,
+                required_scope=view_payload.get("required_scope") or (),
+                required_any_scope=view_payload.get("required_any_scope") or (),
+                json_output=True,
+            )
+            recommended = (
+                f"Fill the placeholders, then run `{next_read}`."
+                if is_template(next_read)
+                else f"Run `{next_read}`."
+            )
+        else:
+            recommended = (
+                "Use `potpie graph describe <subgraph> --view <view> --json` "
+                "for one backed view."
+            )
         _emit_graph_result(
             ctx,
             payload,
             human=_describe_human(payload),
-            recommended_next_action=(
-                f"Use `potpie graph read --subgraph {subgraph_name} --view {described_view} --json` after choosing a scope."
-                if view
-                else "Use `potpie graph describe <subgraph> --view <view> --json` for one backed view."
-            ),
+            recommended_next_action=recommended,
+            adjustments=tuple(adjustments),
         )
 
 
@@ -1474,7 +1596,20 @@ def graph_neighborhood(
             raise ValueError("--depth must be >= 1")
         if limit < 1:
             raise ValueError("--limit must be >= 1")
+        adjustments: list[Adjustment] = []
         detail_mode = (detail or "summary").strip().lower()
+        if detail_mode == "compact":
+            # The graph-read spelling of the same idea; one execution, disclosed.
+            adjustments.append(
+                Adjustment(
+                    field="detail",
+                    requested=detail,
+                    effective="summary",
+                    reason=REASON_CANONICAL_ALIAS,
+                    message="--detail compact is spelled summary on graph neighborhood; returned the summary detail",
+                )
+            )
+            detail_mode = "summary"
         if detail_mode not in {"summary", "full"}:
             raise ValueError("--detail must be one of: summary, full")
         host = get_host()
@@ -1529,6 +1664,7 @@ def graph_neighborhood(
             ctx,
             payload,
             human=_neighborhood_human(payload),
+            adjustments=tuple(adjustments),
         )
 
 
@@ -1904,7 +2040,8 @@ def graph_history(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
+        bounds = _resolve_time_bounds(since=since, until=until, window=None)
+        since_dt, until_dt = bounds.since, bounds.until
         result = host.graph_workbench.history(
             pot_id=pot_id,
             entity_key=entity,
@@ -1964,7 +2101,8 @@ def graph_inbox_list(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
+        bounds = _resolve_time_bounds(since=since, until=until, window=None)
+        since_dt, until_dt = bounds.since, bounds.until
         result = host.graph_workbench.inbox_list(
             pot_id=pot_id,
             status=tuple(status or ()),
@@ -2265,45 +2403,145 @@ def graph_inspect(
 
 @graph_app.command("export")
 def graph_export(
-    file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
+    file: str = typer.Argument(...),
+    pot: str = typer.Option(None, "--pot"),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Replace an existing export file or folder atomically.",
+    ),
+    graph_only: bool = typer.Option(
+        False,
+        "--graph-only",
+        "--no-resources",
+        help="Export graph entities and claims without document resource text.",
+    ),
 ) -> None:
     with _graph_command("graph.export") as ctx:
         host = get_host()
         _require_backend_capability(
             host,
             capability="snapshot",
-            method="export",
+            method="export_data",
             command="graph export",
         )
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        manifest = host.backend.snapshot.export(pot_id=pot_id, destination=file)
+        path = local_path(file)
+        if path.exists() and not overwrite:
+            raise ValueError(
+                f"export destination already exists: {path}; pass --overwrite to replace it"
+            )
+        if graph_only:
+            export_data = _require_snapshot_data_method(
+                host.backend.snapshot, method="export_data", command="graph export"
+            )
+            payload = _invoke_snapshot_data(
+                export_data, method="export_data", command="graph export", pot_id=pot_id
+            )
+        else:
+            export_snapshot = _require_snapshot_data_method(
+                host.resources, method="export_snapshot", command="graph export"
+            )
+            payload = _invoke_snapshot_data(
+                export_snapshot,
+                method="export_snapshot",
+                command="graph export",
+                pot_id=pot_id,
+            )
+        path = write_snapshot(file, payload, overwrite=overwrite)
+        entities = len(payload.get("entities", ()))
+        claims = len(payload.get("claims", ()))
         _emit_graph_result(
             ctx,
-            {"location": manifest.location, "claims": manifest.claim_count},
-            human=f"exported {manifest.claim_count} claims → {manifest.location}",
+            {
+                "path": str(path),
+                "format_version": str(payload.get("format_version", "2")),
+                "entities": entities,
+                "claims": claims,
+            },
+            human=f"exported {entities} entities and {claims} claims → {path}",
         )
 
 
 @graph_app.command("import")
 def graph_import(
-    file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
+    file: str = typer.Argument(...),
+    pot: str = typer.Option(None, "--pot"),
+    graph_only: bool = typer.Option(
+        False,
+        "--graph-only",
+        "--no-resources",
+        help="Import only graph entities and claims, ignoring bundled resources.",
+    ),
 ) -> None:
     with _graph_command("graph.import") as ctx:
         host = get_host()
         _require_backend_capability(
             host,
             capability="snapshot",
-            method="import_",
+            method="import_data",
             command="graph import",
         )
+        # Parse the complete client-side artifact before resolving or mutating
+        # the remote host.  In particular, a missing claims file must never
+        # become a partial import request.
+        payload, path = read_snapshot(file)
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        manifest = host.backend.snapshot.import_(pot_id=pot_id, source=file)
+        if graph_only or "resources" not in payload:
+            if graph_only:
+                payload = {
+                    key: value for key, value in payload.items() if key != "resources"
+                }
+            import_data = _require_snapshot_data_method(
+                host.backend.snapshot, method="import_data", command="graph import"
+            )
+            manifest = _invoke_snapshot_data(
+                import_data,
+                method="import_data",
+                command="graph import",
+                pot_id=pot_id,
+                payload=payload,
+            )
+        else:
+            import_snapshot = _require_snapshot_data_method(
+                host.resources, method="import_snapshot", command="graph import"
+            )
+            manifest = _invoke_snapshot_data(
+                import_snapshot,
+                method="import_snapshot",
+                command="graph import",
+                pot_id=pot_id,
+                payload=payload,
+            )
+        entities = int(
+            getattr(manifest, "entity_count", len(payload.get("entities", ())))
+        )
+        claims = int(getattr(manifest, "claim_count", len(payload.get("claims", ()))))
+        metadata = getattr(manifest, "metadata", {})
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        manifest_warnings = tuple(
+            str(item) for item in metadata.get("warnings", ()) if str(item).strip()
+        )
+        documents = metadata.get("documents")
+        result = {
+            "path": str(path),
+            "format_version": str(payload.get("format_version", "1")),
+            "entities": entities,
+            "claims": claims,
+        }
+        if documents is not None:
+            result["documents"] = int(documents)
+        document_human = f", {documents} documents" if documents is not None else ""
         _emit_graph_result(
             ctx,
-            {"location": manifest.location, "claims": manifest.claim_count},
-            human=f"imported {manifest.claim_count} claims from {manifest.location}",
+            result,
+            human=(
+                f"imported {entities} entities and {claims} claims"
+                f"{document_human} from {path}"
+            ),
+            warnings=manifest_warnings,
         )
 
 
@@ -2565,12 +2803,15 @@ def _describe_human(payload: Mapping[str, Any]) -> str:
     if isinstance(view, Mapping):
         filters = ", ".join(str(v) for v in view.get("supported_filters", ())) or "-"
         relations = ", ".join(str(v) for v in view.get("inline_relations", ())) or "-"
-        return (
-            f"{view.get('name')} ({view.get('result_shape')})\n"
-            f"purpose: {view.get('purpose')}\n"
-            f"filters: {filters}\n"
-            f"relations: {relations}"
-        )
+        lines = [
+            f"{view.get('name')} ({view.get('result_shape')})",
+            f"purpose: {view.get('purpose')}",
+            f"requires: {_describe_requirements(view)}",
+            f"filters: {filters}",
+            f"relations: {relations}",
+        ]
+        lines.extend(_describe_example_lines(view.get("examples")))
+        return "\n".join(lines)
     views = subgraph.get("views", ())
     view_names = ", ".join(str(v.get("name")) for v in views if isinstance(v, Mapping))
     relation_names = ", ".join(
@@ -2578,11 +2819,69 @@ def _describe_human(payload: Mapping[str, Any]) -> str:
         for r in subgraph.get("relation_types", ())
         if isinstance(r, Mapping)
     )
-    return (
-        f"{subgraph.get('name')}: {subgraph.get('purpose')}\n"
-        f"views: {view_names}\n"
-        f"relations: {relation_names}"
-    )
+    lines = [
+        f"{subgraph.get('name')}: {subgraph.get('purpose')}",
+        f"views: {view_names}",
+        f"relations: {relation_names}",
+    ]
+    lines.extend(_describe_example_lines(subgraph.get("examples")))
+    return "\n".join(lines)
+
+
+def _describe_requirements(view: Mapping[str, Any]) -> str:
+    required = [str(v) for v in view.get("required_scope", ()) or ()]
+    required_any = [str(v) for v in view.get("required_any_scope", ()) or ()]
+    parts: list[str] = []
+    if required:
+        parts.append("all of " + ", ".join(required))
+    if required_any:
+        parts.append("one of " + ", ".join(required_any))
+    return "; ".join(parts) or "nothing (pot-wide)"
+
+
+def _describe_example_lines(examples: Any) -> list[str]:
+    """Text rendering of contract examples; ``--examples`` used to change
+    only the JSON body, so the human output was identical with and without
+    the flag."""
+    if not isinstance(examples, list) or not examples:
+        return []
+    lines = ["examples (templates: substitute your own scope/query values):"]
+    for example in examples:
+        if not isinstance(example, Mapping) or not example.get("command"):
+            continue
+        description = str(example.get("description") or "").strip()
+        suffix = f"  # {description}" if description else ""
+        lines.append(f"  - {example['command']}{suffix}")
+    return lines
+
+
+def _scope_describe_examples(payload: dict[str, Any], *, pot_id: str | None) -> None:
+    """Attach the selected pot to the contract's example commands, in place.
+
+    The examples are authored inside the ontology and served by the host, so
+    they cannot know the caller's pot; a copied example that omits it runs
+    against whatever pot is active *later*. Every example is a template — its
+    scope values are illustrative — and says so.
+    """
+
+    def _rewrite(examples: Any) -> None:
+        if not isinstance(examples, list):
+            return
+        for example in examples:
+            if not isinstance(example, dict) or not example.get("command"):
+                continue
+            example["command"] = append_pot(str(example["command"]), pot_id)
+            example["template"] = True
+
+    view = payload.get("view")
+    if isinstance(view, dict):
+        _rewrite(view.get("examples"))
+    subgraph = payload.get("subgraph")
+    if isinstance(subgraph, dict):
+        _rewrite(subgraph.get("examples"))
+        for entry in subgraph.get("views", ()) or ():
+            if isinstance(entry, dict):
+                _rewrite(entry.get("examples"))
 
 
 def _safe(fn, default):
@@ -2611,6 +2910,44 @@ def _require_backend_capability(
             f"a backend that implements {capability}"
         ),
     )
+
+
+def _require_snapshot_data_method(
+    snapshot: Any,
+    *,
+    method: str,
+    command: str,
+):
+    """Require the data-only snapshot API introduced for remote-safe I/O."""
+
+    candidate = getattr(snapshot, method, None)
+    if callable(candidate):
+        return candidate
+    raise CapabilityNotImplemented(
+        f"graph.snapshot.{method}",
+        detail=(
+            f"{command} requires the JSON snapshot data API; this host only "
+            "supports the legacy host-filesystem snapshot API"
+        ),
+        recommended_next_action=(
+            "upgrade both the Potpie CLI and the target daemon, then retry"
+        ),
+    )
+
+
+def _invoke_snapshot_data(candidate, *, method: str, command: str, **kwargs):
+    """Turn a legacy remote host's missing member into upgrade guidance."""
+
+    try:
+        return candidate(**kwargs)
+    except AttributeError as exc:
+        raise CapabilityNotImplemented(
+            f"graph.snapshot.{method}",
+            detail=f"{command} is unavailable on the target host: {exc}",
+            recommended_next_action=(
+                "upgrade both the Potpie CLI and the target daemon, then retry"
+            ),
+        ) from exc
 
 
 def _parse_scope(scope: str | None) -> dict[str, str]:
@@ -3019,9 +3356,9 @@ def _neighborhood_human(payload: Mapping[str, Any]) -> str:
 
 # Admin commands are contract-level names, but each one only works when the
 # active backend implements the capability behind it. The catalog used to list
-# all three unconditionally, so `export`/`import` read as available on the OSS
-# default (falkordb_lite implements no snapshot port) right up to the moment
-# they refused.
+# all three unconditionally, so `export`/`import` appeared available on an
+# unsupported backend right up to the moment they refused. Snapshot-capable native
+# and local profiles now advertise export/import alongside repair.
 _ADMIN_COMMAND_CAPABILITIES: dict[str, str] = {
     "repair": "analytics",
     "export": "snapshot",
@@ -3058,12 +3395,24 @@ def _unsupported_admin_commands(
     )
 
 
-def _catalog_payload_for_profile(
-    payload: Mapping[str, Any], *, profile: str
-) -> dict[str, Any]:
+def _preflight_catalog_profile(profile: str) -> str:
     mode = (profile or "full").strip().lower()
     if mode not in {"full", "read"}:
         raise ValueError("--profile must be one of: full, read")
+    return mode
+
+
+def _preflight_catalog_format(format_: str) -> str:
+    mode = (format_ or "auto").strip().lower()
+    if mode not in {"auto", "table"}:
+        raise ValueError("--format must be one of: auto, table, json")
+    return mode
+
+
+def _catalog_payload_for_profile(
+    payload: Mapping[str, Any], *, profile: str, pot_id: str | None = None
+) -> dict[str, Any]:
+    mode = _preflight_catalog_profile(profile)
     result = dict(payload)
     result["profile"] = mode
     if mode == "full":
@@ -3083,7 +3432,9 @@ def _catalog_payload_for_profile(
         }
     ]
     result["commands"] = read_commands
-    result["views"] = [_compact_catalog_view(view) for view in result.get("views", ())]
+    result["views"] = [
+        _compact_catalog_view(view, pot_id=pot_id) for view in result.get("views", ())
+    ]
     if "task_ranking" in result:
         result["task_ranking"] = [
             _compact_catalog_ranking(entry, rank=index + 1)
@@ -3103,7 +3454,18 @@ def _catalog_payload_for_profile(
     return result
 
 
-def _compact_catalog_view(view: Mapping[str, Any]) -> dict[str, Any]:
+def _compact_catalog_view(
+    view: Mapping[str, Any], *, pot_id: str | None = None
+) -> dict[str, Any]:
+    """The read-profile projection of one catalog view.
+
+    The data-plane catalog entry carries ``inputs`` but not the selector
+    rules, so the compact catalog used to advertise every view with
+    ``filters: -`` and a ``next_read`` that omitted the input the view
+    refuses to run without. The requirements come from the in-process
+    contract (or the entry's own ``extra`` for an extension view), and the
+    next read is templated over them and pinned to the selected pot.
+    """
     out = {
         key: view[key]
         for key in (
@@ -3119,10 +3481,36 @@ def _compact_catalog_view(view: Mapping[str, Any]) -> dict[str, Any]:
         )
         if key in view
     }
-    if "subgraph" in out and "view" in out:
-        out["next_read"] = (
-            f"potpie graph read --subgraph {out['subgraph']} --view {out['view']}"
+    contract = ontology_contract().view(str(view.get("name") or ""))
+    extra = view.get("extra") if isinstance(view.get("extra"), Mapping) else {}
+    if contract is not None:
+        out.setdefault("required_scope", list(contract.required_scope))
+        out.setdefault("required_any_scope", list(contract.required_any_scope))
+        out.setdefault("supported_filters", list(contract.supported_filters))
+        if "result_shape" not in out:
+            out["result_shape"] = contract.result_shape
+    else:
+        out.setdefault(
+            "required_scope", [str(v) for v in extra.get("required_scope", ())]
         )
+        out.setdefault(
+            "required_any_scope",
+            [str(v) for v in extra.get("required_any_scope", ())],
+        )
+        out.setdefault(
+            "supported_filters",
+            [str(v) for v in extra.get("supported_filters", view.get("inputs", ()))],
+        )
+    if "subgraph" in out and "view" in out:
+        command = graph_read_command(
+            str(out["subgraph"]),
+            str(out["view"]),
+            pot_id=pot_id,
+            required_scope=out.get("required_scope") or (),
+            required_any_scope=out.get("required_any_scope") or (),
+        )
+        out["next_read"] = command
+        out["next_read_is_template"] = is_template(command)
     return out
 
 
@@ -3147,6 +3535,7 @@ def _emit_graph_read(
     event_limit: int | None = None,
     human_prefix: str | None = None,
     warnings: tuple[str, ...] = (),
+    adjustments: tuple[Adjustment, ...] = (),
 ) -> None:
     normalized_format = _effective_read_format(result, format_)
     payload = _read_payload(
@@ -3172,6 +3561,7 @@ def _emit_graph_read(
             event_limit=event_limit,
             human_prefix=human_prefix,
             warnings=warnings,
+            adjustments=adjustments,
         )
         return
 
@@ -3214,6 +3604,7 @@ def _emit_graph_read(
             warnings=warnings,
         ),
         warnings=warnings,
+        adjustments=adjustments,
     )
 
 
@@ -3226,10 +3617,14 @@ def _emit_read(
     event_limit: int | None = None,
     human_prefix: str | None = None,
     warnings: tuple[str, ...] = (),
+    adjustments: tuple[Adjustment, ...] = (),
 ) -> None:
     warnings = warnings + tuple(getattr(result, "warnings", ()))
     normalized_format = _effective_read_format(result, format_)
     if normalized_format == "jsonl":
+        # The row stream on stdout stays rows only; notices ride stderr.
+        for line in adjustment_lines(adjustments):
+            typer.echo(line, err=True)
         for warning in warnings:
             typer.echo(f"! {warning}", err=True)
         rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
@@ -3246,7 +3641,7 @@ def _emit_read(
         event_limit=event_limit,
     )
     emit(
-        payload,
+        with_adjustments(payload, adjustments),
         human=_with_read_context(
             _read_human(
                 result,
@@ -3257,6 +3652,7 @@ def _emit_read(
             ),
             human_prefix=human_prefix,
             warnings=warnings,
+            adjustments=adjustments,
         ),
     )
 
@@ -3274,14 +3670,270 @@ def _empty_read_warnings(host: Any, pot_id: str, result: Any) -> tuple[str, ...]
 
 
 def _with_read_context(
-    human: str, *, human_prefix: str | None, warnings: tuple[str, ...]
+    human: str,
+    *,
+    human_prefix: str | None,
+    warnings: tuple[str, ...],
+    adjustments: tuple[Adjustment, ...] = (),
 ) -> str:
     lines: list[str] = []
     if human_prefix:
         lines.append(human_prefix)
     lines.append(human)
+    lines.extend(adjustment_lines(adjustments))
     lines.extend(f"! {warning}" for warning in warnings)
     return "\n".join(lines)
+
+
+# --- Preflight: decided locally, before any host call --------------------
+
+_READ_FORMATS = frozenset({"auto", "raw", "events", "table", "jsonl"})
+_READ_SORTS = frozenset({"auto", "score", "occurred_at"})
+_READ_DEDUPES = frozenset({"auto", "none", "source_ref", "activity"})
+
+
+def _preflight_machine_format(format_: str, adjustments: list[Adjustment]) -> str:
+    """``--format json`` means the machine envelope the root ``--json`` emits.
+
+    The CLI already had a JSON mode; it was only reachable through a root
+    flag, so the obvious spelling failed after the graph work had run. The
+    request preserves the caller's information contract exactly, so it is
+    honoured and disclosed. ``jsonl`` is a different contract (a row stream)
+    and is left alone.
+    """
+    value = (format_ or "auto").strip().lower()
+    if value != "json":
+        return value
+    if not is_json():
+        set_json(True)
+    adjustments.append(
+        Adjustment(
+            field="format",
+            requested=format_,
+            effective="auto",
+            reason=REASON_MACHINE_JSON,
+            message=(
+                "--format json emits the machine JSON envelope (the same "
+                "output as the root --json flag); layout format left at auto"
+            ),
+        )
+    )
+    return "auto"
+
+
+def _preflight_read_presentation(
+    *,
+    format_: str,
+    detail: str,
+    relations: str,
+    sort: str,
+    dedupe: str,
+    adjustments: list[Adjustment],
+) -> tuple[str, str, str, str, str]:
+    """Validate and canonicalize every presentation value before the read.
+
+    Unknown values fail here, with zero backend calls. Exact aliases with a
+    canonical equivalent — ``json`` for the machine envelope, ``summary``
+    for graph read's ``compact`` detail — execute once and are disclosed.
+    Unknown serialization formats are refused, never downgraded to prose:
+    silently answering a ``yaml`` request in text breaks the script that
+    asked.
+    """
+    format_ = _preflight_machine_format(format_, adjustments)
+    if format_ not in _READ_FORMATS:
+        raise ValueError(
+            "--format must be one of: auto, raw, events, table, jsonl, json"
+        )
+    detail_value = (detail or "compact").strip().lower()
+    if detail_value == "summary":
+        adjustments.append(
+            Adjustment(
+                field="detail",
+                requested=detail,
+                effective="compact",
+                reason=REASON_CANONICAL_ALIAS,
+                message=(
+                    "--detail summary is spelled compact on graph read; "
+                    "returned the compact detail"
+                ),
+            )
+        )
+        detail_value = "compact"
+    if detail_value not in {"compact", "full"}:
+        raise ValueError("--detail must be one of: compact, full")
+    relations_value = (relations or "summary").strip().lower()
+    if relations_value not in {"summary", "full"}:
+        raise ValueError("--relations must be one of: summary, full")
+    sort_value = (sort or "auto").strip().lower()
+    if sort_value not in _READ_SORTS:
+        raise ValueError("--sort must be one of: auto, score, occurred_at")
+    dedupe_value = (dedupe or "auto").strip().lower()
+    if dedupe_value not in _READ_DEDUPES:
+        raise ValueError("--dedupe must be one of: auto, none, source_ref, activity")
+    return format_, detail_value, relations_value, sort_value, dedupe_value
+
+
+def _require_positive_limit(limit: int) -> None:
+    """``--limit`` is a result budget; zero and negative values are not.
+
+    A negative limit used to switch off final truncation while the readers
+    kept their own candidate bounds — an undocumented "everything retained"
+    mode that no caller asked for by that name. It is refused rather than
+    reinterpreted: there is no bounded read it could honestly mean.
+    """
+    if limit is None or limit < 1:
+        raise ValueError("--limit must be >= 1")
+
+
+def _bounded_read_depth(
+    *,
+    subgraph: str,
+    view: str,
+    depth: int | None,
+    adjustments: list[Adjustment],
+) -> int | None:
+    """Cap ``--depth`` at the view's advertised maximum, disclosed.
+
+    ``--depth 100`` on the service neighbourhood returns the depth-4 slice
+    with one notice instead of a refusal — the starting point and direction
+    the caller asked for are preserved, and the backend never walks further
+    than it advertises. Zero and negative depths are not reads and are
+    refused. Views that advertise no budget pass the value through so the
+    service can report it as an unsupported filter.
+    """
+    if depth is None:
+        return None
+    bounds = view_depth_bounds(f"{subgraph}.{view}")
+    if depth < 1:
+        supported = f" (this view walks 1..{bounds[1]})" if bounds else ""
+        raise ValueError(f"--depth must be >= 1{supported}")
+    if bounds is None:
+        return depth
+    _default, maximum = bounds
+    if depth <= maximum:
+        return depth
+    adjustments.append(
+        Adjustment(
+            field="depth",
+            requested=depth,
+            effective=maximum,
+            reason=REASON_MAXIMUM_SUPPORTED,
+            max_supported=maximum,
+            message=(
+                f"Depth {depth} exceeds the supported maximum {maximum}; "
+                f"returned depth-{maximum} context."
+            ),
+        )
+    )
+    return maximum
+
+
+def _advertised_vocabulary(host: Any, pot_id: str) -> dict[str, tuple[str, ...]]:
+    """The serving host's entity types / predicates / subgraphs, or ``{}``.
+
+    Asked for only when a value is unknown to the in-process registry — the
+    same lazy pattern ``resolve --include`` uses for extension families — so
+    ordinary lookups keep their existing cost and a stale client still
+    accepts a valid server extension.
+    """
+    from potpie_context_core.ports.graph_service import GraphCatalogRequest
+
+    try:
+        catalog = host.graph.catalog(GraphCatalogRequest(pot_id=pot_id))
+    except Exception:  # noqa: BLE001 - discovery is best-effort guidance
+        return {}
+    return vocabulary_from_catalog(catalog)
+
+
+def _canonical_search_vocabulary(
+    host: Any,
+    pot_id: str,
+    *,
+    type_: str | None,
+    predicate: str | None,
+    subgraph: str | None,
+    adjustments: list[Adjustment],
+) -> tuple[str | None, str | None, str | None]:
+    """``--type`` / ``--predicate`` / ``--subgraph`` as the graph spells them.
+
+    An exact case/spacing variant executes once as the canonical token and is
+    disclosed. A value neither the local registry nor the serving host's
+    catalog advertises is refused *before* retrieval with a bounded list of
+    valid choices — a confident zero-match answer cannot be told apart from
+    a filter that was impossible, and that was the failure being repaired.
+    Nothing here picks a near miss.
+    """
+    advertised: dict[str, tuple[str, ...]] | None = None
+
+    def _resolve(value, *, argument, field, resolver, local, catalog_key, noun):
+        nonlocal advertised
+        if not value:
+            return None
+        match = resolver(value, known=local)
+        if match.canonical is None:
+            if advertised is None:
+                advertised = _advertised_vocabulary(host, pot_id)
+            remote = advertised.get(catalog_key) or ()
+            if remote:
+                match = resolver(value, known=tuple(dict.fromkeys((*local, *remote))))
+        if match.canonical is None:
+            candidates = list(match.candidates)
+            fail(
+                code="unsupported_filter",
+                message=(
+                    f"unknown {argument} value {value!r}: the graph vocabulary "
+                    f"has no such {noun}, so the filter cannot be applied."
+                ),
+                detail={
+                    "argument": argument,
+                    "requested": value,
+                    "candidates": candidates,
+                },
+                next_action=(
+                    f"use one of: {', '.join(candidates)}; "
+                    "`potpie graph catalog --profile full --json` lists the full vocabulary"
+                ),
+            )
+        if match.canonical != value:
+            adjustments.append(
+                Adjustment(
+                    field=field,
+                    requested=value,
+                    effective=match.canonical,
+                    reason=REASON_CANONICAL_CASE,
+                    message=f"{argument} {value!r} read as {match.canonical!r}",
+                )
+            )
+        return match.canonical
+
+    canonical_type = _resolve(
+        type_,
+        argument="--type",
+        field="type",
+        resolver=resolve_entity_type,
+        local=local_entity_types(),
+        catalog_key="entity_types",
+        noun="entity type",
+    )
+    canonical_predicate = _resolve(
+        predicate,
+        argument="--predicate",
+        field="predicate",
+        resolver=resolve_predicate,
+        local=local_predicates(),
+        catalog_key="predicates",
+        noun="predicate",
+    )
+    canonical_subgraph = _resolve(
+        subgraph,
+        argument="--subgraph",
+        field="subgraph",
+        resolver=resolve_claim_subgraph,
+        local=local_claim_subgraphs(),
+        catalog_key="subgraphs",
+        noun="subgraph",
+    )
+    return canonical_type, canonical_predicate, canonical_subgraph
 
 
 def _read_payload(
@@ -3578,17 +4230,72 @@ def _timeline_freshness(events: list[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True, slots=True)
+class _TimeBounds:
+    """Parsed ``--since`` / ``--until`` / ``--time-window`` plus disclosures."""
+
+    since: datetime | None
+    until: datetime | None
+    adjustments: tuple[Adjustment, ...] = ()
+
+
 def _resolve_time_bounds(
     *, since: str | None, until: str | None, window: str | None
-) -> tuple[datetime | None, datetime | None]:
+) -> _TimeBounds:
+    """Effective UTC bounds, with every deviation from the request disclosed.
+
+    Precedence is unchanged — an explicit ``--since`` wins over a relative
+    ``--time-window`` — but it is no longer silent: the unused window is
+    reported as an adjustment naming the bound that was applied instead.
+    Reversed bounds are refused before retrieval with both instants; the
+    dates are never swapped, and no unfiltered read is run in their place,
+    because an empty ``ok`` answer to an impossible window is a lie.
+    """
+    adjustments: list[Adjustment] = []
     until_dt = _parse_instant(until) if until else None
     since_dt = _parse_instant(since) if since else None
+    if since_dt is not None and until_dt is not None and since_dt > until_dt:
+        raise ValueError(
+            f"--since {since_dt.isoformat()} is after --until {until_dt.isoformat()}; "
+            "the window is empty. Swap the bounds or drop one; dates were not "
+            "reordered for you."
+        )
     if since_dt is not None:
-        return since_dt, until_dt
+        if window:
+            adjustments.append(
+                Adjustment(
+                    field="time_window",
+                    requested=window,
+                    effective=None,
+                    reason=REASON_EXPLICIT_SINCE,
+                    message=(
+                        f"--time-window {window} ignored: the explicit --since "
+                        f"{since_dt.isoformat()} was applied instead"
+                    ),
+                )
+            )
+        return _TimeBounds(
+            since=since_dt, until=until_dt, adjustments=tuple(adjustments)
+        )
     if window:
+        duration, canonical = _parse_window(window)
         end = until_dt or datetime.now(timezone.utc)
-        return end - _parse_duration(window), until_dt
-    return None, until_dt
+        start = end - duration
+        if canonical != window.strip():
+            adjustments.append(
+                Adjustment(
+                    field="time_window",
+                    requested=window,
+                    effective=canonical,
+                    reason=REASON_UNIT_ALIAS,
+                    message=(
+                        f"--time-window {window!r} read as {canonical} "
+                        f"(since {start.isoformat()})"
+                    ),
+                )
+            )
+        return _TimeBounds(since=start, until=until_dt, adjustments=tuple(adjustments))
+    return _TimeBounds(since=None, until=until_dt)
 
 
 def _normalize_query_threshold(value: float | None) -> float | None:
@@ -3615,19 +4322,53 @@ def _parse_instant(value: str) -> datetime:
     return dt
 
 
-def _parse_duration(value: str) -> timedelta:
-    m = re.fullmatch(r"\s*(\d+)\s*([mhdw])\s*", value.strip().lower())
-    if not m:
-        raise ValueError("--time-window must look like 30m, 24h, 7d, or 2w")
+#: Explicit unit aliases. Each spelled-out form has exactly one canonical
+#: single-letter reading, so ``7days`` is ``7d`` and nothing else; anything
+#: outside this table (``7 fortnights``, ``yesterday``) stays a refusal.
+_DURATION_UNITS: dict[str, str] = {
+    "m": "m",
+    "min": "m",
+    "mins": "m",
+    "minute": "m",
+    "minutes": "m",
+    "h": "h",
+    "hr": "h",
+    "hrs": "h",
+    "hour": "h",
+    "hours": "h",
+    "d": "d",
+    "day": "d",
+    "days": "d",
+    "w": "w",
+    "wk": "w",
+    "wks": "w",
+    "week": "w",
+    "weeks": "w",
+}
+
+
+def _parse_window(value: str) -> tuple[timedelta, str]:
+    """``(duration, canonical spelling)`` for a relative window."""
+    m = re.fullmatch(r"\s*(\d+)\s*([a-z]+)\s*", (value or "").lower())
+    unit = _DURATION_UNITS.get(m.group(2)) if m else None
+    if not m or unit is None:
+        raise ValueError(
+            "--time-window must look like 30m, 24h, 7d, or 2w "
+            "(minutes/hours/days/weeks are accepted spellings)"
+        )
     amount = int(m.group(1))
-    unit = m.group(2)
+    canonical = f"{amount}{unit}"
     if unit == "m":
-        return timedelta(minutes=amount)
+        return timedelta(minutes=amount), canonical
     if unit == "h":
-        return timedelta(hours=amount)
+        return timedelta(hours=amount), canonical
     if unit == "d":
-        return timedelta(days=amount)
-    return timedelta(weeks=amount)
+        return timedelta(days=amount), canonical
+    return timedelta(weeks=amount), canonical
+
+
+def _parse_duration(value: str) -> timedelta:
+    return _parse_window(value)[0]
 
 
 def _parse_ttl_seconds(value: str) -> int:

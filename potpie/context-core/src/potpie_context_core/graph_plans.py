@@ -56,6 +56,7 @@ class GraphMutationDiff:
     edge_deletes: int = 0
     invalidations: int = 0
     claim_keys: tuple[str, ...] = ()
+    retracted_claim_keys: tuple[str, ...] = ()
 
     @classmethod
     def from_batch(
@@ -69,6 +70,9 @@ class GraphMutationDiff:
             edge_deletes=len(batch.edge_deletes),
             invalidations=len(batch.invalidations),
             claim_keys=claim_keys,
+            retracted_claim_keys=tuple(dict.fromkeys(
+                key for item in batch.invalidations for key in (item.target_claim_keys or ())
+            )),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,8 +82,9 @@ class GraphMutationDiff:
             "edge_deletes": self.edge_deletes,
             "invalidations": self.invalidations,
             "claims_asserted": len(self.claim_keys),
-            "claims_retracted": self.invalidations,
+            "claims_retracted": len(self.retracted_claim_keys),
             "claim_keys": list(self.claim_keys),
+            "retracted_claim_keys": list(self.retracted_claim_keys),
         }
 
     @classmethod
@@ -91,6 +96,7 @@ class GraphMutationDiff:
             edge_deletes=_int(data.get("edge_deletes")),
             invalidations=_int(data.get("invalidations")),
             claim_keys=tuple(str(k) for k in data.get("claim_keys") or ()),
+            retracted_claim_keys=tuple(str(k) for k in data.get("retracted_claim_keys") or ()),
         )
 
 
@@ -243,6 +249,14 @@ class GraphMutationPlanRecord:
                 raw.get("graph_contract_version") or GRAPH_CONTRACT_VERSION
             ),
             ontology_version=str(raw.get("ontology_version") or ONTOLOGY_VERSION),
+        )
+
+    @property
+    def reserves_idempotency(self) -> bool:
+        """A refused key-reuse attempt is audit history, not a new key owner."""
+        return not any(
+            issue.get("code") == "idempotency_key_reused"
+            for issue in self.validation_issues
         )
 
     def is_expired(self, *, now: datetime | None = None) -> bool:
@@ -450,6 +464,7 @@ def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:
                 "reason": item.reason,
                 "superseded_by_key": item.superseded_by_key,
                 "valid_to": item.valid_to,
+                "target_claim_keys": list(item.target_claim_keys) if item.target_claim_keys is not None else None,
             }
             for item in batch.invalidations
         ],
@@ -506,6 +521,7 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
                 reason=str(item.get("reason") or ""),
                 superseded_by_key=str(item.get("superseded_by_key") or "") or None,
                 valid_to=str(item.get("valid_to") or "") or None,
+                target_claim_keys=tuple(item["target_claim_keys"]) if item.get("target_claim_keys") is not None else None,
             )
             for item in raw.get("invalidations") or ()
             if isinstance(item, Mapping)

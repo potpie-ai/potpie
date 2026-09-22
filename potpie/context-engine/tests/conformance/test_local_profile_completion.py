@@ -59,6 +59,104 @@ def test_recorded_preference_surfaces_in_coding_preferences(host):
     assert "ruff" in dict(prefs[0].payload).get("fact", "")
 
 
+def test_recorded_repo_folder_preference_only_surfaces_in_its_scope(host):
+    pot = host.pots.create_pot(name="default", use=True)
+    receipt = host.agent_context.record(
+        RecordRequest(
+            pot_id=pot.pot_id,
+            record_type="preference",
+            summary="Use repository adapters for payment clients",
+            details={
+                "policy_kind": "architecture",
+                "prescription": "Use repository adapters for payment clients",
+            },
+            scope={
+                "repo": "https://github.com/acme/shop.git",
+                "folder": "src/payments",
+            },
+        )
+    )
+    assert receipt.accepted
+
+    matching = host.agent_context.resolve(
+        ResolveRequest(
+            pot_id=pot.pot_id,
+            include=("coding_preferences",),
+            scope={
+                "repo": "git@github.com:acme/shop.git",
+                "path": "src/payments/client.py",
+            },
+        )
+    )
+    unrelated = host.agent_context.resolve(
+        ResolveRequest(
+            pot_id=pot.pot_id,
+            include=("coding_preferences",),
+            scope={
+                "repo": "github.com/acme/other",
+                "path": "src/payments/client.py",
+            },
+        )
+    )
+
+    assert any(
+        "repository adapters" in str(item.payload.get("fact", ""))
+        for item in matching.items
+        if item.include == "coding_preferences"
+    )
+    assert not any(
+        "repository adapters" in str(item.payload.get("fact", ""))
+        for item in unrelated.items
+        if item.include == "coding_preferences"
+    )
+
+
+def test_recorded_project_preference_only_surfaces_in_its_project(host):
+    pot = host.pots.create_pot(name="default", use=True)
+    receipt = host.agent_context.record(
+        RecordRequest(
+            pot_id=pot.pot_id,
+            record_type="preference",
+            summary="Keep checkout handlers small",
+            details={"policy_kind": "structure"},
+            scope={"project": "project:checkout"},
+        )
+    )
+    assert receipt.accepted
+
+    matching = [
+        host.agent_context.resolve(
+            ResolveRequest(
+                pot_id=pot.pot_id,
+                include=("coding_preferences",),
+                scope={"project": project},
+            )
+        )
+        for project in ("checkout", "project:checkout")
+    ]
+    unrelated = host.agent_context.resolve(
+        ResolveRequest(
+            pot_id=pot.pot_id,
+            include=("coding_preferences",),
+            scope={"project": "billing-app"},
+        )
+    )
+
+    assert all(
+        any(
+            "checkout handlers" in str(item.payload.get("fact", ""))
+            for item in envelope.items
+            if item.include == "coding_preferences"
+        )
+        for envelope in matching
+    )
+    assert not any(
+        "checkout handlers" in str(item.payload.get("fact", ""))
+        for item in unrelated.items
+        if item.include == "coding_preferences"
+    )
+
+
 def test_free_form_record_falls_back_to_related_to(host):
     pot = host.pots.create_pot(name="default", use=True)
     # ``workflow`` has no emits_predicate → RELATED_TO fallback; still recorded.

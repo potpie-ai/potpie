@@ -265,7 +265,9 @@ def test_source_refresh_requires_explicit_reconciliation(backend_factory, tmp_pa
     _, _, backend = backend_factory
     runtime = seeded_runtime(tmp_path, backend, pot_id=POT)
     facade = ResourceFacade(
-        store=runtime.graph.resource_store, claims=runtime.backend.claim_query
+        store=runtime.graph.resource_store,
+        graph=runtime.graph,
+        claims=runtime.backend.claim_query,
     )
     slug = FIXTURE["source_ref"].split("/")[3]
     files = read_import_files(tmp_path / "import")

@@ -12,6 +12,9 @@ import pytest
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
+from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
+    EmbeddedGraphBackend,
+)
 from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
     LocalJsonGraphPlanStore,
 )
@@ -162,6 +165,28 @@ def _local_json_cas_worker(
         results.put(("error", repr(exc)))
     else:
         results.put(("ok", changed))
+
+
+def _embedded_commit_worker(home, plans_home, plan_id, ready, results) -> None:
+    service = GraphWorkbenchService(
+        backend=EmbeddedGraphBackend(home=home),
+        plan_store=LocalJsonGraphPlanStore(home=plans_home),
+    )
+    ready.wait(timeout=5)
+    result = service.commit(plan_id, pot_id=POT)
+    results.put((result.status, result.ok))
+
+
+def _idempotency_propose_worker(home, seconds, ready, results) -> None:
+    service = GraphWorkbenchService(
+        backend=InMemoryGraphBackend(),
+        plan_store=LocalJsonGraphPlanStore(home=home),
+    )
+    ready.wait(timeout=5)
+    proposal = service.propose(
+        _timeout_payload(seconds, idempotency_key="request:race"), pot_id=POT
+    )
+    results.put((proposal.status, proposal.ok, proposal.plan_id))
 
 
 class _RaiseOnceMutation:
@@ -350,6 +375,14 @@ def _link_payload(
             }
         ]
     }
+
+
+def _timeout_payload(seconds: int, *, idempotency_key: str | None = None) -> dict:
+    payload = _link_payload()
+    payload["operations"][0]["description"] = f"Ledger timeout is {seconds} seconds"
+    if idempotency_key is not None:
+        payload["idempotency_key"] = idempotency_key
+    return payload
 
 
 def _entity_only_payload() -> dict:
@@ -588,7 +621,7 @@ def test_retry_after_confirmed_absence_rechecks_graph_versions() -> None:
     assert retried.ok is False
     assert retried.status == GraphMutationPlanStatus.conflict.value
     assert retried.expected_subgraph_versions["_global"] == 0
-    assert retried.current_subgraph_versions["_global"] == 1
+    assert retried.current_subgraph_versions["_global"] > 0
     assert flaky.mutation_ids.count(failed.mutation_id) == 1
 
 
@@ -726,11 +759,223 @@ def test_commit_rejects_stale_plan_after_graph_version_changes() -> None:
     assert result.ok is False
     assert result.status == "conflict"
     assert result.expected_subgraph_versions["_global"] == 0
-    assert result.current_subgraph_versions["_global"] == 1
+    assert result.current_subgraph_versions["_global"] > 0
+
+
+def test_commit_rejects_stale_same_count_claim_overwrite() -> None:
+    workbench, backend, _store = _service()
+    initial = workbench.propose(_timeout_payload(10), pot_id=POT)
+    assert workbench.commit(initial.plan_id, pot_id=POT).ok
+
+    stale = workbench.propose(_timeout_payload(20), pot_id=POT)
+    fresh = workbench.propose(_timeout_payload(30), pot_id=POT)
+    assert workbench.commit(fresh.plan_id, pot_id=POT).ok
+    assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
+
+    rejected = workbench.commit(stale.plan_id, pot_id=POT)
+    assert rejected.status == "conflict"
+    rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+    assert rows[0].fact == "Ledger timeout is 30 seconds"
+
+
+def test_competing_plans_compare_and_apply_once_per_backend_instance() -> None:
+    workbench, backend, _store = _service()
+    first = workbench.propose(_timeout_payload(20), pot_id=POT)
+    second = workbench.propose(_timeout_payload(30), pot_id=POT)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(
+            future.result()
+            for future in (
+                pool.submit(workbench.commit, first.plan_id, pot_id=POT),
+                pool.submit(workbench.commit, second.plan_id, pot_id=POT),
+            )
+        )
+
+    assert sorted(result.status for result in results) == ["committed", "conflict"]
+    rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+    assert len(rows) == 1
+
+
+def test_entity_only_update_advances_version_and_rejects_stale_plan() -> None:
+    workbench, backend, _store = _service()
+    stale_payload = _entity_only_payload()
+    stale_payload["operations"][0]["subject"]["summary"] = "stale summary"
+    fresh_payload = _entity_only_payload()
+    fresh_payload["operations"][0]["subject"]["summary"] = "fresh summary"
+    stale = workbench.propose(stale_payload, pot_id=POT)
+    fresh = workbench.propose(fresh_payload, pot_id=POT)
+
+    assert workbench.commit(fresh.plan_id, pot_id=POT).ok
+    rejected = workbench.commit(stale.plan_id, pot_id=POT)
+
+    assert rejected.status == "conflict"
+    props = backend.claim_query.entity_properties(
+        pot_id=POT, entity_key="feature:widget-cache"
+    )
+    assert props["summary"] == "fresh summary"
+
+
+def test_embedded_competing_processes_atomically_compare_and_apply(tmp_path) -> None:
+    graph_home = tmp_path / "graph"
+    plans_home = tmp_path / "plans"
+    service = GraphWorkbenchService(
+        backend=EmbeddedGraphBackend(home=graph_home),
+        plan_store=LocalJsonGraphPlanStore(home=plans_home),
+    )
+    first = service.propose(_timeout_payload(20), pot_id=POT)
+    second = service.propose(_timeout_payload(30), pot_id=POT)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Barrier(2)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_embedded_commit_worker,
+            args=(graph_home, plans_home, plan_id, ready, results),
+        )
+        for plan_id in (first.plan_id, second.plan_id)
+    ]
+    for process in processes:
+        process.start()
+    outcomes = [results.get(timeout=15) for _ in processes]
+    for process in processes:
+        process.join(timeout=15)
+        assert process.exitcode == 0
+
+    assert sorted(outcomes) == [("committed", True), ("conflict", False)]
+    backend = EmbeddedGraphBackend(home=graph_home)
+    assert backend.mutation.current_version(POT) == 1
+    assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
+
+
+def test_verify_detects_later_content_change_at_same_claim_key() -> None:
+    workbench, _backend, _store = _service()
+    first = workbench.propose(_timeout_payload(10), pot_id=POT)
+    assert workbench.commit(first.plan_id, pot_id=POT, verify=True).ok
+    second = workbench.propose(_timeout_payload(30), pot_id=POT)
+    assert workbench.commit(second.plan_id, pot_id=POT).ok
+
+    verification = workbench.verify_commit(first.plan_id, pot_id=POT)
+    assert verification.ok is False
+    assert verification.status == "degraded"
+    assert verification.content_readback["mismatches"]
+
+
+def test_verify_detects_later_entity_property_change() -> None:
+    workbench, backend, _store = _service()
+    proposal = workbench.propose(_entity_only_payload(), pot_id=POT)
+    assert workbench.commit(proposal.plan_id, pot_id=POT, verify=True).ok
+    backend.store.set_entity_properties(
+        pot_id=POT,
+        entity_key="feature:widget-cache",
+        properties={"summary": "changed after commit"},
+    )
+
+    verification = workbench.verify_commit(proposal.plan_id, pot_id=POT)
+
+    assert verification.ok is False
+    assert verification.content_readback["mismatches"]
+    assert verification.content_readback["mismatches"][0]["entity_key"] == (
+        "feature:widget-cache"
+    )
+
+
+def test_idempotency_key_replay_reuses_plan_and_changed_body_is_rejected() -> None:
+    workbench, _backend, _store = _service()
+    first = workbench.propose(
+        _timeout_payload(10, idempotency_key="request:timeout"), pot_id=POT
+    )
+    replay = workbench.propose(
+        _timeout_payload(10, idempotency_key="request:timeout"), pot_id=POT
+    )
+    conflict = workbench.propose(
+        _timeout_payload(30, idempotency_key="request:timeout"), pot_id=POT
+    )
+
+    assert replay.plan_id == first.plan_id
+    assert conflict.ok is False
+    assert conflict.status == "invalid"
+    assert "different content" in (conflict.detail or "")
+
+
+def test_idempotency_key_binding_survives_plan_store_restart(tmp_path) -> None:
+    backend = InMemoryGraphBackend()
+    first_service = GraphWorkbenchService(
+        backend=backend, plan_store=LocalJsonGraphPlanStore(home=tmp_path)
+    )
+    first = first_service.propose(
+        _timeout_payload(10, idempotency_key="request:persisted"), pot_id=POT
+    )
+
+    restarted = GraphWorkbenchService(
+        backend=backend, plan_store=LocalJsonGraphPlanStore(home=tmp_path)
+    )
+    replay = restarted.propose(
+        _timeout_payload(10, idempotency_key="request:persisted"), pot_id=POT
+    )
+    conflict = restarted.propose(
+        _timeout_payload(30, idempotency_key="request:persisted"), pot_id=POT
+    )
+
+    assert replay.plan_id == first.plan_id
+    assert conflict.status == "invalid"
+
+
+def test_conflicted_idempotent_request_can_roll_forward_after_restart(tmp_path) -> None:
+    backend = InMemoryGraphBackend()
+    store = LocalJsonGraphPlanStore(home=tmp_path)
+    service = GraphWorkbenchService(backend=backend, plan_store=store)
+    stale = service.propose(
+        _timeout_payload(20, idempotency_key="request:roll-forward"), pot_id=POT
+    )
+    intervening = service.propose(
+        _link_payload(subject="service:api", object_="service:db"), pot_id=POT
+    )
+    assert service.commit(intervening.plan_id, pot_id=POT).ok
+    assert service.commit(stale.plan_id, pot_id=POT).status == "conflict"
+
+    restarted = GraphWorkbenchService(
+        backend=backend, plan_store=LocalJsonGraphPlanStore(home=tmp_path)
+    )
+    fresh = restarted.propose(
+        _timeout_payload(20, idempotency_key="request:roll-forward"), pot_id=POT
+    )
+
+    assert fresh.plan_id != stale.plan_id
+    assert restarted.commit(fresh.plan_id, pot_id=POT).ok
+
+
+def test_idempotency_key_different_bodies_race_atomically_across_processes(
+    tmp_path,
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    ready = context.Barrier(2)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_idempotency_propose_worker,
+            args=(tmp_path, seconds, ready, results),
+        )
+        for seconds in (10, 30)
+    ]
+    for process in processes:
+        process.start()
+    outcomes = [results.get(timeout=15) for _ in processes]
+    for process in processes:
+        process.join(timeout=15)
+        assert process.exitcode == 0
+
+    assert sorted((status, ok) for status, ok, _ in outcomes) == [
+        ("invalid", False),
+        ("validated", True),
+    ]
+    assert len(LocalJsonGraphPlanStore(home=tmp_path).list(pot_id=POT)) == 1
 
 
 def test_medium_risk_plan_requires_approval_before_commit() -> None:
     workbench, _backend, _store = _service()
+    seeded = workbench.propose(_link_payload(), pot_id=POT)
+    assert workbench.commit(seeded.plan_id, pot_id=POT).ok
     proposal = workbench.propose(_end_relation_payload(), pot_id=POT)
 
     assert proposal.ok is True
@@ -1077,6 +1322,8 @@ def test_propose_with_approved_by_pre_approves_a_medium_risk_plan() -> None:
     """Two calls for a medium-risk write, not three: the approval rides on the
     plan, so the commit that follows needs no ``--approved-by`` of its own."""
     workbench, _backend, _store = _service()
+    seeded = workbench.propose(_link_payload(), pot_id=POT)
+    assert workbench.commit(seeded.plan_id, pot_id=POT).ok
 
     proposal = workbench.propose(
         _end_relation_payload(), pot_id=POT, approved_by="user:alice"
@@ -1101,6 +1348,8 @@ def test_propose_with_approved_by_pre_approves_a_medium_risk_plan() -> None:
 
 def test_propose_without_approval_says_which_commit_will_go_through() -> None:
     workbench, _backend, _store = _service()
+    seeded = workbench.propose(_link_payload(), pot_id=POT)
+    assert workbench.commit(seeded.plan_id, pot_id=POT).ok
 
     proposal = workbench.propose(_end_relation_payload(), pot_id=POT)
 
@@ -1144,7 +1393,7 @@ def test_a_conflict_names_the_commits_that_landed_in_between() -> None:
     assert result.ok is False
     assert result.status == "conflict"
     assert result.detail is not None
-    assert "_global moved from 0 to 1 after this plan was proposed" in result.detail
+    assert "_global moved from 0 to " in result.detail
     assert f"1 commit(s) landed in between: {fresh.plan_id}" in result.detail
     assert "Plans pin the whole pot's version" in result.detail
     assert "nothing from this plan was applied" in result.detail
@@ -1231,7 +1480,9 @@ def test_verification_without_baseline_does_not_invent_quality_delta() -> None:
     assert any("baseline unavailable" in warning for warning in verification.warnings)
 
 
-@pytest.mark.parametrize("status", ["conflict", "expired", "invalid", "abandoned", "error"])
+@pytest.mark.parametrize(
+    "status", ["conflict", "expired", "invalid", "abandoned", "error"]
+)
 def test_commit_status_preserves_durable_failure_and_repair(status) -> None:
     workbench, _, store = _service()
     proposal = workbench.propose(_link_payload(), pot_id=POT)

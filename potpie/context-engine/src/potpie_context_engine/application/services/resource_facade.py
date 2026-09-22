@@ -9,13 +9,16 @@ this name, so every existing import keeps working.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimQueryPort
 from potpie_context_core.ports.graph_service import GraphService
+from potpie_context_core.ports.graph.snapshot import GraphSnapshotPort, SnapshotManifest
 from potpie_context_core.ports.resource_index import (
     DEFAULT_DRAIN_BUDGET,
     DrainReport,
@@ -47,7 +50,12 @@ from potpie_context_core.resource_to_semantic import (
     resource_import_to_semantic_request,
     section_key,
 )
-from potpie_context_core.semantic_mutations import SemanticMutationResult
+from potpie_context_core.semantic_mutations import (
+    MutationActor,
+    SemanticMutation,
+    SemanticMutationRequest,
+    SemanticMutationResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +88,19 @@ class ResourceFacade:
     index: ResourceIndexPort | None = None
     drain: Any = None
     """The background drain, when one is running, so writes can nudge it."""
+    snapshot: GraphSnapshotPort | None = None
+
+    def export_snapshot(self, *, pot_id: str) -> dict[str, Any]:
+        """Export graph and document revisions as one portable bundle."""
+        from .snapshot_archive import export_archive
+
+        return export_archive(self, pot_id=pot_id)
+
+    def import_snapshot(self, *, pot_id: str, payload: dict[str, Any]) -> SnapshotManifest:
+        """Restore validated graph data and its original document text."""
+        from .snapshot_archive import import_archive
+
+        return import_archive(self, pot_id=pot_id, payload=payload)
 
     def import_dir(
         self,
@@ -102,6 +123,8 @@ class ResourceFacade:
         """
         from .protocol_resources import protect_protocol_source
 
+        prior = self._current_manifest(pot_id=pot_id, slug=slug)
+
         protect_protocol_source(
             self.store,
             self.claims,
@@ -119,8 +142,16 @@ class ResourceFacade:
             source_kind=source_kind,
         )
         index_report = self._index_document(pot_id=pot_id, manifest=manifest)
+        manifest, review_claims, review_errors = self._review_claims_for_import(
+            pot_id=pot_id, prior=prior, current=manifest
+        )
         if self.graph is None:
-            return ResourceImportResult(manifest=manifest, index=index_report)
+            return ResourceImportResult(
+                manifest=manifest,
+                index=index_report,
+                review_required_claim_keys=review_claims,
+                review_marker_errors=review_errors,
+            )
         mutation = self.graph.mutate(
             resource_import_to_semantic_request(
                 manifest,
@@ -143,7 +174,233 @@ class ResourceFacade:
             # take the last scope edge with them when a linked section leaves.
             scope_claim_count=self._scope_claim_count(pot_id=pot_id, manifest=manifest),
             index=index_report,
+            review_required_claim_keys=review_claims,
+            review_marker_errors=review_errors,
         )
+
+    def _current_manifest(self, *, pot_id: str, slug: str) -> DocumentManifest | None:
+        try:
+            return self.store.current_manifest(pot_id=pot_id, slug=slug)
+        except ResourceStoreError as exc:
+            if exc.code == RESOURCE_NOT_FOUND:
+                return None
+            raise
+
+    def _review_claims_for_import(
+        self,
+        *,
+        pot_id: str,
+        prior: DocumentManifest | None,
+        current: DocumentManifest,
+    ) -> tuple[DocumentManifest, tuple[str, ...], tuple[str, ...]]:
+        refs = current.pending_review_refs
+        sections = current.pending_review_sections
+        reason = current.pending_review_reason
+        if prior is not None and prior.revision != current.revision:
+            kept = set(current.sections_kept)
+            changed_sections = tuple(
+                section for section in prior.sections if section.slug not in kept
+            )
+            refs = tuple(
+                dict.fromkeys(
+                    (
+                        *refs,
+                        *(
+                            ref
+                            for section in changed_sections
+                            for chunk in section.chunks
+                            for ref in (
+                                format_resource_id(
+                                    prior.doc, section.slug, chunk.seq
+                                ),
+                                format_resource_id(
+                                    prior.doc,
+                                    section.slug,
+                                    chunk.seq,
+                                    revision=prior.revision,
+                                ),
+                            )
+                        ),
+                    )
+                )
+            )
+            sections = tuple(
+                dict.fromkeys((*sections, *(section.slug for section in changed_sections)))
+            )
+            reason = f"document {prior.doc!r} changed in revision {current.revision}"
+        if not refs or not sections or not reason:
+            return current, (), ()
+        keys, errors = self._claim_keys_citing(
+            pot_id=pot_id,
+            refs=refs,
+            doc=current.doc,
+            sections=sections,
+            reason=reason,
+        )
+        if not errors:
+            cleared = self.store.clear_pending_review(
+                pot_id=pot_id, slug=current.doc,
+                expected_revision=current.revision, expected_refs=refs,
+            )
+            if cleared.revision == current.revision and not cleared.pending_review_refs:
+                current = replace(
+                    current,
+                    pending_review_refs=(),
+                    pending_review_sections=(),
+                    pending_review_reason=None,
+                )
+            else:
+                current = cleared
+        return current, keys, errors
+
+    def _claim_keys_citing(
+        self,
+        *,
+        pot_id: str,
+        refs: tuple[str, ...],
+        doc: str,
+        sections: tuple[str, ...],
+        reason: str,
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        if self.claims is None or not refs:
+            return (), ()
+        rows = self.claims.find_claims(
+            ClaimQueryFilter(pot_id=pot_id, include_invalidated=True)
+        )
+        affected = []
+        section_set = set(sections)
+        exact = set(refs)
+        for row in rows:
+            cited = tuple(
+                dict.fromkeys(
+                    (
+                        *row.source_refs,
+                        *(str(item.get("source_ref") or "") for item in row.evidence),
+                    )
+                )
+            )
+            matched = False
+            for source_ref in cited:
+                if source_ref in exact:
+                    matched = True
+                    break
+                try:
+                    parsed = parse_resource_id(source_ref)
+                except ResourceStoreError:
+                    continue
+                if parsed.doc == doc and parsed.section in section_set:
+                    matched = True
+                    break
+            if matched and row.predicate != SECTION_PREDICATE:
+                affected.append(row)
+        marker_errors = self._mark_claims_for_review(
+            pot_id=pot_id,
+            rows=affected,
+            refs=tuple(dict.fromkeys(refs)),
+            reason=reason,
+        )
+        keys = tuple(
+            sorted(
+                {
+                    row.claim_key
+                    for row in affected
+                    if row.claim_key and row.predicate != SECTION_PREDICATE
+                }
+            )
+        )
+        return (() if marker_errors else keys), marker_errors
+
+    def _mark_claims_for_review(
+        self,
+        *,
+        pot_id: str,
+        rows: list[Any],
+        refs: tuple[str, ...],
+        reason: str,
+    ) -> tuple[str, ...]:
+        """Persist evidence-review metadata without changing conclusion text."""
+        if not rows:
+            return ()
+        if self.graph is None or self.claims is None:
+            return (
+                "evidence review markers were not persisted because no graph write service is wired",
+            )
+        keys = {key for row in rows for key in (row.subject_key, row.object_key)}
+        labels = self.claims.entity_labels(pot_id=pot_id, entity_keys=keys)
+        def concrete_type(key: str) -> str | None:
+            concrete = sorted(label for label in labels.get(key, ()) if label != "Entity")
+            return concrete[0] if concrete else None
+
+        operations = []
+        for row in rows:
+            evidence = [dict(item) for item in row.evidence]
+            if not evidence:
+                evidence = [{"source_ref": ref} for ref in row.source_refs]
+            raw = {
+                "op": "assert_claim",
+                "subgraph": row.subgraph or "knowledge",
+                "predicate": row.predicate,
+                "subject": {
+                    "key": row.subject_key,
+                    "type": concrete_type(row.subject_key),
+                },
+                "object": {
+                    "key": row.object_key,
+                    "type": concrete_type(row.object_key),
+                },
+                "truth": row.truth or "agent_claim",
+                "confidence": row.confidence,
+                "description": row.description or row.fact,
+                "environment": row.environment,
+                "valid_from": row.valid_at.isoformat() if row.valid_at else None,
+                "valid_until": row.valid_until.isoformat() if row.valid_until else None,
+                "observed_at": row.observed_at.isoformat() if row.observed_at else None,
+                "evidence": evidence,
+                "extra": {
+                    "evidence_review_required": True,
+                    "evidence_review_reason": reason,
+                    "evidence_review_refs": list(refs),
+                    "_preserve_claim_key": row.claim_key,
+                    "_preserve_claim_properties": dict(row.properties),
+                    "_preserve_claim_fact": row.fact,
+                    "_preserve_source_system": row.source_system,
+                    "_expected_claim_snapshot": _claim_snapshot(row),
+                },
+            }
+            operations.append(SemanticMutation.parse(raw))
+        review_digest = hashlib.sha256(
+            json.dumps(
+                [asdict(operation) for operation in operations],
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()[:20]
+        try:
+            result = self.graph.mutate(
+                SemanticMutationRequest(
+                    pot_id=pot_id,
+                    operations=tuple(operations),
+                    idempotency_key=f"resource-evidence-review:{review_digest}",
+                    created_by=MutationActor(
+                        surface="resource", harness="resource_facade"
+                    ),
+                    allow_review_required=True,
+                    approved_by="resource_evidence_lifecycle",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - report partial lifecycle failure
+            logger.exception("failed to persist evidence review markers")
+            return (f"evidence review markers were not persisted: {exc}",)
+        if not result.ok:
+            errors = tuple(
+                issue.message or issue.code for issue in result.issues
+            ) or tuple(result.warnings) or (
+                result.detail or "graph rejected evidence review markers",
+            )
+            logger.warning("failed to persist evidence review markers: %s", errors)
+            return errors
+        return ()
 
     def _index_document(
         self, *, pot_id: str, manifest: DocumentManifest
@@ -163,7 +420,12 @@ class ResourceFacade:
             return None
         try:
             resource_ids = tuple(
-                format_resource_id(manifest.doc, section.slug, ref.seq)
+                format_resource_id(
+                    manifest.doc,
+                    section.slug,
+                    ref.seq,
+                    revision=manifest.revision,
+                )
                 for section in manifest.sections
                 for ref in section.chunks
             )
@@ -262,6 +524,9 @@ class ResourceFacade:
     ) -> tuple[SectionManifest, ...]:
         return self.store.list(pot_id=pot_id, slug=slug, section=section)
 
+    def current_manifest(self, *, pot_id: str, slug: str) -> DocumentManifest:
+        return self.store.current_manifest(pot_id=pot_id, slug=slug)
+
     def delete(self, *, pot_id: str, slug: str) -> ResourceDeleteResult:
         """Remove one document's bytes and retract every claim about it.
 
@@ -281,6 +546,51 @@ class ResourceFacade:
         from .protocol_resources import protect_protocol_source
 
         protect_protocol_source(self.store, self.claims, pot_id=pot_id, slug=slug)
+        manifest = self.store.current_manifest(pot_id=pot_id, slug=slug)
+        evidence_refs = tuple(
+            ref
+            for section in manifest.sections
+            for chunk in section.chunks
+            for ref in (
+                format_resource_id(slug, section.slug, chunk.seq),
+                format_resource_id(
+                    slug,
+                    section.slug,
+                    chunk.seq,
+                    revision=manifest.revision,
+                ),
+            )
+        )
+        reason = f"document {slug!r} was explicitly deleted"
+        self.store.set_pending_review(
+            pot_id=pot_id,
+            slug=slug,
+            refs=evidence_refs,
+            sections=tuple(section.slug for section in manifest.sections),
+            reason=reason,
+            expected_revision=manifest.revision,
+        )
+        review_claims, review_errors = self._claim_keys_citing(
+            pot_id=pot_id,
+            refs=evidence_refs,
+            doc=slug,
+            sections=tuple(section.slug for section in manifest.sections),
+            reason=reason,
+        )
+        if review_errors:
+            return ResourceDeleteResult(
+                removed=False,
+                review_marker_errors=review_errors,
+            )
+        cleared = self.store.clear_pending_review(
+            pot_id=pot_id, slug=slug, expected_revision=manifest.revision,
+            expected_refs=evidence_refs,
+        )
+        if cleared.pending_review_refs:
+            return ResourceDeleteResult(
+                removed=False,
+                review_marker_errors=("document changed while evidence review was being recorded; retry deletion",),
+            )
         graph_result = None
         if self.graph is not None and sections:
             slugs = tuple(section.slug for section in sections)
@@ -303,6 +613,8 @@ class ResourceFacade:
         return ResourceDeleteResult(
             removed=self.store.delete(pot_id=pot_id, slug=slug),
             graph=graph_result,
+            review_required_claim_keys=review_claims,
+            review_marker_errors=review_errors,
         )
 
     def _drop_from_index(self, *, pot_id: str, slug: str) -> None:
@@ -432,7 +744,7 @@ class ResourceFacade:
         for slug in slugs:
             self.index.drop_document(pot_id=pot_id, slug=slug)
             sections = self.store.list(pot_id=pot_id, slug=slug)
-            manifest = DocumentManifest(
+            manifest = self._current_manifest(pot_id=pot_id, slug=slug) or DocumentManifest(
                 pot_id=pot_id,
                 doc=slug,
                 # The store's ``list`` returns sections, not the document's
@@ -446,7 +758,10 @@ class ResourceFacade:
             chunks = self.store.get_many(
                 pot_id=pot_id,
                 resource_ids=tuple(
-                    format_resource_id(slug, section.slug, ref.seq)
+                    format_resource_id(
+                        slug, section.slug, ref.seq,
+                        revision=manifest.revision or None,
+                    )
                     for section in sections
                     for ref in section.chunks
                 ),
@@ -493,7 +808,10 @@ class ResourceFacade:
             key = (resource.doc, resource.section)
             if key not in sequences:
                 sections = self.store.list(
-                    pot_id=pot_id, slug=resource.doc, section=resource.section
+                    pot_id=pot_id,
+                    slug=resource.doc,
+                    section=resource.section,
+                    revision=resource.revision,
                 )
                 sequences[key] = tuple(
                     sorted(ref.seq for row in sections for ref in row.chunks)
@@ -507,7 +825,12 @@ class ResourceFacade:
                 position = seqs.index(resource.seq)
                 neighborhood = seqs[max(position - 1, 0) : position + 2]
             for seq in neighborhood:
-                candidate = format_resource_id(resource.doc, resource.section, seq)
+                candidate = format_resource_id(
+                    resource.doc,
+                    resource.section,
+                    seq,
+                    revision=resource.revision,
+                )
                 if candidate not in seen:
                     seen.add(candidate)
                     expanded.append(candidate)
@@ -523,3 +846,28 @@ def _index_profile(index: ResourceIndexPort | None) -> str:
 
 
 __all__ = ["ResourceFacade"]
+
+
+def _claim_snapshot(row: Any) -> dict[str, Any]:
+    def timestamp(value: Any) -> str | None:
+        return value.isoformat() if value is not None else None
+
+    return {
+        "claim_key": row.claim_key,
+        "predicate": row.predicate,
+        "subject_key": row.subject_key,
+        "object_key": row.object_key,
+        "fact": row.fact,
+        "description": row.description,
+        "source_system": row.source_system,
+        "source_refs": list(row.source_refs),
+        "evidence": [dict(item) for item in row.evidence],
+        "properties": dict(row.properties),
+        "valid_at": timestamp(row.valid_at),
+        "invalid_at": timestamp(row.invalid_at),
+        "valid_until": timestamp(row.valid_until),
+        "observed_at": timestamp(row.observed_at),
+        "truth": row.truth,
+        "confidence": row.confidence,
+        "environment": row.environment,
+    }

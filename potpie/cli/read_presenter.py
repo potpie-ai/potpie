@@ -212,6 +212,7 @@ def render_items_bullets(
     for item in items[:limit]:
         lines.extend(_item_bullet_lines(item, ctx))
         lines.extend(_protocol_lines(item, ctx))
+    lines.extend(_omitted_item_lines(items, limit=limit))
     return "\n".join(lines)
 
 
@@ -267,6 +268,13 @@ def render_items_table(
 
     for item in items[:limit]:
         lines.extend(_protocol_lines(item, ctx))
+        details = item.get("details")
+        if isinstance(details, Mapping) and details:
+            entity_key = _item_entity_key(item) or "item"
+            lines.append("")
+            lines.append(f"details for {entity_key}")
+            lines.extend(_detail_lines(details, indent="  "))
+    lines.extend(_omitted_item_lines(items, limit=limit))
 
     if ctx.relations == "full":
         for item in items[:limit]:
@@ -394,6 +402,9 @@ def _item_bullet_lines(
         lines.append(f"    refs: {', '.join(refs)}")
     if item.get("fetch"):
         lines.append(f"    fetch: {item['fetch']}")
+    details = item.get("details")
+    if isinstance(details, Mapping) and details:
+        lines.extend(_detail_lines(details, indent="    "))
     claim = item.get("claim")
     if ctx.detail == "full" and isinstance(claim, Mapping):
         claim_parts = [
@@ -416,6 +427,34 @@ def _item_bullet_lines(
     elif ctx.relations == "full":
         lines.extend(_format_relations_full_lines(item, indent="    "))
     return lines
+
+
+def _detail_lines(details: Mapping[str, Any], *, indent: str) -> list[str]:
+    lines: list[str] = []
+    for key, value in details.items():
+        if value is None or value == "" or value == []:
+            continue
+        if isinstance(value, Mapping):
+            lines.append(f"{indent}{key}:")
+            lines.extend(_detail_lines(value, indent=indent + "  "))
+        elif isinstance(value, list):
+            lines.append(f"{indent}{key}:")
+            for entry in value:
+                rendered = json.dumps(entry, ensure_ascii=False) if isinstance(entry, Mapping) else str(entry)
+                lines.append(f"{indent}  - {rendered}")
+        else:
+            lines.append(f"{indent}{key}: {value}")
+    return lines
+
+
+def _omitted_item_lines(items: list[Mapping[str, Any]], *, limit: int) -> list[str]:
+    omitted = max(0, len(items) - limit)
+    if not omitted:
+        return []
+    return [
+        f"omitted_items={omitted}",
+        "fetch_more: rerun this graph read with a larger --limit or narrow --scope/--query",
+    ]
 
 
 def _parent_item_for_event(

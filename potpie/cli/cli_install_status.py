@@ -12,6 +12,11 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from potpie_context_engine.adapters.outbound.install.cli_probe import (
+    REQUIRED_COMMANDS,
+    probe_cli_surface,
+)
+
 CLI_TOOL_NAME = "potpie-context-engine"
 CLI_EXECUTABLE = "potpie"
 _UV_TOOL_NAMES = frozenset({"potpie", "potpie-context-engine", "context-engine"})
@@ -79,6 +84,9 @@ def collect_cli_install_status() -> dict[str, Any]:
     elif via_uv_tool:
         hint = _PUBLISHED_HINT
 
+    command_probe = probe_cli_surface(primary_path)
+    missing_commands = list(command_probe["missing_commands"])
+
     return {
         "package_name": CLI_TOOL_NAME,
         "package_version": package_version,
@@ -98,6 +106,10 @@ def collect_cli_install_status() -> dict[str, Any]:
         "editable": editable if via_uv_tool else None,
         # Only when the active PATH executable is backed by a uv tools env.
         "install_method": "uv_tool" if via_uv_tool else None,
+        "usable": bool(paths_on_path) and command_probe["ok"] and not missing_commands,
+        "command_probe": command_probe,
+        "required_commands": list(REQUIRED_COMMANDS),
+        "missing_commands": missing_commands,
         "diagnostic_commands": _diagnostic_commands(),
         "hint": hint,
         "pip_show_note": (
@@ -125,6 +137,10 @@ def cli_install_human(status: dict[str, Any]) -> str:
     if py:
         parts.append(f"python={py}")
     line = " ".join(parts)
+    if status.get("usable") is False:
+        missing = status.get("missing_commands") or []
+        suffix = f"; missing commands: {', '.join(missing)}" if missing else ""
+        line += f" [INCOMPLETE{suffix}]"
     if status.get("editable"):
         line += " | tip: make cli-status (local reinstall: make cli-install)"
     elif via == "uv_tool":

@@ -416,16 +416,17 @@ def test_partial_backend_profiles_fail_closed_for_unbuilt_projections(
     backend = _build(profile, tmp_path, monkeypatch)
     assert isinstance(backend, GraphBackend)
     expected = {
-        "neo4j": {"mutation", "claim_query", "semantic", "analytics"},
+        "neo4j": {"mutation", "claim_query", "semantic", "analytics", "snapshot"},
         # FalkorDB profiles implement structural inspection (graph explorer /
         # ``potpie graph inspect``) over the canonical RELATES_TO edges.
-        "falkordb": {"mutation", "claim_query", "semantic", "analytics", "inspection"},
+        "falkordb": {"mutation", "claim_query", "semantic", "analytics", "inspection", "snapshot"},
         "falkordb_lite": {
             "mutation",
             "claim_query",
             "semantic",
             "analytics",
             "inspection",
+            "snapshot",
         },
     }[profile]
     assert set(backend.capabilities().implemented()) == expected

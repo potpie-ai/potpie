@@ -86,6 +86,14 @@ class ClaimQueryFilter:
     # candidates ordered by similarity. Cosine distance scores are
     # stamped onto ``ClaimRow.properties["semantic_similarity"]``.
     fact_query: str | None = None
+    # Deterministic identity substrings applied before ``limit``. These are
+    # canonical variants such as ``pr-1074`` and ``/pull/1074``; callers still
+    # verify boundary-aware identity matching after hydration.
+    exact_text_in: tuple[str, ...] = ()
+    exact_text_pattern: str | None = None
+    environment_in: tuple[str, ...] = ()
+    truth_in: tuple[str, ...] = ()
+    endpoint_label: str | None = None
 
 
 @runtime_checkable

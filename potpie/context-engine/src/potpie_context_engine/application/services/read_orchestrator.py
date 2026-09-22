@@ -14,7 +14,7 @@ returning nothing — the plan's anti-phantom-vocabulary rule.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Mapping
 
@@ -41,10 +41,19 @@ from potpie_context_core.agent_context_port import (
     normalize_context_intent,
 )
 from potpie_context_core.agent_envelope import AgentEnvelope, UnsupportedInclude
+from potpie_context_core.cli_commands import (
+    graph_neighborhood_command,
+    resource_get_command,
+)
 from potpie_context_core.definition import GraphReaderSpec
 from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_core.ports.resource_index import ResourceIndexPort
 from potpie_context_engine.domain.ranking import RankingService
+from potpie_context_engine.application.search_identity import (
+    exact_identity,
+    record_identity_matches,
+    repositories_in,
+)
 
 
 # Protocol-free reader alias: every P9 reader exposes ``read(ReadRequest)``.
@@ -165,7 +174,7 @@ class ReadOrchestrator:
             # else: not in the vocab at all → the EnvelopeBuilder flags it
             # ``unknown_include`` from ``requested_includes``.
 
-        return self.builder.build(
+        envelope = self.builder.build(
             pot_id=pot_id,
             intent=intent,
             results=results,
@@ -174,9 +183,138 @@ class ReadOrchestrator:
             as_of=as_of,
             metadata=metadata,
         )
+        return _describe_search_result(
+            envelope,
+            query=query,
+            searched_families=resolved,
+            max_items=max_items,
+        )
 
 
 __all__ = ["ReadOrchestrator"]
+
+
+def _describe_search_result(
+    envelope: AgentEnvelope,
+    *,
+    query: str | None,
+    searched_families: list[str],
+    max_items: int,
+) -> AgentEnvelope:
+    """Add the W8 honesty/continuation contract without changing reader data."""
+    identity = exact_identity(query)
+    items = list(envelope.items)
+    exact_items = [
+        item
+        for item in items
+        if identity is not None
+        and record_identity_matches(
+            identity,
+            canonical_key=(
+                item.payload.get("subject_key")
+                or item.payload.get("entity_key")
+                or item.candidate_key
+            ),
+            explicit_identity=(
+                item.payload.get("source_ref"),
+                item.payload.get("source_refs"),
+                item.payload.get("properties"),
+            ),
+            description=(
+                item.payload.get("fact"),
+                item.payload.get("description"),
+                item.payload.get("summary"),
+            ),
+        )
+    ]
+
+    if identity is not None:
+        # A made-up ticket must not be presented as found merely because the
+        # similarity backend can always fill a page.
+        identity_families = {"timeline", "docs", "resources"}
+        if dict(envelope.metadata).get("search"):
+            items = exact_items
+        else:
+            # Resolve can be a combined question. Exactness governs the
+            # identity-bearing families without erasing an independently
+            # requested decision/preference/architecture answer.
+            items = [
+                item
+                for item in items
+                if item.include not in identity_families or item in exact_items
+            ]
+        repos = sorted({repo for item in items for repo in repositories_in(item.payload)})
+        if not items:
+            match_status = "no_exact_match"
+        elif len(repos) > 1:
+            match_status = "ambiguous_exact_match"
+        else:
+            match_status = "exact_match"
+    else:
+        repos = []
+        match_status = "possible_matches" if items else "no_matches"
+
+    items = [_with_follow_ups(item, envelope.pot_id, identity) for item in items]
+    pool_by_family = {report.include: report.candidate_pool for report in envelope.coverage}
+    returned_by_family = {
+        family: sum(item.include == family for item in items)
+        for family in searched_families
+    }
+    more_by_family = {
+        family: pool_by_family.get(family, 0) > returned_by_family.get(family, 0)
+        and (max_items <= 0 or returned_by_family.get(family, 0) >= max_items)
+        for family in searched_families
+    }
+    meta = {
+        **dict(envelope.metadata),
+        "searched_families": list(searched_families),
+        "match_status": match_status,
+        "more_results_available": any(more_by_family.values()),
+        "more_results_by_family": more_by_family,
+    }
+    if identity is not None:
+        meta["exact_identifier"] = {
+            "kind": identity.kind,
+            "value": identity.value,
+            "display": identity.display,
+        }
+        meta["exact_match_count"] = len(exact_items)
+    if repos:
+        meta["matching_repositories"] = repos
+        if len(repos) > 1:
+            meta["disambiguation"] = "Repeat the lookup with an explicit repository scope."
+    return replace(envelope, items=tuple(items), metadata=meta)
+
+
+def _with_follow_ups(item, pot_id: str, identity):
+    payload = dict(item.payload)
+    commands = dict(payload.get("follow_up_commands") or {})
+    entity_key = payload.get("subject_key") or payload.get("entity_key")
+    if isinstance(entity_key, str) and entity_key:
+        command_name = "named_record" if identity is not None else "entity_context"
+        commands[command_name] = graph_neighborhood_command(
+            entity_key, pot_id=pot_id, depth=1, limit=50, detail="full"
+        )
+    chunk_ids = payload.get("chunk_ids") or ()
+    resource_id = payload.get("resource_id")
+    chunk_id = next((x for x in chunk_ids if isinstance(x, str)), None)
+    if not chunk_id:
+        chunk_id = next(
+            (
+                ref
+                for ref in payload.get("source_refs") or ()
+                if isinstance(ref, str) and ref.startswith("potpie://res/")
+            ),
+            None,
+        )
+    if not chunk_id and isinstance(resource_id, str):
+        chunk_id = resource_id
+    if chunk_id:
+        commands["source_passage"] = resource_get_command(
+            chunk_id, pot_id=pot_id, with_neighbors=True
+        )
+    payload["follow_up_commands"] = commands
+    return replace(item, payload=payload)
 
 
 def _disabled_resource_index() -> ResourceIndexPort:

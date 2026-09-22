@@ -605,6 +605,11 @@ def _claude_plugin_remap(rel_path: Path) -> Path | None:
     return Path(_CLAUDE_PLUGIN_PREFIX) / rel_path
 
 
+def _claude_plugin_skill_remap(rel_path: Path) -> Path | None:
+    remapped = _remap_skills_path(rel_path, "skills")
+    return Path(_CLAUDE_PLUGIN_PREFIX) / remapped if remapped is not None else None
+
+
 def install_skill_bundle(
     skills_root: str | Path,
     *,
@@ -658,10 +663,11 @@ def install_global_agent_instructions(
 
     _install_bundle(
         install_root,
-        "global_agent_bundle",
+        "routing",
         result,
         force=force,
-        include=lambda rel: rel.as_posix() == filename,
+        include=lambda rel: rel.as_posix() == "POTPIE.md",
+        remap=lambda _rel: Path(filename),
         merge_files=frozenset({filename}),
         dry_run=dry_run,
     )
@@ -683,9 +689,10 @@ def uninstall_global_agent_instructions(
 
     _uninstall_bundle(
         install_root,
-        "global_agent_bundle",
+        "routing",
         result,
-        include=lambda rel: rel.as_posix() == filename,
+        include=lambda rel: rel.as_posix() == "POTPIE.md",
+        remap=lambda _rel: Path(filename),
         merge_files=frozenset({filename}),
         dry_run=dry_run,
     )
@@ -744,7 +751,7 @@ def _claude_plugin_include(
     """
     sid = _skill_id_from_generic_skill_path(rel_path)
     if sid is not None:
-        return selected is None or sid in selected
+        return False
     return support_files
 
 
@@ -755,6 +762,10 @@ class _BundlePlan:
     bundle: str
     include: Callable[[Path], bool]
     remap: Callable[[Path], Path | None] | None = None
+
+
+def _routing_remap(filename: str) -> Callable[[Path], Path | None]:
+    return lambda rel: Path(filename) if rel.as_posix() == "POTPIE.md" else None
 
 
 def _agent_bundle_plans(
@@ -773,6 +784,9 @@ def _agent_bundle_plans(
         )
     if normalized == "claude":
         return (
+            _BundlePlan(
+                "routing", lambda _rel: support_files, _routing_remap("CLAUDE.md")
+            ),
             _BundlePlan(
                 "claude_bundle",
                 lambda rel: _claude_bundle_include(
@@ -794,16 +808,20 @@ def _agent_bundle_plans(
                 ),
                 _claude_plugin_remap,
             ),
+            _BundlePlan(
+                "agent_bundle",
+                lambda rel: _include_selected_skills(rel, selected),
+                _claude_plugin_skill_remap,
+            ),
         )
     if normalized == "cursor":
         return (
             _BundlePlan(
+                "routing", lambda _rel: support_files, _routing_remap("AGENTS.md")
+            ),
+            _BundlePlan(
                 "agent_bundle",
-                lambda rel: (
-                    _support_file_include(rel, selected, support_files=support_files)
-                    if rel.as_posix() == "AGENTS.md"
-                    else _include_selected_skills(rel, selected)
-                ),
+                lambda rel: _include_selected_skills(rel, selected),
                 _cursor_bundle_remap,
             ),
         )
@@ -817,12 +835,11 @@ def _agent_bundle_plans(
         )
     return (
         _BundlePlan(
+            "routing", lambda _rel: support_files, _routing_remap("AGENTS.md")
+        ),
+        _BundlePlan(
             "agent_bundle",
-            lambda rel: (
-                _support_file_include(rel, selected, support_files=support_files)
-                if rel.as_posix() == "AGENTS.md"
-                else _include_selected_skills(rel, selected)
-            ),
+            lambda rel: _include_selected_skills(rel, selected),
         ),
     )
 
@@ -911,7 +928,7 @@ def available_skill_ids(*, agent: str = "default") -> frozenset[str]:
     """
     normalized = agent.strip().lower() if agent else "default"
     if normalized == "claude-plugin":
-        bundles = ("claude_plugin",)
+        bundles = ("agent_bundle",)
     elif normalized == "claude":
         bundles = ("agent_bundle", "claude_bundle")
     else:

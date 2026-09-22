@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import potpie.cli as _clipkg
+from potpie_context_engine.adapters.outbound.skills.agent_installer import install_agent_bundle
 
 pytestmark = pytest.mark.unit
 
@@ -90,9 +91,13 @@ def test_no_hook_command_invokes_a_model() -> None:
             assert token.lower() not in low, f"hook command calls a model: {cmd!r}"
 
 
-def test_adapter_and_skill_files_exist() -> None:
+def test_adapter_and_canonical_skills_install(tmp_path: Path) -> None:
     assert (PLUGIN / "hooks" / "potpie_nudge.py").is_file()
-    assert (PLUGIN / "skills" / "potpie-graph" / "SKILL.md").is_file()
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    install_agent_bundle(repo, agent="claude-plugin")
+    installed = repo / ".claude" / "potpie-plugin"
+    assert (installed / "skills" / "potpie-graph" / "SKILL.md").is_file()
     for skill_id in (
         "potpie-project-preferences",
         "potpie-infra-architecture",
@@ -101,7 +106,7 @@ def test_adapter_and_skill_files_exist() -> None:
         "potpie-source-ingestion",
         "potpie-repo-baseline",
     ):
-        assert (PLUGIN / "skills" / skill_id / "SKILL.md").is_file()
+        assert (installed / "skills" / skill_id / "SKILL.md").is_file()
     assert (PLUGIN / "commands" / "potpie-feature.md").is_file()
     assert (PLUGIN / "commands" / "potpie-record.md").is_file()
 
@@ -117,24 +122,14 @@ def test_adapter_is_model_free() -> None:
         assert token not in source, f"adapter references a model client: {token}"
 
 
-def test_potpie_graph_skill_does_not_drift_across_bundles() -> None:
-    paths = [
-        TEMPLATES / "agent_bundle" / ".agents" / "skills" / "potpie-graph" / "SKILL.md",
-        TEMPLATES
-        / "claude_bundle"
-        / ".claude"
-        / "skills"
-        / "potpie-graph"
-        / "SKILL.md",
-        PLUGIN / "skills" / "potpie-graph" / "SKILL.md",
+def test_potpie_graph_has_one_maintained_source() -> None:
+    paths = list(TEMPLATES.rglob("potpie-graph/SKILL.md"))
+    assert paths == [
+        TEMPLATES / "agent_bundle" / ".agents" / "skills" / "potpie-graph" / "SKILL.md"
     ]
-    bodies = {p.read_text(encoding="utf-8") for p in paths}
-    assert len(bodies) == 1, (
-        "potpie-graph SKILL.md must be identical across all bundles"
-    )
 
 
-def test_shared_plugin_and_agent_skills_do_not_drift() -> None:
+def test_plugin_does_not_carry_copied_skill_sources() -> None:
     for skill_id in (
         "potpie-change-timeline",
         "potpie-debug-memory",
@@ -143,10 +138,7 @@ def test_shared_plugin_and_agent_skills_do_not_drift() -> None:
         "potpie-repo-baseline",
         "potpie-source-ingestion",
     ):
-        agent = (
+        assert not (PLUGIN / "skills" / skill_id / "SKILL.md").exists()
+        assert (
             TEMPLATES / "agent_bundle" / ".agents" / "skills" / skill_id / "SKILL.md"
-        )
-        plugin = PLUGIN / "skills" / skill_id / "SKILL.md"
-        assert agent.read_text(encoding="utf-8") == plugin.read_text(
-            encoding="utf-8"
-        ), f"{skill_id} SKILL.md must be identical in agent_bundle and claude_plugin"
+        ).is_file()

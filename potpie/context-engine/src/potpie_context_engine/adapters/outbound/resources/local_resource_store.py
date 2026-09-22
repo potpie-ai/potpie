@@ -31,9 +31,15 @@ import shutil
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
+
+try:  # pragma: no cover - platform selected at import time
+    import fcntl as _fcntl
+except ImportError:  # Windows
+    _fcntl = None
+    import msvcrt as _msvcrt
 
 from potpie_context_core.ports.resource_store import (
     ImportFiles,
@@ -44,6 +50,7 @@ from potpie_context_core.ports.resource_store import (
     RESOURCE_LABEL_MAX_CHARS,
     RESOURCE_MANIFEST_INVALID,
     RESOURCE_NOT_FOUND,
+    RESOURCE_REVISION_AMBIGUOUS,
     RESOURCE_SECTION_MISSING_CHUNK,
     RESOURCE_SEQ_WIDTH,
     RESOURCE_SUMMARY_MAX_CHARS,
@@ -62,6 +69,8 @@ from potpie_context_core.ports.resource_store import (
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
 
 META_FILENAME = "meta.json"
+VERSIONS_DIRNAME = ".versions"
+REVISION_COUNTERS_DIRNAME = ".revision-counters"
 
 # Anything outside this alphabet is folded to a hyphen when a pot id becomes a
 # directory name.
@@ -247,6 +256,9 @@ def build_import_manifest(
         sections_kept=kept,
         sections_removed=removed,
         warnings=source.warnings,
+        pending_review_refs=prior.pending_review_refs if prior else (),
+        pending_review_sections=prior.pending_review_sections if prior else (),
+        pending_review_reason=prior.pending_review_reason if prior else None,
     )
 
 
@@ -261,6 +273,48 @@ def _next_revision(prior: DocumentManifest | None, *, moved: bool) -> int:
     if prior is None:
         return 1
     return prior.revision + 1 if moved else prior.revision
+
+
+def _with_pending_review(
+    prior: DocumentManifest | None, current: DocumentManifest
+) -> DocumentManifest:
+    """Publish the review delta atomically with a changed document revision."""
+    if prior is None or prior.revision == current.revision:
+        return current
+    kept = set(current.sections_kept)
+    changed = tuple(section for section in prior.sections if section.slug not in kept)
+    if not changed:
+        return current
+    refs = tuple(
+        dict.fromkeys(
+            (
+                *current.pending_review_refs,
+                *(
+                    ref
+                    for section in changed
+                    for chunk in section.chunks
+                    for ref in (
+                        format_resource_id(prior.doc, section.slug, chunk.seq),
+                        format_resource_id(
+                            prior.doc, section.slug, chunk.seq, revision=prior.revision
+                        ),
+                    )
+                ),
+            )
+        )
+    )
+    return replace(
+        current,
+        pending_review_refs=refs,
+        pending_review_sections=tuple(
+            dict.fromkeys(
+                (*current.pending_review_sections, *(row.slug for row in changed))
+            )
+        ),
+        pending_review_reason=(
+            f"document {prior.doc!r} changed in revision {current.revision}"
+        ),
+    )
 
 
 def _with_carried_summary(
@@ -292,7 +346,12 @@ def build_chunk(
 ) -> Chunk:
     """Hydrate the ``get`` response from stored text plus manifest provenance."""
     return Chunk(
-        resource_id=format_resource_id(resource.doc, resource.section, resource.seq),
+        resource_id=format_resource_id(
+            resource.doc,
+            resource.section,
+            resource.seq,
+            revision=resource.revision,
+        ),
         doc=resource.doc,
         section=resource.section,
         seq=resource.seq,
@@ -359,6 +418,16 @@ class LocalResourceStore:
     def _pot_root(self, pot_id: str) -> Path:
         return self._path / pot_dir_name(pot_id)
 
+    def export_snapshot(self, *, pot_id: str) -> dict[str, Any]:
+        from .snapshot import export_resources
+
+        return export_resources(self, pot_id=pot_id)
+
+    def restore_snapshot(self, *, pot_id: str, payload: Mapping[str, Any]):
+        from .snapshot import restore_resources
+
+        return restore_resources(self, pot_id=pot_id, payload=payload)
+
     # --- import -------------------------------------------------------------
     def import_dir(
         self,
@@ -378,27 +447,77 @@ class LocalResourceStore:
         with import_source(source_dir, files) as root:
             source = read_source_document(root)
         pot_root = self._pot_root(pot_id)
-        final = pot_root / doc
         pot_root.mkdir(parents=True, exist_ok=True)
+        with _pot_lock(pot_root, exclusive=False):
+            with _document_lock(pot_root, doc):
+                return self._import_validated(
+                    pot_id=pot_id,
+                    doc=doc,
+                    source=source,
+                    source_ref=source_ref,
+                    source_kind=source_kind,
+                )
+
+    def _import_validated(
+        self,
+        *,
+        pot_id: str,
+        doc: str,
+        source: SourceDocument,
+        source_ref: str | None,
+        source_kind: str | None,
+    ) -> DocumentManifest:
+        pot_root = self._pot_root(pot_id)
+        final = pot_root / doc
         # Before the prior revision is read, not after: a crashed import left
         # it in a trash directory, and diffing against nothing would restart
         # the revision counter at 1.
         _recover_scratch(pot_root, doc, final=final)
+        prior = _load_manifest(final, pot_id=pot_id, doc=doc)
         manifest = build_import_manifest(
             pot_id=pot_id,
             doc=doc,
             source=source,
-            prior=_load_manifest(final, pot_id=pot_id, doc=doc),
+            prior=prior,
             source_ref=source_ref,
             source_kind=source_kind,
         )
+        if (
+            prior is not None
+            and manifest.revision == prior.revision
+            and _document_fingerprint(manifest, source.texts)
+            != _document_fingerprint(prior, _read_document_texts(final, prior))
+        ):
+            # The extractor's content_hash is advisory.  When the actual bytes
+            # or citation-visible metadata differ, no section may be reported
+            # as kept merely because that caller-supplied hash was reused.
+            manifest = replace(
+                manifest,
+                revision=prior.revision + 1,
+                sections_kept=(),
+            )
+        counter = _read_revision_counter(pot_root, doc)
+        if manifest.revision <= counter and (
+            not final.exists() or manifest.revision != _load_manifest(final, pot_id=pot_id, doc=doc).revision
+        ):
+            manifest = replace(manifest, revision=counter + 1)
+        manifest = _with_pending_review(prior, manifest)
 
         # mkdtemp inside the pot root keeps staging on the same filesystem, so
         # the swap below is a rename and not a copy.
         staging = Path(tempfile.mkdtemp(dir=pot_root, prefix=f".{doc}.staging."))
         try:
             _write_document(staging, manifest, source.texts)
+            if final.exists():
+                _carry_revision_history(
+                    final=final,
+                    staging=staging,
+                    pot_id=pot_id,
+                    doc=doc,
+                    new_revision=manifest.revision,
+                )
             _swap_into_place(staging=staging, final=final, doc=doc)
+            _write_revision_counter(pot_root, doc, manifest.revision)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -411,28 +530,65 @@ class LocalResourceStore:
     def get_many(
         self, *, pot_id: str, resource_ids: tuple[str, ...]
     ) -> tuple[Chunk, ...]:
+        pot_root = self._pot_root(pot_id)
+        documents = sorted({parse_resource_id(value).doc for value in resource_ids})
+        with _pot_lock(pot_root, exclusive=False):
+            with contextlib.ExitStack() as locks:
+                for doc in documents:
+                    locks.enter_context(_document_lock(pot_root, doc))
+                return self._get_many_locked(pot_id=pot_id, resource_ids=resource_ids)
+
+    def _get_many_locked(
+        self, *, pot_id: str, resource_ids: tuple[str, ...]
+    ) -> tuple[Chunk, ...]:
         manifests: dict[str, DocumentManifest] = {}
         chunks: list[Chunk] = []
         for resource_id in resource_ids:
             resource = parse_resource_id(resource_id)
-            manifest = manifests.get(resource.doc)
+            manifest_key = f"{resource.doc}@{resource.revision or 'current'}"
+            manifest = manifests.get(manifest_key)
             if manifest is None:
                 # One meta.json read per document, however many chunks of it
                 # the batch asks for.
+                doc_root = self._pot_root(pot_id) / resource.doc
+                current = _load_manifest(doc_root, pot_id=pot_id, doc=resource.doc)
+                if current is None:
+                    raise chunk_not_found(resource_id)
+                if resource.revision is None and (
+                    current.revision > 1 or _has_revision_history(doc_root)
+                ):
+                    raise ResourceStoreError(
+                        RESOURCE_REVISION_AMBIGUOUS,
+                        f"unversioned resource id is ambiguous after {resource.doc!r} changed: {resource_id}",
+                        recommended_next_action=(
+                            "Use the immutable @revN id from resource list or search."
+                        ),
+                    )
+                revision_root = (
+                    doc_root
+                    if resource.revision in (None, current.revision)
+                    else doc_root / VERSIONS_DIRNAME / str(resource.revision)
+                )
                 manifest = _load_manifest(
-                    self._pot_root(pot_id) / resource.doc,
+                    revision_root,
                     pot_id=pot_id,
                     doc=resource.doc,
                 )
                 if manifest is None:
                     raise chunk_not_found(resource_id)
-                manifests[resource.doc] = manifest
+                manifests[manifest_key] = manifest
             ref = find_chunk_ref(manifest, section=resource.section, seq=resource.seq)
             if ref is None:
                 raise chunk_not_found(resource_id)
+            current_root = self._pot_root(pot_id) / resource.doc
+            root = (
+                current_root
+                if resource.revision in (None, manifest.revision)
+                and _load_manifest(current_root, pot_id=pot_id, doc=resource.doc).revision == manifest.revision
+                else current_root / VERSIONS_DIRNAME / str(manifest.revision)
+            )
             path = (
-                self._pot_root(pot_id)
-                / resource.doc
+                root
                 / resource.section
                 / chunk_filename(resource.seq)
             )
@@ -446,19 +602,101 @@ class LocalResourceStore:
         return tuple(chunks)
 
     def list(
-        self, *, pot_id: str, slug: str, section: str | None = None
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        section: str | None = None,
+        revision: int | None = None,
     ) -> tuple[SectionManifest, ...]:
         doc = require_resource_slug(slug, kind="document")
-        manifest = _load_manifest(self._pot_root(pot_id) / doc, pot_id=pot_id, doc=doc)
+        pot_root = self._pot_root(pot_id)
+        with _pot_lock(pot_root, exclusive=False):
+            with _document_lock(pot_root, doc):
+                root = pot_root / doc
+                current = _load_manifest(root, pot_id=pot_id, doc=doc)
+                if current is not None and revision not in (None, current.revision):
+                    root = root / VERSIONS_DIRNAME / str(revision)
+                manifest = _load_manifest(root, pot_id=pot_id, doc=doc)
         if manifest is None:
             raise document_not_found(doc)
         if section is None:
-            return manifest.sections
+            return tuple(replace(row, revision=manifest.revision) for row in manifest.sections)
         wanted = require_resource_slug(section, kind="section")
         rows = tuple(row for row in manifest.sections if row.slug == wanted)
         if not rows:
             raise section_not_found(doc, wanted)
-        return rows
+        return tuple(replace(row, revision=manifest.revision) for row in rows)
+
+    def current_manifest(self, *, pot_id: str, slug: str) -> DocumentManifest:
+        doc = require_resource_slug(slug, kind="document")
+        pot_root = self._pot_root(pot_id)
+        with _pot_lock(pot_root, exclusive=False):
+            with _document_lock(pot_root, doc):
+                manifest = _load_manifest(pot_root / doc, pot_id=pot_id, doc=doc)
+        if manifest is None:
+            raise document_not_found(doc)
+        return manifest
+
+    def set_pending_review(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        refs: tuple[str, ...],
+        sections: tuple[str, ...],
+        reason: str,
+        expected_revision: int | None = None,
+    ) -> DocumentManifest:
+        return self._update_pending_review(
+            pot_id=pot_id,
+            slug=slug,
+            refs=refs,
+            sections=sections,
+            reason=reason,
+            expected_revision=expected_revision,
+        )
+
+    def clear_pending_review(
+        self, *, pot_id: str, slug: str, expected_revision: int | None = None,
+        expected_refs: tuple[str, ...] = (),
+    ) -> DocumentManifest:
+        return self._update_pending_review(
+            pot_id=pot_id, slug=slug, refs=(), sections=(), reason=None,
+            expected_revision=expected_revision, expected_refs=expected_refs,
+        )
+
+    def _update_pending_review(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        refs: tuple[str, ...],
+        sections: tuple[str, ...],
+        reason: str | None,
+        expected_revision: int | None = None,
+        expected_refs: tuple[str, ...] = (),
+    ) -> DocumentManifest:
+        doc = require_resource_slug(slug, kind="document")
+        pot_root = self._pot_root(pot_id)
+        with _pot_lock(pot_root, exclusive=False):
+            with _document_lock(pot_root, doc):
+                root = pot_root / doc
+                manifest = _load_manifest(root, pot_id=pot_id, doc=doc)
+                if manifest is None:
+                    raise document_not_found(doc)
+                if expected_revision is not None and manifest.revision != expected_revision:
+                    return manifest
+                if expected_refs and manifest.pending_review_refs != expected_refs:
+                    return manifest
+                updated = replace(
+                    manifest,
+                    pending_review_refs=tuple(dict.fromkeys(refs)),
+                    pending_review_sections=tuple(dict.fromkeys(sections)),
+                    pending_review_reason=reason,
+                )
+                _write_manifest_atomic(root / META_FILENAME, updated)
+                return updated
 
     def documents(self, *, pot_id: str) -> tuple[str, ...]:
         """Every document slug this pot holds — one readdir, no manifest reads.
@@ -483,10 +721,15 @@ class LocalResourceStore:
     # --- teardown -----------------------------------------------------------
     def delete(self, *, pot_id: str, slug: str) -> bool:
         doc = require_resource_slug(slug, kind="document")
-        return _remove_tree(self._pot_root(pot_id) / doc)
+        pot_root = self._pot_root(pot_id)
+        with _pot_lock(pot_root, exclusive=False):
+            with _document_lock(pot_root, doc):
+                return _remove_tree(pot_root / doc)
 
     def purge_pot(self, pot_id: str) -> bool:
-        return _remove_tree(self._pot_root(pot_id))
+        pot_root = self._pot_root(pot_id)
+        with _pot_lock(pot_root, exclusive=True):
+            return _remove_tree(pot_root)
 
     # --- diagnostics --------------------------------------------------------
     def status(self, *, pot_id: str | None = None) -> ResourceStoreStatus:
@@ -744,6 +987,9 @@ def _load_manifest(doc_dir: Path, *, pot_id: str, doc: str) -> DocumentManifest 
         source_ref=data.get("source_ref"),
         source_kind=data.get("source_kind"),
         sections=sections,
+        pending_review_refs=tuple(data.get("pending_review_refs") or ()),
+        pending_review_sections=tuple(data.get("pending_review_sections") or ()),
+        pending_review_reason=data.get("pending_review_reason"),
     )
 
 
@@ -773,6 +1019,9 @@ def _manifest_to_json(manifest: DocumentManifest) -> dict[str, Any]:
             }
             for section in manifest.sections
         ],
+        "pending_review_refs": list(manifest.pending_review_refs),
+        "pending_review_sections": list(manifest.pending_review_sections),
+        "pending_review_reason": manifest.pending_review_reason,
     }
 
 
@@ -795,6 +1044,20 @@ def _write_document(
         json.dumps(_manifest_to_json(manifest), indent=2, sort_keys=True),
     )
     _sync_dir(staging)
+
+
+def _write_manifest_atomic(path: Path, manifest: DocumentManifest) -> None:
+    scratch = path.with_suffix(f".tmp.{uuid.uuid4().hex}")
+    try:
+        _write_text(
+            scratch,
+            json.dumps(_manifest_to_json(manifest), indent=2, sort_keys=True),
+        )
+        os.replace(scratch, path)
+        _sync_dir(path.parent)
+    finally:
+        with contextlib.suppress(OSError):
+            scratch.unlink()
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -861,6 +1124,131 @@ def _swap_into_place(*, staging: Path, final: Path, doc: str) -> None:
     _sync_dir(final.parent)
     if trash is not None:
         shutil.rmtree(trash, ignore_errors=True)
+
+
+def _has_revision_history(doc_root: Path) -> bool:
+    versions = doc_root / VERSIONS_DIRNAME
+    return versions.is_dir() and any(path.is_dir() for path in versions.iterdir())
+
+
+def _read_document_texts(
+    root: Path, manifest: DocumentManifest
+) -> dict[tuple[str, int], str]:
+    return {
+        (section.slug, ref.seq): _read_text(
+            root / section.slug / chunk_filename(ref.seq)
+        )
+        for section in manifest.sections
+        for ref in section.chunks
+    }
+
+
+def _document_fingerprint(
+    manifest: DocumentManifest, texts: Mapping[tuple[str, int], str]
+) -> str:
+    """Digest every byte and citation-visible metadata field in a revision."""
+    payload = {
+        "source_ref": manifest.source_ref,
+        "source_kind": manifest.source_kind,
+        "sections": [asdict(section) for section in manifest.sections],
+        "texts": [
+            [section, seq, text]
+            for (section, seq), text in sorted(texts.items())
+        ],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _carry_revision_history(
+    *, final: Path, staging: Path, pot_id: str, doc: str, new_revision: int
+) -> None:
+    """Copy prior immutable snapshots and archive the current revision."""
+    versions = staging / VERSIONS_DIRNAME
+    prior_versions = final / VERSIONS_DIRNAME
+    if prior_versions.is_dir():
+        shutil.copytree(prior_versions, versions, dirs_exist_ok=True)
+    prior = _load_manifest(final, pot_id=pot_id, doc=doc)
+    if prior is None or prior.revision == new_revision:
+        return
+    snapshot = versions / str(prior.revision)
+    snapshot.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(final / META_FILENAME, snapshot / META_FILENAME)
+    for section in prior.sections:
+        source = final / section.slug
+        if source.is_dir():
+            shutil.copytree(source, snapshot / section.slug, dirs_exist_ok=True)
+
+
+def _counter_path(pot_root: Path, doc: str) -> Path:
+    return (
+        pot_root.parent
+        / REVISION_COUNTERS_DIRNAME
+        / pot_root.name
+        / f"{doc}.txt"
+    )
+
+
+@contextlib.contextmanager
+def _document_lock(pot_root: Path, doc: str):
+    """Serialize revision allocation and publication across host processes."""
+    path = pot_root.parent / ".locks" / pot_root.name / f"{doc}.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _file_lock(path, exclusive=True):
+        yield
+
+
+@contextlib.contextmanager
+def _pot_lock(pot_root: Path, *, exclusive: bool):
+    """Let document writes coexist while pot purge excludes all of them."""
+    path = pot_root.parent / ".locks" / pot_root.name / "pot.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _file_lock(path, exclusive=exclusive):
+        yield
+
+
+@contextlib.contextmanager
+def _file_lock(path: Path, *, exclusive: bool):
+    """Portable advisory lock; Windows conservatively serializes all access."""
+    with path.open("a+b") as handle:
+        if _fcntl is not None:
+            _fcntl.flock(
+                handle.fileno(), _fcntl.LOCK_EX if exclusive else _fcntl.LOCK_SH
+            )
+        else:  # pragma: no cover - exercised on Windows
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            _msvcrt.locking(handle.fileno(), _msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            if _fcntl is not None:
+                _fcntl.flock(handle.fileno(), _fcntl.LOCK_UN)
+            else:  # pragma: no cover - exercised on Windows
+                handle.seek(0)
+                _msvcrt.locking(handle.fileno(), _msvcrt.LK_UNLCK, 1)
+
+
+def _read_revision_counter(pot_root: Path, doc: str) -> int:
+    try:
+        return int(_counter_path(pot_root, doc).read_text(encoding="ascii"))
+    except (OSError, ValueError):
+        return 0
+
+
+def _write_revision_counter(pot_root: Path, doc: str, revision: int) -> None:
+    path = _counter_path(pot_root, doc)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    scratch = path.with_suffix(f".tmp.{uuid.uuid4().hex}")
+    with scratch.open("w", encoding="ascii") as handle:
+        handle.write(str(revision))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(scratch, path)
+    _sync_dir(path.parent)
 
 
 def _recover_scratch(pot_root: Path, doc: str, *, final: Path) -> None:

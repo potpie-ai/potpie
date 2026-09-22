@@ -90,6 +90,18 @@ class _CountingStore:
         self.calls.append("list")
         return self.inner.list(**kwargs)
 
+    def current_manifest(self, **kwargs):
+        self.calls.append("current_manifest")
+        return self.inner.current_manifest(**kwargs)
+
+    def set_pending_review(self, **kwargs):
+        self.calls.append("set_pending_review")
+        return self.inner.set_pending_review(**kwargs)
+
+    def clear_pending_review(self, **kwargs):
+        self.calls.append("clear_pending_review")
+        return self.inner.clear_pending_review(**kwargs)
+
     def delete(self, **kwargs):
         self.calls.append("delete")
         return self.inner.delete(**kwargs)
@@ -268,7 +280,7 @@ def test_import_carries_chunk_ids_as_claim_evidence(tmp_path):
     )
     assert len(rows) == 1
     assert set(rows[0].source_refs) == {
-        format_resource_id(DOC, "body", seq) for seq in (0, 1, 2)
+        format_resource_id(DOC, "body", seq, revision=1) for seq in (0, 1, 2)
     }
 
 
@@ -737,7 +749,9 @@ def test_list_returns_chunk_ids_and_labels(tmp_path):
         "middle",
         "closing",
     ]
-    assert section["chunks"][0]["resource_id"] == format_resource_id(DOC, "body", 0)
+    assert section["chunks"][0]["resource_id"] == format_resource_id(
+        DOC, "body", 0, revision=1
+    )
 
 
 def test_list_can_narrow_to_one_section(tmp_path):

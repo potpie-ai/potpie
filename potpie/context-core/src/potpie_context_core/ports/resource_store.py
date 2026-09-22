@@ -63,6 +63,7 @@ RESOURCE_SLUG_INVALID = "resource_slug_invalid"
 RESOURCE_CHUNK_TOO_LARGE = "resource_chunk_too_large"
 RESOURCE_ID_INVALID = "resource_id_invalid"
 RESOURCE_NOT_FOUND = "resource_not_found"
+RESOURCE_REVISION_AMBIGUOUS = "resource_revision_ambiguous"
 RESOURCE_MANIFEST_INVALID = "resource_manifest_invalid"
 RESOURCE_SECTION_MISSING_CHUNK = "resource_section_missing_chunk"
 RESOURCE_TEXT_TOO_LARGE = "resource_text_too_large"
@@ -128,6 +129,7 @@ class ResourceId:
     doc: str
     section: str
     seq: int
+    revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +162,9 @@ class SectionManifest:
     content_hash: str
     chunks: tuple[ChunkRef, ...] = ()
     summary_pending: bool = False
+    # Populated by ``ResourceStorePort.list`` so callers can render immutable
+    # citations without a second, racy manifest lookup.
+    revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +192,9 @@ class DocumentManifest:
     sections_kept: tuple[str, ...] = ()
     sections_removed: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+    pending_review_refs: tuple[str, ...] = ()
+    pending_review_sections: tuple[str, ...] = ()
+    pending_review_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,7 +259,9 @@ def require_resource_slug(value: object, *, kind: str = "document") -> str:
     return value
 
 
-def format_resource_id(doc: str, section: str, seq: int) -> str:
+def format_resource_id(
+    doc: str, section: str, seq: int, *, revision: int | None = None
+) -> str:
     """Render the canonical ``potpie://res/<doc>/<section>/<seq>`` id."""
     require_resource_slug(doc, kind="document")
     require_resource_slug(section, kind="section")
@@ -260,7 +270,15 @@ def format_resource_id(doc: str, section: str, seq: int) -> str:
             RESOURCE_ID_INVALID,
             f"chunk sequence must be a non-negative integer: {seq!r}",
         )
-    return f"{RESOURCE_URI_PREFIX}{doc}/{section}/{seq:0{RESOURCE_SEQ_WIDTH}d}"
+    suffix = ""
+    if revision is not None:
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            raise ResourceStoreError(
+                RESOURCE_ID_INVALID,
+                f"resource revision must be a positive integer: {revision!r}",
+            )
+        suffix = f"@rev{revision}"
+    return f"{RESOURCE_URI_PREFIX}{doc}/{section}/{seq:0{RESOURCE_SEQ_WIDTH}d}{suffix}"
 
 
 def parse_resource_id(resource_id: str) -> ResourceId:
@@ -287,6 +305,20 @@ def parse_resource_id(resource_id: str) -> ResourceId:
             f"resource id needs exactly doc/section/seq segments: {resource_id!r}",
         )
     doc, section, raw_seq = segments
+    revision = None
+    if "@rev" in raw_seq:
+        raw_seq, marker, raw_revision = raw_seq.partition("@rev")
+        if marker != "@rev" or not raw_revision.isascii() or not raw_revision.isdigit():
+            raise ResourceStoreError(
+                RESOURCE_ID_INVALID,
+                f"resource revision must use @rev followed by digits: {resource_id!r}",
+            )
+        revision = int(raw_revision)
+        if revision < 1 or str(revision) != raw_revision:
+            raise ResourceStoreError(
+                RESOURCE_ID_INVALID,
+                f"resource revision must be a canonical positive integer: {raw_revision!r}",
+            )
     require_resource_slug(doc, kind="document")
     require_resource_slug(section, kind="section")
     if not (raw_seq.isascii() and raw_seq.isdigit()):
@@ -300,7 +332,7 @@ def parse_resource_id(resource_id: str) -> ResourceId:
             RESOURCE_ID_INVALID,
             f"chunk sequence must be zero-padded to {RESOURCE_SEQ_WIDTH}: {raw_seq!r}",
         )
-    return ResourceId(doc=doc, section=section, seq=seq)
+    return ResourceId(doc=doc, section=section, seq=seq, revision=revision)
 
 
 # --- Import transport ---------------------------------------------------------
@@ -487,9 +519,42 @@ class ResourceStorePort(Protocol):
         ...
 
     def list(
-        self, *, pot_id: str, slug: str, section: str | None = None
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        section: str | None = None,
+        revision: int | None = None,
     ) -> tuple[SectionManifest, ...]:
         """Return a document's sections, with their chunk labels."""
+        ...
+
+    def current_manifest(self, *, pot_id: str, slug: str) -> DocumentManifest:
+        """Return current document metadata without reading chunk payloads."""
+        ...
+
+    def set_pending_review(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        refs: tuple[str, ...],
+        sections: tuple[str, ...],
+        reason: str,
+        expected_revision: int | None = None,
+    ) -> DocumentManifest:
+        """Durably remember evidence review work until graph marking succeeds."""
+        ...
+
+    def clear_pending_review(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        expected_revision: int | None = None,
+        expected_refs: tuple[str, ...] = (),
+    ) -> DocumentManifest:
+        """Clear a pending review descriptor after its graph marker commits."""
         ...
 
     def delete(self, *, pot_id: str, slug: str) -> bool:
@@ -525,6 +590,7 @@ __all__ = [
     "RESOURCE_LABEL_MAX_CHARS",
     "RESOURCE_MANIFEST_INVALID",
     "RESOURCE_NOT_FOUND",
+    "RESOURCE_REVISION_AMBIGUOUS",
     "RESOURCE_SECTION_MISSING_CHUNK",
     "RESOURCE_SEQ_WIDTH",
     "RESOURCE_SLUG_INVALID",

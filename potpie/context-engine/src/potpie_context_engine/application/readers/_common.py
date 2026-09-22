@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from potpie_context_core.ports.claim_query import ClaimRow
+from potpie_context_core.source_references import evidence_review_fields
 from potpie_context_engine.domain.ranking import (
     Candidate,
     RankedItem,
@@ -188,6 +189,7 @@ def claim_payload(
     }
     if extra:
         payload.update(extra)
+    payload.update(evidence_review_fields(row.properties))
     return payload
 
 

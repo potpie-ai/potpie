@@ -9,13 +9,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import logging
+import threading
 from typing import Any, Callable
 
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.semantic_mutation_lowering import lower_semantic_request
 from potpie_context_core.semantic_mutation_validator import validate_semantic_request
 from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.errors import GraphMutationVersionConflict
 from potpie_context_core.graph_contract import (
     GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
 )
@@ -108,6 +111,8 @@ _QUALITY_SUMMARY_REPORTS = (
     "projection-drift",
     "entity-label-drift",
 )
+_COMMIT_LOCKS_GUARD = threading.Lock()
+_COMMIT_LOCKS: dict[tuple[int, str], threading.Lock] = {}
 
 _CROSS_CUTTING_RESULT_KEYS = frozenset(
     {
@@ -157,7 +162,10 @@ class GraphWorkbenchService:
         )
         self.lowerer = lowerer or (
             lambda request, plan: lower_semantic_request(
-                request, plan, definition=self.definition, claim_query=self.backend.claim_query
+                request,
+                plan,
+                definition=self.definition,
+                claim_query=self.backend.claim_query,
             )
         )
         self.default_plan_ttl_seconds = (
@@ -194,6 +202,64 @@ class GraphWorkbenchService:
         )
         payload_with_pot = dict(payload)
         payload_with_pot["pot_id"] = pot_id
+
+        idempotency_key = str(payload.get("idempotency_key") or "").strip()
+        if idempotency_key:
+            matching = _plan_for_idempotency_key(
+                self.plan_store, pot_id=pot_id, idempotency_key=idempotency_key
+            )
+            if matching is not None:
+                if _request_fingerprint(
+                    matching.original_payload
+                ) == _request_fingerprint(payload_with_pot):
+                    if matching.status in {
+                        GraphMutationPlanStatus.conflict.value,
+                        GraphMutationPlanStatus.error.value,
+                        GraphMutationPlanStatus.expired.value,
+                    }:
+                        matching = None
+                    else:
+                        return _proposal_from_record(
+                            matching,
+                            ok=matching.status
+                            not in {GraphMutationPlanStatus.invalid.value},
+                            recommended_next_action=(
+                                "Reuse the existing plan_id; this idempotency key already "
+                                "names the same request."
+                            ),
+                        )
+                if matching is None:
+                    pass
+                else:
+                    issue = {
+                        "code": "idempotency_key_reused",
+                        "message": (
+                            f"idempotency_key {idempotency_key!r} is already bound to "
+                            f"plan {matching.plan_id!r} with different content"
+                        ),
+                        "severity": "error",
+                        "op_index": None,
+                    }
+                    record = GraphMutationPlanRecord(
+                        plan_id=plan_id,
+                        pot_id=pot_id,
+                        status=GraphMutationPlanStatus.invalid.value,
+                        risk=MutationRisk.low.value,
+                        created_at=now,
+                        expires_at=expires_at,
+                        original_payload=payload_with_pot,
+                        validation_issues=(issue,),
+                        rejected_ops=(issue,),
+                        expected_subgraph_versions=expected_versions,
+                        current_subgraph_versions=current_versions,
+                        detail=issue["message"],
+                    )
+                    self.plan_store.save(record)
+                    return _proposal_from_record(
+                        record,
+                        ok=False,
+                        recommended_next_action="Use a new idempotency_key for different content.",
+                    )
 
         try:
             request = SemanticMutationRequest.parse(
@@ -308,7 +374,46 @@ class GraphWorkbenchService:
             approval=approval,
             detail=detail,
         )
-        self.plan_store.save(record)
+        if idempotency_key:
+            reserve = getattr(self.plan_store, "reserve_idempotency", None)
+            if callable(reserve):
+                try:
+                    stored, inserted = reserve(
+                        record=record,
+                        idempotency_key=idempotency_key,
+                        request_fingerprint=_request_fingerprint(payload_with_pot),
+                    )
+                except ValueError as exc:
+                    rejected_record = replace(
+                        record,
+                        status=GraphMutationPlanStatus.invalid.value,
+                        detail=str(exc),
+                    )
+                    return _proposal_from_record(
+                        rejected_record,
+                        ok=False,
+                        recommended_next_action=(
+                            "Use a new idempotency_key for different content."
+                        ),
+                    )
+                if not inserted:
+                    return _proposal_from_record(
+                        stored,
+                        ok=stored.status
+                        not in {
+                            GraphMutationPlanStatus.invalid.value,
+                            GraphMutationPlanStatus.conflict.value,
+                            GraphMutationPlanStatus.error.value,
+                        },
+                        recommended_next_action=(
+                            "Reuse the existing plan_id; this idempotency key already "
+                            "names the same request."
+                        ),
+                    )
+            else:
+                self.plan_store.save(record)
+        else:
+            self.plan_store.save(record)
         return _proposal_from_record(
             record,
             ok=status
@@ -588,9 +693,29 @@ class GraphWorkbenchService:
         commit_actor = approved_by or (
             approval.approved_by if approval is not None else None
         )
+        compare_and_apply = getattr(self.backend.mutation, "compare_and_apply", None)
+        atomic_apply: Callable[[int], Any] | None = None
+        if callable(compare_and_apply):
+
+            def atomic_apply(expected_version: int) -> Any:
+                return compare_and_apply(
+                    deepcopy(record.lowered_batch),
+                    expected_pot_id=pot_id,
+                    expected_version=expected_version,
+                    provenance_context=_provenance_for_commit(
+                        record.provenance,
+                        approved_by=commit_actor,
+                        mutation_id=execution_mutation_id,
+                    ),
+                    reconciliation_config=self.reconciliation_config,
+                )
+
         try:
-            with reconciliation_config_scope(self.reconciliation_config):
-                result = self.backend.mutation.apply(
+            result, apply_versions = _apply_if_current(
+                self.backend,
+                pot_id=pot_id,
+                expected_versions=record.expected_subgraph_versions,
+                apply=lambda: self.backend.mutation.apply(
                     deepcopy(record.lowered_batch),
                     expected_pot_id=pot_id,
                     provenance_context=_provenance_for_commit(
@@ -598,6 +723,36 @@ class GraphWorkbenchService:
                         approved_by=commit_actor,
                         mutation_id=execution_mutation_id,
                     ),
+                ),
+                atomic_apply=atomic_apply,
+                reconciliation_config=self.reconciliation_config,
+            )
+            if result is None:
+                conflict = _version_conflict(
+                    record.expected_subgraph_versions, apply_versions
+                )
+                conflicted = replace(
+                    record,
+                    status=GraphMutationPlanStatus.conflict.value,
+                    current_subgraph_versions=apply_versions,
+                    commit_attempt_id=None,
+                    commit_attempt_started_at=None,
+                    detail=_conflict_message(conflict or {}),
+                )
+                self.plan_store.compare_and_set(expected=record, replacement=conflicted)
+                return GraphMutationCommitResult(
+                    ok=False,
+                    plan_id=plan_id,
+                    status=GraphMutationPlanStatus.conflict.value,
+                    risk=record.risk,
+                    pot_id=pot_id,
+                    mutation_id=execution_mutation_id,
+                    expected_subgraph_versions=record.expected_subgraph_versions,
+                    current_subgraph_versions=apply_versions,
+                    diff=record.diff,
+                    claim_keys=_claim_keys_from_record(record),
+                    detail=conflicted.detail,
+                    recommended_next_action=_CONFLICT_NEXT_ACTION,
                 )
             final_versions = (
                 _subgraph_versions(self.backend, pot_id) if result.ok else None
@@ -1360,6 +1515,7 @@ def graph_success_envelope(
     warnings: tuple[str, ...] | list[str] = (),
     unsupported: tuple[GraphUnsupported, ...] | list[GraphUnsupported] = (),
     recommended_next_action: str | Mapping[str, Any] | None = None,
+    adjustments: Sequence[Mapping[str, Any]] = (),
 ) -> GraphCommandEnvelope:
     return GraphCommandEnvelope(
         ok=True,
@@ -1371,6 +1527,7 @@ def graph_success_envelope(
         warnings=tuple(warnings),
         unsupported=tuple(unsupported),
         recommended_next_action=recommended_next_action,
+        adjustments=tuple(dict(item) for item in adjustments),
     )
 
 
@@ -1535,14 +1692,102 @@ def _unsupported_tuple(value: Any) -> tuple[GraphUnsupported, ...]:
 
 
 def _subgraph_versions(backend: GraphBackend, pot_id: str) -> dict[str, int]:
+    current_version = getattr(backend.mutation, "current_version", None)
+    atomic_supported = getattr(backend.mutation, "atomic_mutations_supported", True)
+    if atomic_supported and callable(current_version):
+        return {"_global": int(current_version(pot_id))}
     try:
-        counts = dict(backend.analytics.counts(pot_id))
+        rows = backend.claim_query.find_claims(
+            ClaimQueryFilter(pot_id=pot_id, include_invalidated=True)
+        )
     except Exception:
-        counts = {}
-    try:
-        return {"_global": int(counts.get("claims", 0))}
-    except (TypeError, ValueError):
         return {"_global": 0}
+    if not rows:
+        return {"_global": 0}
+    state = [
+        {
+            "claim_key": row.claim_key,
+            "subgraph": row.subgraph,
+            "predicate": row.predicate,
+            "subject_key": row.subject_key,
+            "object_key": row.object_key,
+            "truth": row.truth,
+            "confidence": row.confidence,
+            "fact": row.fact,
+            "description": row.description,
+            "environment": row.environment,
+            "valid_at": row.valid_at,
+            "valid_until": row.valid_until,
+            "invalid_at": row.invalid_at,
+            "source_refs": tuple(row.source_refs),
+            "evidence": tuple(row.evidence),
+            "properties": dict(row.properties),
+        }
+        for row in rows
+    ]
+    state.sort(key=lambda item: json.dumps(item, sort_keys=True, default=str))
+    encoded = json.dumps(state, sort_keys=True, separators=(",", ":"), default=str)
+    # Graph versions are opaque integer concurrency tokens. Unlike the former
+    # claim count, this token changes when an existing claim is overwritten.
+    return {
+        "_global": int.from_bytes(
+            hashlib.blake2b(encoded.encode("utf-8"), digest_size=8).digest(), "big"
+        )
+    }
+
+
+def _apply_if_current(
+    backend: GraphBackend,
+    *,
+    pot_id: str,
+    expected_versions: Mapping[str, int],
+    apply: Callable[[], Any],
+    atomic_apply: Callable[[int], Any] | None,
+    reconciliation_config: ReconciliationConfig,
+) -> tuple[Any | None, dict[str, int]]:
+    """Serialize compare-and-apply for commits sharing this backend instance.
+
+    Persistent adapters may provide a stronger transaction internally. This
+    guard closes the in-process TOCTOU window and always rechecks after the plan
+    reservation, immediately before entering the backend write door.
+    """
+    key = (id(backend), pot_id)
+    with _COMMIT_LOCKS_GUARD:
+        lock = _COMMIT_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        expected = int(expected_versions.get("_global", 0))
+        atomic_supported = getattr(backend.mutation, "atomic_mutations_supported", True)
+        if atomic_supported and atomic_apply is not None:
+            try:
+                result = atomic_apply(expected)
+            except GraphMutationVersionConflict as exc:
+                return None, {"_global": exc.current}
+            return result, {"_global": expected}
+        current = _subgraph_versions(backend, pot_id)
+        if _version_conflict(expected_versions, current):
+            return None, current
+        with reconciliation_config_scope(reconciliation_config):
+            return apply(), current
+
+
+def _request_fingerprint(payload: Mapping[str, Any]) -> str:
+    normalized = dict(payload)
+    normalized.pop("expected_subgraph_versions", None)
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=20).hexdigest()
+
+
+def _plan_for_idempotency_key(
+    store: GraphPlanStorePort, *, pot_id: str, idempotency_key: str
+) -> GraphMutationPlanRecord | None:
+    for record in store.list(pot_id=pot_id):
+        if (
+            record.reserves_idempotency
+            and str(record.original_payload.get("idempotency_key") or "").strip()
+            == idempotency_key
+        ):
+            return record
+    return None
 
 
 def _expected_versions(
@@ -1905,13 +2150,21 @@ def _verify_ingestion_commit(
 ) -> GraphIngestionVerificationResult:
     claim_keys = _claim_keys_from_record(record)
     readback = _verification_readback(backend, pot_id=pot_id, claim_keys=claim_keys)
-    content_readback = {}
+    content_readback = _claim_content_readback(backend, pot_id=pot_id, record=record)
     if "protocols" in definition.extensions:
         from potpie_context_core.protocol_validation import protocol_content_readback
 
-        content_readback = protocol_content_readback(
+        protocol_readback = protocol_content_readback(
             backend, pot_id=pot_id, record=record
         )
+        generic_mismatches = tuple(content_readback.get("mismatches", ()))
+        content_readback = {**content_readback, **protocol_readback}
+        if protocol_readback.get("mismatches"):
+            content_readback["mismatches"] = generic_mismatches + tuple(
+                protocol_readback["mismatches"]
+            )
+        elif generic_mismatches:
+            content_readback["mismatches"] = generic_mismatches
     after_quality = _verification_quality_snapshot(
         backend,
         pot_id=pot_id,
@@ -1939,7 +2192,7 @@ def _verify_ingestion_commit(
     if content_readback.get("mismatches"):
         ok = False
         status = "degraded"
-        detail = "protocol content readback differs from the committed extraction"
+        detail = "persisted graph content differs from the committed mutation"
         recommended = "Inspect content_readback and preserve conflicting extractions in graph inbox before repair."
     elif readback["missing_claim_keys"]:
         ok = False
@@ -1972,7 +2225,7 @@ def _verify_ingestion_commit(
         recommended = (
             "Review graph quality summary before relying on newly committed memory."
         )
-    elif not claim_keys:
+    elif not claim_keys and not content_readback.get("checked_retracted_claim_keys"):
         # Entity-only (or retraction-only) plans have nothing to read back, and
         # reporting the plain "ok" for them made verification read as proof the
         # write landed when no claim was ever checked. Say what was actually
@@ -2008,6 +2261,225 @@ def _verify_ingestion_commit(
     )
 
 
+def _claim_content_readback(
+    backend: GraphBackend,
+    *,
+    pot_id: str,
+    record: GraphMutationPlanRecord,
+) -> dict[str, Any]:
+    """Compare persisted ordinary claims with the exact lowered write payload."""
+    batch = record.lowered_batch
+    if batch is None:
+        return {}
+    expected: dict[str, dict[str, Any]] = {}
+    for edge in batch.edge_upserts:
+        props = edge.properties
+        claim_key = str(props.get("claim_key") or "")
+        if not claim_key:
+            continue
+        expected[claim_key] = {
+            "predicate": edge.edge_type,
+            "subject_key": edge.from_entity_key,
+            "object_key": edge.to_entity_key,
+            "subgraph": props.get("subgraph"),
+            "truth": props.get("truth"),
+            "confidence": props.get("confidence"),
+            "fact": props.get("fact"),
+            "description": props.get("description"),
+            "environment": props.get("environment"),
+            "source_refs": tuple(props.get("source_refs") or ()),
+            "evidence": tuple(props.get("evidence") or ()),
+            "valid_until": props.get("valid_until"),
+            "properties": {
+                key: value
+                for key, value in props.items()
+                if key not in _CLAIM_CONTRACT_PROPERTY_KEYS
+            },
+        }
+    retracted = tuple(
+        dict.fromkeys(
+            key
+            for invalidation in batch.invalidations
+            for key in (getattr(invalidation, "target_claim_keys", None) or ())
+        )
+    )
+    if not expected and not retracted and not batch.entity_upserts:
+        return {}
+    requested_keys = tuple(expected) + tuple(
+        key for key in retracted if key not in expected
+    )
+    rows = backend.claim_query.find_claims(
+        ClaimQueryFilter(
+            pot_id=pot_id,
+            claim_key_in=requested_keys,
+            include_invalidated=True,
+            limit=max(20, len(requested_keys) * 2),
+        )
+    )
+    by_key = {str(row.claim_key): row for row in rows if row.claim_key}
+    mismatches: list[dict[str, Any]] = []
+    checked_entities: list[str] = []
+    for entity in batch.entity_upserts:
+        checked_entities.append(entity.entity_key)
+        actual_properties = backend.claim_query.entity_properties(
+            pot_id=pot_id, entity_key=entity.entity_key
+        )
+        actual_labels = backend.claim_query.entity_labels(
+            pot_id=pot_id, entity_keys=(entity.entity_key,)
+        ).get(entity.entity_key, ())
+        entity_differences: dict[str, Any] = {}
+        for key, value in entity.properties.items():
+            actual_value = _normalize_persisted_json(value, actual_properties.get(key))
+            if _comparable_value(value) != _comparable_value(actual_value):
+                entity_differences[f"properties.{key}"] = {
+                    "expected": value,
+                    "actual": actual_properties.get(key),
+                }
+        if not set(entity.labels).issubset(set(actual_labels)):
+            entity_differences["labels"] = {
+                "expected": tuple(entity.labels),
+                "actual": tuple(actual_labels),
+            }
+        if entity_differences:
+            mismatches.append(
+                {"entity_key": entity.entity_key, "fields": entity_differences}
+            )
+    for claim_key, intended in expected.items():
+        row = by_key.get(claim_key)
+        if row is None:
+            continue
+        actual = {
+            "predicate": row.predicate,
+            "subject_key": row.subject_key,
+            "object_key": row.object_key,
+            "subgraph": row.subgraph,
+            "truth": row.truth,
+            "confidence": row.confidence,
+            "fact": row.fact,
+            "description": row.description,
+            "environment": row.environment,
+            "source_refs": tuple(row.source_refs),
+            "evidence": tuple(row.evidence),
+            "valid_until": row.valid_until.isoformat() if row.valid_until else None,
+            "properties": dict(row.properties),
+        }
+        differences = {}
+        for field, value in intended.items():
+            actual_value = actual[field]
+            if field == "properties" and isinstance(value, Mapping):
+                actual_mapping = (
+                    actual_value if isinstance(actual_value, Mapping) else {}
+                )
+                property_diff = {
+                    key: {"expected": expected_value, "actual": actual_mapping.get(key)}
+                    for key, expected_value in value.items()
+                    if _comparable_value(expected_value)
+                    != _comparable_value(
+                        _normalize_persisted_json(
+                            expected_value, actual_mapping.get(key)
+                        )
+                    )
+                }
+                if property_diff:
+                    differences[field] = property_diff
+            elif _comparable_value(value) != _comparable_value(actual_value):
+                differences[field] = {"expected": value, "actual": actual_value}
+        if differences:
+            mismatches.append({"claim_key": claim_key, "fields": differences})
+    valid_to_by_key = {
+        key: invalidation.valid_to
+        for invalidation in batch.invalidations
+        for key in (getattr(invalidation, "target_claim_keys", None) or ())
+    }
+    for claim_key in retracted:
+        row = by_key.get(claim_key)
+        expected_invalid_at = valid_to_by_key.get(claim_key) or "set"
+        actual_invalid_at = (
+            row.invalid_at.isoformat() if row and row.invalid_at else None
+        )
+        if (
+            row is None
+            or row.invalid_at is None
+            or (
+                expected_invalid_at != "set"
+                and _comparable_value(expected_invalid_at)
+                != _comparable_value(actual_invalid_at)
+            )
+        ):
+            mismatches.append(
+                {
+                    "claim_key": claim_key,
+                    "fields": {
+                        "invalid_at": {
+                            "expected": expected_invalid_at,
+                            "actual": actual_invalid_at,
+                        }
+                    },
+                }
+            )
+    return {
+        "checked_claim_keys": tuple(expected),
+        "checked_entities": tuple(checked_entities),
+        "checked_retracted_claim_keys": retracted,
+        "mismatches": tuple(mismatches),
+    }
+
+
+_CLAIM_CONTRACT_PROPERTY_KEYS = frozenset(
+    {
+        "claim_key",
+        "subgraph",
+        "truth",
+        "evidence_strength",
+        "confidence",
+        "fact",
+        "description",
+        "source_refs",
+        "evidence",
+        "source_system",
+        "source_ref",
+        "valid_at",
+        "valid_from",
+        "observed_at",
+        "created_by",
+        "graph_contract_version",
+        "ontology_version",
+        "idempotency_key",
+        "identity_key",
+        "environment",
+        "valid_until",
+        "mutation_id",
+    }
+)
+
+
+def _comparable_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str) and value.endswith("Z"):
+        return value[:-1] + "+00:00"
+    if isinstance(value, Mapping):
+        return {key: _comparable_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return tuple(_comparable_value(item) for item in value)
+    return value
+
+
+def _normalize_persisted_json(expected: Any, actual: Any) -> Any:
+    """Decode adapter-serialized JSON only when the intended value is structured."""
+    if not isinstance(expected, (Mapping, list, tuple)) or not isinstance(actual, str):
+        return actual
+    try:
+        decoded = json.loads(actual)
+    except (TypeError, ValueError):
+        return actual
+    if isinstance(expected, Mapping) and isinstance(decoded, Mapping):
+        return decoded
+    if isinstance(expected, (list, tuple)) and isinstance(decoded, list):
+        return decoded
+    return actual
+
+
 def _verification_readback(
     backend: GraphBackend,
     *,
@@ -2026,7 +2498,7 @@ def _verification_readback(
             ClaimQueryFilter(
                 pot_id=pot_id,
                 claim_key_in=claim_keys,
-                include_invalidated=False,
+                include_invalidated=True,
                 limit=max(len(claim_keys) * 2, 20),
             )
         )
@@ -2650,7 +3122,11 @@ def _quality_stale_facts(
     tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
 ]:
     rows, unsupported = _quality_claim_rows(
-        backend, pot_id=pot_id, subgraph=subgraph, limit=limit
+        backend,
+        pot_id=pot_id,
+        subgraph=subgraph,
+        limit=limit,
+        include_invalidated=True,
     )
     if unsupported:
         return (), {"scanned_claims": 0}, unsupported
@@ -3066,7 +3542,9 @@ def _quality_entity_metadata(
             )
         except CapabilityNotImplemented as exc:
             unsupported.append(
-                _unsupported_from_exception(exc, fallback="claim_query.entity_properties")
+                _unsupported_from_exception(
+                    exc, fallback="claim_query.entity_properties"
+                )
             )
     return labels, props, tuple(unsupported)
 
@@ -3152,12 +3630,20 @@ def _quality_finding_id(kind: str, *parts: str) -> str:
 
 def _stale_reasons(row: ClaimRow, *, now: datetime) -> list[str]:
     reasons: list[str] = []
-    if row.valid_until is not None and row.valid_until < now:
+    valid_until = row.valid_until
+    if valid_until is not None and valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=timezone.utc)
+    if valid_until is not None and valid_until <= now:
         reasons.append(f"valid_until elapsed at {row.valid_until.isoformat()}")
     freshness = str(row.properties.get("freshness") or "").lower()
     sync_status = str(row.properties.get("sync_status") or "").lower()
     if freshness == "stale" or sync_status == "stale":
         reasons.append("source reference is marked stale")
+    if row.properties.get("evidence_review_required"):
+        reasons.append(
+            "evidence needs review: "
+            + str(row.properties.get("evidence_review_reason") or "source changed or disappeared")
+        )
     return reasons
 
 

@@ -38,6 +38,11 @@ from potpie_context_engine.application.readers._common import (
     rank_candidates,
     service_anchor_keys,
 )
+from potpie_context_engine.application.readers._details import entity_details
+from potpie_context_core.graph_views import (
+    DEFAULT_TRAVERSAL_DEPTH,
+    MAX_TRAVERSAL_DEPTH,
+)
 from potpie_context_core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
@@ -54,12 +59,16 @@ _INFRA_PREDICATES: tuple[str, ...] = (
     "USES_ADAPTER",
     "CONFIGURES",
     "DEPLOYED_WITH",
+    "EXPOSES",
     "HOSTED_ON",
     "OWNED_BY",
 )
 
 
-_MAX_TRAVERSAL_DEPTH = 4
+# The traversal budget is the view's, not the reader's: ``graph_views``
+# declares it once and advertises it through the view contract, so the CLI
+# can cap a request before dispatch at the same number this walk enforces.
+_MAX_TRAVERSAL_DEPTH = MAX_TRAVERSAL_DEPTH
 
 
 @dataclass(slots=True)
@@ -67,7 +76,7 @@ class InfraTopologyReader:
     claim_query: ClaimQueryPort
     ranker: RankingService
     family: str = "infra_topology"
-    max_blast_radius_depth: int = 2
+    max_blast_radius_depth: int = DEFAULT_TRAVERSAL_DEPTH
 
     def read(self, req: ReadRequest) -> ReadResponse:
         anchor_keys = service_anchor_keys(req.scope, include_anchor_entity_key=True)
@@ -80,6 +89,12 @@ class InfraTopologyReader:
             anchor_keys=anchor_keys,
             environment_filter=environment_filter,
             include_unqualified_environment=include_unqualified_environment,
+        )
+        endpoint_details = entity_details(
+            self.claim_query,
+            pot_id=req.pot_id,
+            entity_keys=(key for row in rows for key in (row.subject_key, row.object_key)),
+            fields=("name", "summary", "description", "method", "path", "url", "protocol"),
         )
 
         candidates: list[Candidate] = []
@@ -97,7 +112,7 @@ class InfraTopologyReader:
             candidates.append(
                 Candidate(
                     candidate_key=claim_candidate_key(row),
-                    payload=_payload_from_row(row),
+                    payload=_payload_from_row(row, entity_details=endpoint_details),
                     strength=row.evidence_strength,
                     valid_at=row.valid_at,
                     scope_overlap=overlap,
@@ -118,8 +133,23 @@ class InfraTopologyReader:
                 "environment": environment_filter,
                 "include_unqualified_environment": include_unqualified_environment,
                 "candidate_pool": len(rows),
+                # The walk that actually ran. ``requested_depth`` is echoed
+                # verbatim so a caller can see that 100 became 4 even when
+                # the CLI in front did not say so.
+                "requested_depth": req.depth,
+                "effective_depth": (
+                    self._effective_depth(req.depth) if anchor_keys else None
+                ),
+                "max_depth": _MAX_TRAVERSAL_DEPTH,
+                "direction": (req.direction or "both").lower() if anchor_keys else None,
             },
         )
+
+    def _effective_depth(self, requested: int | None) -> int:
+        """The hop count a request walks: default, else the capped request."""
+        if isinstance(requested, int) and requested > 0:
+            return min(requested, _MAX_TRAVERSAL_DEPTH)
+        return self.max_blast_radius_depth
 
     def _traverse(
         self,
@@ -160,9 +190,7 @@ class InfraTopologyReader:
             )
 
         # Traverse-axis controls: bounded depth and direction-aware walk.
-        depth = self.max_blast_radius_depth
-        if isinstance(req.depth, int) and req.depth > 0:
-            depth = min(req.depth, _MAX_TRAVERSAL_DEPTH)
+        depth = self._effective_depth(req.depth)
         direction = (req.direction or "both").lower()
         walk_out = direction in ("out", "both")
         walk_in = direction in ("in", "both")
@@ -360,8 +388,22 @@ def _scope_overlap(
     return min(1.0, score / max(bumps, 1))
 
 
-def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
-    return claim_payload(row, environment=_row_environment(row))
+def _payload_from_row(
+    row: ClaimRow, *, entity_details: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
+    details = {
+        key: value
+        for key, value in (
+            ("subject", entity_details.get(row.subject_key)),
+            ("object", entity_details.get(row.object_key)),
+        )
+        if value
+    }
+    return claim_payload(
+        row,
+        environment=_row_environment(row),
+        extra={"details": details} if details else None,
+    )
 
 
 __all__ = ["InfraTopologyReader"]

@@ -289,6 +289,38 @@ def test_the_handoff_cookie_authenticates_the_api(
     assert anonymous.get("/ui/api/pots").status_code == 200
 
 
+def test_opening_another_daemon_preserves_both_browser_sessions(app) -> None:
+    """Cookies share a host across ports; distinct daemons must not overwrite
+    each other's credentials when their explorers open in the same browser."""
+    other_token = "other-daemon-token"  # noqa: S105 - non-secret test fixture
+    other_app = daemon_main.create_app(
+        token=other_token,
+        base_url="http://127.0.0.1:8766",
+        pid=456,
+        log_file="/tmp/potpie-other-daemon-test.log",  # noqa: S108
+    )
+    first = TestClient(app, base_url="http://127.0.0.1:8765")
+    second = TestClient(other_app, base_url="http://127.0.0.1:8766")
+
+    first_code = first.post("/ui/api/handoff", headers=BEARER).json()["code"]
+    first.get("/ui", params={"k": first_code})
+    assert first.get("/ui/api/pots").status_code == 200
+
+    # A browser sends the same cookie jar to both loopback ports. The first
+    # daemon's session must not authenticate the second daemon.
+    second.cookies.update(first.cookies)
+    assert second.get("/ui/api/pots").status_code == 401
+    second_code = second.post(
+        "/ui/api/handoff", headers={"Authorization": f"Bearer {other_token}"}
+    ).json()["code"]
+    second.get("/ui", params={"k": second_code})
+    assert second.get("/ui/api/pots").status_code == 200
+
+    # Bring the browser's updated jar back to the original tab.
+    first.cookies.update(second.cookies)
+    assert first.get("/ui/api/pots").status_code == 200
+
+
 def test_a_handoff_code_is_single_use(app, authorized: TestClient) -> None:
     """The link lives on in shell history and in the terminal scrollback; a
     reusable code there would be a standing credential."""

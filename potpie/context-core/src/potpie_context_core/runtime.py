@@ -7,6 +7,7 @@ from contextvars import ContextVar
 import importlib
 import inspect
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol, runtime_checkable
 
@@ -81,7 +82,31 @@ class _MutationPortBridge:
     """Protocol-visible facade for a sync or async mutation port."""
 
     def __init__(self, target: Any) -> None:
+        self._target = target
         self._bridge = _SyncAsyncBridge(target)
+
+    @property
+    def atomic_mutations_supported(self) -> bool:
+        value = getattr(self._target, "atomic_mutations_supported", None)
+        if callable(value):
+            value = value()
+        if value is not None:
+            return bool(value)
+        return callable(getattr(self._target, "current_version", None)) and callable(
+            getattr(self._target, "compare_and_apply", None)
+        )
+
+    def current_version(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("current_version", *args, **kwargs)
+
+    async def current_version_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("current_version", *args, **kwargs)
+
+    def compare_and_apply(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("compare_and_apply", *args, **kwargs)
+
+    async def compare_and_apply_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("compare_and_apply", *args, **kwargs)
 
     def apply(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("apply", *args, **kwargs)
@@ -229,6 +254,18 @@ class _SnapshotPortBridge:
     def __init__(self, target: Any) -> None:
         self._bridge = _SyncAsyncBridge(target)
 
+    def export_data(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("export_data", *args, **kwargs)
+
+    async def export_data_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("export_data", *args, **kwargs)
+
+    def import_data(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("import_data", *args, **kwargs)
+
+    async def import_data_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("import_data", *args, **kwargs)
+
     def export(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("export", *args, **kwargs)
 
@@ -271,6 +308,38 @@ class _StoreBridge:
 
 class _PlanStoreBridge(_StoreBridge):
     """Plan-store facade including the atomic commit-state transition."""
+
+    def __init__(self, target: Any) -> None:
+        super().__init__(target)
+        self._reservation_lock = threading.RLock()
+
+    def reserve_idempotency(self, *args: Any, **kwargs: Any) -> Any:
+        if callable(getattr(self._bridge._target, "reserve_idempotency", None)):
+            return self._bridge.call("reserve_idempotency", *args, **kwargs)
+        record = kwargs["record"]
+        idempotency_key = kwargs["idempotency_key"]
+        request_fingerprint = kwargs["request_fingerprint"]
+        with self._reservation_lock:
+            for existing in self.list(pot_id=record.pot_id):
+                key = str(existing.original_payload.get("idempotency_key") or "").strip()
+                if key != idempotency_key or not existing.reserves_idempotency:
+                    continue
+                from potpie_context_core.workbench_service import _request_fingerprint
+
+                if _request_fingerprint(existing.original_payload) != request_fingerprint:
+                    raise ValueError(
+                        f"idempotency_key {idempotency_key!r} is already bound to "
+                        f"plan {existing.plan_id!r} with different content"
+                    )
+                if existing.status not in {"conflict", "error", "expired"}:
+                    return existing, False
+            self.save(record)
+            return record, True
+
+    async def reserve_idempotency_async(self, *args: Any, **kwargs: Any) -> Any:
+        # Use the same compatibility reservation when the store predates this
+        # capability; directly forwarding would bypass the fallback above.
+        return await asyncio.to_thread(self.reserve_idempotency, *args, **kwargs)
 
     def compare_and_set(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("compare_and_set", *args, **kwargs)
@@ -779,14 +848,6 @@ def build_graph_runtime(
     runtime_inbox_store = (
         _InboxStoreBridge(inbox_store) if inbox_store is not None else None
     )
-    graph = composition.build_graph_service(
-        backend=runtime_backend,
-        definition=definition,
-        policy=policy,
-        reconciliation_config=reconciliation,
-        resource_index=resource_index,
-        **({"resource_store": resource_store} if resource_store is not None else {}),
-    )
     workbench = GraphWorkbenchService(
         backend=runtime_backend,
         plan_store=runtime_plan_store,
@@ -794,6 +855,15 @@ def build_graph_runtime(
         definition=definition,
         policy=policy,
         reconciliation_config=reconciliation,
+    )
+    graph = composition.build_graph_service(
+        backend=runtime_backend,
+        record_workbench=workbench,
+        definition=definition,
+        policy=policy,
+        reconciliation_config=reconciliation,
+        resource_index=resource_index,
+        **({"resource_store": resource_store} if resource_store is not None else {}),
     )
     return GraphRuntime(
         backend=runtime_backend,

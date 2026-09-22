@@ -8,7 +8,7 @@ shim details stay in outbound adapters.
 
 from __future__ import annotations
 
-from copy import deepcopy
+import asyncio
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 import uuid
@@ -18,9 +18,6 @@ from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
 )
 from potpie_context_engine.adapters.outbound.graph.apply_plan import (
     apply_mutation_batch,
-)
-from potpie_context_engine.adapters.outbound.graph.backends._unimplemented import (
-    UnimplementedSnapshot,
 )
 from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import (
     ClaimQueryAnalytics,
@@ -57,7 +54,9 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.errors import GraphMutationVersionConflict
 from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.graph_mutations import InvalidationOp
 from potpie_context_core.lifecycle import DONE, FAILED, SetupPlan, StepResult
 from potpie_context_core.ports.claim_query import ClaimQueryPort
 from potpie_context_core.ports.graph.backend import BackendCapabilities
@@ -138,6 +137,10 @@ class _FalkorDBMutation:
         default_factory=MutationExecutionRegistry
     )
 
+    @property
+    def atomic_mutations_supported(self) -> bool:
+        return hasattr(self.writer, "_get_graph")
+
     async def apply_async(
         self,
         plan: MutationBatch,
@@ -155,19 +158,79 @@ class _FalkorDBMutation:
             provenance_context or ProvenanceContext(),
             mutation_id=mutation_id,
         )
-        return await self.execution_registry.execute_async(
-            plan,
-            expected_pot_id=expected_pot_id,
-            mutation_id=mutation_id,
-            operation=lambda: apply_mutation_batch(
-                self.writer,
-                deepcopy(plan),
+        if not hasattr(self.writer, "_get_graph"):
+            return await self.execution_registry.execute_async(
+                plan,
                 expected_pot_id=expected_pot_id,
-                provenance_context=context,
-                definition=self.definition,
-                reconciliation_config=reconciliation_config,
-            ),
+                mutation_id=mutation_id,
+                operation=lambda: apply_mutation_batch(
+                    self.writer,
+                    plan,
+                    expected_pot_id=expected_pot_id,
+                    provenance_context=context,
+                    definition=self.definition,
+                    reconciliation_config=reconciliation_config,
+                ),
+            )
+        return await asyncio.to_thread(
+            self._compare_and_apply_sync,
+            plan,
+            expected_pot_id,
+            None,
+            context,
+            reconciliation_config,
         )
+
+    def current_version(self, pot_id: str) -> int:
+        from potpie_context_engine.adapters.outbound.graph.falkordb_atomic import (
+            current_version,
+        )
+
+        return current_version(self.writer._get_graph(), pot_id)
+
+    def compare_and_apply(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
+        context = replace(
+            provenance_context or ProvenanceContext(),
+            mutation_id=(provenance_context.mutation_id if provenance_context else None)
+            or uuid.uuid4().hex,
+        )
+        return self._compare_and_apply_sync(
+            plan, expected_pot_id, expected_version, context, reconciliation_config
+        )
+
+    def _compare_and_apply_sync(self, plan, pot_id, expected_version, context, config):
+        from potpie_context_engine.adapters.outbound.graph.falkordb_atomic import (
+            apply_atomic,
+        )
+
+        while True:
+            version = (
+                self.current_version(pot_id)
+                if expected_version is None
+                else expected_version
+            )
+            try:
+                return apply_atomic(
+                    self.writer._get_graph(),
+                    plan,
+                    expected_pot_id=pot_id,
+                    expected_version=version,
+                    provenance_context=context,
+                    definition=self.definition,
+                    reconciliation_config=config,
+                    embedder=getattr(self.writer, "_embedder", None),
+                )
+            except GraphMutationVersionConflict:
+                if expected_version is not None:
+                    raise
 
     def lookup_execution(
         self,
@@ -183,11 +246,17 @@ class _FalkorDBMutation:
         )
         if lookup.state != MutationExecutionState.absent.value:
             return lookup
-        return MutationExecutionLookup(
-            state=MutationExecutionState.unsupported.value,
+        if not self.atomic_mutations_supported:
+            return lookup
+        from potpie_context_engine.adapters.outbound.graph.falkordb_atomic import (
+            lookup_execution,
+        )
+
+        return lookup_execution(
+            self.writer._get_graph(),
+            plan,
+            expected_pot_id=expected_pot_id,
             mutation_id=mutation_id,
-            batch_fingerprint=lookup.batch_fingerprint,
-            detail="FalkorDB mutation receipts are not durable across processes",
         )
 
     def apply(
@@ -210,14 +279,40 @@ class _FalkorDBMutation:
     def invalidate(
         self, *, pot_id: str, claim_keys: Any, reason: str | None = None
     ) -> int:
-        raise CapabilityNotImplemented(
-            f"graph.{self.profile}.mutation.invalidate",
-            detail=f"claim-key invalidation is not implemented for {self.profile} yet",
-            recommended_next_action="use mutation.apply with InvalidationOp, or implement claim-key Cypher invalidation",
+        if not self.atomic_mutations_supported:
+            raise CapabilityNotImplemented(
+                f"graph.{self.profile}.mutation.invalidate",
+                detail="the injected legacy writer has no atomic mutation surface",
+            )
+        plan = MutationBatch(
+            invalidations=[
+                InvalidationOp(
+                    target_entity_key=None,
+                    target_edge=None,
+                    target_claim_keys=(claim_key,),
+                    reason=reason or "claim invalidated",
+                )
+                for claim_key in claim_keys
+            ]
         )
+        result = self.apply(
+            plan,
+            expected_pot_id=pot_id,
+            provenance_context=ProvenanceContext(
+                mutation_id=uuid.uuid4().hex,
+                source_event_id=f"invalidation:{uuid.uuid4().hex}",
+            ),
+        )
+        return result.mutation_summary.invalidations_applied
 
     def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        return _run_sync(self.writer.reset_pot(pot_id))
+        if not self.atomic_mutations_supported:
+            return _run_sync(self.writer.reset_pot(pot_id))
+        from potpie_context_engine.adapters.outbound.graph.falkordb_atomic import (
+            reset_pot,
+        )
+
+        return reset_pot(self.writer._get_graph(), pot_id)
 
     def readiness(self, pot_id: str) -> BackendReadiness:
         driver = _missing_driver_module(self.settings)
@@ -231,7 +326,8 @@ class _FalkorDBMutation:
         elif ready:
             detail = (
                 f"{self.profile} claim_query + mutation + semantic + analytics + "
-                "inspection wired; snapshot pending"
+                "inspection + snapshot wired; atomic revision checks and durable "
+                "mutation receipts supported"
             )
         else:
             detail = (
@@ -243,11 +339,12 @@ class _FalkorDBMutation:
             detail=detail,
             capability_ready={
                 "mutation": ready,
+                "atomic_mutation": ready and self.atomic_mutations_supported,
                 "claim_query": ready,
                 "analytics": ready,
                 "semantic": ready,
                 "inspection": ready,
-                "snapshot": False,
+                "snapshot": ready,
             },
         )
 
@@ -346,8 +443,12 @@ class FalkorDBGraphBackend:
         )
 
     @property
-    def snapshot(self) -> UnimplementedSnapshot:
-        return UnimplementedSnapshot(self.profile_name)
+    def snapshot(self) -> Any:
+        from potpie_context_engine.adapters.outbound.graph.falkordb_snapshot import (
+            FalkorDBSnapshot,
+        )
+
+        return FalkorDBSnapshot(self.graph_provider)
 
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
@@ -357,7 +458,7 @@ class FalkorDBGraphBackend:
             analytics=True,
             semantic=True,
             inspection=True,
-            snapshot=False,
+            snapshot=True,
         )
 
     def bind_definition(self, definition: GraphDefinition) -> FalkorDBGraphBackend:

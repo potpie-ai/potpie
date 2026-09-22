@@ -269,10 +269,14 @@ def test_reimport_bumps_the_revision_and_drops_the_old_chunks(kind, tmp_path):
 
     assert manifest.revision == 2
     assert store.get(
-        pot_id=POT, resource_id=format_resource_id(DOC, "body", 0)
+        pot_id=POT,
+        resource_id=format_resource_id(DOC, "body", 0, revision=2),
     ).text == ("rewritten")
     with pytest.raises(ResourceStoreError) as exc:
-        store.get(pot_id=POT, resource_id=format_resource_id(DOC, "body", 1))
+        store.get(
+            pot_id=POT,
+            resource_id=format_resource_id(DOC, "body", 1, revision=2),
+        )
     assert exc.value.code == RESOURCE_NOT_FOUND
 
 
@@ -742,7 +746,8 @@ def test_local_store_sweeps_stale_leftovers_from_a_crashed_import(tmp_path):
 
     assert [path.name for path in pot_root.iterdir()] == [DOC]
     assert store.get(
-        pot_id=POT, resource_id=format_resource_id(DOC, "body", 0)
+        pot_id=POT,
+        resource_id=format_resource_id(DOC, "body", 0, revision=2),
     ).text == ("omega")
 
 

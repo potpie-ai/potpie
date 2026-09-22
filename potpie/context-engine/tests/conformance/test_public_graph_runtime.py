@@ -50,6 +50,9 @@ from potpie_context_engine.testing import (
 from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
     EmbeddedGraphBackend,
 )
+from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+    LocalJsonGraphPlanStore,
+)
 
 
 class _WidgetReader:
@@ -330,6 +333,34 @@ def test_public_runtime_retracts_extension_predicate() -> None:
     )
     assert len(history) == 1
     assert history[0].invalid_at is not None
+
+
+def test_public_runtime_uses_embedded_atomic_version_across_instances(tmp_path) -> None:
+    graph_home = tmp_path / "graph"
+    first = build_graph_runtime(
+        EmbeddedGraphBackend(home=graph_home),
+        LocalJsonGraphPlanStore(home=tmp_path / "plans-a"),
+    )
+    second = build_graph_runtime(
+        EmbeddedGraphBackend(home=graph_home),
+        LocalJsonGraphPlanStore(home=tmp_path / "plans-b"),
+    )
+    payload = {
+        "operations": [
+            {
+                "op": "upsert_entity",
+                "subject": {"key": "service:atomic-runtime", "type": "Service"},
+            }
+        ]
+    }
+    first_plan = first.propose(payload, pot_id="pot:atomic-runtime")
+    second_plan = second.propose(payload, pot_id="pot:atomic-runtime")
+
+    assert first.commit(first_plan.plan_id, pot_id="pot:atomic-runtime").ok
+    stale = second.commit(second_plan.plan_id, pot_id="pot:atomic-runtime")
+
+    assert stale.ok is False
+    assert stale.status == "conflict"
 
 
 def test_quality_uses_extension_singleton_predicates() -> None:

@@ -13,9 +13,8 @@ from typing import Any, Iterable, Mapping, cast
 from urllib.parse import urlsplit
 
 from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_engine.adapters.outbound.skills.claude_target import (
-    ProjectAgentTarget,
-)
+from potpie_context_core.ports.agent_context import SkillNudge
+
 from potpie_context_engine.adapters.outbound.skills.agent_installer import (
     validate_packaged_skill_command_snippets,
 )
@@ -23,7 +22,9 @@ from potpie_context_engine.adapters.outbound.skills.bundle_catalog import (
     RECOMMENDED_SKILL_IDS,
     catalog_by_id,
 )
-from potpie_context_core.ports.agent_context import SkillNudge
+from potpie_context_engine.adapters.outbound.skills.claude_target import (
+    ProjectAgentTarget,
+)
 from potpie_context_engine.domain.ports.services.skill_manager import (
     AgentTargetPort,
     SkillInfo,
@@ -221,6 +222,24 @@ class DefaultSkillManager:
             return True
         return bool(checker(skill_id=skill_id, path=path))
 
+    @staticmethod
+    def _locally_modified(target: AgentTargetPort, skill_id: str) -> bool:
+        checker = getattr(target, "locally_modified", None)
+        return bool(checker(skill_id=skill_id)) if callable(checker) else False
+
+    @staticmethod
+    def _disabled(target: AgentTargetPort) -> frozenset[str]:
+        reader = getattr(target, "disabled", None)
+        return frozenset(reader()) if callable(reader) else frozenset()
+
+    @staticmethod
+    def _set_disabled(
+        target: AgentTargetPort, *, skill_id: str, disabled: bool
+    ) -> None:
+        writer = getattr(target, "set_disabled", None)
+        if callable(writer):
+            writer(skill_id=skill_id, disabled=disabled)
+
     def _is_current(
         self,
         target: AgentTargetPort,
@@ -303,6 +322,7 @@ class DefaultSkillManager:
         catalog = catalog_by_id()
         target = self._target_for_scope(agent=agent, scope=scope, path=path)
         installed = target.installed()
+        disabled = self._disabled(target)
         out: list[SkillInfo] = []
         for sid, info in catalog.items():
             ver = installed.get(sid)
@@ -322,6 +342,7 @@ class DefaultSkillManager:
                     installed=ver is not None,
                     installed_version=ver,
                     drifted=drifted,
+                    disabled=sid in disabled,
                 )
             )
         return out
@@ -339,10 +360,14 @@ class DefaultSkillManager:
         requested = bool(skill_id)
         ids = [skill_id] if requested else list(RECOMMENDED_SKILL_IDS)
         changed: list[str] = []
+        preserved: list[str] = []
         unavailable: list[str] = []
         available = self._available(target)
         installed = target.installed()
+        disabled = self._disabled(target)
         for sid in ids:
+            if not requested and sid in disabled:
+                continue
             if available is not None and sid not in available:
                 # Named, it is a refusal: there is no version of this skill for
                 # this harness and reporting it installed is how a caller comes
@@ -367,8 +392,16 @@ class DefaultSkillManager:
                 target, sid, installed=installed, version=info.version, path=path
             ):
                 continue
+            if (
+                not requested
+                and sid in installed
+                and self._locally_modified(target, sid)
+            ):
+                preserved.append(sid)
+                continue
             validate_packaged_skill_command_snippets(skill_ids=(sid,))
             target.install(skill_id=sid, version=info.version, path=path)
+            self._set_disabled(target, skill_id=sid, disabled=False)
             changed.append(sid)
         # Only the sweep gets to touch the harness's own files. Naming one skill
         # id is a request for that skill, and honouring it by also rewriting
@@ -379,12 +412,15 @@ class DefaultSkillManager:
             agent=agent,
             operation="install",
             changed=tuple(changed),
-            metadata=self._metadata(
-                target,
-                scope=scope,
-                support_files=support,
-                unavailable=tuple(unavailable),
-            ),
+            metadata={
+                **self._metadata(
+                    target,
+                    scope=scope,
+                    support_files=support,
+                    unavailable=tuple(unavailable),
+                ),
+                **({"preserved_user_edits": preserved} if preserved else {}),
+            },
         )
 
     def update(
@@ -413,6 +449,7 @@ class DefaultSkillManager:
         requested = bool(skill_id)
         ids = [skill_id] if requested else list(installed)
         changed: list[str] = []
+        preserved: list[str] = []
         available = self._available(target)
         for sid in ids:
             if available is not None and sid not in available:
@@ -439,6 +476,9 @@ class DefaultSkillManager:
                 target, sid, installed=installed, version=info.version, path=path
             ):
                 continue
+            if self._locally_modified(target, sid):
+                preserved.append(sid)
+                continue
             validate_packaged_skill_command_snippets(skill_ids=(sid,))
             # ``path=`` was dropped here while ``install`` passed it, so the two
             # commands could resolve the same ``--path`` to different roots.
@@ -449,7 +489,10 @@ class DefaultSkillManager:
             agent=agent,
             operation="update",
             changed=tuple(changed),
-            metadata=self._metadata(target, scope=scope, support_files=support),
+            metadata={
+                **self._metadata(target, scope=scope, support_files=support),
+                **({"preserved_user_edits": preserved} if preserved else {}),
+            },
         )
 
     def remove(
@@ -490,6 +533,8 @@ class DefaultSkillManager:
                 not_installed.append(sid)
                 continue
             target.remove(skill_id=sid)
+            if not all_:
+                self._set_disabled(target, skill_id=sid, disabled=True)
             changed.append(sid)
         # Only the sweep owns the harness's own files — the mirror of the rule
         # `install` follows. It runs whether or not any skill was removed:
@@ -519,6 +564,8 @@ class DefaultSkillManager:
         installed_infos: list[SkillInfo] = []
         missing: list[SkillInfo] = []
         outdated: list[SkillInfo] = []
+        disabled_infos: list[SkillInfo] = []
+        disabled = self._disabled(target)
         for sid in RECOMMENDED_SKILL_IDS:
             # "Recommended" has to mean recommended *for this harness*. A skill
             # its bundle cannot carry is not missing, it is inapplicable, and
@@ -527,6 +574,17 @@ class DefaultSkillManager:
             if available is not None and sid not in available:
                 continue
             info = catalog[sid]
+            if sid in disabled:
+                disabled_infos.append(
+                    SkillInfo(
+                        id=info.id,
+                        title=info.title,
+                        version=info.version,
+                        description=info.description,
+                        disabled=True,
+                    )
+                )
+                continue
             ver = installed.get(sid)
             if ver is None:
                 missing.append(info)
@@ -555,6 +613,7 @@ class DefaultSkillManager:
             installed=tuple(installed_infos),
             missing=tuple(missing),
             outdated=tuple(outdated),
+            disabled=tuple(disabled_infos),
         )
 
     def nudge(self, *, agent: str) -> SkillNudge:

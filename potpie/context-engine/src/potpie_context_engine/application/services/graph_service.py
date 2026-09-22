@@ -27,18 +27,12 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
 
-from potpie_context_engine.application.services.read_orchestrator import (
-    ReadOrchestrator,
-)
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_core.record_to_semantic import record_to_semantic_request
-from potpie_context_core.semantic_mutation_lowering import lower_semantic_request
-from potpie_context_core.semantic_mutation_validator import validate_semantic_request
 from potpie_context_core.agent_context_port import (
     build_context_record_source_id,
     normalize_context_intent,
 )
 from potpie_context_core.agent_envelope import AgentEnvelope, EvidenceItem
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.graph_contract import (
     APPLICABLE_MUTATION_OPS,
@@ -53,7 +47,9 @@ from potpie_context_core.graph_views import (
     GRAPH_VIEWS,
     UnknownGraphViewError,
     include_guess_guidance,
+    resolve_view_selector,
 )
+from potpie_context_core.vocabulary import resolve_entity_type, resolve_predicate
 from potpie_context_core.graph_workbench_ontology import (
     ExampleCommand,
     ViewContract,
@@ -64,11 +60,6 @@ from potpie_context_core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
 )
-from potpie_context_core.reconciliation_config import (
-    ReconciliationConfig,
-    reconciliation_config_scope,
-)
-from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
 from potpie_context_core.ontology import canonical_entity_labels
 from potpie_context_core.ports.agent_context import (
     RecordReceipt,
@@ -91,9 +82,27 @@ from potpie_context_core.ports.graph_service import (
     normalize_read_detail,
     normalize_read_relations,
 )
+from potpie_context_core.reconciliation_config import (
+    ReconciliationConfig,
+    reconciliation_config_scope,
+)
+from potpie_context_core.reconciliation_flags import reconciliation_config_from_env
+from potpie_context_core.record_to_semantic import record_to_semantic_request
+from potpie_context_core.semantic_mutation_lowering import lower_semantic_request
+from potpie_context_core.semantic_mutation_validator import validate_semantic_request
 from potpie_context_core.semantic_mutations import (
     SemanticMutationRequest,
     SemanticMutationResult,
+)
+from potpie_context_core.source_references import (
+    evidence_review_fields,
+    evidence_review_warnings,
+)
+from potpie_context_core.workbench_service import GraphWorkbenchService
+
+from potpie_context_engine.application.readers._common import dedupe_claim_rows
+from potpie_context_engine.application.services.read_orchestrator import (
+    ReadOrchestrator,
 )
 
 _COMMANDS = ("catalog", "read", "search-entities", "mutate")
@@ -121,6 +130,7 @@ class DefaultGraphService:
     )
     validator: Callable[[SemanticMutationRequest], Any] | None = None
     lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None
+    record_workbench: GraphWorkbenchService | None = None
     resource_store: Any = None
     resource_index: Any = None
     """Backs the ``resources`` include family. ``None`` degrades it, labeled.
@@ -150,7 +160,10 @@ class DefaultGraphService:
             )
         if self.lowerer is None:
             self.lowerer = lambda request, plan: lower_semantic_request(
-                request, plan, definition=self.definition, claim_query=self.backend.claim_query
+                request,
+                plan,
+                definition=self.definition,
+                claim_query=self.backend.claim_query,
             )
 
     @property
@@ -214,6 +227,14 @@ class DefaultGraphService:
             source_id=source_id,
             definition=self.definition,
         )
+        if request.idempotency_key:
+            from potpie_context_engine.application.services.record_capture import (
+                record_once,
+            )
+
+            return record_once(
+                request, sem_request, source_id=source_id, workbench=self.record_workbench
+            )
         result = self.mutate(sem_request)
 
         accepted = result.status in ("applied", "validated")
@@ -348,7 +369,9 @@ class DefaultGraphService:
     def read(self, request: GraphReadRequest) -> GraphReadResult:
         detail = normalize_read_detail(request.detail)
         relations = normalize_read_relations(request.relations)
-        view_name = _qualified_view_name(request.subgraph, request.view)
+        view_name = _qualified_view_name(
+            request.subgraph, request.view, views=self.definition.views
+        )
         contract = ontology_contract().view(view_name)
         spec = self.definition.views.get(view_name)
         if spec is not None and contract is None:
@@ -481,21 +504,65 @@ class DefaultGraphService:
         self, request: GraphEntitySearchRequest
     ) -> GraphEntitySearchResult:
         cq = self.backend.claim_query
+        from potpie_context_engine.application.search_identity import (
+            exact_identity,
+            exact_text_needles,
+            exact_text_pattern,
+        )
+
+        request = _canonical_search_filters(request, definition=self.definition)
+        requested_identity = exact_identity(request.query)
         predicate_in = (request.predicate,) if request.predicate else ()
-        rows = cq.find_claims(
-            ClaimQueryFilter(
+        exact_pattern = (
+            exact_text_pattern(requested_identity)
+            if requested_identity is not None
+            else None
+        )
+        common_filter = dict(
                 pot_id=request.pot_id,
                 predicate_in=predicate_in,
+                subgraph_in=(request.subgraph,) if request.subgraph else (),
                 source_ref_in=request.source_refs,
                 source_system_in=(request.source_system,)
                 if request.source_system
                 else (),
-                fact_query=request.query or None,
+                # Exact lookup bypasses ANN ordering entirely.
+                fact_query=None if requested_identity else (request.query or None),
+                exact_text_pattern=exact_pattern,
+                exact_text_in=(
+                    exact_text_needles(requested_identity)
+                    if requested_identity is not None
+                    else ()
+                ),
+                environment_in=(request.environment,) if request.environment else (),
+                truth_in=(request.truth,) if request.truth else (),
+                # Type is also inferred from canonical key prefixes, so a
+                # backend label filter would hide valid legacy entities that
+                # have the right key but no stored label. Exact passes are
+                # uncapped and apply the type after hydration below.
+                endpoint_label=None,
                 valid_at_after=request.since,
                 valid_at_before=request.until,
-                limit=max(request.limit * 10, 100),
-            )
+                # The backend applies the distinctive identity substrings and
+                # scope before returning rows. Do not cap that exact pass:
+                # boundary verification below must see through near-ID values
+                # such as PR 10740, which FalkorDB cannot reject with regex.
+                limit=None if requested_identity else max(request.limit * 10, 100),
         )
+        repo_key = _search_repo_scope_key(request.scope) if requested_identity else None
+        if repo_key:
+            rows = dedupe_claim_rows(
+                (
+                    *cq.find_claims(
+                        ClaimQueryFilter(**common_filter, subject_key_in=(repo_key,))
+                    ),
+                    *cq.find_claims(
+                        ClaimQueryFilter(**common_filter, object_key_in=(repo_key,))
+                    ),
+                )
+            )
+        else:
+            rows = cq.find_claims(ClaimQueryFilter(**common_filter))
         rows = [row for row in rows if _matches_search_filters(row, request)]
         if request.environment:
             rows = [r for r in rows if _row_env(r) == request.environment.lower()]
@@ -562,12 +629,84 @@ class DefaultGraphService:
                 )
             )
         candidates.sort(key=lambda c: (c.key == exact_key, c.score), reverse=True)
+        from potpie_context_engine.application.search_identity import (
+            record_identity_matches,
+            repositories_in,
+        )
+
+        identity = requested_identity
+        if identity is not None:
+            # Claims mention both endpoints, so aggregating an exact PR claim
+            # also discovers its repository. Identity belongs to the Activity,
+            # not every entity connected to it.
+            candidates = [
+                candidate
+                for candidate in candidates
+                if not (
+                    identity.kind in {"pull_request", "issue"}
+                    and candidate.key.startswith("repo:")
+                )
+                and record_identity_matches(
+                    identity,
+                    canonical_key=candidate.key,
+                    explicit_identity=(
+                        props := normalize_entity_properties(
+                            (
+                                entity_props(
+                                    pot_id=request.pot_id, entity_key=candidate.key
+                                )
+                                if callable(entity_props)
+                                else {}
+                            ),
+                            entity_key=candidate.key,
+                        ),
+                        tuple(
+                            ref
+                            for row in agg.get(candidate.key, {}).get("claims", ())
+                            for ref in (
+                                *(row.source_refs or ()),
+                                *((row.source_ref,) if row.source_ref else ()),
+                            )
+                        ),
+                    ),
+                    description=(
+                        candidate.name,
+                        candidate.summary,
+                        candidate.description,
+                        props,
+                    ),
+                )
+            ]
+            matching_repositories = sorted(
+                {
+                    repo
+                    for candidate in candidates
+                    for repo in repositories_in(
+                        (
+                            candidate.key,
+                            candidate.name,
+                            candidate.summary,
+                            candidate.description,
+                        )
+                    )
+                }
+            )
+            if len(matching_repositories) > 1:
+                match_status = "ambiguous_exact_match"
+            else:
+                match_status = "exact_match" if candidates else "no_exact_match"
+        else:
+            matching_repositories = []
+            match_status = "possible_matches" if candidates else "no_matches"
         return GraphEntitySearchResult(
             entities=tuple(candidates[: request.limit]),
             match_mode=self._match_mode(),
             graph_contract_version=GRAPH_CONTRACT_VERSION,
             ontology_version=self.definition.ontology_version,
             subgraph_versions=self._subgraph_versions(request.pot_id),
+            match_status=match_status,
+            more_results_available=len(candidates) > request.limit,
+            matching_repositories=tuple(matching_repositories),
         )
 
     def mutate(self, request: SemanticMutationRequest) -> SemanticMutationResult:
@@ -982,19 +1121,30 @@ def _describe_definition_subgraph(
     }
 
 
-def _qualified_view_name(subgraph: str, view: str) -> str:
+def _qualified_view_name(
+    subgraph: str, view: str, *, views: Mapping[str, Any] | None = None
+) -> str:
+    """``<subgraph>.<view>`` after exact canonicalization.
+
+    Case, a fully-qualified ``--view`` that agrees with ``--subgraph``, and the
+    proven include-family aliases resolve here so an RPC caller gets the same
+    effective read as the CLI, which canonicalizes before dispatch. A
+    qualified view that names a *different* subgraph is a conflict and raises
+    with both targets; a near-miss token is left as typed so the unknown-view
+    error still carries its candidate guidance.
+    """
     subgraph_value = (subgraph or "").strip()
     view_value = (view or "").strip()
-    if not subgraph_value:
+    if not subgraph_value and "." not in view_value:
         raise ValueError("--subgraph is required")
     if not view_value:
         raise ValueError("--view is required")
-    if "." in view_value:
-        raise ValueError(
-            "graph read now requires --subgraph <name> --view <view>; "
-            f"got fully-qualified view {view_value!r}"
-        )
-    return f"{subgraph_value}.{view_value}"
+    selector = resolve_view_selector(
+        subgraph_value,
+        view_value,
+        views=tuple(views.values()) if views is not None else None,
+    )
+    return selector.name
 
 
 def _guidance_suffix(guidance: Mapping[str, Any] | None) -> str:
@@ -1181,7 +1331,23 @@ def _read_result_from_envelope(
             _coverage_dict(
                 report,
                 view_name=contract.name,
-                metadata=reader_metadata.get(report.include, {}),
+                metadata={
+                    **reader_metadata.get(report.include, {}),
+                    **{
+                        key: meta[key]
+                        for key in (
+                            "match_status",
+                            "exact_identifier",
+                            "exact_match_count",
+                            "searched_families",
+                            "more_results_available",
+                            "more_results_by_family",
+                            "matching_repositories",
+                            "disambiguation",
+                        )
+                        if key in meta
+                    },
+                },
             )
             for report in env.coverage
         ),
@@ -1193,6 +1359,18 @@ def _read_result_from_envelope(
             warning
             for report in env.coverage
             for warning in reader_metadata.get(report.include, {}).get("warnings", ())
+        )
+        + (
+            (
+                f"No exact match for {dict(meta.get('exact_identifier') or {}).get('display', 'the requested identifier')}.",
+            )
+            if meta.get("match_status") == "no_exact_match"
+            else ()
+        )
+        + tuple(
+            dict.fromkeys(
+                warning for item in items for warning in evidence_review_warnings(item)
+            )
         ),
         backed=bool(meta.get("backed", contract.backed)),
         read_shape=str(meta.get("read_shape") or contract.result_shape),
@@ -1273,6 +1451,16 @@ def _normalize_read_item(
             "truth": _first_truth(relations) or _str_or_none(payload.get("truth")),
             "coverage_status": item.coverage_status,
             "breakdown": dict(item.breakdown),
+            **(
+                {"details": dict(payload["details"])}
+                if isinstance(payload.get("details"), Mapping)
+                else {}
+            ),
+            **(
+                {"follow_up_commands": dict(payload["follow_up_commands"])}
+                if isinstance(payload.get("follow_up_commands"), Mapping)
+                else {}
+            ),
         }
 
     source_refs = _string_tuple(payload.get("source_refs"))
@@ -1296,6 +1484,7 @@ def _normalize_read_item(
             item.candidate_key,
         ),
         "status": _status_from_payload(payload),
+        **evidence_review_fields(payload),
         "claim": {
             "claim_key": payload.get("claim_key"),
             "predicate": payload.get("predicate"),
@@ -1312,6 +1501,16 @@ def _normalize_read_item(
         "truth": _str_or_none(payload.get("truth")),
         "coverage_status": item.coverage_status,
         "breakdown": dict(item.breakdown),
+        **(
+            {"details": dict(payload["details"])}
+            if isinstance(payload.get("details"), Mapping)
+            else {}
+        ),
+        **(
+            {"follow_up_commands": dict(payload["follow_up_commands"])}
+            if isinstance(payload.get("follow_up_commands"), Mapping)
+            else {}
+        ),
     }
 
 
@@ -1334,6 +1533,7 @@ def _normalize_read_relation(rel: Mapping[str, Any]) -> dict[str, Any]:
         "valid_until": rel.get("valid_until"),
         "observed_at": rel.get("observed_at"),
         "properties": dict(rel.get("properties") or {}),
+        **evidence_review_fields(rel),
         "claim_key": claim.get("candidate_key"),
         "score": claim.get("score"),
     }
@@ -1357,8 +1557,11 @@ def _read_quality(
     env: AgentEnvelope, *, backend_quality: Mapping[str, Any]
 ) -> dict[str, Any]:
     statuses = [report.status for report in env.coverage]
+    review_needed = any(evidence_review_warnings(item.payload) for item in env.items)
     return {
-        "status": "ok" if statuses and all(s != "empty" for s in statuses) else "watch",
+        "status": "ok"
+        if statuses and all(s != "empty" for s in statuses) and not review_needed
+        else "watch",
         "coverage_statuses": statuses,
         "confidence": env.overall_confidence,
         "backend": dict(backend_quality),
@@ -1466,6 +1669,35 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     return (str(value),)
 
 
+def _canonical_search_filters(
+    request: GraphEntitySearchRequest, *, definition: GraphDefinition
+) -> GraphEntitySearchRequest:
+    """``--type`` / ``--predicate`` in the spelling the stored labels use.
+
+    The candidate filter below compares labels verbatim, so ``repository``
+    silently matched nothing while ``Repository`` matched. An exact case or
+    spacing variant of a label the definition advertises is resolved here;
+    a value the definition does not know is passed through untouched — a
+    stored custom label is still a legitimate filter for the backend, and
+    refusing unknown vocabulary is the CLI's job, where the advertised
+    catalog can be shown alongside the refusal.
+    """
+    changes: dict[str, Any] = {}
+    if request.type:
+        match = resolve_entity_type(
+            request.type, known=tuple(definition.entity_types)
+        )
+        if match.canonical is not None and match.canonical != request.type:
+            changes["type"] = match.canonical
+    if request.predicate:
+        match = resolve_predicate(
+            request.predicate, known=tuple(definition.edge_types)
+        )
+        if match.canonical is not None and match.canonical != request.predicate:
+            changes["predicate"] = match.canonical
+    return dataclasses.replace(request, **changes) if changes else request
+
+
 def _matches_search_filters(row: ClaimRow, request: GraphEntitySearchRequest) -> bool:
     if request.subgraph and row.subgraph != request.subgraph:
         return False
@@ -1513,6 +1745,11 @@ def _scope_needles(scope: Mapping[str, Any]) -> list[str]:
             if not isinstance(item, str) or not item.strip():
                 continue
             raw = item.strip().lower()
+            if key in {"repo", "repo_name"}:
+                normalized_repo = _search_repo_scope_key({"repo": raw})
+                if normalized_repo:
+                    needles.append(normalized_repo.lower())
+                    continue
             if ":" in raw:
                 needles.append(raw)
                 continue
@@ -1763,6 +2000,8 @@ def _assemble_inline_relation_items(
     for entity_key, relations in relation_groups.items():
         top = best_item[entity_key]
         props = props_by_key.get(entity_key, {})
+        top_payload = dict(top.payload)
+        entity_details = _details_for_entity(top_payload, entity_key=entity_key)
         items.append(
             EvidenceItem(
                 include=top.include,
@@ -1799,6 +2038,16 @@ def _assemble_inline_relation_items(
                         for rel in relations
                     ],
                     "relation_count": len(relations),
+                    **({"details": entity_details} if entity_details else {}),
+                    **(
+                        {
+                            "follow_up_commands": dict(
+                                top_payload["follow_up_commands"]
+                            )
+                        }
+                        if isinstance(top_payload.get("follow_up_commands"), Mapping)
+                        else {}
+                    ),
                 },
             )
         )
@@ -1815,6 +2064,26 @@ def _assemble_inline_relation_items(
             "inline_relation_count": sum(len(v) for v in relation_groups.values()),
         },
     )
+
+
+def _details_for_entity(
+    payload: Mapping[str, Any], *, entity_key: str
+) -> dict[str, Any]:
+    """Keep typed W7 details attached to the endpoint they describe."""
+    details = payload.get("details")
+    if not isinstance(details, Mapping):
+        return {}
+    subject_key = _str_or_none(payload.get("subject_key"))
+    object_key = _str_or_none(payload.get("object_key"))
+    subject = details.get("subject")
+    obj = details.get("object")
+    if entity_key == subject_key and isinstance(subject, Mapping):
+        return dict(subject)
+    if entity_key == object_key and isinstance(obj, Mapping):
+        return dict(obj)
+    if "subject" in details or "object" in details:
+        return {}
+    return dict(details) if entity_key == subject_key else {}
 
 
 def _relation_payload(
@@ -1918,6 +2187,20 @@ def _str_or_none(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _search_repo_scope_key(scope: Mapping[str, Any]) -> str | None:
+    raw = scope.get("repo") or scope.get("repo_name")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    value = raw.strip().rstrip("/")
+    if value.startswith("repo:"):
+        return value
+    if value.startswith("https://github.com/"):
+        return "repo:github.com/" + value.removeprefix("https://github.com/")
+    if value.startswith("github.com/"):
+        return "repo:" + value
+    return "repo:github.com/" + value
 
 
 def _safe(fn, default):

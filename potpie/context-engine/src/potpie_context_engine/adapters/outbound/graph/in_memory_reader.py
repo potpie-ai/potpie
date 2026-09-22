@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
+    claim_is_applicable,
     embedding_score,
 )
 from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
@@ -175,7 +176,46 @@ def _matches_filter(
         return False
     if filter_.source_system_in and row.source_system not in filter_.source_system_in:
         return False
-    if not filter_.include_invalidated and row.invalid_at is not None:
+    if filter_.exact_text_in:
+        haystack = " ".join(
+            str(value)
+            for value in (
+                row.subject_key, row.object_key, row.claim_key, row.fact,
+                row.description, row.source_ref, row.source_refs, row.properties,
+            )
+            if value is not None
+        ).lower()
+        if not any(needle.lower() in haystack for needle in filter_.exact_text_in):
+            return False
+    if filter_.exact_text_pattern:
+        import re
+
+        haystack = " ".join(
+            str(value)
+            for value in (
+                row.subject_key, row.object_key, row.claim_key, row.fact,
+                row.description, row.source_ref, row.source_refs, row.properties,
+            )
+            if value is not None
+        ).lower()
+        if re.fullmatch(filter_.exact_text_pattern, haystack) is None:
+            return False
+    if filter_.environment_in and (row.environment or "").lower() not in {
+        value.lower() for value in filter_.environment_in
+    }:
+        return False
+    if filter_.truth_in and (row.truth or "").lower() not in {
+        value.lower() for value in filter_.truth_in
+    }:
+        return False
+    if filter_.endpoint_label:
+        subject_labels = store.entity_label_index.get((row.pot_id, row.subject_key), ())
+        object_labels = store.entity_label_index.get((row.pot_id, row.object_key), ())
+        if filter_.endpoint_label not in (*subject_labels, *object_labels):
+            return False
+    if not filter_.include_invalidated and not claim_is_applicable(
+        row, as_of=filter_.as_of
+    ):
         return False
     if filter_.valid_at_after and (
         row.valid_at is None or row.valid_at < filter_.valid_at_after
@@ -184,8 +224,6 @@ def _matches_filter(
     if filter_.valid_at_before and (
         row.valid_at is not None and row.valid_at > filter_.valid_at_before
     ):
-        return False
-    if filter_.as_of and row.valid_at is not None and row.valid_at > filter_.as_of:
         return False
     if filter_.subject_label:
         labels = store.entity_label_index.get((row.pot_id, row.subject_key), ())

@@ -24,14 +24,35 @@ def protect_protocol_source(
         return
     try:
         sections = store.list(pot_id=pot_id, slug=slug)
+        current_manifest = getattr(store, "current_manifest", None)
+        manifest = (
+            current_manifest(pot_id=pot_id, slug=slug)
+            if callable(current_manifest)
+            else None
+        )
     except ResourceStoreError as exc:
         if exc.code == RESOURCE_NOT_FOUND:
             return
         raise
     refs = tuple(
-        format_resource_id(slug, section.slug, ref.seq)
+        resource_id
         for section in sections
         for ref in section.chunks
+        for resource_id in (
+            format_resource_id(slug, section.slug, ref.seq),
+            *(
+                (
+                    format_resource_id(
+                        slug,
+                        section.slug,
+                        ref.seq,
+                        revision=manifest.revision,
+                    ),
+                )
+                if manifest is not None
+                else ()
+            ),
+        )
     )
     if not refs:
         return
@@ -78,8 +99,9 @@ def protect_protocol_source(
             else None
         )
         if incoming is not None:
-            chunks = store.get_many(pot_id=pot_id, resource_ids=refs)
-            if len(chunks) == len(refs) and all(
+            immutable_refs = tuple(ref for ref in refs if "@rev" in ref) or refs
+            chunks = store.get_many(pot_id=pot_id, resource_ids=immutable_refs)
+            if len(chunks) == len(immutable_refs) and all(
                 incoming.get(f"{chunk.section}/{chunk.seq:04}.txt") == chunk.text
                 for chunk in chunks
             ):

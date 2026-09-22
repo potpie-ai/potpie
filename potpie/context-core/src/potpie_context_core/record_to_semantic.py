@@ -20,6 +20,8 @@ merge) are never produced here.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Mapping
 
 from potpie_context_core.context_records import (
@@ -28,6 +30,7 @@ from potpie_context_core.context_records import (
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.identity import _slugify  # deterministic slug; reused for keys
 from potpie_context_core.ports.agent_context import RecordRequest
+from potpie_context_core.repository_identity import normalize_repo_ref
 from potpie_context_core.semantic_mutations import (
     MutationActor,
     SemanticMutation,
@@ -134,6 +137,10 @@ def _build_operation(
 
     if record_type == "bug_pattern":
         symptom = _str(details.get("symptom_signature")) or summary
+        bug_key = _explicit_entity_key(details.get("bug_pattern_id"), "bug_pattern")
+        occurrence_id = _occurrence_identity(
+            request, target=target, source_id=source_id
+        )
         return {
             **base,
             "op": "assert_claim",
@@ -141,7 +148,7 @@ def _build_operation(
             "predicate": "REPRODUCES",
             "truth": "agent_claim",
             "subject": {
-                "key": f"bug_pattern:{_slug(symptom or source_id)}",
+                "key": bug_key or f"bug_pattern:{_slug(occurrence_id)}",
                 "type": "BugPattern",
                 "description": summary,
                 "properties": _drop_empty(
@@ -158,8 +165,17 @@ def _build_operation(
 
     if record_type == "fix":
         symptom = _str(details.get("symptom_signature")) or summary
+        occurrence_id = _str(details.get("incident_id")) or _occurrence_identity(
+            request, target=target, source_id=source_id
+        )
+        explicit_fix_key = _explicit_entity_key(
+            details.get("fix_id") or details.get("incident_id"), "fix"
+        )
+        explicit_bug_key = _explicit_entity_key(
+            details.get("bug_pattern_id"), "bug_pattern"
+        )
         bug = {
-            "key": f"bug_pattern:{_slug(symptom or source_id)}",
+            "key": explicit_bug_key or f"bug_pattern:{_slug(occurrence_id)}",
             "type": "BugPattern",
             "description": symptom,
         }
@@ -188,7 +204,7 @@ def _build_operation(
                 "predicate": main_predicate,
                 "truth": "agent_claim",
                 "subject": {
-                    "key": f"fix:{_slug(summary or source_id)}",
+                    "key": explicit_fix_key or f"fix:{_slug(occurrence_id)}",
                     "type": "Fix",
                     "description": summary,
                     "properties": _drop_empty(
@@ -215,7 +231,7 @@ def _build_operation(
                     "predicate": "ATTEMPTED_FIX_FAILED",
                     "truth": "agent_claim",
                     "subject": {
-                        "key": f"fix:{_slug(attempt)}",
+                        "key": f"fix:{_slug(f'{occurrence_id}:{attempt}')}",
                         "type": "Fix",
                         "description": attempt,
                         "properties": _drop_empty(
@@ -237,20 +253,32 @@ def _build_operation(
 
     if record_type == "verification":
         target_ref = _str(details.get("target_ref")) or source_id
+        outcome = _str(details.get("outcome"))
+        explicit_activity_key = _explicit_entity_key(
+            details.get("verification_id") or details.get("activity_id"), "activity"
+        )
         return {
             **base,
+            # Keep the outcome on the immutable claim occurrence as well as
+            # its Activity endpoint. Readers must not need to borrow mutable
+            # endpoint state to interpret historical checks.
+            "extra": {**code_scope, "outcome": outcome},
             "op": "assert_claim",
             "subgraph": "debugging",
             "predicate": "VERIFIED",
             "truth": "timeline_event",
             "subject": {
-                "key": f"activity:verification:{_slug(target_ref)}",
+                # source_id is replay-stable and includes summary, scope and
+                # source refs (or the caller's idempotency key), so two checks
+                # of the same fix do not overwrite one Activity.
+                "key": explicit_activity_key
+                or f"activity:verification:{_slug(source_id)}",
                 "type": "Activity",
                 "description": summary,
                 "properties": _drop_empty(
                     {
                         "verb_class": "verified",
-                        "outcome": _str(details.get("outcome")),
+                        "outcome": outcome,
                     }
                 ),
             },
@@ -345,10 +373,23 @@ def _build_operation(
 def _scope_target(scope: dict, pot_id: str) -> dict:
     service = scope.get("service")
     if isinstance(service, str) and service.strip():
-        return {"key": f"service:{_slug(service)}", "type": "Service"}
+        return {
+            "key": _explicit_entity_key(service, "service"),
+            "type": "Service",
+        }
     repo = scope.get("repo") or scope.get("repo_name")
     if isinstance(repo, str) and repo.strip():
-        return {"key": f"repo:{_slug(repo)}", "type": "Repository"}
+        canonical = normalize_repo_ref(repo)
+        if canonical:
+            return {"key": f"repo:{canonical}", "type": "Repository"}
+    project = scope.get("project")
+    if isinstance(project, str) and project.strip():
+        project_key = _slug(_strip_entity_prefix(project.strip(), "project"))
+        return {
+            "key": f"code:project:{project_key}",
+            "type": "CodeAsset",
+            "properties": {"project": project_key},
+        }
     return {"key": f"repo:{_slug(pot_id)}", "type": "Repository"}
 
 
@@ -356,18 +397,70 @@ def _code_scope(scope: dict) -> dict[str, str]:
     keys = (
         "language",
         "framework",
-        "repo",
         "service",
-        "file_path",
         "audience",
         "environment",
     )
     out: dict[str, str] = {}
+    repo = scope.get("repo") or scope.get("repo_name")
+    if isinstance(repo, str) and repo.strip():
+        canonical = normalize_repo_ref(repo)
+        if canonical:
+            out["repo"] = canonical
+    project = scope.get("project")
+    if isinstance(project, str) and project.strip():
+        out["project"] = _slug(_strip_entity_prefix(project.strip(), "project"))
+    file_path = scope.get("file_path") or scope.get("path") or scope.get("folder")
+    if isinstance(file_path, str) and file_path.strip():
+        out["file_path"] = file_path.strip()
     for key in keys:
         val = scope.get(key)
         if isinstance(val, str) and val.strip():
-            out[key] = val.strip()
+            if key == "service":
+                out[key] = _strip_entity_prefix(val.strip(), "service")
+            else:
+                out[key] = val.strip()
     return out
+
+
+def _explicit_entity_key(value: Any, prefix: str) -> str | None:
+    """Preserve a supplied entity key, adding its type prefix when omitted."""
+    raw = _str(value)
+    if raw is None:
+        return None
+    return raw if raw.startswith(f"{prefix}:") else f"{prefix}:{raw}"
+
+
+def _occurrence_identity(
+    request: RecordRequest, *, target: Mapping[str, Any], source_id: str
+) -> str:
+    """Identify one occurrence with canonical, order-independent input."""
+    refs = sorted({ref.strip() for ref in request.source_refs if ref.strip()})
+    scope = _code_scope(dict(request.scope))
+    canonical = {
+        "pot_id": request.pot_id,
+        "target": target["key"],
+        "scope": scope,
+        "source_refs": refs,
+        "fallback": (
+            None
+            if refs
+            else (
+                _str(request.idempotency_key)
+                or {"summary": request.summary, "details": dict(request.details)}
+                or source_id
+            )
+        ),
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
+    readable = _slug(str(target["key"]).partition(":")[2] or str(target["key"]))[:48]
+    return f"{readable}-{digest}"
+
+
+def _strip_entity_prefix(value: str, prefix: str) -> str:
+    marker = f"{prefix}:"
+    return value[len(marker) :] if value.lower().startswith(marker) else value
 
 
 def _slug(text: str) -> str:

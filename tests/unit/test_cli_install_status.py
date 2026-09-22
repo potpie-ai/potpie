@@ -337,3 +337,43 @@ def test_collect_cli_install_status_omits_hint_without_uv_tool(
     assert status["uv_tool_installed"] is False
     assert status["hint"] is None
     assert "make cli-install" in status["diagnostic_commands"]
+    assert status["usable"] is False
+    assert status["missing_commands"] == list(cis.REQUIRED_COMMANDS)
+
+
+def test_command_probe_requires_the_agent_workflow_surface(monkeypatch) -> None:
+    from potpie_context_engine.adapters.outbound.install.cli_probe import (
+        REQUIRED_COMMAND_GROUPS,
+    )
+
+    def help_for(argv, **_kwargs):
+        group = tuple(argv[1:-1])
+        return MagicMock(
+            returncode=0,
+            stdout="\n".join(f"│ {name}  help" for name in REQUIRED_COMMAND_GROUPS[group]),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        cis.subprocess,
+        "run",
+        help_for,
+    )
+
+    probe = cis.probe_cli_surface("/tmp/potpie")
+
+    assert probe["ok"] is True
+    assert probe["commands"] == list(cis.REQUIRED_COMMANDS)
+
+
+def test_command_probe_reports_partial_cli(monkeypatch) -> None:
+    monkeypatch.setattr(
+        cis.subprocess,
+        "run",
+        lambda *args, **kwargs: MagicMock(
+            returncode=0, stdout="│ status  help\n│ doctor  help\n", stderr=""
+        ),
+    )
+    probe = cis.probe_cli_surface("/tmp/potpie")
+    assert "record" in probe["missing_commands"]
+    assert "graph read" in probe["missing_commands"]

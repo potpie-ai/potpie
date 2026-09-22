@@ -71,6 +71,7 @@ def skills_list(
                         "installed": s.installed,
                         "installed_version": s.installed_version,
                         "drifted": s.drifted,
+                        "disabled": s.disabled,
                     }
                     for s in items
                 ],
@@ -266,11 +267,14 @@ def skills_status(
                 "missing": [s.id for s in st.missing],
                 "outdated": [s.id for s in st.outdated],
                 "drifted": drifted,
+                "disabled": [s.id for s in st.disabled],
             },
             human=(
                 f"agent={st.agent} installed={len(st.installed)} "
-                f"missing={[s.id for s in st.missing]} outdated={[s.id for s in st.outdated]}"
+                f"missing={[s.id for s in st.missing]} "
+                f"outdated={[s.id for s in st.outdated]}"
                 + (f" drifted={drifted}" if drifted else "")
+                + (f" disabled={[s.id for s in st.disabled]}" if st.disabled else "")
             ),
         )
 
@@ -293,7 +297,9 @@ def _skill_line(skill) -> str:
     if skill.installed and skill.installed_version != skill.version:
         line = f"{line} (installed v{skill.installed_version})"
     if skill.drifted:
-        line = f"{line} [modified — reinstall to repair]"
+        line = f"{line} [modified — preserved by update; install explicitly to replace]"
+    if skill.disabled:
+        line = f"{line} [disabled]"
     return line
 
 

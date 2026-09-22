@@ -420,9 +420,10 @@ they exit `1` like any other caller mistake. `rm` is destructive and takes `--co
 reports the store's kind, readiness, location, and the active pot's document count.
 
 `resource rm` retracts section claims before deleting bytes; `pot reset` / `pot archive`
-purge the pot's resource tree with the graph (P5). Resource bytes are not portable *by
-design*: `graph export` carries claims only, so chunk ids in a restored snapshot resolve
-to `resource_not_found` until the document is re-imported.
+purge the pot's resource tree with the graph (P5). Snapshot exports include resource
+bytes by default. `graph export --graph-only` deliberately carries graph data only, so
+chunk ids in that restored snapshot resolve to `resource_not_found` until the document
+is re-imported.
 
 ---
 
@@ -489,7 +490,7 @@ potpie graph read --subgraph <s> --view <v> \
   [--environment <env>] [--source-ref <ref> ...] \
   [--depth <n>] [--direction out|in|both] [--limit 12] \
   [--sort auto|score|occurred_at] [--dedupe auto|none|source_ref|activity] \
-  [--format auto|raw|events|table|jsonl] [--detail compact|full] [--relations summary|full] \
+  [--format auto|raw|events|table|jsonl|json] [--detail compact|full] [--relations summary|full] \
   [--current] [--pot <ref>]
 
 potpie timeline recent \
@@ -547,9 +548,43 @@ potpie graph search-entities [<query> | --query <text>] \
   ```
 
   `--json` uses the same item shaping (`detail` / `relations`) but emits structured
-  JSON instead of human tables/bullets.
+  JSON instead of human tables/bullets. `--format json` is an accepted spelling of
+  the same request.
+
+  **Adjusted reads.** A read that can run with a bounded or canonical version of
+  what was asked for runs *once* and says so, instead of refusing and costing a
+  retry. The contract is shared by every read command (`potpie_context_core.adjustments`):
+
+  | Request | Effective behaviour | Disclosed as |
+  |---|---|---|
+  | `--depth 100` on `service_neighborhood` (max 4) | depth-4 context, same anchor and direction | `depth requested=100 effective=4 reason=maximum_supported` |
+  | `--subgraph Decisions --view Preferences_For_Scope`, `--view debugging.prior_occurrences`, `--subgraph knowledge --view docs` | the canonical view, one execution | `reason=canonical_case` / `canonical_alias` |
+  | `--detail summary` (read), `--detail compact` (neighborhood), `--format json` | the equivalent supported mode | `canonical_alias` / `machine_json` |
+  | `--since <t> --time-window 1h` | the explicit `--since` (documented precedence) | `time_window … reason=explicit_since` |
+  | `--time-window 7days` | `7d` | `reason=unit_alias`, with the effective UTC start |
+  | `search-entities --type repository --predicate policy-applies-to` | `Repository` / `POLICY_APPLIES_TO` | `reason=canonical_case` |
+
+  JSON carries `status: "adjusted"` plus an `adjustments` list (`field`,
+  `requested`, `effective`, `reason`, `message`, optional `max_supported`) on the
+  envelope; envelopes that adjusted nothing are unchanged. Text prints one `~ …`
+  line per adjustment, before any `! …` warning. Nothing is ever *guessed*: a
+  near-miss view or unknown vocabulary (`--type Repositry`, `--time-window 2fortnights`)
+  is refused **before** any host call with a bounded candidate list, a conflicting
+  qualified view (`--subgraph decisions --view debugging.prior_occurrences`) names
+  both targets, reversed `--since/--until` bounds are refused rather than swapped,
+  and `--depth`/`--limit` below 1 are not reads. Unknown `--format`/`--detail`
+  values also fail before the host is asked, never downgraded to prose.
+
+  Every follow-up command a read hands back — the `fetch:` line on a passage hit,
+  the compact catalog's `next_read`, `describe --examples` commands — carries the
+  resolved `--pot`, is `shlex`-quoted, and marks any input it could not invent as a
+  `'<placeholder>'` (`next_read_is_template: true`) rather than looking runnable.
 - **`graph search-entities`** is the **Filter** axis (identity resolution before a
-  write) — structured per-entity lookup, **not** through the read trunk.
+  write) — structured per-entity lookup, **not** through the read trunk. `--type`,
+  `--predicate` and `--subgraph` are checked against the serving host's advertised
+  vocabulary (local registry first, the catalog only for a value it does not know)
+  and refused as `unsupported_filter` with candidates when unknown, so a filter
+  that could never match is never reported as a confident empty result.
 
 ### Write (route `host.graph_workbench`)
 
@@ -637,8 +672,8 @@ potpie graph neighborhood --entity <key> [--predicate <p>] [--depth 2] [--direct
                           [--limit 50] [--detail summary|full] [--pot <ref>]
 potpie graph inspect <entity_key> [--depth 2] [--pot <ref>]      # legacy alias of neighborhood
 
-potpie graph export <file> [--pot <ref>]
-potpie graph import <file> [--pot <ref>]
+potpie graph export <folder-or-json> [--pot <ref>] [--overwrite] [--graph-only]
+potpie graph import <folder-or-json> [--pot <ref>] [--graph-only]
 potpie graph repair [--semantic-index] [--entity-summaries] [--entity-labels] \
                     [--document-keys] [--all] [--pot <ref>]
 ```
@@ -653,15 +688,15 @@ potpie graph repair [--semantic-index] [--entity-summaries] [--entity-labels] \
   `Document` nodes still keyed by the pre-resource-store content hash and returns
   them under `findings` with a `recommended_next_action`. Nothing is rewritten —
   re-minting an entity key would orphan every claim citing the old one.
-- **`graph export`/`import` is graph-only** and stays that way — a snapshot carries
-  claims and entities, never resource chunk bytes ([resources.md](./resources.md)
-  non-goals). A restored pot keeps document structure and section summaries, while
-  `resource get` on its chunk ids answers `resource_not_found` until the document is
-  re-imported.
+- **`graph export`/`import`** transfers complete graph entities and claims plus
+  document text and retained revisions by default. The CLI writes a readable
+  folder locally; RPC carries data, not filesystem paths. Import validates first,
+  skips identical records and refuses conflicting identities. See
+  [Export and import a pot](snapshots.md) for folder contents and merge semantics.
+  `--graph-only` omits document text.
 
-> **Roadmap (not yet wired):** `snapshot` (`graph export/import`) is real only on the
-> `in_memory`/`embedded` backends; `graph inspect`/`neighborhood` is unavailable on
-> `neo4j`. On the OSS default `falkordb_lite`, export/import are unavailable.
+Snapshots are supported on `in_memory`, `embedded`, `falkordb_lite`, `falkordb`,
+and `neo4j`. `graph inspect`/`neighborhood` remains unavailable on `neo4j`.
 
 ---
 
@@ -769,7 +804,9 @@ potpie graph commit <plan_id> --verify
 
 - Human output: an action-oriented summary plus a suggested next command.
 - `--json`: stable fields for agents/scripts (additive changes are OK); errors carry
-  `code`, `message`, `detail`, `recommended_next_action`.
+  `code`, `message`, `detail`, `recommended_next_action`. A read that ran with a
+  disclosed change to the request adds `status: "adjusted"` and `adjustments`
+  (see *Adjusted reads* above); text shows the same facts as `~ …` lines.
 - `setup --dry-run`: returns a preview document; no mutation, dependency setup,
   source registration, or skill install occurs.
 - Destructive commands (`pot reset`, `pot archive`, `resource rm`) require `--confirm` or

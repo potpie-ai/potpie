@@ -671,9 +671,12 @@ def test_lowering_append_event_creates_activity_and_edges() -> None:
     assert "PERFORMED" in edge_types
     assert "TOUCHED" in edge_types
     for edge in plan.batch.edge_upserts:
-        assert edge.properties["valid_at"] == "2026-06-08T00:00:00Z"
+        assert edge.properties["valid_at"] == "2026-06-08T00:00:00+00:00"
+        assert edge.properties["occurred_at"] == "2026-06-08T00:00:00+00:00"
     labels = {lbl for e in plan.batch.entity_upserts for lbl in e.labels}
     assert "Activity" in labels
+    activity = next(e for e in plan.batch.entity_upserts if "Activity" in e.labels)
+    assert activity.properties["occurred_at"] == "2026-06-08T00:00:00+00:00"
 
 
 def test_lowering_retract_produces_invalidation() -> None:
@@ -684,6 +687,7 @@ def test_lowering_retract_produces_invalidation() -> None:
         "predicate": "DEPENDS_ON",
         "object": {"key": "service:ledger-api", "type": "Service"},
         "reason": "dependency removed",
+        "valid_until": "2026-06-08T05:30:00+05:30",
     }
     req = _req(op, allow_review_required=True, approved_by="user:alice")
     plan = validate_semantic_request(req)
@@ -691,6 +695,7 @@ def test_lowering_retract_produces_invalidation() -> None:
     lower_semantic_request(req, plan)
     assert len(plan.batch.invalidations) == 1
     assert plan.batch.invalidations[0].target_edge[0] == "DEPENDS_ON"
+    assert plan.batch.invalidations[0].valid_to == "2026-06-08T00:00:00+00:00"
 
 
 def test_lowering_supersede_claim_replaces_claim_and_invalidates_old_relation() -> None:
@@ -704,6 +709,7 @@ def test_lowering_supersede_claim_replaces_claim_and_invalidates_old_relation() 
             "superseded_by": {"key": "service:ledger-new", "type": "Service"},
             "reason": "ledger dependency moved",
             "description": "payments now depends on the new ledger service",
+            "valid_until": "2026-06-08T05:30:00+05:30",
         },
         allow_review_required=True,
         approved_by="user:alice",
@@ -725,6 +731,7 @@ def test_lowering_supersede_claim_replaces_claim_and_invalidates_old_relation() 
         "service:ledger-old",
     )
     assert invalidation.superseded_by_key == "service:ledger-new"
+    assert invalidation.valid_to == "2026-06-08T00:00:00+00:00"
     assert plan.accepted_ops[0].claim_keys
 
 

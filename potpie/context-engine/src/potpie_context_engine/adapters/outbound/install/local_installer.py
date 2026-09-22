@@ -10,10 +10,13 @@ installation-flow owner to fill. They are environment-specific
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 
 from potpie_context_core.errors import CapabilityNotImplemented
 from potpie_context_core.lifecycle import StepResult
+
+from potpie_context_engine.adapters.outbound.install.cli_probe import probe_cli_surface
 
 
 @dataclass(slots=True)
@@ -21,9 +24,10 @@ class LocalInstaller:
     """CLI-on-PATH + OS service-unit registration (POC: reports installed)."""
 
     def is_installed(self) -> bool:
-        # The POC CLI is invoked from an installed/importable entrypoint; the
-        # real check inspects PATH + the registered service unit.
-        return True
+        executable = shutil.which("potpie")
+        if executable is None:
+            return False
+        return bool(probe_cli_surface(executable)["ok"])
 
     def install_cli(self) -> StepResult:
         raise CapabilityNotImplemented(

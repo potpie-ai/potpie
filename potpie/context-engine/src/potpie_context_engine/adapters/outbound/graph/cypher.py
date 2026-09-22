@@ -73,6 +73,27 @@ _REVIVE_CLAUSE = """
                     r.supersession_reason = null,
                     r.deleted_by = null"""
 
+
+def _conditional_revive_clause(
+    *, alias: str, preserve_param: str
+) -> str:
+    """Preserve invalidation lifecycle for metadata-only evidence markers."""
+    preserve = f"${preserve_param} AND {alias}.invalid_at IS NOT NULL"
+    fields = (
+        "invalid_at",
+        "expired_at",
+        "invalidation_reason",
+        "invalidated_by",
+        "superseded_by_object",
+        "supersession_reason",
+        "deleted_by",
+    )
+    return ",\n                    ".join(
+        f"{alias}.{field} = CASE WHEN {preserve} "
+        f"THEN {alias}.{field} ELSE null END"
+        for field in fields
+    )
+
 _POT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _PREDICATE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
@@ -495,6 +516,10 @@ async def upsert_edges_async(
             # it also reuses pre-upgrade rows on an idempotent reassertion.
             claim_key = edge_props.get("claim_key")
             claim_identity = ", claim_key: $claim_key" if claim_key else ""
+            preserve_lifecycle = edge_props.get("evidence_review_required") is True
+            revive_clause = _conditional_revive_clause(
+                alias="r", preserve_param="preserve_lifecycle"
+            )
             await session.run(
                 f"""
                 MATCH (a:Entity {{group_id: $gid, entity_key: $from_key}})
@@ -509,9 +534,11 @@ async def upsert_edges_async(
                 ON CREATE SET
                     r.uuid = randomUUID(),
                     r.created_at = $now
-                SET r.revived_at = CASE WHEN r.invalid_at IS NULL
-                                        THEN r.revived_at ELSE $now END
-                SET{_REVIVE_CLAUSE}
+                SET r.revived_at = CASE
+                    WHEN r.invalid_at IS NULL
+                         OR ($preserve_lifecycle AND r.invalid_at IS NOT NULL)
+                    THEN r.revived_at ELSE $now END
+                SET {revive_clause}
                 SET r += $props
                 """,
                 gid=pot_id,
@@ -521,6 +548,7 @@ async def upsert_edges_async(
                 source_ref=source_ref,
                 claim_key=claim_key,
                 now=now.isoformat(),
+                preserve_lifecycle=preserve_lifecycle,
                 props=_coerce_props_for_neo4j(edge_props),
             )
             # F3 deterministic supersession: when a singleton-predicate
@@ -696,6 +724,24 @@ async def apply_invalidations_async(
                 "invalidated_by": provenance.source_event_id,
             }
 
+            if item.target_claim_keys is not None:
+                res = await session.run(
+                    "MATCH ()-[r:RELATES_TO {group_id: $gid}]->() "
+                    "WHERE r.claim_key IN $claim_keys AND r.invalid_at IS NULL "
+                    "SET r += $props RETURN count(r) AS cnt",
+                    gid=pot_id,
+                    claim_keys=list(item.target_claim_keys),
+                    props=invalidation_props,
+                )
+                rec = await res.single()
+                await res.consume()
+                count += int(rec["cnt"]) if rec is not None else 0
+                if item.superseded_by_key and item.target_edge:
+                    await _write_supersedes_claim(
+                        session, pot_id=pot_id, new_key=item.superseded_by_key,
+                        old_key=item.target_edge[2], reason=item.reason,
+                        now=now, provenance=provenance,
+                    )
             if item.target_entity_key:
                 res = await session.run(
                     "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
@@ -719,7 +765,7 @@ async def apply_invalidations_async(
                         provenance=provenance,
                     )
                 count += matched
-            elif item.target_edge:
+            elif item.target_edge and item.target_claim_keys is None:
                 edge_type, from_key, to_key = item.target_edge
                 if not _is_valid_predicate(edge_type, definition=definition):
                     continue

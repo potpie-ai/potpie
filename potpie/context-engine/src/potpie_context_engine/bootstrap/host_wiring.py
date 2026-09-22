@@ -263,6 +263,7 @@ def build_host_shell(
             store=resource_store,
             graph=graph,
             claims=backend.claim_query,
+            snapshot=graph_runtime.backend.snapshot,
             # The same index the read trunk answers ``--include resources``
             # from. One instance, so an import is visible to the very next
             # search without a reload — two would be two databases.

@@ -130,7 +130,7 @@ def test_project_scope_bundle_install_preserves_existing_agents_md(
     assert "# Existing Setup" in text
     assert "Keep this." in text
     assert "<!-- potpie-start -->" in text
-    assert "# Context Engine" in text
+    assert "Potpie is durable project memory" in text
     assert (repo / ".agents" / "skills" / "potpie-cli" / "SKILL.md").exists()
     assert result.metadata["support_files"] == ["AGENTS.md"]
 

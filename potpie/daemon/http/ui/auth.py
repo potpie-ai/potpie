@@ -33,8 +33,8 @@ from urllib.parse import SplitResult, urlsplit
 from fastapi import HTTPException, Request
 from starlette.responses import Response
 
-#: Name of the browser session cookie. Path-scoped to ``/ui`` so it is never
-#: attached to ``/rpc``, which takes the bearer token and nothing else.
+#: Prefix of the per-daemon browser session cookie. Path-scoped to ``/ui`` so
+#: it is never attached to ``/rpc``, which takes the bearer token and nothing else.
 SESSION_COOKIE = "potpie_ui_session"
 COOKIE_PATH = "/ui"
 
@@ -75,6 +75,11 @@ class UiAuth:
 
     def __init__(self, *, token: str) -> None:
         self._token = token
+        # Cookies are scoped by host and path, not port. Multiple local homes
+        # can run daemons on different ports in the same browser; a shared
+        # cookie name lets opening one explorer log the other out. Keep the
+        # namespace local to this daemon, just like the sessions it holds.
+        self._cookie_name = f"{SESSION_COOKIE}_{secrets.token_hex(8)}"
         self._lock = threading.Lock()
         self._sessions: dict[str, float] = {}
         self._codes: dict[str, float] = {}
@@ -88,7 +93,7 @@ class UiAuth:
         return _same(header, f"Bearer {self._token}")
 
     def has_session(self, request: Request) -> bool:
-        value = request.cookies.get(SESSION_COOKIE)
+        value = request.cookies.get(self._cookie_name)
         if not value:
             return False
         now = time.monotonic()
@@ -136,7 +141,7 @@ class UiAuth:
         keeps it off every other route this daemon serves.
         """
         response.set_cookie(
-            SESSION_COOKIE,
+            self._cookie_name,
             session,
             max_age=int(SESSION_TTL_SECONDS),
             httponly=True,

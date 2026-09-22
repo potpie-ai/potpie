@@ -4,8 +4,9 @@
 |--------|------|-------|------|
 | Complete (P1–P5, P7–P9) | 2026-08-06 | nndn | `context-core/ontology.py`, `context-core/ports/resource_store.py`, `context-core/resource_to_semantic.py`, `context-engine/.../adapters/outbound/resources/`, `.../application/readers/docs.py`, `.../application/services/pot_management.py`, `.../host/shell.py`, `cli/commands/resource.py`, `cli/commands/pots.py`, `cli/source_kinds.py`, `.../graph/document_key_repair.py`, `cli/templates/*/skills/potpie-resource-*/`, `.../application/services/envelope_builder.py`, `.../adapters/outbound/graph/{canonical_claim_query,falkordb_reader,neo4j_reader}.py` |
 
-Every planned phase has landed; **P6 (export/import round-trip) is dropped** — resource bytes are
-deliberately outside the graph snapshot, see [Non-goals](#non-goals). The end-to-end path
+The original resource-store phases are implemented. **P6 (export/import round-trip)
+is now supported** through [readable snapshot bundles](snapshots.md), including
+retained document revisions. The end-to-end path
 works: `potpie resource import` writes bytes to the local store *and* the document's structure
 to the graph, so an imported document is findable by search and by
 `graph neighborhood --entity document:<slug>`, and `resource get` resolves a chunk id with no graph query.
@@ -40,7 +41,7 @@ Split a document into two halves that each live where they belong. The **bytes**
 | R7 | Re-import replaces cleanly and invalidates claims from the prior revision. |
 | R8 | Everything is pot-scoped, and pot teardown removes resources with the graph. |
 | R9 | Storage is swappable (local disk now, S3 later) behind one port. |
-| ~~R10~~ | *Dropped.* `graph export`/`import` does not round-trip resources — the snapshot stays graph-only ([Non-goals](#non-goals)). Numbering is kept so R11–R14 references stay stable. |
+| R10 | `graph export`/`import` bundles document text and retained revisions by default. `--graph-only` explicitly omits resources. |
 | R11 | `resource get` is fast: no graph query and no embedding on the read path. |
 | R12 | Every section carries a retrieval-grade summary — it is the only index into its chunks. |
 | R13 | An agent can reach chunk text in two calls, and fetch several chunks in one. |
@@ -80,7 +81,7 @@ Ingest: the agent picks the skill for the format, writes a script that walks the
 
 Find, then fetch: an agent searches as usual. Section summaries are embedded like any claim, so semantic search lands on a section; `DOCUMENTS` edges answer the structural version ("what documentation covers `service:payments-api`"). Either path yields chunk IDs, and `resource get` resolves the ID straight to a file path — no graph round-trip on the hot path.
 
-Re-import replaces: the same slug deletes the old chunk set, writes the new one, bumps `revision`, and invalidates claims from the prior revision using supersession the claim store already has. `revision` advances only when the section set actually moved (something added, changed, or removed) — re-importing a byte-identical directory is a genuine no-op, because R7 hangs prior-revision invalidation on this counter and a number that ticks on no-ops cannot say which revision a claim was made against.
+Re-import publishes a new current revision and retains every prior revision's bytes. Evidence uses an immutable `@revN` URI, so a conclusion continues to open the bytes it cited. Any conclusion citing a changed or removed section is marked `evidence_review_required`; Potpie does not rewrite or retract that conclusion. `revision` advances when actual chunk bytes or citation-visible metadata changes, even if an extractor reuses an incorrect `content_hash`. A byte-identical re-import remains a no-op.
 
 ## Contracts
 
@@ -115,7 +116,8 @@ erDiagram
 Chunks are files, not nodes: a 500-page PDF becomes ~40 section nodes, not ~400 chunk nodes.
 
 ```
-resource id    potpie://res/<doc>/<section>/<seq>     seq zero-padded; section is "body" when the source has none
+evidence id    potpie://res/<doc>/<section>/<seq>@rev<N>  immutable; seq is zero-padded
+legacy id      potpie://res/<doc>/<section>/<seq>        accepted only before a second revision exists
 disk path      <home>/resources/<pot_dir>/<doc>/<section>/<seq>.txt
 pot_dir        <sanitized pot_id>-<sha256(pot_id)[:16]>  pot ids are opaque; the digest keeps the mapping injective
 chunk size     target 4,000 chars, hard cap 8,000     rejected at import, never clamped at read
@@ -165,13 +167,13 @@ Chunk IDs reach claims through `SourceReferenceRecord.retrieval_uri` with `fetch
 | Documents are first-class graph entities | Keep resources entirely outside the graph | Document identity is what `graph search-entities` and the alias table already solve; keeping it out grows a second identity system and lets slugs sprawl. |
 | Manifest lives on the graph nodes | A per-doc `manifest.json`, or the local state store | Two manifests means two things to keep in sync and a migration when the flat-file store becomes SQLite. Disk holds bytes, graph holds structure. |
 | Section slug is agent-supplied | Derive the slug from the heading text | A retitled heading would orphan the section node and every claim citing it. |
-| Re-import replaces the chunk set | Immutable content-addressed versions | Versioning made re-ingest an unbounded append needing its own GC; replacement plus a `revision` bump reuses existing claim supersession. Cost: history may cite a chunk whose text was replaced. |
+| Re-import retains immutable revisions | Rebind old IDs to the newest bytes | Citations must remain truthful. Revisions are retained until explicit `resource rm`; deletion removes their bytes and subsequent reads return `resource_not_found`. Revision counters remain as tombstones so a deleted slug can never reuse an old `@revN` identity. |
 | Bytes written before graph state | Graph first, or one transaction | No cross-store transaction exists. Bytes-first fails to orphan files (harmless, overwritten); graph-first fails to dangling refs (corrupt). |
 | Agent writes a script; CLI imports a directory | `resource put` per chunk with text as an argument | Per-chunk text would pass through the agent's output tokens — expensive on a large PDF. A directory import is also atomic, so a crashed ingest leaves nothing half-written. |
 | Per-format skills teach extraction | Potpie ships PDF/spreadsheet parsers | Keeps `pypdf`/`openpyxl`/`unstructured` out of the dep tree (none present today) and honors "no Potpie-owned LLM/reconciliation agent". |
 | Pot-scoped storage under `<home>/resources/<pot_dir>/` | One flat global `/resources` | `pot_id == group_id` is the hardest invariant and cross-pot federation is an anti-goal; a flat store leaves `reset_pot` unable to clean up. Cost: the same file in two pots is stored twice. |
 | `import` goes through `graph.mutate` | Direct graph writes | Keeps `apply` the single write door, so a document is validated, risk-classified, and embedded by exactly the path an agent's own write takes. |
-| `graph export` stays graph-only | Bundle the pot's chunk tree into the snapshot | A snapshot is a graph artifact; bundling bytes gives it a second format, a size class, and a partial-restore story. Re-running `resource import` rebuilds both halves from the source directory, which is the real recovery path. Cost: chunk refs in a restored snapshot dangle until re-import — `resource get` answers `resource_not_found`, loudly and per-chunk. |
+| `graph export` bundles graph and resource files | Graph-only snapshots remain available via `--graph-only`; the default preserves readable evidence across pots. |
 | Reject oversized chunks at import | Clamp at read | Clamping hides the problem until an agent hits it; rejecting keeps every stored chunk uniformly safe to read. |
 | Two-pass ingest; summaries may be deferred | Summaries emitted by the script at split time | A script can split but cannot judge, and a document larger than the agent's context cannot be summarized in one pass. Deferring makes a big document usable section by section. |
 | Batched `get` and section chunk IDs on the claim | One `get` per chunk, `list` between search and fetch | A daemon round-trip measures ~0.7s, so a naive search → list → get ×5 costs ~5s of pure overhead before any reading happens. |
@@ -181,7 +183,7 @@ Chunk IDs reach claims through `SourceReferenceRecord.retrieval_uri` with `fetch
 - No chunk-level vector index. Embeddings stay one-per-claim-edge on `RELATES_TO.fact_embedding`; sections are the finest searchable grain.
 - No binary, image, or audio payloads.
 - No cross-pot sharing or dedup, and not a general file server: the store holds ingested source evidence, not uploads or build artifacts.
-- **No resource portability.** `graph export`/`import` carries claims, never chunk bytes, and there is no `resource export`. A snapshot restored into a pot with no store behind it keeps its `Document`/`DocumentSection` structure and its section summaries — the searchable half — while `resource get` on those chunk ids returns `resource_not_found`. Re-running `resource import` from the source directory is the way to restore bytes.
+- **No general filesystem backup.** [Graph snapshots](snapshots.md) include stored document text and retained revisions, but not arbitrary source files, credentials or host configuration.
 
 ## What determines quality
 
@@ -206,7 +208,7 @@ P1 and P2 are independent and can land in either order; everything after depends
 | ~~**P3 — Host + CLI**~~ *(landed)* | `HostShell.resources` (`ResourceFacade`), `resources` in `_ALLOWED_RPC_SURFACES`, `cli/commands/resource.py` with `import/get/list/rm`, `--confirm` on `rm`, `contract()` boundary and `--json` shape. `doctor` reports store readiness. Added along the way: `ResourceStorePort.status`, host-side neighbor resolution, and `error_code` on the daemon's validation payload so store codes survive the hop. | P2 |
 | ~~**P4 — Graph integration**~~ *(landed)* | `resource_to_semantic.py` maps a manifest to semantic ops (Document upsert + `SECTION_OF` claim per section + `retract_claim` per removed section); `ResourceFacade.import_dir` applies them through `graph.mutate`, so `apply` stays the single write door and import never lowers a `MutationBatch` itself. `DocsReader` returns section claims with a `chunk_ids` field on an unscoped read. | P1, P2, P3 |
 | ~~**P5 — Pot lifecycle**~~ *(landed)* | `LocalPotManagementService.reset_pot` / `archive_pot` and `hard_reset_pot` call `purge_pot` after a successful graph reset (graph writers stay graph-only; orchestration owns the second store). `resource rm` retracts `SECTION_OF` claims via `resource_delete_to_semantic_request` before deleting bytes. **`source remove` ignores resources** — registration only; there is no source→document FK (`source_ref` is a free URI), so cleanup is `resource rm` or pot teardown. | P2, P4 |
-| ~~**P6 — Export/import**~~ *(dropped)* | Bundling the chunk tree into `graph export` is not planned. The snapshot stays graph-only; re-import is the recovery path. See [Non-goals](#non-goals). | — |
+| **P6 — Export/import** *(implemented)* | Readable folder bundles contain graph entities/claims and resource chunks with retained revisions. Validated restore rejects conflicting target documents and rolls back staged bytes on graph failure. See [snapshots](snapshots.md). | P2, P4 |
 | ~~**P7 — Skills**~~ *(landed)* | `potpie-resource-pdf` / `-spreadsheet` / `-markdown` in `claude_plugin` + `agent_bundle` (byte-identical; the bundle catalog auto-registers them for `skills install`): script-writing, stable section slugs, the 1–5 chunk rule, the two-pass summarize flow, resolve-before-import, and — for spreadsheets — deriving facts as claims with chunk-id evidence. Existing skills updated in step: `potpie-graph` v6 (find-then-fetch read path), `potpie-source-ingestion` v2 (payload routing), `potpie-cli` v3 (`resource` group), plus AGENTS.md/CLAUDE.md routing. Content contract pinned in `tests/unit/test_agent_templates_v15.py`. | P3, P4 |
 | ~~**P9 — Section fact family**~~ *(landed)* | `Document` / `DocumentSection` use `fact_family=documents`; `docs` is demoted in `EnvelopeBuilder` cross-include ranking; non-docs readers pass `subgraph_not_in=("knowledge",)`; selective vector queries over-fetch ANN candidates so section embeddings cannot starve `prior_bugs`. | P4 |
 | ~~**P8 — Deprecations**~~ *(landed)* | `source add` dispatches on a closed kind table (`cli/source_kinds.py`): git hosts canonicalize to `repo`, document kinds exit 1 toward `resource import`, unknown kinds exit 1, `--default` is repo-only. `POST /api/v1/context/ingest` and `submit_raw_episode.py` are deleted, with the client's `ingest()` and the `ingest_episode` policy action; the `raw_episode` ingestion kind stays so historical rows still read. | P7 |
@@ -221,7 +223,7 @@ potpie graph search-entities --query "q3 review"       # resolves document:q3-re
 
 # R3, R11 — section search finds it; get does no graph work
 potpie graph read --subgraph knowledge --view document_context --scope service:payments-api --json
-potpie resource get potpie://res/q3-review/capacity/0000 --json    # text + chars
+potpie resource get potpie://res/q3-review/capacity/0000@rev1 --json    # immutable text + chars
 
 # R4 — oversized chunk is refused at import, with the standard error contract
 potpie resource import ./oversized --doc big --json     # exit 1, code=resource_chunk_too_large, no partial write
@@ -234,8 +236,8 @@ potpie search "liability cap" --json                    # section claim, source_
 potpie resource get <id-a> <id-b> --with-neighbors --json
 
 # R7, R14 — replacement, supersession, and incremental re-summary
-potpie resource import ./out-v2 --doc q3-review         # revision 2; old chunks gone
-potpie graph history --entity document:q3-review        # prior-revision claims invalidated
+potpie resource import ./out-v2 --doc q3-review         # revision 2; revision 1 retained
+potpie graph history --entity document:q3-review        # affected conclusions require review
 potpie resource import ./out-v2 --doc q3-review --json  # unchanged sections: kept, not re-summarized
 
 # R8 — pot scoping and teardown
@@ -248,9 +250,9 @@ potpie pot reset --confirm && potpie resource list --doc q3-review              
 ## Risks & open questions
 
 - **Content nobody claimed stays unreachable.** A section whose summary omits what a user later asks about is dead storage — there is no lexical fallback by design. Decide whether that is accepted or needs a `resource grep` escape hatch.
-- **Replacement makes history partly lossy.** A claim invalidated by re-import keeps its chunk ID but the text is gone. Acceptable only if `graph history` shows the revision a claim was made against.
+- **Retention is deliberate and unbounded per document.** Refresh never garbage-collects cited bytes. `resource rm --confirm` is the explicit deletion boundary: all retained revisions become unavailable, affected conclusions are marked for review, and their text is not rewritten.
 - **Promoting `Document` is a real migration.** Identity moves from `CONTENT_HASH` to `SLUG_ALIAS`, so existing soft-fail `Document` nodes get different keys, and coherence guards fail import on catalog drift.
-- **Concurrent imports to one doc.** The daemon serializes RPC behind `rpc_lock` (`daemon/main.py:122`), which covers local use; the cloud adapter will not have that lock and needs its own guard. `LocalResourceStore` no longer *corrupts* under a race — scratch directories are swept by age, never by name, so one import cannot delete another's staging tree — but two concurrent imports of one doc are still last-writer-wins.
+- **Concurrent imports to one doc.** `LocalResourceStore` takes an OS file lock around revision allocation, snapshot publication, deletion, and the durable monotonic counter. Different documents remain independent. A future remote object store must provide the equivalent conditional-write contract.
 - **A summary written to the graph does not reach the disk manifest.** Two-pass ingest fills `summary_pending` sections through the graph write door; `meta.json` keeps the empty copy `list` returns. P4 left this as-is rather than adding a second write path: the graph is the manifest of record (there is no `resource manifest` command for exactly this reason), and `resource list` reporting `summary_pending` for a section the graph has summarized is a stale *display*, not stale data. It is only a real problem for the re-import diff, which keys on `content_hash` and not on the summary. The fix, when it is worth it, is `ResourceStorePort.set_section_summary` — not narrowing `meta.json`, which `list` needs offline.
 - **`source remove` ignores resources (decided in P5).** A registered source's `location` is not a foreign key into the resource store — documents carry a free-form `source_ref` URI — so remove cannot know which documents came from it. Purge with `resource rm`; wipe a pot with `pot reset` / `pot archive`.
 

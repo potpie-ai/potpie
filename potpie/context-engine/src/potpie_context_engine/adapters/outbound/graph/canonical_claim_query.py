@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from potpie_context_core.graph_contract import evidence_strength_for_truth
@@ -40,6 +40,8 @@ CONTRACT_EDGE_KEYS = frozenset(
         "object_key",
         "observed_at",
         "ontology_version",
+        "__potpie_snapshot_properties_v2",
+        "__potpie_snapshot_claim_fields_v2",
         "source_ref",
         "source_refs",
         "source_system",
@@ -53,6 +55,27 @@ CONTRACT_EDGE_KEYS = frozenset(
     }
 )
 RESERVED_EDGE_KEYS = CONTRACT_EDGE_KEYS
+
+
+def claim_is_applicable(row: ClaimRow, *, as_of: datetime | None = None) -> bool:
+    """Return whether a claim applies in the half-open valid-time interval."""
+    point = _as_utc(as_of or datetime.now(timezone.utc))
+    start = _as_utc(row.valid_at) if row.valid_at is not None else None
+    valid_until = _as_utc(row.valid_until) if row.valid_until is not None else None
+    invalid_at = _as_utc(row.invalid_at) if row.invalid_at is not None else None
+    if start is not None and start > point:
+        return False
+    if valid_until is not None and point >= valid_until:
+        return False
+    if invalid_at is not None and point >= invalid_at:
+        return False
+    return True
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def parse_dt(value: Any) -> datetime | None:
@@ -77,7 +100,7 @@ def parse_dt(value: Any) -> datetime | None:
 
 
 def iso(value: datetime | None) -> str | None:
-    return value.isoformat() if value is not None else None
+    return _as_utc(value).isoformat() if value is not None else None
 
 
 def vector_property(value: Any) -> tuple[float, ...] | None:
@@ -159,7 +182,7 @@ def row_from_record(rec: Mapping[str, Any]) -> ClaimRow:
         predicate=str(props.get("name") or ""),
         subject_key=str(props.get("subject_key") or ""),
         object_key=str(props.get("object_key") or ""),
-        valid_at=parse_dt(props.get("valid_at")),
+        valid_at=parse_dt(props.get("valid_from") or props.get("valid_at")),
         invalid_at=parse_dt(props.get("invalid_at")),
         evidence_strength=evidence_strength_for_truth(truth),
         source_system=_coerce_str(props.get("source_system")),
@@ -235,8 +258,20 @@ WHERE ($preds IS NULL OR r.name IN $preds)
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
   AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
-  AND ($include_invalid OR r.invalid_at IS NULL)
-  AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)
+  AND ($exact_text IS NULL OR any(needle IN $exact_text WHERE
+    toLower(coalesce(r.subject_key, '') + ' ' + coalesce(r.object_key, '') + ' ' +
+      coalesce(r.claim_key, '') + ' ' + coalesce(r.fact, '') + ' ' +
+      coalesce(r.description, '') + ' ' + coalesce(r.source_ref, '') + ' ' +
+      reduce(text = '', ref IN [] + coalesce(r.source_refs, []) | text + ' ' + ref))
+    CONTAINS needle))
+  AND ($environments IS NULL OR toLower(coalesce(r.environment, '')) IN $environments)
+  AND ($truths IS NULL OR toLower(coalesce(r.truth, '')) IN $truths)
+  AND ($endpoint_label IS NULL OR $endpoint_label IN labels(a) OR $endpoint_label IN labels(b))
+  AND ($include_invalid OR (
+    (coalesce(r.valid_from, r.valid_at) IS NULL OR coalesce(r.valid_from, r.valid_at) <= $query_time)
+    AND (r.valid_until IS NULL OR $query_time < r.valid_until)
+    AND (r.invalid_at IS NULL OR $query_time < r.invalid_at)
+  ))
   AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
   AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
   AND ($subject_label IS NULL OR $subject_label IN labels(a))

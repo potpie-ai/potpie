@@ -159,6 +159,7 @@ class SemanticMutation:
     # end_relation_validity / retract_claim / supersede_claim
     reason: str | None = None
     superseded_by: GraphEntityRef | None = None
+    target_claim_keys: tuple[str, ...] = ()
 
     # patch_entity / transition_state
     patch: Mapping[str, Any] = field(default_factory=dict)
@@ -229,6 +230,7 @@ class SemanticMutation:
             observed_at=_opt_str(raw.get("observed_at")),
             reason=_opt_str(raw.get("reason")),
             superseded_by=GraphEntityRef.parse(raw.get("superseded_by")),
+            target_claim_keys=tuple(str(key) for key in _as_list(raw.get("target_claim_keys"))),
             patch=patch,
             expected_entity_version=_opt_str(
                 raw.get("expected_entity_version")
@@ -370,6 +372,8 @@ class SemanticMutationPlan:
     batch: Any = None
     provenance: Any = None
     warnings: tuple[str, ...] = ()
+    # Resolved against the proposal snapshot; lowering must not broaden these.
+    correction_targets: dict[int, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def errors(self) -> tuple[SemanticMutationValidationIssue, ...]:

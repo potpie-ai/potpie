@@ -655,6 +655,34 @@ def test_the_cut_is_announced_not_silent():
     assert lines[-1] == "  … +3 more (use --json)"
 
 
+def test_human_envelope_renders_bounded_kind_details_and_fetch_guidance():
+    claim = _claim("prior_bugs", key="claim:fix")
+    item = EvidenceItem(
+        include=claim.include,
+        candidate_key=claim.candidate_key,
+        score=claim.score,
+        payload={
+            **dict(claim.payload),
+            "details": {
+                "root_cause": "Leaked retry sockets",
+                "fix_steps": ["Close sockets in finally"],
+                "omitted": {"fix_steps": {"items": 2}},
+            },
+            "follow_up_commands": {
+                "full_entity": "potpie graph neighborhood --entity fix:checkout --pot local:test"
+            },
+        },
+        coverage_status=claim.coverage_status,
+    )
+
+    text = query._envelope_human(_envelope(item))
+
+    assert "root_cause: Leaked retry sockets" in text
+    assert 'fix_steps: ["Close sockets in finally"]' in text
+    assert "fetch_more:" in text
+    assert "potpie graph neighborhood --entity fix:checkout --pot local:test" in text
+
+
 def test_a_resource_row_names_the_chunk_to_fetch():
     item = EvidenceItem(
         include="resources",
@@ -729,9 +757,11 @@ def test_record_help_names_the_required_detail_per_type():
     result = CliRunner().invoke(_app(), ["record", "--help"])
 
     assert result.exit_code == 0
-    text = " ".join(result.stdout.split())
+    # Rich wraps long option help across panel borders; drop the box glyphs
+    # before joining so a phrase split over two lines still matches.
+    text = " ".join(result.stdout.replace("│", " ").split())
     for record_type, keys in REQUIRED_DETAIL_KEYS.items():
-        assert f"{record_type}: {', '.join(keys) or 'none'}" in text
+        assert f"{record_type} (needs {', '.join(keys) or 'no detail'})" in text
 
 
 @pytest.mark.parametrize("command", ["resolve", "search"])
@@ -834,3 +864,53 @@ def test_invalid_traversal_direction_fails_before_host_resolution():
     )
     assert result.exit_code == 1
     assert "--direction must be one of: out, in, both" in result.output
+
+
+# --- AX15: the record-type vocabulary is discoverable from the CLI -------------
+
+
+def test_record_help_advertises_exactly_the_public_record_types():
+    from potpie_context_core.ontology import PUBLIC_RECORD_TYPES
+
+    result = CliRunner().invoke(_app(), ["record", "--help"])
+
+    assert result.exit_code == 0
+    text = " ".join(result.stdout.replace("│", " ").split())
+    for record_type in PUBLIC_RECORD_TYPES:
+        assert record_type in text, record_type
+    assert "Structured" in text and "Free-form" in text
+    # No implementation history in user-facing help.
+    assert "before this flag existed" not in text
+    assert "impossible to execute" not in text
+
+
+def test_record_unknown_type_is_refused_before_the_host_is_asked():
+    _common.set_json(True)
+    host = _host()
+
+    result = CliRunner().invoke(
+        _app(), ["record", "--type", "decsion", "--summary", "use jittered backoff"]
+    )
+
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
+    assert host.agent_context.requests == []
+    payload = json.loads(result.output)
+    assert payload["code"] == "validation_error"
+    assert payload["detail"]["candidates"][0] == "decision"
+    assert payload["detail"]["corrected_template"] == (
+        "potpie record --type decision --summary '<summary>' --detail rationale=<rationale>"
+    )
+    assert "potpie record --type decision" in payload["recommended_next_action"]
+    assert "decision" in payload["detail"]["structured_types"]
+    assert "runbook_note" in payload["detail"]["free_form_types"]
+
+
+def test_record_type_case_is_folded_quietly():
+    host = _host()
+
+    result = CliRunner().invoke(
+        _app(), ["record", "--type", "Fix", "--summary", "retries need jitter"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert host.agent_context.requests[0].record_type == "fix"

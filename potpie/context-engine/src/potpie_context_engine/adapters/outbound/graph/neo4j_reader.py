@@ -17,6 +17,7 @@ labeled lexical scorer so old deployments degrade instead of dropping results.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
@@ -50,8 +51,11 @@ WHERE r.group_id = $gid
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
   AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
-  AND ($include_invalid OR r.invalid_at IS NULL)
-  AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)
+  AND ($include_invalid OR (
+    (coalesce(r.valid_from, r.valid_at) IS NULL OR coalesce(r.valid_from, r.valid_at) <= $query_time)
+    AND (r.valid_until IS NULL OR $query_time < r.valid_until)
+    AND (r.invalid_at IS NULL OR $query_time < r.invalid_at)
+  ))
   AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
   AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
   AND ($subject_label IS NULL OR $subject_label IN labels(a))
@@ -134,8 +138,14 @@ class Neo4jClaimQueryStore:
             "mutation_ids": list(filter_.mutation_id_in) or None,
             "source_refs": list(filter_.source_ref_in) or None,
             "sources": list(filter_.source_system_in) or None,
+            "exact_text": [value.lower() for value in filter_.exact_text_in] or None,
+            "exact_pattern": filter_.exact_text_pattern,
+            "environments": [value.lower() for value in filter_.environment_in] or None,
+            "truths": [value.lower() for value in filter_.truth_in] or None,
+            "endpoint_label": filter_.endpoint_label,
             "include_invalid": bool(filter_.include_invalidated),
             "as_of": _iso(filter_.as_of),
+            "query_time": _iso(filter_.as_of or datetime.now(timezone.utc)),
             "va_after": _iso(filter_.valid_at_after),
             "va_before": _iso(filter_.valid_at_before),
             "subject_label": filter_.subject_label,
@@ -213,7 +223,7 @@ class Neo4jClaimQueryStore:
         query = "MATCH (e:Entity {group_id: $gid}) WHERE e.entity_key IN $keys RETURN e.entity_key AS key, properties(e) AS props"
         with self._get_driver().session() as session:
             records = list(session.run(query, gid=pot_id, keys=keys))
-        return {rec["key"]: dict(rec["props"]) for rec in records}
+        return {rec["key"]: _public_entity_properties(rec["props"]) for rec in records}
 
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
         driver = self._get_driver()
@@ -228,7 +238,17 @@ class Neo4jClaimQueryStore:
         if not records:
             return {}
         props = records[0].get("props")
-        return dict(props) if isinstance(props, Mapping) else {}
+        return _public_entity_properties(props)
+
+
+def _public_entity_properties(props: Any) -> dict[str, Any]:
+    if not isinstance(props, Mapping):
+        return {}
+    return {
+        key: value
+        for key, value in props.items()
+        if key != "__potpie_snapshot_properties_v2"
+    }
 
 
 __all__ = [

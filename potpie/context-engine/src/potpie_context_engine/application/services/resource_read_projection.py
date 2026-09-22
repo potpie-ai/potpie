@@ -16,6 +16,7 @@ def resource_read_item(item: EvidenceItem) -> dict[str, Any]:
         "chunk_ids": [payload["resource_id"]],
         "source_refs": [source_ref] if source_ref else [],
         "fetch": payload.get("fetch"),
+        "follow_up_commands": dict(payload.get("follow_up_commands") or {}),
         "retrieval": dict(payload.get("retrieval") or {}),
         "coverage_status": item.coverage_status,
         "breakdown": dict(item.breakdown),

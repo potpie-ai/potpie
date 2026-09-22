@@ -71,6 +71,29 @@ class TestFix:
         assert isinstance(rec, FixRecord)
         assert rec.attempted_failed_fixes == ("restart pod",)
 
+    def test_fix_preserves_explicit_identity_fields(self) -> None:
+        rec = validate_record_payload(
+            record_type="fix",
+            summary="timeout",
+            details={
+                "incident_id": "incident:payments-42",
+                "fix_id": "fix:payments-42",
+                "bug_pattern_id": "bug_pattern:connection-timeout",
+            },
+        )
+        assert isinstance(rec, FixRecord)
+        assert rec.incident_id == "incident:payments-42"
+        assert rec.fix_id == "fix:payments-42"
+        assert rec.bug_pattern_id == "bug_pattern:connection-timeout"
+
+    def test_explicit_identity_must_be_a_non_empty_string(self) -> None:
+        with pytest.raises(ContextRecordValidationError):
+            validate_record_payload(
+                record_type="fix",
+                summary="timeout",
+                details={"incident_id": "   "},
+            )
+
 
 class TestBugPattern:
     def test_minimal_bug_pattern(self) -> None:

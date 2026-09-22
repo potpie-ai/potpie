@@ -93,6 +93,25 @@ def test_find_claims_builds_params_and_parses_rows() -> None:
     assert params["as_of"] == "2026-03-01T00:00:00+00:00"
 
 
+def test_public_readers_hide_snapshot_encoding_metadata() -> None:
+    claim_graph = _props_graph(
+        {
+            "group_id": "p1",
+            "name": "USES",
+            "subject_key": "a",
+            "object_key": "b",
+            "__potpie_snapshot_properties_v2": '{"nested":"{\\"x\\":1}"}',
+        }
+    )
+    claims = FalkorDBClaimQueryStore(settings=object(), graph=claim_graph)  # type: ignore[arg-type]
+    row = claims.find_claims(ClaimQueryFilter(pot_id="p1"))[0]
+    assert "__potpie_snapshot_properties_v2" not in row.properties
+
+    entity_graph = _props_graph(
+        {"name": "A", "__potpie_snapshot_properties_v2": '{"nested":"{}"}'}
+    )
+    entities = FalkorDBClaimQueryStore(settings=object(), graph=entity_graph)  # type: ignore[arg-type]
+    assert entities.entity_properties(pot_id="p1", entity_key="a") == {"name": "A"}
 def test_find_claims_hydrates_v15_metadata_from_rows() -> None:
     graph = _props_graph(
         {

@@ -6,6 +6,10 @@ description: "Use when the task can read or write the project-memory graph throu
 
 # Potpie Graph Workbench
 
+Supported single-record types:
+
+preference|policy|bug_pattern|fix|verification|decision|doc_reference|workflow|runbook_note|incident_summary|investigation|diagnostic_signal|service_note|feature_note|integration_note
+
 The graph is project memory: preferences, prior bugs and their fixes, infra
 topology, decisions, a timeline of changes, and ingested documents. You are the
 intelligence that reads it before acting and writes durable learnings after.

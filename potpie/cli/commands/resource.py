@@ -216,11 +216,16 @@ def resource_list(
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         sections = host.resources.list(pot_id=pot_id, slug=doc, section=section)
+        revisions = {row.revision for row in sections if row.revision is not None}
+        revision = next(iter(revisions)) if len(revisions) == 1 else None
         payload = {
             "doc": doc,
             "section_count": len(sections),
             "chunk_count": sum(len(row.chunks) for row in sections),
-            "sections": [_section_payload(doc, row) for row in sections],
+            "revision": revision,
+            "sections": [
+                _section_payload(doc, row, revision=row.revision) for row in sections
+            ],
         }
         emit(payload, human=_list_human(payload))
 
@@ -250,7 +255,15 @@ def resource_rm(
         # runs where none did.
         retracted = result.graph_retracted
         emit(
-            {"doc": doc, "removed": removed, "graph_retracted": retracted},
+            {
+                "doc": doc,
+                "removed": removed,
+                "graph_retracted": retracted,
+                "review_required_claim_keys": list(
+                    result.review_required_claim_keys
+                ),
+                "review_marker_errors": list(result.review_marker_errors),
+            },
             human=(
                 f"removed document '{doc}' "
                 + ("(chunks and section claims)" if retracted else "(chunks)")
@@ -486,6 +499,7 @@ def _import_payload(result: ResourceImportResult) -> dict[str, Any]:
     )
     pending = tuple(row.slug for row in manifest.sections if row.summary_pending)
     warnings = list(manifest.warnings)
+    warnings.extend(result.review_marker_errors)
     if pending:
         warnings.append(
             f"{len(pending)} section(s) imported without a summary: "
@@ -521,6 +535,8 @@ def _import_payload(result: ResourceImportResult) -> dict[str, Any]:
         "sections_changed": list(changed),
         "sections_removed": list(manifest.sections_removed),
         "summary_pending": list(pending),
+        "review_required_claim_keys": list(result.review_required_claim_keys),
+        "review_marker_errors": list(result.review_marker_errors),
         "graph": graph,
         "index": index,
         "warnings": warnings,
@@ -639,7 +655,9 @@ def _import_next_action(result: ResourceImportResult, pending: Sequence[str]) ->
     )
 
 
-def _section_payload(doc: str, section: SectionManifest) -> dict[str, Any]:
+def _section_payload(
+    doc: str, section: SectionManifest, *, revision: int
+) -> dict[str, Any]:
     return {
         "slug": section.slug,
         "title": section.title,
@@ -650,7 +668,9 @@ def _section_payload(doc: str, section: SectionManifest) -> dict[str, Any]:
         "chunks": [
             {
                 # The id is the point of `list`: it is what `get` takes.
-                "resource_id": format_resource_id(doc, section.slug, ref.seq),
+                "resource_id": format_resource_id(
+                    doc, section.slug, ref.seq, revision=revision
+                ),
                 "seq": ref.seq,
                 "label": ref.label,
                 "page": ref.page,

@@ -1365,3 +1365,93 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
     assert provenance.actor_client_name == "codex"
     assert passed_config is None
     assert active_config is reconciliation_config
+
+
+# --- RPC parity with the CLI's canonicalization (AX17/AX18/AX19) -------------
+
+
+def _seed_repository_claim(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="POLICY_APPLIES_TO",
+            subject_key="preference:jittered-backoff",
+            object_key="repo:github.com/potpie-ai/potpie",
+            fact="jittered backoff applies to the potpie repo",
+            properties={"semantic_similarity": 0.9},
+        )
+    )
+    store.set_entity_label(
+        pot_id="p",
+        entity_key="repo:github.com/potpie-ai/potpie",
+        labels=("Entity", "Repository"),
+    )
+
+
+def test_search_entities_canonicalizes_type_and_predicate_spelling(service) -> None:
+    _seed_repository_claim(service)
+
+    canonical = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p", query="backoff", type="Repository", predicate="POLICY_APPLIES_TO"
+        )
+    ).to_dict()
+    variant = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p", query="backoff", type="repository", predicate="policy applies to"
+        )
+    ).to_dict()
+
+    assert [e["key"] for e in canonical["entities"]] == ["repo:github.com/potpie-ai/potpie"]
+    assert variant["entities"] == canonical["entities"]
+
+
+def test_search_entities_leaves_unknown_labels_literal(service) -> None:
+    # A stored custom label is still a legitimate backend filter; refusing
+    # unknown vocabulary with candidates is the CLI's job.
+    _seed_repository_claim(service)
+    result = service.search_entities(
+        GraphEntitySearchRequest(pot_id="p", query="backoff", type="Repositry")
+    ).to_dict()
+    assert result["entities"] == []
+
+
+def test_read_canonicalizes_case_and_qualified_views(service) -> None:
+    canonical = service.read(
+        GraphReadRequest(
+            pot_id="p", subgraph="debugging", view="prior_occurrences", query="timeout"
+        )
+    ).to_dict()
+    for subgraph, view in (
+        ("Debugging", "Prior_Occurrences"),
+        ("debugging", "debugging.prior_occurrences"),
+    ):
+        variant = service.read(
+            GraphReadRequest(pot_id="p", subgraph=subgraph, view=view, query="timeout")
+        ).to_dict()
+        assert variant["view"] == canonical["view"] == "debugging.prior_occurrences"
+        assert variant["ok"] is True
+
+
+def test_read_refuses_a_qualified_view_that_disagrees_with_its_subgraph(service) -> None:
+    with pytest.raises(UnknownGraphViewError) as excinfo:
+        service.read(
+            GraphReadRequest(
+                pot_id="p",
+                subgraph="decisions",
+                view="debugging.prior_occurrences",
+                query="timeout",
+            )
+        )
+    assert "'decisions'" in str(excinfo.value)
+    assert "'debugging'" in str(excinfo.value)
+
+
+def test_read_still_refuses_a_near_miss_view_with_guidance(service) -> None:
+    with pytest.raises(UnknownGraphViewError):
+        service.read(
+            GraphReadRequest(
+                pot_id="p", subgraph="decisions", view="preferences_for_scop"
+            )
+        )

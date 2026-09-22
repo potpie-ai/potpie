@@ -154,8 +154,7 @@ def test_a_damaged_skill_is_detected_and_repaired(monkeypatch, tmp_path: Path) -
     assert [s.id for s in after.installed] == [SKILL]
 
 
-def test_update_all_repairs_damage_too(monkeypatch, tmp_path: Path) -> None:
-    """``update --all`` exited 0 with ``changed: []`` on a corrupted file."""
+def test_update_all_preserves_user_edits(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = build_host_shell(backend=InMemoryGraphBackend())
     repo = _repo(tmp_path, "repo")
@@ -167,8 +166,15 @@ def test_update_all_repairs_damage_too(monkeypatch, tmp_path: Path) -> None:
         agent="codex", all_=True, path=str(repo), scope="project"
     )
 
-    assert result.changed == (SKILL,)
-    assert "truncated" not in skill_md.read_text(encoding="utf-8")
+    assert result.changed == ()
+    assert result.metadata["preserved_user_edits"] == [SKILL]
+    assert skill_md.read_text(encoding="utf-8") == "truncated"
+
+    setup_style_rerun = host.skills.install(
+        agent="codex", path=str(repo), scope="project"
+    )
+    assert setup_style_rerun.metadata["preserved_user_edits"] == [SKILL]
+    assert skill_md.read_text(encoding="utf-8") == "truncated"
 
 
 def test_list_reports_the_installed_version_and_drift(
@@ -207,11 +213,10 @@ def test_the_plugin_installs_at_project_scope(monkeypatch, tmp_path: Path) -> No
     plugin = repo / ".claude" / "potpie-plugin"
     assert (plugin / ".claude-plugin" / "plugin.json").exists()
     assert (plugin / "skills" / "potpie-graph" / "SKILL.md").exists()
-    # The bundle carries ten of the eleven catalog skills. The missing one is
-    # reported, not silently skipped — and it must never appear in `changed`,
-    # which is what made every rerun claim to install it again.
-    assert SKILL not in result.changed
-    assert result.metadata["unavailable"] == [SKILL]
+    # Every harness installs from the canonical agent bundle, so the plugin
+    # cannot drift onto an older copied skill body.
+    assert SKILL in result.changed
+    assert "unavailable" not in result.metadata
     assert (
         host.skills.install(
             agent="claude-plugin", path=str(repo), scope="project"
@@ -234,20 +239,35 @@ def test_the_plugin_refuses_global_scope_with_a_repair(
     assert "--scope project" in str(exc.value)
 
 
-def test_naming_a_skill_the_plugin_cannot_carry_is_refused(
+def test_naming_a_skill_uses_the_canonical_plugin_bundle(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = build_host_shell(backend=InMemoryGraphBackend())
     repo = _repo(tmp_path, "repo")
 
-    with pytest.raises(ValueError) as exc:
-        host.skills.install(
-            agent="claude-plugin", skill_id=SKILL, path=str(repo), scope="project"
-        )
+    result = host.skills.install(
+        agent="claude-plugin", skill_id=SKILL, path=str(repo), scope="project"
+    )
+    assert result.changed == (SKILL,)
+    assert (repo / ".claude/potpie-plugin/skills" / SKILL / "SKILL.md").exists()
 
-    assert SKILL in str(exc.value)
-    assert "--agent claude" in str(exc.value)
+
+def test_disabled_skill_survives_bundle_install(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
+    host = build_host_shell(backend=InMemoryGraphBackend())
+    repo = _repo(tmp_path, "repo")
+    host.skills.install(agent="codex", path=str(repo), scope="project")
+    host.skills.remove(
+        agent="codex", skill_id=SKILL, path=str(repo), scope="project"
+    )
+
+    result = host.skills.install(agent="codex", path=str(repo), scope="project")
+    status = host.skills.status(agent="codex", path=str(repo), scope="project")
+
+    assert SKILL not in result.changed
+    assert [item.id for item in status.disabled] == [SKILL]
+    assert SKILL not in [item.id for item in status.missing]
 
 
 # --- a typo is not a packaging gap -------------------------------------------

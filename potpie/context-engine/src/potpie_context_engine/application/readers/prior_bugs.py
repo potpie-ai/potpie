@@ -31,6 +31,7 @@ from potpie_context_engine.application.readers._common import (
     row_in_anchor_set,
     service_anchor_keys,
 )
+from potpie_context_engine.application.readers._details import entity_details
 from potpie_context_core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
@@ -77,7 +78,31 @@ class PriorBugsReader:
         # querying, we count VERIFIED rows in the same result set and
         # roll the count into the corroboration_count of the related
         # RESOLVED row.
-        verification_counts = _count_verifications(rows)
+        verification_details = entity_details(
+            self.claim_query,
+            pot_id=req.pot_id,
+            entity_keys=(key for row in rows if row.predicate == "VERIFIED" for key in (row.subject_key, row.object_key)),
+            fields=("outcome", "status", "verification_status", "summary", "description"),
+        )
+        verification_counts = _count_verifications(
+            rows, entity_details=verification_details
+        )
+        verification_outcomes = _verification_outcomes(
+            rows, entity_details=verification_details
+        )
+        fix_details = entity_details(
+            self.claim_query,
+            pot_id=req.pot_id,
+            entity_keys=_fix_keys(rows),
+            fields=(
+                "summary",
+                "description",
+                "root_cause",
+                "fix_steps",
+                "verification_status",
+                "resolution_status",
+            ),
+        )
 
         candidates: list[Candidate] = []
         bug_scope = _bug_scope_overlaps(rows, anchor_keys=anchor_keys)
@@ -100,7 +125,12 @@ class PriorBugsReader:
             candidates.append(
                 Candidate(
                     candidate_key=claim_candidate_key(row),
-                    payload=_payload_from_row(row, verifications=verification_boost),
+                    payload=_payload_from_row(
+                        row,
+                        verifications=verification_boost,
+                        details=fix_details.get(fix_key or ""),
+                        verification_outcomes=verification_outcomes.get(fix_key or "", {}),
+                    ),
                     strength=row.evidence_strength,
                     valid_at=row.valid_at,
                     corroboration_count=1 + verification_boost,
@@ -251,14 +281,86 @@ def _scope_overlap(
     return 0.0
 
 
-def _count_verifications(rows: Iterable[ClaimRow]) -> dict[str, int]:
+def _count_verifications(
+    rows: Iterable[ClaimRow], *, entity_details: Mapping[str, Mapping[str, Any]]
+) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in rows:
-        if row.predicate == "VERIFIED":
+        if row.predicate == "VERIFIED" and _verification_succeeded(
+            row, entity_details=entity_details
+        ):
             fix_key = _fix_key_for_row(row)
             if fix_key:
                 counts[fix_key] = counts.get(fix_key, 0) + 1
     return counts
+
+
+def _verification_succeeded(
+    row: ClaimRow, *, entity_details: Mapping[str, Mapping[str, Any]]
+) -> bool:
+    raw_outcome = _verification_outcome_value(row, entity_details=entity_details)
+    # Legacy VERIFIED edges carried no outcome; their predicate is the positive
+    # assertion. Once an outcome is present, only explicit positive states can
+    # improve rank. Failed, partial, unknown and malformed values stay visible
+    # in details but add no corroboration.
+    if raw_outcome is None:
+        return True
+    if isinstance(raw_outcome, bool):
+        return raw_outcome
+    if isinstance(raw_outcome, (int, float)):
+        return False
+    outcome = str(raw_outcome).strip().lower()
+    return outcome in {"passed", "pass", "worked", "success", "succeeded", "verified", "true"}
+
+
+def _verification_outcome_value(
+    row: ClaimRow, *, entity_details: Mapping[str, Mapping[str, Any]]
+) -> Any:
+    for field in ("outcome", "verification_status", "status"):
+        if field in row.properties:
+            return row.properties[field]
+    for entity_key in (row.subject_key, row.object_key):
+        details = entity_details.get(entity_key, {})
+        for field in ("outcome", "verification_status", "status"):
+            if field in details:
+                return details[field]
+    return None
+
+
+def _verification_outcomes(
+    rows: Iterable[ClaimRow], *, entity_details: Mapping[str, Mapping[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    outcomes: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.predicate != "VERIFIED":
+            continue
+        fix_key = _fix_key_for_row(row)
+        if not fix_key:
+            continue
+        raw_outcome = _verification_outcome_value(row, entity_details=entity_details)
+        succeeded = _verification_succeeded(row, entity_details=entity_details)
+        fact = row.fact or ""
+        refs = list(row.source_refs or ((row.source_ref,) if row.source_ref else ()))
+        item: dict[str, Any] = {
+            "succeeded": succeeded,
+            "outcome": raw_outcome if raw_outcome is not None else "legacy_verified",
+            "fact": fact[:2_000] or None,
+            "source_refs": refs[:12],
+        }
+        omitted: dict[str, int] = {}
+        if len(fact) > 2_000:
+            omitted["fact_characters"] = len(fact) - 2_000
+        if len(refs) > 12:
+            omitted["source_refs"] = len(refs) - 12
+        if omitted:
+            item["omitted"] = omitted
+        outcomes.setdefault(fix_key, []).append(
+            item
+        )
+    return {
+        key: {"items": tuple(values[:12]), "omitted": max(0, len(values) - 12)}
+        for key, values in outcomes.items()
+    }
 
 
 def _bug_scope_overlaps(
@@ -313,13 +415,30 @@ def _fix_key_for_row(row: ClaimRow) -> str | None:
     return None
 
 
-def _payload_from_row(row: ClaimRow, *, verifications: int) -> dict[str, Any]:
+def _payload_from_row(
+    row: ClaimRow,
+    *,
+    verifications: int,
+    details: Mapping[str, Any] | None,
+    verification_outcomes: Mapping[str, Any],
+) -> dict[str, Any]:
+    extra: dict[str, Any] = {
+        "is_attempted_failed_fix": row.predicate == "ATTEMPTED_FIX_FAILED",
+        "verification_count": verifications,
+    }
+    if details:
+        extra["details"] = dict(details)
+    outcomes = list(verification_outcomes.get("items", ()))
+    if outcomes:
+        extra.setdefault("details", {})["verification_outcomes"] = outcomes
+        omitted = verification_outcomes.get("omitted", 0)
+        if omitted:
+            extra["details"].setdefault("omitted", {})["verification_outcomes"] = {
+                "items": omitted
+            }
     return claim_payload(
         row,
-        extra={
-            "is_attempted_failed_fix": row.predicate == "ATTEMPTED_FIX_FAILED",
-            "verification_count": verifications,
-        },
+        extra=extra,
     )
 
 

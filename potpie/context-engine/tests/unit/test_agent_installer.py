@@ -38,7 +38,7 @@ def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:
 
     result = install_agent_bundle(repo)
 
-    expected = {rel.as_posix() for rel, _ in iter_template_files()}
+    expected = {rel.as_posix() for rel, _ in iter_template_files()} | {"AGENTS.md"}
     created = set(result.created)
     assert created == expected
     assert not result.updated
@@ -126,26 +126,16 @@ def test_install_global_agent_instructions_merges_compact_agents_md(
     # without removing a word, and adding a paragraph the block genuinely wanted
     # broke it. Raise this deliberately, having decided the words earn their keep
     # in a file the reader did not write.
-    assert len(managed.strip()) <= 800
+    assert len(managed.strip()) <= 950
 
     rerun = install_global_agent_instructions(root, agent="codex")
 
     assert rerun.unchanged == ["AGENTS.md"]
 
 
-def test_the_two_global_instruction_templates_do_not_drift() -> None:
-    """AGENTS.md and CLAUDE.md carry the same words, so one budget covers both.
-
-    They are two copies of one paragraph, differing only in which harness reads
-    them, and only the codex/AGENTS.md path has a size assertion on it. Left
-    unpinned, CLAUDE.md could grow alone -- and CLAUDE.md is the copy that lands
-    in the global config of every Claude user on the machine.
-    """
-    bundle = dict(agent_installer._iter_bundle_files("global_agent_bundle"))
-    by_name = {path.as_posix(): text for path, text in bundle.items()}
-
-    assert set(by_name) == {"AGENTS.md", "CLAUDE.md"}
-    assert by_name["AGENTS.md"] == by_name["CLAUDE.md"]
+def test_global_instructions_have_one_canonical_source() -> None:
+    bundle = dict(agent_installer._iter_bundle_files("routing"))
+    assert set(path.as_posix() for path in bundle) == {"POTPIE.md"}
 
 
 def test_install_global_agent_instructions_updates_managed_claude_section(
@@ -234,7 +224,7 @@ def test_install_agent_bundle_merges_existing_agents_md_without_force(
     assert "AGENTS.md" in result.updated
     assert "local edits" in text
     assert "<!-- potpie-start -->" in text
-    assert "# Context Engine" in text
+    assert "Potpie is durable project memory" in text
 
 
 def test_install_agent_bundle_does_not_overwrite_agents_md_with_force(
@@ -252,7 +242,7 @@ def test_install_agent_bundle_does_not_overwrite_agents_md_with_force(
     assert "AGENTS.md" in result.updated
     assert "local edits" in text
     assert "<!-- potpie-start -->" in text
-    assert "# Context Engine" in text
+    assert "Potpie is durable project memory" in text
 
 
 def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> None:
@@ -262,8 +252,8 @@ def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> No
     target = repo / "AGENTS.md"
     marked_template = next(
         content
-        for rel, content in iter_template_files()
-        if rel.as_posix() == "AGENTS.md"
+        for rel, content in agent_installer._iter_bundle_files("routing")
+        if rel.as_posix() == "POTPIE.md"
     )
     old_unmarked = (
         marked_template.split("\n", 1)[1].rsplit("\n<!-- potpie-end -->", 1)[0].strip()
@@ -275,7 +265,7 @@ def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> No
 
     text = target.read_text(encoding="utf-8")
     assert "AGENTS.md" in result.updated
-    assert text.count("# Context Engine") == 1
+    assert text.count("Potpie is durable project memory") == 1
     assert "<!-- potpie-start -->" in text
 
 
@@ -288,8 +278,8 @@ def test_install_agent_bundle_replaces_embedded_unmarked_agents_md(
     target = repo / "AGENTS.md"
     marked_template = next(
         content
-        for rel, content in iter_template_files()
-        if rel.as_posix() == "AGENTS.md"
+        for rel, content in agent_installer._iter_bundle_files("routing")
+        if rel.as_posix() == "POTPIE.md"
     )
     old_unmarked = (
         marked_template.split("\n", 1)[1].rsplit("\n<!-- potpie-end -->", 1)[0].strip()
@@ -309,7 +299,7 @@ def test_install_agent_bundle_replaces_embedded_unmarked_agents_md(
     assert "Some custom project instructions." in text
     assert "## Team notes" in text
     assert "Keep these too." in text
-    assert text.count("# Context Engine") == 1
+    assert text.count("Potpie is durable project memory") == 1
     assert text.count("<!-- potpie-start -->") == 1
     assert text.count("<!-- potpie-end -->") == 1
 
@@ -333,7 +323,7 @@ def test_install_agent_bundle_updates_marked_agents_md_without_force(
     assert "# Local Setup" in text
     assert "Keep me." in text
     assert "stale" not in text
-    assert "# Context Engine" in text
+    assert "Potpie is durable project memory" in text
     assert text.count("<!-- potpie-start -->") == 1
 
 

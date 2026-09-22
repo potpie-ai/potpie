@@ -1,5 +1,7 @@
 # Context Graph Docs
 
+For readable folder backups and restore commands, see [Export and import a pot](snapshots.md).
+
 Diagrams include PNG previews and SVG links for viewers without Mermaid support; expandable Mermaid source remains beside each preview. Regenerate both images when changing a diagram's source.
 
 For the service topology reviewed on 2026-09-10, including implemented managed routing, Pie/VS Code/Copilot, and current compatibility gaps, start with [Service architecture](../architecture/README.md). The older snapshot below contains historical roadmap statements that no longer describe every current surface.

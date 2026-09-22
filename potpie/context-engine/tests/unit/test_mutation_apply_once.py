@@ -190,6 +190,35 @@ def test_embedded_receipt_survives_new_backend_without_rewriting(tmp_path) -> No
     assert len(fresh.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
 
 
+@pytest.mark.parametrize("profile", ["memory", "embedded"])
+def test_completed_retry_after_reset_returns_receipt_without_resurrecting_graph(
+    profile, tmp_path
+) -> None:
+    backend = (
+        InMemoryGraphBackend()
+        if profile == "memory"
+        else EmbeddedGraphBackend(home=tmp_path)
+    )
+    plan = _plan()
+    first = backend.mutation.apply(
+        plan,
+        expected_pot_id=POT,
+        provenance_context=_context(),
+    )
+    assert backend.mutation.reset_pot(POT) == {"removed_claims": 1}
+
+    if profile == "embedded":
+        backend = EmbeddedGraphBackend(home=tmp_path)
+    retried = backend.mutation.apply(
+        plan,
+        expected_pot_id=POT,
+        provenance_context=_context(),
+    )
+
+    assert retried == first
+    assert backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT)) == []
+
+
 def test_embedded_rejects_reused_id_with_different_batch_across_instances(
     tmp_path,
 ) -> None:

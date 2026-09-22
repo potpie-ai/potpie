@@ -40,6 +40,7 @@ from potpie_context_core.graph_contract import (
     normalize_entity_key,
 )
 from potpie_context_core.ontology import EdgeTypeSpec, EntityTypeSpec
+from potpie_context_core.ports.claim_query import ClaimQueryFilter
 from potpie_context_core.semantic_mutations import (
     GraphEntityRef,
     LoweredOperation,
@@ -101,6 +102,10 @@ def validate_semantic_request(
     token = _CURRENT_DEFINITION.set(definition or DEFAULT_GRAPH_DEFINITION)
     try:
         plan = _validate_semantic_request(request)
+        from potpie_context_core.correction_targets import resolve_correction_targets
+
+        resolve_correction_targets(request, plan, claim_query)
+        _validate_preservation_guards(request, plan, claim_query)
         if "protocols" in _CURRENT_DEFINITION.get().extensions:
             from potpie_context_core.protocol_validation import protocol_issues
 
@@ -112,6 +117,90 @@ def validate_semantic_request(
         return plan
     finally:
         _CURRENT_DEFINITION.reset(token)
+
+
+def _validate_preservation_guards(request, plan, claim_query) -> None:
+    guarded = [
+        op
+        for op in request.operations
+        if isinstance(op.extra.get("_expected_claim_snapshot"), Mapping)
+    ]
+    if not guarded:
+        return
+    issues = []
+    if claim_query is None:
+        issues.append(
+            SemanticMutationValidationIssue(
+                code="claim_preservation_unavailable",
+                message="exact claim preservation requires a claim query store",
+            )
+        )
+    for op in guarded:
+        expected = dict(op.extra["_expected_claim_snapshot"])
+        claim_key = str(expected.get("claim_key") or "")
+        preserve_key = str(op.extra.get("_preserve_claim_key") or "")
+        operation_matches = (
+            preserve_key == claim_key
+            and (op.predicate or "").strip().upper() == expected.get("predicate")
+            and op.subject is not None
+            and op.subject.key == expected.get("subject_key")
+            and op.object is not None
+            and op.object.key == expected.get("object_key")
+        )
+        rows = (
+            claim_query.find_claims(
+                ClaimQueryFilter(
+                    pot_id=request.pot_id,
+                    claim_key_in=(claim_key,),
+                    include_invalidated=True,
+                )
+            )
+            if claim_query is not None and claim_key
+            else []
+        )
+        if (
+            not operation_matches
+            or len(rows) != 1
+            or _claim_snapshot(rows[0]) != expected
+        ):
+            issues.append(
+                SemanticMutationValidationIssue(
+                    code="claim_preservation_conflict",
+                    message=(
+                        f"claim {claim_key!r} changed before evidence review metadata "
+                        "could be applied; read the current claim and retry"
+                    ),
+                )
+            )
+    if issues:
+        plan.issues = (*plan.issues, *issues)
+        plan.ok = False
+        plan.decision = "rejected"
+
+
+def _claim_snapshot(row) -> dict:
+    def timestamp(value):
+        return value.isoformat() if value is not None else None
+
+    return {
+        "claim_key": row.claim_key,
+        "predicate": row.predicate,
+        "subject_key": row.subject_key,
+        "object_key": row.object_key,
+        "fact": row.fact,
+        "description": row.description,
+        "source_system": row.source_system,
+        "source_refs": list(row.source_refs),
+        "evidence": [dict(item) for item in row.evidence],
+        "properties": dict(row.properties),
+        "valid_at": timestamp(row.valid_at),
+        "invalid_at": timestamp(row.invalid_at),
+        "valid_until": timestamp(row.valid_until),
+        "observed_at": timestamp(row.observed_at),
+        "truth": row.truth,
+        "confidence": row.confidence,
+        "environment": row.environment,
+    }
 
 
 def _validate_semantic_request(
@@ -899,6 +988,9 @@ def subgraph_for_predicate(
         finally:
             _CURRENT_DEFINITION.reset(token)
     pred = (predicate or "").strip().upper()
+    mapped = _CURRENT_DEFINITION.get().predicate_subgraphs.get(pred)
+    if mapped is not None:
+        return mapped
     if pred in _MEMORY_PREDICATE_SUBGRAPH:
         return _MEMORY_PREDICATE_SUBGRAPH[pred]
     spec = _edge_spec(pred)

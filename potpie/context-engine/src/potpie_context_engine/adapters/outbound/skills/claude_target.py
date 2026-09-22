@@ -15,8 +15,8 @@ from potpie_context_engine.adapters.outbound.skills.agent_installer import (
     InstallResult,
     UninstallResult,
     available_skill_ids,
-    install_global_agent_instructions,
     install_agent_bundle,
+    install_global_agent_instructions,
     install_skill_bundle,
     project_skill_path,
     prune_empty_dirs,
@@ -58,6 +58,13 @@ def _read_version_manifest(path: Path) -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items()}
 
 
+def _file_digest(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def _project_manifest_slug(root: Path) -> str:
     """A per-project manifest suffix: a readable name plus a collision-proof digest.
 
@@ -95,6 +102,16 @@ class FileBackedAgentTarget:
     def _load(self) -> dict[str, str]:
         return _read_version_manifest(self._path)
 
+    @property
+    def _hash_path(self) -> Path:
+        name = self._path.name.replace("skills_", "skill_hashes_", 1)
+        return self._path.with_name(name)
+
+    @property
+    def _disabled_path(self) -> Path:
+        name = self._path.name.replace("skills_", "skill_disabled_", 1)
+        return self._path.with_name(name)
+
     def _save(self, data: Mapping[str, str]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
         with open(self._path, "w", encoding="utf-8") as fh:
@@ -129,6 +146,27 @@ class FileBackedAgentTarget:
         )
         return not (result.created or result.updated)
 
+    def locally_modified(self, *, skill_id: str) -> bool:
+        expected = _read_version_manifest(self._hash_path).get(skill_id)
+        current = _file_digest(self._skill_file(skill_id))
+        return expected is not None and current is not None and current != expected
+
+    def disabled(self) -> frozenset[str]:
+        return frozenset(_read_version_manifest(self._disabled_path))
+
+    def set_disabled(self, *, skill_id: str, disabled: bool) -> None:
+        state = _read_version_manifest(self._disabled_path)
+        if disabled:
+            state[skill_id] = "disabled"
+        else:
+            state.pop(skill_id, None)
+        self._save_to(self._disabled_path, state)
+
+    def _save_to(self, path: Path, data: Mapping[str, str]) -> None:
+        self.home.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(dict(data), fh, indent=2)
+
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path).expanduser() if path else self.skills_root
         install_skill_bundle(root, skill_ids=(skill_id,), force=True)
@@ -136,6 +174,11 @@ class FileBackedAgentTarget:
         if (root.expanduser() / skill_id / "SKILL.md").exists():
             data[skill_id] = version
         self._save(data)
+        hashes = _read_version_manifest(self._hash_path)
+        digest = _file_digest(root.expanduser() / skill_id / "SKILL.md")
+        if digest:
+            hashes[skill_id] = digest
+            self._save_to(self._hash_path, hashes)
 
     def install_support_files(self, *, path: str | None = None) -> InstallResult | None:
         del path
@@ -195,9 +238,24 @@ class ProjectAgentTarget:
     def _load(self) -> dict[str, str]:
         return _read_version_manifest(self._path)
 
+    @property
+    def _hash_path(self) -> Path:
+        name = self._path.name.replace("skills_", "skill_hashes_", 1)
+        return self._path.with_name(name)
+
+    @property
+    def _disabled_path(self) -> Path:
+        name = self._path.name.replace("skills_", "skill_disabled_", 1)
+        return self._path.with_name(name)
+
     def _save(self, data: Mapping[str, str]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
         with open(self._path, "w", encoding="utf-8") as fh:
+            json.dump(dict(data), fh, indent=2)
+
+    def _save_to(self, path: Path, data: Mapping[str, str]) -> None:
+        self.home.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(dict(data), fh, indent=2)
 
     def installed(self) -> Mapping[str, str]:
@@ -224,6 +282,24 @@ class ProjectAgentTarget:
         )
         return not (result.created or result.updated)
 
+    def locally_modified(self, *, skill_id: str) -> bool:
+        expected = _read_version_manifest(self._hash_path).get(skill_id)
+        current = _file_digest(
+            project_skill_path(self.path, agent=self.agent, skill_id=skill_id)
+        )
+        return expected is not None and current is not None and current != expected
+
+    def disabled(self) -> frozenset[str]:
+        return frozenset(_read_version_manifest(self._disabled_path))
+
+    def set_disabled(self, *, skill_id: str, disabled: bool) -> None:
+        state = _read_version_manifest(self._disabled_path)
+        if disabled:
+            state[skill_id] = "disabled"
+        else:
+            state.pop(skill_id, None)
+        self._save_to(self._disabled_path, state)
+
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path) if path else self.path
         # Support files are the caller's *other* request; see
@@ -241,6 +317,13 @@ class ProjectAgentTarget:
         if project_skill_path(root, agent=self.agent, skill_id=skill_id).exists():
             data[skill_id] = version
         self._save(data)
+        hashes = _read_version_manifest(self._hash_path)
+        digest = _file_digest(
+            project_skill_path(root, agent=self.agent, skill_id=skill_id)
+        )
+        if digest:
+            hashes[skill_id] = digest
+            self._save_to(self._hash_path, hashes)
 
     def install_support_files(self, *, path: str | None = None) -> InstallResult:
         root = Path(path) if path else self.path

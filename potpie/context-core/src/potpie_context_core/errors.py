@@ -5,6 +5,15 @@ class ContextEngineError(Exception):
     """Base for all context-engine domain errors."""
 
 
+class GraphMutationVersionConflict(ContextEngineError):
+    """Atomic compare-and-apply observed a newer canonical graph revision."""
+
+    def __init__(self, *, expected: int, current: int):
+        super().__init__(f"graph version moved from {expected} to {current}")
+        self.expected = expected
+        self.current = current
+
+
 class ContextEngineDisabled(ContextEngineError):
     """Feature flag off or graph clients unavailable."""
 

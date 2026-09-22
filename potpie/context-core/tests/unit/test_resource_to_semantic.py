@@ -72,8 +72,8 @@ def test_section_claims_cite_their_chunk_ids():
 
     claim = request.operations[1]
     assert [e.source_ref for e in claim.evidence] == [
-        "potpie://res/q3-review/capacity/0000",
-        "potpie://res/q3-review/capacity/0001",
+        "potpie://res/q3-review/capacity/0000@rev1",
+        "potpie://res/q3-review/capacity/0001@rev1",
     ]
 
 
