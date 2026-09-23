@@ -106,7 +106,7 @@ For the **HTTP** path the bench talks to a real engine. Required environment:
 | `OPENAI_API_KEY` | Used by the LLM judge (default model `gpt-5.4`). |
 | `POTPIE_BENCH_JUDGE_MODEL` | Optional. Override the judge model. Default `gpt-5.4`. |
 | `POTPIE_BENCH_REPO` | Optional. `owner/repo` to attach to each ephemeral pot. Default `acme/sandbox`. |
-| `CONTEXT_ENGINE_RECONCILIATION_MODEL` | Optional. Reconciliation-agent model on the engine side. Default `openai-responses:gpt-5.4-mini`. |
+| `CONTEXT_ENGINE_RECONCILIATION_MODEL` | Optional. Reconciliation-agent model on the engine side. Default `openai-responses:gpt-5.4-mini`. Prefix with `orcarouter:` (e.g. `orcarouter:anthropic/claude-sonnet-4`) to run the agent through the OrcaRouter gateway using `ORCAROUTER_API_KEY`. |
 
 ## Running
 

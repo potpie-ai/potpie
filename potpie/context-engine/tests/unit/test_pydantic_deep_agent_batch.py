@@ -109,6 +109,74 @@ def test_compose_instructions_dedupes_repeated_event_kinds() -> None:
     assert text.count("github / pull_request / merged") == 1
 
 
+def test_orcarouter_model_prefix_resolves_to_openai_chat_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("pydantic_deep")
+    pytest.importorskip("openai")
+
+    from pydantic_ai.models.openai import OpenAIChatModel
+
+    from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+        _resolve_reconciliation_model,
+    )
+
+    monkeypatch.setenv("ORCAROUTER_API_KEY", "sk-orca-test-key")
+
+    model = _resolve_reconciliation_model("orcarouter:anthropic/claude-sonnet-4")
+
+    assert isinstance(model, OpenAIChatModel)
+    assert model._model_name == "anthropic/claude-sonnet-4"
+    assert str(model._provider.base_url) == "https://api.orcarouter.ai/v1/"
+    assert model._provider.client.api_key == "sk-orca-test-key"
+
+
+def test_orcarouter_model_prefix_keeps_default_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("pydantic_deep")
+    pytest.importorskip("openai")
+
+    from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+        _resolve_reconciliation_model,
+    )
+
+    monkeypatch.delenv("ORCAROUTER_API_KEY", raising=False)
+
+    model = _resolve_reconciliation_model("orcarouter:anthropic/claude-sonnet-4")
+    # The OpenAI SDK requires a non-empty key; we fall back to a placeholder so
+    # construction never hard-fails when the env var is absent.
+    assert model._provider.client.api_key == "api-key-not-set"
+
+
+def test_reconciliation_model_string_passthrough() -> None:
+    pytest.importorskip("pydantic_deep")
+
+    from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+        _resolve_reconciliation_model,
+    )
+
+    # Non-orcarouter strings keep the pydantic-deep string path untouched.
+    assert (
+        _resolve_reconciliation_model("openai-responses:gpt-5.4-mini")
+        == "openai-responses:gpt-5.4-mini"
+    )
+
+
+def test_reconciliation_model_object_passthrough() -> None:
+    pytest.importorskip("pydantic_deep")
+    pytest.importorskip("openai")
+
+    from pydantic_ai.models.test import TestModel
+
+    from potpie_context_engine.adapters.outbound.reconciliation.pydantic_deep_agent import (
+        _resolve_reconciliation_model,
+    )
+
+    test_model = TestModel()
+    assert _resolve_reconciliation_model(test_model) is test_model
+
+
 def test_run_batch_short_circuits_for_empty_event_list() -> None:
     pytest.importorskip("pydantic_deep")
     agent = PydanticDeepReconciliationAgent()
