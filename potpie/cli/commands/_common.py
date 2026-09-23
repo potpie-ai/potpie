@@ -259,13 +259,12 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
     from potpie.runtime import (
         DaemonEngineClient,
         HttpDaemonTransport,
-        LocalEngineClient,
         ProtocolTransportError,
     )
-    from potpie.runtime.local_engine import build_local_resource_manager
+    from potpie.runtime.composition import default_host_mode
 
     selector = _context_selector(explicit_pot)
-    mode = os.getenv("CONTEXT_ENGINE_HOST_MODE", "daemon").strip().lower()
+    mode = default_host_mode()
     if mode != "in_process":
         from potpie.config.local_paths import (
             default_home,
@@ -283,7 +282,10 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
                 ProtocolTransportError(
                     code="daemon_discovery_unavailable",
                     message="canonical daemon discovery is unavailable",
-                    recommended_next_action="run 'potpie daemon restart'",
+                    recommended_next_action=(
+                        "run 'potpie daemon restart', or set "
+                        "CONTEXT_ENGINE_HOST_MODE=in_process"
+                    ),
                     retry_posture="safe",
                 )
             ) from exc
@@ -303,12 +305,33 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
                 ),
                 expected_instance_id=connection.discovery.instance_id,
             )
-            handshake = _run_engine_awaitable(client.handshake())
+            try:
+                handshake = _run_engine_awaitable(client.handshake())
+            except Exception as exc:
+                raise EngineClientError(
+                    ProtocolTransportError(
+                        code="daemon_unavailable",
+                        message="daemon handshake failed",
+                        recommended_next_action=(
+                            "run 'potpie daemon restart', or set "
+                            "CONTEXT_ENGINE_HOST_MODE=in_process"
+                        ),
+                        retry_posture="safe",
+                    )
+                ) from exc
             if not getattr(handshake, "ok", False):
                 raise EngineClientError(handshake.error)
             _state["engine_daemon_client"] = client
             _state["engine_daemon_key"] = key
         return client
+
+    return _local_engine_client(selector, runtime=runtime)
+
+
+def _local_engine_client(selector: Any, *, runtime: Any | None = None):
+    """Build / reuse the in-process LocalEngineClient."""
+    from potpie.runtime import LocalEngineClient
+    from potpie.runtime.local_engine import build_local_resource_manager
 
     runtime = runtime if runtime is not None else get_runtime()
     from potpie.runtime.composition import LocalRuntimeComposition

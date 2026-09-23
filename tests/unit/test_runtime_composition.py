@@ -321,7 +321,7 @@ def test_local_runtime_rejects_runtime_only_backend() -> None:
         build_local_runtime(backend=runtime_only)
 
 
-@pytest.mark.parametrize("profile", ["falkordb", "falkordb_lite"])
+@pytest.mark.parametrize("profile", ["falkordb", "falkordb_lite", "ladybug"])
 def test_local_runtime_accepts_backend_env(
     profile: str, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -330,24 +330,40 @@ def test_local_runtime_accepts_backend_env(
     monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
     if profile == "falkordb_lite":
         monkeypatch.setenv("FALKORDB_MODE", "server")
+    if profile == "ladybug":
+        monkeypatch.setenv(
+            "CONTEXT_ENGINE_LADYBUG_PATH", str(tmp_path / "ladybug.lbdb")
+        )
 
     runtime = build_local_runtime()
 
     assert runtime.root.backend.profile == profile
 
 
-def test_local_runtime_defaults_to_falkordb_lite(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [
+        ("win32", "ladybug"),
+        ("darwin", "falkordb_lite"),
+        ("linux", "falkordb_lite"),
+    ],
+)
+def test_local_runtime_defaults_to_platform_backend(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    expected: str,
 ) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
     monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
     monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
+    monkeypatch.setattr("sys.platform", platform)
 
     runtime = build_local_runtime()
 
-    assert default_backend_profile() == "falkordb_lite"
-    assert runtime.root.backend.profile == "falkordb_lite"
+    assert default_backend_profile() == expected
+    assert runtime.root.backend.profile == expected
 
 
 def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:

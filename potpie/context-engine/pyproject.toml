@@ -28,15 +28,18 @@ http = [
     "uvicorn[standard]>=0.32.0",
 ]
 local = [
+    # Default OSS embedded backend on Windows (native win_amd64 wheels + HNSW).
+    "ladybug>=0.20.3",
+    "numpy>=1.26",
     "falkordb>=1.6.1",
-    # Default CLI backend is FalkorDBLite on Python 3.12+.
-    "falkordblite>=0.10.0; python_version >= '3.12'",
+    # Opt-in legacy embedded profile (Unix rollback); skip on Windows.
+    "falkordblite>=0.10.0; python_version >= '3.12' and sys_platform != 'win32'",
     # redis 8 enables maintenance notifications that break FalkorDBLite's
     # hostless embedded connection; keep the bound wherever falkordblite ships.
-    "redis>=7.1,<8; python_version >= '3.12'",
+    "redis>=7.1,<8; python_version >= '3.12' and sys_platform != 'win32'",
     # Without hiredis, redis-py parses RESP replies element-by-element in pure
     # Python — graph reads spend seconds in the parser on large result sets.
-    "hiredis>=3.0.0; python_version >= '3.12'",
+    "hiredis>=3.0.0; python_version >= '3.12' and sys_platform != 'win32'",
 ]
 neo4j = [
     "neo4j>=5.28.0",

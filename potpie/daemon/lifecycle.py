@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import socket
@@ -37,6 +38,8 @@ from potpie_context_engine import Failure, Success
 from potpie.config.local_paths import default_home
 from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan, StepResult
 
+logger = logging.getLogger(__name__)
+
 
 class DaemonStartError(Exception):
     """Raised when the canonical local daemon cannot become ready."""
@@ -54,18 +57,67 @@ class DaemonStopError(Exception):
         self.error = error
 
 
-def _pid_alive(pid: int) -> bool:
+# Win32: STILL_ACTIVE exit code + limited query/terminate rights.
+_WINDOWS_STILL_ACTIVE = 259
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_PROCESS_TERMINATE = 0x0001
+
+
+def _pid_alive_windows(pid: int) -> bool:
+    """Return True if *pid* is a live Win32 process (STILL_ACTIVE).
+
+    Do not use ``os.waitpid(..., os.WNOHANG)`` or bare ``os.kill(pid, 0)`` as the
+    primary probe on Windows — those paths are POSIX-shaped and previously
+    surfaced as ``Unexpected internal error`` from ``potpie daemon start/status``.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    handle = ctypes.windll.kernel32.OpenProcess(
+        _PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid)
+    )
+    if not handle:
+        return False
     try:
-        waited_pid, _status = os.waitpid(pid, os.WNOHANG)
-    except OSError:
-        # A daemon launched by another CLI process is not our child. Retain the
-        # signal probe for that normal cross-process observation path.
-        pass
-    else:
-        # ``kill(pid, 0)`` still succeeds for an exited child that is a zombie
-        # on POSIX. Reap that child before deciding whether its PID is live.
-        if waited_pid == pid:
+        code = wintypes.DWORD()
+        ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        if not ok:
             return False
+        return int(code.value) == _WINDOWS_STILL_ACTIVE
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _windows_terminate(pid: int) -> None:
+    import ctypes
+
+    handle = ctypes.windll.kernel32.OpenProcess(_PROCESS_TERMINATE, False, int(pid))
+    if not handle:
+        raise OSError(f"OpenProcess(PROCESS_TERMINATE) failed for pid={pid}")
+    try:
+        if not ctypes.windll.kernel32.TerminateProcess(handle, 1):
+            raise OSError(f"TerminateProcess failed for pid={pid}")
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        return _pid_alive_windows(pid)
+    wnohang = getattr(os, "WNOHANG", None)
+    if wnohang is not None:
+        try:
+            waited_pid, _status = os.waitpid(pid, wnohang)
+        except OSError:
+            # A daemon launched by another CLI process is not our child. Retain
+            # the signal probe for that normal cross-process observation path.
+            pass
+        else:
+            # ``kill(pid, 0)`` still succeeds for an exited child that is a
+            # zombie on POSIX. Reap that child before deciding whether its PID
+            # is live.
+            if waited_pid == pid:
+                return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -105,9 +157,16 @@ class _RecordedDaemonProcess:
         return self._returncode
 
     def terminate(self) -> None:
+        if os.name == "nt":
+            _windows_terminate(self._pid)
+            return
         os.kill(self._pid, signal.SIGTERM)
 
     def kill(self) -> None:
+        if os.name == "nt":
+            _windows_terminate(self._pid)
+            return
+        # SIGKILL is POSIX-only.
         os.kill(self._pid, signal.SIGKILL)
 
 
@@ -173,6 +232,7 @@ class Daemon:
         try:
             daemon_status = self._run(observer.status())
             if isinstance(daemon_status, Success):
+                result["ready"] = daemon_status.value.lifecycle_state == "ready"
                 result["backend"] = daemon_status.value.backend_profile
                 result["url"] = daemon_status.value.ui_url
         finally:
@@ -438,6 +498,26 @@ class Daemon:
             ),
             **({"CONTEXT_ENGINE_BACKEND": backend} if backend else {}),
         }
+        # Ladybug Win64: OpenSSL DLL dir is per-process (add_dll_directory is not
+        # inherited). Bootstrap in the parent and pass PATH + cache dir so the
+        # detached child can load _lbug*.pyd before import.
+        if sys.platform == "win32":
+            try:
+                from potpie_context_engine.adapters.outbound.graph.ladybug_windows_bootstrap import (
+                    ensure_ladybug_openssl,
+                )
+
+                status = ensure_ladybug_openssl()
+                cache = status.get("cache_directory")
+                if isinstance(cache, str) and cache:
+                    overrides["POTPIE_LADYBUG_OPENSSL_DIR"] = cache
+                    path = os.environ.get("PATH", "")
+                    if cache not in path.split(os.pathsep):
+                        overrides["PATH"] = cache + os.pathsep + path
+            except Exception:  # noqa: BLE001 — never block daemon spawn on shim
+                logger.debug(
+                    "Ladybug Windows DLL bootstrap was unavailable", exc_info=True
+                )
         environment = project_child_environment(
             load_cli_runtime_settings(), os.environ, overrides=overrides
         )

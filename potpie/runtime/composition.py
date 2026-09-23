@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -62,6 +63,7 @@ from potpie_context_engine.bootstrap.logging_setup import configure_logging
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import set_observability
 from potpie_context_engine.bootstrap.observability_wiring import default_observability
+from potpie_context_engine.core.lifecycle import default_platform_graph_backend
 from potpie_context_engine.core.runtime import build_graph_runtime
 from potpie_context_engine.core.coherence import assert_runtime_coherence
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
@@ -88,11 +90,20 @@ def default_backend_profile() -> str:
         profile = (os.getenv(env_name) or "").strip().lower()
         if profile:
             return profile
-    return "falkordb_lite"
+    return default_platform_graph_backend()
 
 
 def default_host_mode() -> str:
-    mode = (os.getenv("CONTEXT_ENGINE_HOST_MODE") or "daemon").strip().lower()
+    """Select CLI/daemon host mode.
+
+    Windows defaults to ``in_process`` because the Ladybug native runtime is
+    not safe to host in the detached daemon on the supported Windows path.
+    macOS/Linux retain the detached ``daemon`` default. Explicit
+    ``CONTEXT_ENGINE_HOST_MODE`` always wins, so daemon mode remains available
+    as an opt-in diagnostic path.
+    """
+    raw = (os.getenv("CONTEXT_ENGINE_HOST_MODE") or "").strip().lower()
+    mode = raw or ("in_process" if sys.platform == "win32" else "daemon")
     if mode not in {"daemon", "in_process"}:
         raise ValueError(
             "invalid CONTEXT_ENGINE_HOST_MODE="
