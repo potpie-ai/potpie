@@ -2579,6 +2579,36 @@ def test_neighborhood_byte_budget_preserves_fix_fields_and_exact_route() -> None
     assert "--predicate VERIFIED --unbounded --pot p" in bounded["recommended_next_action"]
 
 
+def test_neighborhood_cli_byte_budget_includes_workbench_envelope(monkeypatch) -> None:
+    def neighborhood(self, *, pot_id, entity_key, **kwargs):
+        return GraphSlice(
+            pot_id=pot_id,
+            nodes=(GraphNode(key=entity_key, labels=("Fix",), properties={
+                "root_cause": "Shared cookie name", "fix_steps": ["Use a per-daemon suffix"],
+                "diagnostic": "x" * 8_000,
+            }),),
+            edges=tuple(GraphEdge(
+                predicate="VERIFIED", from_key=entity_key,
+                to_key=f"activity:check-{index}",
+                properties={"fact": "x" * 3_000, "source_refs": ["test:fix"]},
+            ) for index in range(30)),
+        )
+
+    monkeypatch.setattr(_Inspection, "neighborhood", neighborhood)
+    _common.set_json(True)
+    _common.set_host(_Host(_Graph(), backend=_Backend()))
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["neighborhood", "--entity", "fix:cookie", "--detail", "full"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(result.output.encode("utf-8")) <= 32_768
+    body = _assert_graph_envelope(json.loads(result.output), "graph.neighborhood")
+    assert body["nodes"][0]["properties"]["root_cause"] == "Shared cookie name"
+    assert body["omitted_relation_count"] > 0
+
+
 def test_graph_describe_returns_executable_view_contract() -> None:
     _common.set_json(True)
     graph_service = _Graph()
