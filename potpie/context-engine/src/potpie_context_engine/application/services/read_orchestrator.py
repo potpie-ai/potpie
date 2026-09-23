@@ -40,7 +40,7 @@ from potpie_context_core.agent_context_port import (
     includes_for_request,
     normalize_context_intent,
 )
-from potpie_context_core.agent_envelope import AgentEnvelope, UnsupportedInclude
+from potpie_context_core.agent_envelope import AgentEnvelope, UnsupportedInclude, bound_agent_envelope
 from potpie_context_core.cli_commands import (
     graph_neighborhood_command,
     resource_get_command,
@@ -267,20 +267,38 @@ def _describe_search_result(
         match_status = "possible_matches" if items else "no_matches"
 
     items = [_with_follow_ups(item, envelope.pot_id, identity) for item in items]
+    available_by_family = {
+        family: sum(item.include == family for item in items)
+        for family in searched_families
+    }
+    items = items[: max(max_items, 0)]
     pool_by_family = {report.include: report.candidate_pool for report in envelope.coverage}
     returned_by_family = {
         family: sum(item.include == family for item in items)
         for family in searched_families
     }
+    omitted_by_total_budget = {
+        family: available_by_family[family] - returned_by_family[family]
+        for family in searched_families
+    }
     more_by_family = {
-        family: pool_by_family.get(family, 0) > returned_by_family.get(family, 0)
-        and (max_items <= 0 or returned_by_family.get(family, 0) >= max_items)
+        family: bool(omitted_by_total_budget[family]) or (
+            pool_by_family.get(family, 0) > available_by_family[family]
+            and available_by_family[family] >= max_items
+        )
         for family in searched_families
     }
     meta = {
         **dict(envelope.metadata),
         "searched_families": list(searched_families),
         "match_status": match_status,
+        "total_result_budget": max_items,
+        "returned_by_family": returned_by_family,
+        "omitted_by_total_budget": omitted_by_total_budget,
+        "families_with_candidates_omitted": [
+            family for family in searched_families
+            if available_by_family[family] and not returned_by_family[family]
+        ],
         "more_results_available": any(more_by_family.values()),
         "more_results_by_family": more_by_family,
     }
@@ -295,7 +313,7 @@ def _describe_search_result(
         meta["matching_repositories"] = repos
         if len(repos) > 1:
             meta["disambiguation"] = "Repeat the lookup with an explicit repository scope."
-    return replace(envelope, items=tuple(items), metadata=meta)
+    return bound_agent_envelope(replace(envelope, items=tuple(items), metadata=meta))
 
 
 def _with_follow_ups(item, pot_id: str, identity):

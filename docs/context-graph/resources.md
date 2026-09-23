@@ -142,12 +142,12 @@ Summaries are written by the agent, not the script — a script can split but ca
 
 ```bash
 potpie resource import <dir> --doc <slug> [--source-ref <uri>] [--source-kind <fmt>]  # atomic; replaces on re-import
-potpie resource get <id> [<id>...] [--with-neighbors] [--json]   # hot path — batched, file read only
-potpie resource list --doc <slug> [--section <slug>]             # returns chunk ids + labels
+potpie resource get <id> [<id>...] [--with-neighbors] [--full] [--json] # batched, file read only
+potpie resource list --doc <slug> [--section <slug>] [--limit 10] [--full] # bounded section overview
 potpie resource rm <slug> --confirm                              # destructive; --confirm per CLI contract
 ```
 
-`get` returns `{resource_id, doc, section, seq, text, chars, revision, source_ref, page?, offset?, requested}` — `requested` is false on a chunk that `--with-neighbors` pulled in. Neighbors resolve *host-side*, so a neighbor-expanded read is still one daemon round trip. In human mode `get` prints the stored text verbatim rather than through the shared block formatter, which drops blank lines: a command whose job is returning evidence must not edit it.
+`get` returns `{resource_id, doc, section, seq, text, chars, revision, source_ref, page?, offset?, requested}` — `requested` is false on a chunk that `--with-neighbors` pulled in. Neighbors resolve *host-side*, so a neighbor-expanded read is still one daemon round trip. Normal output is capped at 32 KiB, preferring requested roots over neighbors and naming omitted IDs/characters with exact follow-ups. `--full` bypasses the byte cap for a selected chunk. In human mode `get` preserves line breaks instead of using the shared block formatter. Credential-like JSON metadata values are redacted in indexing and agent-visible retrieval, including `--full`; source bytes stay immutable and security-guide prose remains searchable.
 
 `import` reports `sections_added / kept / changed / removed`, where **changed** is what is left after the other three — the answer to "what needs re-summarizing" (R14), derived by the CLI so no caller repeats the subtraction.
 

@@ -18,11 +18,14 @@ graph. They are exposed through the CLI in V1.5.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+import json
 from typing import Any, Mapping, Protocol
 
-from potpie_context_core.agent_envelope import AgentEnvelope
+from potpie_context_core.agent_envelope import AgentEnvelope, _bound_evidence_payload
+from potpie_context_core.cli_commands import graph_neighborhood_command
+from potpie_context_core.resource_projection import project_public_metadata
 from potpie_context_core.ports.agent_context import (
     RecordReceipt,
     RecordRequest,
@@ -176,6 +179,7 @@ class GraphReadResult:
     relations: str = "summary"
     effective_request: Mapping[str, Any] = field(default_factory=dict)
     fallback_context: Mapping[str, Any] = field(default_factory=dict)
+    output_budget: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         detail = normalize_read_detail(self.detail)
@@ -210,11 +214,92 @@ class GraphReadResult:
             out["effective_request"] = dict(self.effective_request)
         if self.fallback_context:
             out["fallback_context"] = dict(self.fallback_context)
+        if self.output_budget:
+            out["output_budget"] = dict(self.output_budget)
         if self.status:
             out["status"] = self.status
         if self.message:
             out["message"] = self.message
         return out
+
+
+def bound_graph_read_result(
+    result: GraphReadResult, *, pot_id: str, max_bytes: int = 32_768
+) -> GraphReadResult:
+    """Keep answer-bearing fix rows while bounding a named read's JSON body."""
+    def size(value: GraphReadResult) -> int:
+        return len(json.dumps(value.to_dict(), ensure_ascii=False, default=str).encode("utf-8"))
+
+    result = replace(result, items=tuple(
+        project_public_metadata(item) for item in result.items
+    ))
+    if size(result) <= max_bytes:
+        return result
+    items = [dict(item) for item in result.items]
+    omitted_fields: dict[str, Mapping[str, int]] = {}
+    original_count = len(items)
+    answer_anchor = next((item.get("entity_key") for item in items if _answer_bearing_fix(item)), None)
+    answer_anchor = answer_anchor or (items[0].get("entity_key") if items else None)
+
+    def current() -> GraphReadResult:
+        next_action = (
+            graph_neighborhood_command(str(answer_anchor), pot_id=pot_id, detail="full") + " --unbounded"
+            if answer_anchor else None
+        )
+        return replace(result, items=tuple(items), output_budget={
+            "max_bytes": max_bytes,
+            "omitted_items": original_count - len(items),
+            "omitted_fields_by_entity": dict(omitted_fields),
+            **({"recommended_next_action": next_action} if next_action else {}),
+        })
+
+    for index, item in enumerate(items):
+        bounded, omitted = _bound_evidence_payload(item, text_limit=2_000, list_limit=8)
+        items[index] = bounded
+        if omitted:
+            omitted_fields[str(item.get("entity_key") or index)] = omitted
+    while len(items) > 1 and size(current()) > max_bytes:
+        candidates = [index for index, item in enumerate(items) if not _answer_bearing_fix(item)]
+        items.pop(candidates[-1] if candidates else -1)
+    if size(current()) <= max_bytes:
+        return current()
+    if items:
+        bounded, omitted = _bound_evidence_payload(items[0], text_limit=500, list_limit=2)
+        items[0] = bounded
+        omitted_fields[str(items[0].get("entity_key") or 0)] = omitted
+    if size(current()) > max_bytes and items:
+        bounded, omitted = _bound_evidence_payload(
+            items[0], text_limit=160, list_limit=1, mapping_limit=12,
+        )
+        items[0] = bounded
+        omitted_fields[str(items[0].get("entity_key") or 0)] = omitted
+    if size(current()) > max_bytes:
+        compact = current()
+        compact = replace(
+            compact, coverage=(), freshness={}, quality={}, source_refs=(),
+            unsupported=(), warnings=(), effective_request={}, fallback_context={},
+            output_budget={
+                **compact.output_budget,
+                "omitted_metadata": True,
+            },
+        )
+        if size(compact) <= max_bytes:
+            return compact
+        items.clear()
+        return replace(
+            compact, items=(), output_budget={
+                **compact.output_budget,
+                "omitted_items": original_count,
+            },
+        )
+    return current()
+
+
+def _answer_bearing_fix(item: Mapping[str, Any]) -> bool:
+    details = item.get("details")
+    return isinstance(details, Mapping) and bool(
+        details.get("root_cause") or details.get("fix_steps")
+    )
 
 
 @dataclass(frozen=True, slots=True)

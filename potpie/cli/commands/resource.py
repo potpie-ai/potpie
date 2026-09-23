@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import asdict
+import json
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
@@ -30,6 +31,8 @@ from potpie.cli.commands._common import (
     resolve_pot_id,
 )
 from potpie_context_core.errors import CapabilityNotImplemented
+from potpie_context_core.cli_commands import join_command
+from potpie_context_core.resource_projection import project_chunk, project_public_metadata
 from potpie_context_core.ports.resource_store import (
     Chunk,
     ResourceBatchResult,
@@ -45,6 +48,8 @@ from potpie_context_core.resource_to_semantic import ResourceImportResult
 resource_app = typer.Typer(
     help="Document payloads: import a chunk directory, read chunks, list, remove."
 )
+
+_RESOURCE_OUTPUT_BUDGET_BYTES = 32_768
 
 # A nested sub-app, the shape ``pot default`` and ``ledger sources`` already
 # use. The index is an implementation detail of ``resource``, not a peer of it:
@@ -179,6 +184,7 @@ def resource_get(
         "--with-neighbors",
         help="Also return the chunks either side, within the same section.",
     ),
+    full: bool = typer.Option(False, "--full", help="Bypass the output budget; credential metadata remains redacted."),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Read chunk text by id — a file read, no graph query and no embedding."""
@@ -190,7 +196,7 @@ def resource_get(
             pot_id=pot_id, resource_ids=requested, with_neighbors=with_neighbors
         )
         batch = result if isinstance(result, ResourceBatchResult) else None
-        chunks = batch.chunks if batch else result
+        chunks = tuple(project_chunk(chunk) for chunk in (batch.chunks if batch else result))
         resolved_roots = tuple(
             outcome.resource_id for outcome in batch.outcomes if outcome.chunk_ids
         ) if batch else requested
@@ -206,30 +212,37 @@ def resource_get(
                 "recommended_next_action": failures[0].get("recommended_next_action"),
                 "outcomes": outcomes,
             }
+        payload = {
+            **receipt,
+            "requested": list(requested),
+            "with_neighbors": with_neighbors,
+            "count": len(chunks),
+            "chunks": [_chunk_payload(row, resolved_roots) for row in chunks],
+        }
+        if not full:
+            payload = _bound_resource_payload(payload, pot_id=pot_id)
         if is_json():
-            emit(
-                {
-                    **receipt,
-                    "requested": list(requested),
-                    "with_neighbors": with_neighbors,
-                    "count": len(chunks),
-                    "chunks": [_chunk_payload(row, resolved_roots) for row in chunks],
-                },
-                human="",
-            )
+            emit(payload, human="")
             if batch:
                 raise typer.Exit(code=1)
             return
         if batch:
             typer.echo(f"status={batch.status}; {len(chunks)} chunks returned. Only failed ids need follow-up.")
         # Deliberately not `emit`'s human block: this command's whole job is
-        # returning stored text verbatim, and the shared formatter drops blank
-        # lines and dims body copy, which would silently edit the evidence.
-        for index, chunk in enumerate(chunks):
+        # returning projected text with its line breaks intact; the shared
+        # formatter drops blank lines and dims body copy.
+        for index, chunk in enumerate(payload["chunks"]):
             if index:
                 typer.echo("")
-            typer.echo(_chunk_header(chunk, resolved_roots))
-            typer.echo(chunk.text)
+            source = next(row for row in chunks if row.resource_id == chunk["resource_id"])
+            typer.echo(_chunk_header(source, resolved_roots))
+            typer.echo(chunk["text"])
+            if chunk.get("omitted_characters"):
+                typer.echo(f"  … {chunk['omitted_characters']} characters omitted by output budget")
+        if payload.get("omitted_chunk_count"):
+            typer.echo(f"… {payload['omitted_chunk_count']} chunks omitted by output budget")
+        if payload.get("recommended_next_action"):
+            typer.echo(f"Next: {payload['recommended_next_action']}")
         if batch:
             for outcome in receipt["outcomes"]:
                 typer.echo(f"\n{outcome['resource_id']}: {outcome['status']}")
@@ -248,24 +261,38 @@ def resource_get(
 def resource_list(
     doc: str = typer.Option(..., "--doc", help="Document slug."),
     section: str = typer.Option(None, "--section", help="Limit to one section."),
+    limit: int = typer.Option(10, "--limit", help="Maximum sections in the overview."),
+    full: bool = typer.Option(False, "--full", help="Bypass the output budget for the selected sections."),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """List a document's sections with their chunk ids and labels."""
     with _resource_contract():
+        if limit < 1:
+            raise ValueError("--limit must be >= 1")
         host = get_host()
         pot_id = resolve_pot_id(host, pot)
         sections = host.resources.list(pot_id=pot_id, slug=doc, section=section)
+        shown = sections if section else sections[:limit]
         revisions = {row.revision for row in sections if row.revision is not None}
         revision = next(iter(revisions)) if len(revisions) == 1 else None
         payload = {
             "doc": doc,
             "section_count": len(sections),
             "chunk_count": sum(len(row.chunks) for row in sections),
+            "returned_section_count": len(shown),
+            "omitted_section_count": len(sections) - len(shown),
             "revision": revision,
             "sections": [
-                _section_payload(doc, row, revision=row.revision) for row in sections
+                _section_payload(doc, row, revision=row.revision) for row in shown
             ],
         }
+        if len(sections) > len(shown):
+            payload["recommended_next_action"] = join_command([
+                "potpie", "resource", "list", "--doc", doc,
+                "--section", sections[len(shown)].slug, "--pot", pot_id,
+            ])
+        if not full:
+            payload = _bound_resource_list_payload(payload, pot_id=pot_id)
         emit(payload, human=_list_human(payload))
 
 
@@ -697,7 +724,7 @@ def _import_next_action(result: ResourceImportResult, pending: Sequence[str]) ->
 def _section_payload(
     doc: str, section: SectionManifest, *, revision: int
 ) -> dict[str, Any]:
-    return {
+    return project_public_metadata({
         "slug": section.slug,
         "title": section.title,
         "ordinal": section.ordinal,
@@ -717,7 +744,7 @@ def _section_payload(
             }
             for ref in section.chunks
         ],
-    }
+    })
 
 
 def _is_requested_chunk(chunk: Chunk, requested: Sequence[str]) -> bool:
@@ -746,6 +773,107 @@ def _chunk_payload(chunk: Chunk, requested: Sequence[str]) -> dict[str, Any]:
         # False marks a chunk pulled in by --with-neighbors.
         "requested": _is_requested_chunk(chunk, requested),
     }
+
+
+def _bound_resource_payload(payload: dict[str, Any], *, pot_id: str) -> dict[str, Any]:
+    def size(value: dict[str, Any]) -> int:
+        return len(json.dumps(value, default=str, ensure_ascii=False).encode("utf-8"))
+
+    if size(payload) <= _RESOURCE_OUTPUT_BUDGET_BYTES:
+        return payload
+    rows = list(payload["chunks"])
+    original_text_lengths = {row["resource_id"]: len(row["text"]) for row in rows}
+    selected: list[dict[str, Any]] = []
+    omitted: list[str] = []
+    partial: list[str] = []
+    result = {
+        **payload,
+        "total_chunk_count": len(rows),
+        "output_budget_bytes": _RESOURCE_OUTPUT_BUDGET_BYTES,
+        "chunks": selected,
+    }
+    # Requested roots carry the answer. Neighbors are useful context but do
+    # not consume the budget before their roots.
+    for row in sorted(rows, key=lambda item: not item["requested"]):
+        candidate = dict(row)
+        if size({**result, "chunks": [*selected, candidate]}) <= _RESOURCE_OUTPUT_BUDGET_BYTES - 2_048:
+            selected.append(candidate)
+            continue
+        if row["requested"] and not selected:
+            candidate["text"] = candidate["text"][:16_000]
+            candidate["omitted_characters"] = len(row["text"]) - len(candidate["text"])
+            selected.append(candidate)
+            partial.append(row["resource_id"])
+        else:
+            omitted.append(row["resource_id"])
+    result["count"] = len(selected)
+    result["omitted_chunk_count"] = len(omitted)
+    result["omitted_chunk_ids"] = omitted[:12]
+    result["omitted_chunk_ids_count"] = max(0, len(omitted) - 12)
+    while size(result) > _RESOURCE_OUTPUT_BUDGET_BYTES and selected:
+        last = selected[-1]
+        if last["text"]:
+            cutoff = max(0, len(last["text"]) - 1_024)
+            last["omitted_characters"] = original_text_lengths[last["resource_id"]] - cutoff
+            last["text"] = last["text"][:cutoff]
+            if last["resource_id"] not in partial:
+                partial.append(last["resource_id"])
+        else:
+            omitted.append(selected.pop()["resource_id"])
+            result["count"] = len(selected)
+            result["omitted_chunk_count"] = len(omitted)
+            result["omitted_chunk_ids"] = omitted[:12]
+            result["omitted_chunk_ids_count"] = max(0, len(omitted) - 12)
+    follow_up_id = (partial or omitted or [None])[0]
+    if follow_up_id:
+        result["recommended_next_action"] = join_command([
+            "potpie", "resource", "get", follow_up_id, "--full", "--pot", pot_id,
+        ])
+    return result
+
+
+def _bound_resource_list_payload(payload: dict[str, Any], *, pot_id: str) -> dict[str, Any]:
+    def size(value: dict[str, Any]) -> int:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+
+    if size(payload) <= _RESOURCE_OUTPUT_BUDGET_BYTES:
+        return payload
+    sections = [dict(row) for row in payload["sections"]]
+    result = {**payload, "sections": sections, "output_budget_bytes": _RESOURCE_OUTPUT_BUDGET_BYTES}
+    while len(sections) > 1 and size(result) > _RESOURCE_OUTPUT_BUDGET_BYTES - 1_024:
+        sections.pop()
+    omitted_fields = 0
+    if size(result) > _RESOURCE_OUTPUT_BUDGET_BYTES - 1_024 and sections:
+        section = sections[0]
+        for key in ("title", "summary"):
+            value = section.get(key)
+            if isinstance(value, str) and len(value) > 1_000:
+                section[key] = value[:1_000]
+                omitted_fields += 1
+        chunks = section.get("chunks") or []
+        if len(chunks) > 12:
+            section["chunks"] = chunks[:12]
+            omitted_fields += 1
+        for chunk in section.get("chunks") or []:
+            if len(str(chunk.get("label") or "")) > 200:
+                chunk["label"] = str(chunk["label"])[:200]
+                omitted_fields += 1
+    result["returned_section_count"] = len(sections)
+    result["omitted_section_count"] = result["section_count"] - len(sections)
+    result["omitted_field_count"] = omitted_fields
+    if result["omitted_section_count"]:
+        first_omitted = payload["sections"][len(sections)]["slug"] if len(payload["sections"]) > len(sections) else None
+        if first_omitted:
+            result["recommended_next_action"] = join_command([
+                "potpie", "resource", "list", "--doc", payload["doc"],
+                "--section", first_omitted, "--full", "--pot", pot_id,
+            ])
+    elif omitted_fields and sections:
+        result["recommended_next_action"] = join_command([
+            "potpie", "resource", "list", "--doc", payload["doc"],
+            "--section", sections[0]["slug"], "--full", "--pot", pot_id,
+        ])
+    return result
 
 
 # --- human rendering --------------------------------------------------------
@@ -798,6 +926,12 @@ def _list_human(payload: dict[str, Any]) -> str:
         lines.append(f"  {section['slug']} — {section['title']}{pending}")
         for chunk in section["chunks"]:
             lines.append(f"    {chunk['resource_id']}  {chunk['label']}")
+    if payload.get("omitted_section_count"):
+        lines.append(f"  … {payload['omitted_section_count']} sections omitted")
+        lines.append(f"Next: {payload['recommended_next_action']}")
+    elif payload.get("omitted_field_count"):
+        lines.append(f"  … {payload['omitted_field_count']} section fields bounded by output budget")
+        lines.append(f"Next: {payload['recommended_next_action']}")
     return "\n".join(lines)
 
 

@@ -30,6 +30,8 @@ from potpie_context_core.ports.resource_store import (
     format_resource_id,
 )
 from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.resource_projection import project_resource_text
+from potpie_context_core.ports.resource_index import IndexReport
 from potpie_context_engine.host.shell import ResourceFacade
 from potpie_context_engine.testing import (
     InMemoryResourceStore,
@@ -654,6 +656,75 @@ def test_get_with_neighbors_stays_one_round_trip(tmp_path):
     assert host.store.calls == ["list", "get_many"]
 
 
+def test_neighbor_expansion_has_a_byte_budget_and_exact_full_follow_up(tmp_path):
+    _seed(tmp_path, [_section("body", chunks=[
+        {"label": f"part {index}", "text": str(index) * 7_600}
+        for index in range(6)
+    ])])
+    ids = [format_resource_id(DOC, "body", index) for index in (1, 2, 3, 4)]
+
+    response = _run(["get", *ids, "--with-neighbors"])
+    payload = json.loads(response.stdout)
+
+    assert response.exit_code == 0
+    assert len(response.stdout.encode("utf-8")) <= 32_768
+    assert payload["total_chunk_count"] == 6
+    assert payload["omitted_chunk_count"] >= 1
+    assert all(chunk["requested"] for chunk in payload["chunks"])
+    assert "--full --pot p" in payload["recommended_next_action"]
+
+    complete = _run(["get", *ids, "--with-neighbors", "--full"])
+    assert complete.exit_code == 0
+    assert json.loads(complete.stdout)["count"] == 6
+
+
+def test_structured_credential_metadata_is_excluded_from_index_and_read(tmp_path):
+    host = _host()
+    indexed = []
+
+    class Index:
+        profile = "test"
+
+        def index_document(self, **kwargs):
+            indexed.extend(kwargs["chunks"])
+            return IndexReport(doc=DOC, profile="test")
+
+    host.resources.index = Index()
+    source = '{\n  "owner": "potpie-ai",\n  "temp_clone_token": "fixture-secret",\n  "password": "fixture-password",\n  "session_cookie": "fixture-cookie"\n}'
+    directory = _import_dir(tmp_path / "metadata", [
+        _section("repository-metadata", chunks=[{"label": "metadata", "text": source}]),
+    ])
+    imported = _run(["import", str(directory), "--doc", DOC])
+    assert imported.exit_code == 0, imported.stdout
+
+    chunk_id = format_resource_id(DOC, "repository-metadata", 0)
+    stored = host.store.inner.get(pot_id="p", resource_id=chunk_id)
+    assert "fixture-secret" in stored.text  # immutable source bytes remain stored
+    assert indexed and "fixture-secret" not in indexed[0].text
+    assert '"owner": "potpie-ai"' in indexed[0].text
+
+    result = _run(["get", chunk_id])
+    assert result.exit_code == 0, result.stdout
+    emitted = json.loads(result.stdout)["chunks"][0]["text"]
+    for secret in ("fixture-secret", "fixture-password", "fixture-cookie"):
+        assert secret not in emitted
+    assert '"owner": "potpie-ai"' in emitted
+    assert "[redacted]" in emitted
+
+    diagnostic = host.resources.status(pot_id="p")
+    assert "fixture-secret" not in str(diagnostic)
+    assert project_resource_text("A security guide explains password and cookie handling.") == (
+        "A security guide explains password and cookie handling."
+    )
+    compact = '{"owner":"potpie-ai","tempCloneToken":"fixture-secret","session_cookie":"fixture-cookie"}'
+    projected = project_resource_text(compact)
+    assert json.loads(projected) == {
+        "owner": "potpie-ai", "tempCloneToken": "[redacted]", "session_cookie": "[redacted]",
+    }
+    fragment = '"owner":"potpie-ai","temp_clone_token":"fixture-secret"'
+    assert "fixture-secret" not in project_resource_text(fragment)
+
+
 def test_get_with_neighbors_stops_at_the_section_boundary(tmp_path):
     _seed(
         tmp_path,
@@ -751,6 +822,47 @@ def test_list_returns_chunk_ids_and_labels(tmp_path):
     ]
     assert section["chunks"][0]["resource_id"] == format_resource_id(
         DOC, "body", 0, revision=1
+    )
+
+
+def test_list_limit_returns_one_bounded_section_and_exact_follow_up(tmp_path):
+    host = _seed(tmp_path, [
+        _section(f"part-{i}", chunks=[{"label": "text", "text": f"part {i}"}])
+        for i in range(3)
+    ])
+
+    payload = json.loads(_run(["list", "--doc", DOC, "--limit", "1"]).stdout)
+
+    assert host.store.calls == ["list"]
+    assert payload["section_count"] == 3
+    assert payload["returned_section_count"] == 1
+    assert payload["omitted_section_count"] == 2
+    assert [item["slug"] for item in payload["sections"]] == ["part-0"]
+    assert payload["recommended_next_action"] == (
+        f"potpie resource list --doc {DOC} --section part-1 --pot p"
+    )
+
+
+def test_list_byte_budget_handles_one_oversized_section() -> None:
+    payload = {
+        "doc": DOC, "section_count": 1, "chunk_count": 1,
+        "returned_section_count": 1, "omitted_section_count": 0,
+        "revision": 1,
+        "sections": [{
+            "slug": "metadata", "title": "Metadata", "summary": "x" * 100_000,
+            "summary_pending": False,
+            "chunks": [{"resource_id": format_resource_id(DOC, "metadata", 0),
+                        "label": "owner fields"}],
+        }],
+    }
+
+    bounded = resource._bound_resource_list_payload(payload, pot_id="p")
+
+    assert len(json.dumps(bounded, ensure_ascii=False).encode()) <= 32_768
+    assert bounded["omitted_field_count"] == 1
+    assert bounded["sections"][0]["chunks"][0]["resource_id"] == format_resource_id(DOC, "metadata", 0)
+    assert bounded["recommended_next_action"] == (
+        f"potpie resource list --doc {DOC} --section metadata --full --pot p"
     )
 
 

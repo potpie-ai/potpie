@@ -101,6 +101,7 @@ class PriorBugsReader:
                 "fix_steps",
                 "verification_status",
                 "resolution_status",
+                "source_status",
             ),
         )
 

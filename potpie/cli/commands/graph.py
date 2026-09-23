@@ -62,7 +62,9 @@ from potpie_context_core.cli_commands import (
     append_pot,
     graph_read_command,
     is_template,
+    join_command,
 )
+from potpie_context_core.resource_projection import project_public_metadata
 from potpie_context_core.vocabulary import (
     local_claim_subgraphs,
     local_entity_types,
@@ -763,6 +765,9 @@ def graph_read(
                 ),
             )
         )
+        from potpie_context_core.ports.graph_service import bound_graph_read_result
+        # Leave space for the workbench envelope wrapped around the read body.
+        result = bound_graph_read_result(result, pot_id=pot_id, max_bytes=30_720)
         _emit_graph_read(
             ctx,
             result,
@@ -1591,6 +1596,7 @@ def graph_neighborhood(
     direction: str = typer.Option("both", "--direction"),
     limit: int = typer.Option(50, "--limit"),
     detail: str = typer.Option("summary", "--detail", help="summary | full"),
+    unbounded: bool = typer.Option(False, "--unbounded", help="Return the complete selected slice even if it exceeds the normal output budget."),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.neighborhood") as ctx:
@@ -1647,6 +1653,7 @@ def graph_neighborhood(
             "entity_key": entity,
             "depth": depth,
             "direction": normalized_direction,
+            "limit": limit,
             "predicates": list(predicates),
             "detail": detail_mode,
             "node_count": len(sl.nodes),
@@ -1659,7 +1666,7 @@ def graph_neighborhood(
                 {
                     "key": n.key,
                     "labels": list(n.labels),
-                    "properties": dict(n.properties),
+                    "properties": project_public_metadata(n.properties),
                 }
                 for n in sl.nodes
             ]
@@ -1668,13 +1675,15 @@ def graph_neighborhood(
                     "predicate": e.predicate,
                     "from": e.from_key,
                     "to": e.to_key,
-                    "properties": dict(e.properties),
+                    "properties": project_public_metadata(e.properties),
                 }
                 for e in sl.edges
             ]
         if identity_status == "missing":
             from potpie_context_core.cli_commands import graph_search_entities_command
             payload["recommended_next_action"] = graph_search_entities_command(entity, pot_id=pot_id)
+        if not unbounded:
+            payload = _bound_neighborhood_payload(payload, pot_id=pot_id)
         _emit_graph_result(
             ctx,
             payload,
@@ -3370,9 +3379,156 @@ def _neighborhood_human(payload: Mapping[str, Any]) -> str:
         lines.append(f"  • {rel.get('predicate')} [{refs}] {fact}")
     if len(relations) > 20:
         lines.append(f"  … {len(relations) - 20} relations hidden; use --json for the returned slice.")
+    if payload.get("omitted_relation_count"):
+        lines.append(f"  … {payload['omitted_relation_count']} relations omitted by output budget.")
+    if payload.get("detail") == "full":
+        nodes = list(payload.get("nodes") or ())
+        edges = list(payload.get("edges") or ())
+        anchor = next((node for node in nodes if node.get("key") == payload.get("entity_key")), None)
+        displayed_nodes = ([anchor] if anchor else []) + [
+            node for node in nodes if node is not anchor
+        ][:4 if anchor else 5]
+        answer_fields = (
+            "root_cause", "fix_steps", "verification_status",
+            "resolution_status", "source_status",
+        )
+        for node in displayed_nodes:
+            properties = dict(node["properties"])
+            lines.append(
+                f"  node {node['key']} [{', '.join(node['labels'])}] "
+                f"properties={_bounded_neighborhood_properties({key: value for key, value in properties.items() if key not in answer_fields})}"
+            )
+            if node is anchor:
+                for field in answer_fields:
+                    if field in properties:
+                        rendered, omitted = _bounded_neighborhood_answer(properties[field])
+                        lines.append(f"    {field}: {rendered}")
+                        if omitted:
+                            lines.append(f"    {field} omitted: {omitted}")
+        if len(nodes) > len(displayed_nodes):
+            lines.append(f"  … {len(nodes) - len(displayed_nodes)} node details hidden; use --json for the returned slice.")
+        for edge in edges[:5]:
+            lines.append(
+                f"  edge {edge['from']} {edge['predicate']} {edge['to']} "
+                f"properties={_bounded_neighborhood_properties(edge['properties'])}"
+            )
+        if len(edges) > 5:
+            lines.append(f"  … {len(edges) - 5} edge details hidden; use --json for the returned slice.")
     if payload.get("truncated"):
         lines.append("Bounded neighborhood; completeness is unknown beyond this slice.")
     return "\n".join(lines)
+
+
+def _bounded_neighborhood_properties(properties: Mapping[str, Any]) -> str:
+    rendered = json.dumps(dict(properties), ensure_ascii=False, default=str, separators=(",", ":"))
+    return rendered if len(rendered) <= 320 else rendered[:317] + "…"
+
+
+def _bounded_neighborhood_answer(value: Any) -> tuple[str, str | None]:
+    if isinstance(value, (list, tuple)):
+        selected = [str(item)[:500] for item in value[:12]]
+        omitted = len(value) - len(selected)
+        clipped = sum(max(0, len(str(item)) - 500) for item in value[:12])
+        note = ", ".join(part for part in (
+            f"{omitted} items" if omitted else "",
+            f"{clipped} characters" if clipped else "",
+        ) if part)
+        return json.dumps(selected, ensure_ascii=False), note or None
+    rendered = str(value)
+    if len(rendered) > 2_000:
+        return rendered[:2_000], f"{len(rendered) - 2_000} characters"
+    return rendered, None
+
+
+_NEIGHBORHOOD_OUTPUT_BUDGET_BYTES = 32_768
+
+
+def _bound_neighborhood_payload(payload: dict[str, Any], *, pot_id: str) -> dict[str, Any]:
+    def size(value: dict[str, Any]) -> int:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+
+    if size(payload) <= _NEIGHBORHOOD_OUTPUT_BUDGET_BYTES - 2_048:
+        return payload
+    bounded = dict(payload)
+    relations = [dict(row) for row in payload["relations"]]
+    edges = [dict(row) for row in payload.get("edges", ())]
+    nodes = [dict(row) for row in payload.get("nodes", ())]
+    bounded["relations"] = relations
+    if "edges" in payload:
+        bounded["edges"] = edges
+    if "nodes" in payload:
+        bounded["nodes"] = nodes
+    omitted_fields = 0
+    for row in relations:
+        if len(str(row.get("fact") or "")) > 2_000:
+            omitted_fields += 1
+            row["fact"] = str(row["fact"])[:2_000]
+        if len(row.get("source_refs") or ()) > 12:
+            omitted_fields += 1
+        row["source_refs"] = list(row.get("source_refs") or ())[:12]
+    def bound_value(value: Any) -> Any:
+        nonlocal omitted_fields
+        if isinstance(value, str):
+            if len(value) > 2_000:
+                omitted_fields += 1
+            return value[:2_000]
+        if isinstance(value, (list, tuple)):
+            if len(value) > 12:
+                omitted_fields += 1
+            return [bound_value(item) for item in value[:12]]
+        if isinstance(value, Mapping):
+            return {key: bound_value(item) for key, item in value.items()}
+        return value
+    for row in [*nodes, *edges]:
+        properties = row.get("properties")
+        if isinstance(properties, Mapping):
+            row["properties"] = {
+                key: bound_value(value)
+                for key, value in properties.items()
+            }
+    total_relations = len(relations)
+    total_nodes = len(nodes)
+    while size(bounded) > _NEIGHBORHOOD_OUTPUT_BUDGET_BYTES - 2_048 and relations:
+        relations.pop()
+        if edges:
+            edges.pop()
+    if nodes:
+        visible_keys = {payload["entity_key"]}
+        for row in relations:
+            visible_keys.update((row.get("from_key"), row.get("to_key")))
+        nodes[:] = [node for node in nodes if node.get("key") in visible_keys]
+    if size(bounded) > _NEIGHBORHOOD_OUTPUT_BUDGET_BYTES - 2_048:
+        essential = {
+            "name", "summary", "description", "root_cause", "fix_steps",
+            "verification_status", "resolution_status", "source_status",
+        }
+        for node in nodes:
+            properties = node.get("properties")
+            if isinstance(properties, Mapping):
+                node["properties"] = {key: value for key, value in properties.items() if key in essential}
+                omitted_fields += len(properties) - len(node["properties"])
+        for edge in edges:
+            omitted_fields += len(edge.get("properties") or ())
+            edge["properties"] = {}
+    bounded["relation_count"] = len(relations)
+    bounded["node_count"] = len(nodes) if "nodes" in payload else payload["node_count"]
+    bounded["total_relation_count"] = total_relations
+    bounded["total_node_count"] = total_nodes
+    bounded["omitted_relation_count"] = total_relations - len(relations)
+    bounded["omitted_node_count"] = total_nodes - len(nodes)
+    bounded["omitted_field_count"] = omitted_fields
+    bounded["output_budget_bytes"] = _NEIGHBORHOOD_OUTPUT_BUDGET_BYTES
+    bounded["truncated"] = True
+    tokens = [
+        "potpie", "graph", "neighborhood", "--entity", payload["entity_key"],
+        "--depth", str(payload["depth"]), "--direction", payload["direction"],
+        "--limit", str(payload["limit"]), "--detail", payload["detail"],
+    ]
+    if payload.get("predicates"):
+        tokens.extend(("--predicate", ",".join(payload["predicates"])))
+    tokens.extend(("--unbounded", "--pot", pot_id))
+    bounded["recommended_next_action"] = join_command(tokens)
+    return bounded
 
 
 # Admin commands are contract-level names, but each one only works when the
@@ -4026,6 +4182,15 @@ def _read_human(
                 f"projection_omitted={meta.get('projection_omitted', 0)}. "
                 "Narrow the scope/query or increase --limit for more context; this is not a continuation."
             )
+    if result.output_budget:
+        budget = result.output_budget
+        lines.append(
+            f"Output budget {budget.get('max_bytes')} bytes; "
+            f"omitted_items={budget.get('omitted_items', 0)}; "
+            f"bounded_entities={len(budget.get('omitted_fields_by_entity', {}))}."
+        )
+        if budget.get("recommended_next_action"):
+            lines.append(f"Next: {budget['recommended_next_action']}")
     return "\n".join([*lines, body])
 
 

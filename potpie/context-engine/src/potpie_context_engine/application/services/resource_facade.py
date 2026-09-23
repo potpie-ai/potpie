@@ -39,6 +39,7 @@ from potpie_context_core.ports.resource_store import (
     parse_resource_id,
     ResourceBatchResult,
 )
+from potpie_context_core.resource_projection import project_chunk
 from potpie_context_core.resource_to_semantic import (
     RESOURCE_SUBGRAPH,
     SCOPE_PREDICATE,
@@ -433,7 +434,7 @@ class ResourceFacade:
             report = self.index.index_document(
                 pot_id=pot_id,
                 manifest=manifest,
-                chunks=self.store.get_many(pot_id=pot_id, resource_ids=resource_ids),
+                chunks=tuple(project_chunk(chunk) for chunk in self.store.get_many(pot_id=pot_id, resource_ids=resource_ids)),
             )
         except Exception as exc:  # noqa: BLE001 - see the docstring
             logger.warning("resource index write failed for %s: %s", manifest.doc, exc)
@@ -526,7 +527,7 @@ class ResourceFacade:
         else:
             try:
                 ids = self._with_neighbors(pot_id=pot_id, resource_ids=resource_ids) if with_neighbors else resource_ids
-                return self.store.get_many(pot_id=pot_id, resource_ids=ids)
+                return tuple(project_chunk(chunk) for chunk in self.store.get_many(pot_id=pot_id, resource_ids=ids))
             except ResourceStoreError:
                 remaining_calls = 64
 
@@ -547,7 +548,10 @@ class ResourceFacade:
                     sections=lambda chunk: bounded_call(self.store.list, pot_id=pot_id, slug=chunk.doc, revision=chunk.revision),
                     with_neighbors=with_neighbors,
                 )
-        return result.chunks if result.status == "success" else result
+        safe_result = replace(
+            result, chunks=tuple(project_chunk(chunk) for chunk in result.chunks)
+        )
+        return safe_result.chunks if safe_result.status == "success" else safe_result
 
     def list(
         self, *, pot_id: str, slug: str, section: str | None = None
@@ -804,7 +808,8 @@ class ResourceFacade:
                 )
             reports.append(
                 self.index.index_document(
-                    pot_id=pot_id, manifest=manifest, chunks=chunks
+                    pot_id=pot_id, manifest=manifest,
+                    chunks=tuple(project_chunk(chunk) for chunk in chunks),
                 )
             )
         if self.drain is not None and any(r.pending_embeddings for r in reports):

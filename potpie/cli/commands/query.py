@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 
 import typer
 from potpie_context_core.agent_context_port import (
@@ -16,6 +17,7 @@ from potpie_context_core.agent_context_port import (
     CONTEXT_INTENTS,
     READER_BACKED_INCLUDES,
 )
+from potpie_context_core.agent_envelope import bound_agent_envelope
 from potpie_context_core.context_records import (
     REQUIRED_DETAIL_KEYS,
     has_structured_schema,
@@ -203,6 +205,7 @@ def register(root: typer.Typer) -> None:
         intent: str = typer.Option(None, "--intent", help=_RESOLVE_INTENT_HELP),
         include: str = typer.Option(None, "--include", help=_INCLUDE_HELP),
         mode: str = typer.Option("fast", "--mode", help=_MODE_HELP),
+        limit: int = typer.Option(12, "--limit", help="Maximum total results across all families."),
         pot: str = typer.Option(None, "--pot"),
     ) -> None:
         """context_resolve — a bounded context wrap for a task."""
@@ -229,6 +232,8 @@ def register(root: typer.Typer) -> None:
                 allowed=RESOLVE_MODES,
                 example="--mode balanced",
             )
+            if limit < 1:
+                raise ValueError("--limit must be >= 1")
             host = get_host()
             pot_id = resolve_pot_id(host, pot)
             env = host.agent_context.resolve(
@@ -238,8 +243,10 @@ def register(root: typer.Typer) -> None:
                     intent=intent,
                     include=_split(include, host=host, pot_id=pot_id),
                     mode=mode,
+                    max_items=limit,
                 )
             )
+            env = bound_agent_envelope(_cap_legacy_host_envelope(env, limit))
             _capture_context_activation(command="resolve", item_count=len(env.items))
             emit(env.to_dict(), human=_envelope_human(env))
 
@@ -252,6 +259,7 @@ def register(root: typer.Typer) -> None:
             "--intent",
             help=f"Narrow the search to one intent's families. {_INTENT_HELP}",
         ),
+        limit: int = typer.Option(12, "--limit", help="Maximum total results across all families."),
         pot: str = typer.Option(None, "--pot"),
     ) -> None:
         """context_search — narrow follow-up lookup."""
@@ -270,6 +278,8 @@ def register(root: typer.Typer) -> None:
                     allowed=CONTEXT_INTENTS,
                     example="--intent docs",
                 )
+            if limit < 1:
+                raise ValueError("--limit must be >= 1")
             host = get_host()
             pot_id = resolve_pot_id(host, pot)
             env = host.agent_context.search(
@@ -278,8 +288,10 @@ def register(root: typer.Typer) -> None:
                     query=query,
                     include=_split(include, host=host, pot_id=pot_id),
                     intent=intent,
+                    max_items=limit,
                 )
             )
+            env = bound_agent_envelope(_cap_legacy_host_envelope(env, limit))
             _capture_context_activation(command="search", item_count=len(env.items))
             emit(env.to_dict(), human=_envelope_human(env))
 
@@ -405,6 +417,32 @@ def _record_human(receipt) -> str:
 _HUMAN_ITEM_LIMIT = 10
 
 
+def _cap_legacy_host_envelope(env, limit: int):
+    """Honor a CLI budget when an installed daemon predates total slicing."""
+    if len(env.items) <= limit:
+        return env
+    shown = env.items[:limit]
+    metadata = dict(env.metadata or {})
+    families = tuple(metadata.get("searched_families") or (row.include for row in env.coverage))
+    available = {family: sum(item.include == family for item in env.items) for family in families}
+    returned = {family: sum(item.include == family for item in shown) for family in families}
+    omitted = {family: available[family] - returned[family] for family in families}
+    more_by_family = dict(metadata.get("more_results_by_family") or {})
+    more_by_family.update({family: bool(omitted[family]) or more_by_family.get(family, False)
+                           for family in families})
+    return replace(env, items=shown, metadata={
+        **metadata,
+        "total_result_budget": limit,
+        "returned_by_family": returned,
+        "omitted_by_total_budget": omitted,
+        "families_with_candidates_omitted": [
+            family for family in families if available[family] and not returned[family]
+        ],
+        "more_results_available": True,
+        "more_results_by_family": more_by_family,
+    })
+
+
 def _envelope_human(env) -> str:
     """The envelope as lines an agent can act on without ``--json``.
 
@@ -430,8 +468,19 @@ def _envelope_human(env) -> str:
     searched = metadata.get("searched_families") or ()
     if searched:
         lines.append(f"searched={', '.join(searched)} match={metadata.get('match_status', 'unknown')}")
+    omitted = metadata.get("omitted_by_total_budget") or {}
+    if any(omitted.values()):
+        detail = ", ".join(f"{family} {count}" for family, count in omitted.items() if count)
+        lines.append(f"  … total limit {metadata['total_result_budget']} omitted {sum(omitted.values())} results ({detail})")
+    byte_omitted = metadata.get("omitted_by_output_budget") or {}
+    if any(byte_omitted.values()) or metadata.get("omitted_fields_by_candidate"):
+        lines.append(
+            f"  … output budget {metadata.get('output_budget_bytes')} bytes; "
+            f"omitted results={sum(byte_omitted.values())}; "
+            f"bounded fields={len(metadata.get('omitted_fields_by_candidate') or {})}"
+        )
     if metadata.get("more_results_available"):
-        lines.append("  … more results available; narrow the query or family")
+        lines.append("  … more results available; raise --limit or narrow the query or family")
     if metadata.get("match_status") == "ambiguous_exact_match":
         repos = metadata.get("matching_repositories") or ()
         lines.append(f"  ! exact ID exists in multiple repositories: {', '.join(repos)}")

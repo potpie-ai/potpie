@@ -67,7 +67,7 @@ from potpie_context_core.ports.agent_context import (
     ResolveRequest,
     SearchRequest,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow, entity_properties_many
 from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_core.ports.graph_service import (
     DataPlaneStatus,
@@ -78,6 +78,7 @@ from potpie_context_core.ports.graph_service import (
     GraphEntitySearchRequest,
     GraphEntitySearchResult,
     GraphReadRequest,
+    bound_graph_read_result,
     GraphReadResult,
     normalize_read_detail,
     normalize_read_relations,
@@ -483,7 +484,8 @@ class DefaultGraphService:
                 since=None if "since" in unapplied else request.since,
                 until=None if "until" in unapplied else request.until,
             )
-        subgraph_versions = self._subgraph_versions(request.pot_id)
+        counts = _safe(lambda: dict(self.backend.analytics.counts(request.pot_id)), {})
+        subgraph_versions = self._subgraph_versions(request.pot_id, counts=counts)
         scope = dict(request.scope)
         if request.environment:
             scope["environment"] = request.environment
@@ -535,15 +537,14 @@ class DefaultGraphService:
             backend_freshness=_safe(
                 lambda: dict(self.backend.analytics.freshness(request.pot_id)), {}
             ),
-            backend_quality=_safe(
-                lambda: dict(self.backend.analytics.quality(request.pot_id)), {}
-            ),
+            backend_quality=_quality_from_counts(counts),
             detail=detail,
             relations=relations,
             definition=self.definition,
         )
         result = dataclasses.replace(result, effective_request=effective_read_request(request))
-        return partial_read(result, requested, unapplied) if unapplied else result
+        final = partial_read(result, requested, unapplied) if unapplied else result
+        return bound_graph_read_result(final, pot_id=request.pot_id)
 
     def search_entities(
         self, request: GraphEntitySearchRequest
@@ -627,14 +628,28 @@ class DefaultGraphService:
         # claim at all (claims are how the aggregate above discovers keys, so an
         # entity written by upsert_entity alone was unreachable), and even when
         # some other entity's claim text scores higher against the same string.
+        raw_key = (request.query or "").strip()
+        identity_keys = tuple(dict.fromkeys((raw_key, raw_key.lower()))) if raw_key else ()
+        hydration_keys = tuple(dict.fromkeys((*agg, *identity_keys)))
+        labels_map = cq.entity_labels(
+            pot_id=request.pot_id, entity_keys=list(hydration_keys)
+        )
+        raw_props = entity_properties_many(
+            cq, pot_id=request.pot_id, entity_keys=hydration_keys
+        )
         exact_key = _exact_entity_key(
-            request, claim_query=cq, known_keys=frozenset(agg)
+            request,
+            known_keys=frozenset(agg),
+            labels=labels_map,
+            properties=raw_props,
         )
         if exact_key is not None:
             agg.setdefault(exact_key, {"score": 0.0, "claims": []})
 
-        labels_map = cq.entity_labels(pot_id=request.pot_id, entity_keys=list(agg))
-        entity_props = getattr(cq, "entity_properties", None)
+        props_by_key = {
+            key: normalize_entity_properties(raw_props.get(key, {}), entity_key=key)
+            for key in agg
+        }
 
         candidates: list[GraphEntityCandidate] = []
         for key, bucket in agg.items():
@@ -643,12 +658,7 @@ class DefaultGraphService:
             )
             if request.type and request.type not in labels:
                 continue
-            props = (
-                entity_props(pot_id=request.pot_id, entity_key=key)
-                if callable(entity_props)
-                else {}
-            )
-            props = normalize_entity_properties(props, entity_key=key)
+            props = props_by_key.get(key, {})
             if request.external_id and not (
                 _matches_external_id(key, props, request.external_id)
                 or any(
@@ -695,16 +705,7 @@ class DefaultGraphService:
                     identity,
                     canonical_key=candidate.key,
                     explicit_identity=(
-                        props := normalize_entity_properties(
-                            (
-                                entity_props(
-                                    pot_id=request.pot_id, entity_key=candidate.key
-                                )
-                                if callable(entity_props)
-                                else {}
-                            ),
-                            entity_key=candidate.key,
-                        ),
+                        props := props_by_key.get(candidate.key, {}),
                         tuple(
                             ref
                             for row in agg.get(candidate.key, {}).get("claims", ())
@@ -1037,11 +1038,26 @@ class DefaultGraphService:
             return mode
         return getattr(self.backend.claim_query, "match_mode", "lexical")
 
-    def _subgraph_versions(self, pot_id: str) -> dict[str, int]:
+    def _subgraph_versions(
+        self, pot_id: str, *, counts: Mapping[str, Any] | None = None
+    ) -> dict[str, int]:
         # V1.5 stub: a single monotonic counter (claim count) is enough for V2's
         # optimistic concurrency to be additive later.
-        counts = _safe(lambda: dict(self.backend.analytics.counts(pot_id)), {})
+        if counts is None:
+            counts = _safe(lambda: dict(self.backend.analytics.counts(pot_id)), {})
         return {"_global": int(counts.get("claims", 0))}
+
+
+def _quality_from_counts(counts: Mapping[str, Any]) -> dict[str, Any]:
+    """The supported analytics backends derive this projection from counts."""
+    if "claims" not in counts:
+        return {}
+    claim_count = int(counts.get("claims", 0))
+    return {
+        "status": "ok" if claim_count else "empty",
+        "open_conflicts": 0,
+        "claim_count": claim_count,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1822,16 +1838,17 @@ def _scope_needles(scope: Mapping[str, Any]) -> list[str]:
 def _exact_entity_key(
     request: GraphEntitySearchRequest,
     *,
-    claim_query,
     known_keys: frozenset[str],
+    labels: Mapping[str, Sequence[str]],
+    properties: Mapping[str, Mapping[str, Any]],
 ) -> str | None:
     """Return the entity key the query names exactly, if the pot has one.
 
     A search that spells out an entity key is identity resolution, not text
     retrieval: it must resolve to that entity whatever the claim text scores.
     Keys the claim aggregate already found count as present; anything else is
-    probed against stored entity labels/properties so an entity with no claims
-    is still reachable.
+    probed against the already loaded labels/properties so an entity with no
+    claims is still reachable without a second property read.
     """
     raw = (request.query or "").strip()
     if not raw:
@@ -1839,23 +1856,9 @@ def _exact_entity_key(
     for candidate in dict.fromkeys((raw, raw.lower())):
         if candidate in known_keys:
             return candidate
-        if _entity_exists(claim_query, pot_id=request.pot_id, entity_key=candidate):
+        if labels.get(candidate) or properties.get(candidate):
             return candidate
     return None
-
-
-def _entity_exists(claim_query, *, pot_id: str, entity_key: str) -> bool:
-    labels = _safe(
-        lambda: claim_query.entity_labels(pot_id=pot_id, entity_keys=[entity_key]),
-        {},
-    )
-    if labels.get(entity_key):
-        return True
-    entity_props = getattr(claim_query, "entity_properties", None)
-    if not callable(entity_props):
-        return False
-    props = _safe(lambda: entity_props(pot_id=pot_id, entity_key=entity_key), {})
-    return bool(props)
 
 
 def _matches_external_id(
@@ -2036,17 +2039,11 @@ def _assemble_inline_relation_items(
     labels = _safe_entity_labels(
         claim_query, pot_id=env.pot_id, entity_keys=entity_keys
     )
-    entity_props = getattr(claim_query, "entity_properties", None)
     props_by_key = {
-        entity_key: normalize_entity_properties(
-            (
-                entity_props(pot_id=env.pot_id, entity_key=entity_key)
-                if callable(entity_props)
-                else {}
-            ),
-            entity_key=entity_key,
-        )
-        for entity_key in entity_keys
+        entity_key: normalize_entity_properties(props, entity_key=entity_key)
+        for entity_key, props in entity_properties_many(
+            claim_query, pot_id=env.pot_id, entity_keys=entity_keys
+        ).items()
     }
 
     items: list[EvidenceItem] = []

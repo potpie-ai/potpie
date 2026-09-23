@@ -17,8 +17,12 @@ that duplicate was removed so there is a single source of truth. ``intent`` and
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from dataclasses import replace
 from datetime import datetime
+import json
 from typing import Any, Mapping, Sequence
+
+from .resource_projection import project_public_metadata
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +118,139 @@ class AgentEnvelope:
             "as_of": self.as_of.isoformat() if self.as_of else None,
             "metadata": dict(self.metadata),
         }
+
+
+DEFAULT_OUTPUT_BUDGET_BYTES = 32_768
+
+
+def bound_agent_envelope(
+    envelope: AgentEnvelope, *, max_bytes: int = DEFAULT_OUTPUT_BUDGET_BYTES
+) -> AgentEnvelope:
+    """Bound serialized evidence while preserving identity and answer fields."""
+    def size(value: AgentEnvelope) -> int:
+        return len(json.dumps(value.to_dict(), ensure_ascii=False, default=str).encode("utf-8"))
+
+    envelope = replace(envelope, items=tuple(
+        replace(item, payload=project_public_metadata(item.payload))
+        for item in envelope.items
+    ))
+    if size(envelope) <= max_bytes:
+        return envelope
+    items = list(envelope.items)
+    omitted: dict[str, int] = {}
+    metadata = dict(envelope.metadata)
+    metadata["output_budget_bytes"] = max_bytes
+
+    def current() -> AgentEnvelope:
+        metadata["omitted_by_output_budget"] = dict(omitted)
+        returned = dict(metadata.get("returned_by_family") or {})
+        if returned:
+            metadata["returned_by_family"] = {
+                family: sum(item.include == family for item in items) for family in returned
+            }
+        metadata["more_results_available"] = True
+        return replace(envelope, items=tuple(items), metadata=dict(metadata))
+
+    while len(items) > 1 and size(current()) > max_bytes:
+        removed = items.pop()
+        omitted[removed.include] = omitted.get(removed.include, 0) + 1
+    if size(current()) <= max_bytes:
+        return current()
+    if not items:
+        return current()
+
+    item = items[0]
+    original = dict(item.payload)
+    for text_limit, list_limit in ((2_000, 4), (500, 2), (160, 1)):
+        bounded, omitted_fields = _bound_evidence_payload(
+            original, text_limit=text_limit, list_limit=list_limit,
+        )
+        items[0] = replace(item, payload=bounded)
+        metadata["omitted_fields_by_candidate"] = {
+            item.candidate_key: omitted_fields
+        } if omitted_fields else {}
+        if size(current()) <= max_bytes:
+            return current()
+    compact = dict(items[0].payload)
+    properties = compact.get("properties")
+    if isinstance(properties, Mapping):
+        essential = {
+            "name", "summary", "description", "root_cause", "fix_steps",
+            "verification_status", "resolution_status", "source_ref", "revision",
+        }
+        compact["properties"] = {
+            key: value for key, value in properties.items() if key in essential
+        }
+        metadata.setdefault("omitted_fields_by_candidate", {}).setdefault(
+            item.candidate_key, {}
+        )["properties"] = len(properties) - len(compact["properties"])
+    items[0] = replace(item, payload=compact)
+    if size(current()) <= max_bytes:
+        return current()
+    bounded, omitted_fields = _bound_evidence_payload(
+        compact, text_limit=160, list_limit=1, mapping_limit=12,
+    )
+    items[0] = replace(item, payload=bounded)
+    metadata["omitted_fields_by_candidate"] = {item.candidate_key: omitted_fields}
+    if size(current()) <= max_bytes:
+        return current()
+    compact_metadata = {
+        key: metadata[key]
+        for key in (
+            "searched_families", "total_result_budget", "omitted_by_total_budget",
+            "omitted_by_output_budget", "more_results_available", "output_budget_bytes",
+        )
+        if key in metadata
+    }
+    compact_metadata["omitted_metadata_fields"] = len(metadata) - len(compact_metadata)
+    metadata.clear()
+    metadata.update(compact_metadata)
+    if size(current()) <= max_bytes:
+        return current()
+    # An unbounded identifier or answer may itself exceed the envelope budget.
+    metadata["omitted_candidate_key"] = item.candidate_key
+    items.clear()
+    omitted[item.include] = omitted.get(item.include, 0) + 1
+    return current()
+
+
+def _bound_evidence_payload(
+    payload: Mapping[str, Any], *, text_limit: int, list_limit: int,
+    mapping_limit: int = 32,
+) -> tuple[dict[str, Any], dict[str, int]]:
+    omitted: dict[str, int] = {}
+    protected = {"resource_id", "doc", "section", "revision", "source_ref", "claim_key",
+                 "subject_key", "object_key", "entity_key", "follow_up_commands"}
+
+    def bound(value: Any, path: str) -> Any:
+        if isinstance(value, str):
+            if len(value) > text_limit and path.split(".")[-1] not in protected:
+                omitted[path] = len(value) - text_limit
+                return value[:text_limit]
+            return value
+        if isinstance(value, (list, tuple)):
+            if len(value) > list_limit:
+                omitted[path] = len(value) - list_limit
+                value = value[:list_limit]
+            return [bound(item, f"{path}.{index}") for index, item in enumerate(value)]
+        if isinstance(value, Mapping):
+            essential = {
+                "resource_id", "doc", "section", "revision", "source_ref",
+                "source_refs", "claim_key", "subject_key", "object_key",
+                "entity_key", "follow_up_commands", "details", "root_cause",
+                "fix_steps", "verification_status", "resolution_status",
+                "source_status",
+            }
+            keys = [key for key in value if key in essential]
+            keys.extend(key for key in value if key not in essential)
+            selected = keys[:mapping_limit]
+            if len(keys) > len(selected):
+                omitted[path or "properties"] = len(keys) - len(selected)
+            return {key: bound(value[key], f"{path}.{key}" if path else str(key))
+                    for key in selected}
+        return value
+
+    return bound(payload, ""), omitted
 
 
 #: Best calibrated relevance at or above which the evidence is called ``high``.

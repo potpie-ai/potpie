@@ -279,8 +279,8 @@ def test_real_passage_index_participates_without_overriding_authoritative_defini
     try:
         service, _ = definition_service(resource_index=index)
         for env in (
-            service.search(SearchRequest(pot_id="p", query=query, max_items=1)),
-            service.resolve(ResolveRequest(pot_id="p", task=query, max_items=1)),
+            service.search(SearchRequest(pot_id="p", query=query, max_items=12)),
+            service.resolve(ResolveRequest(pot_id="p", task=query, max_items=12)),
         ):
             assert env.items[0].candidate_key == "correct", env.to_dict()
             passages = [item for item in env.items if item.include == "resources"]

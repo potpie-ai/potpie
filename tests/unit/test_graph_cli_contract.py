@@ -2462,6 +2462,34 @@ def test_graph_neighborhood_returns_inspection_slice() -> None:
     assert body["edges"][0]["from"] == "service:web"
 
 
+def test_full_neighborhood_diagnostic_redacts_credential_metadata(monkeypatch) -> None:
+    def neighborhood(self, *, pot_id, entity_key, **kwargs):
+        return GraphSlice(
+            pot_id=pot_id,
+            nodes=(GraphNode(key=entity_key, labels=("Repository",), properties={
+                "owner": "potpie-ai", "source_ref": "test:repository",
+                "temp_clone_token": "fixture-secret",
+                "sessionCookie": "fixture-cookie",
+            }),),
+            edges=(),
+        )
+
+    monkeypatch.setattr(_Inspection, "neighborhood", neighborhood)
+    _common.set_json(True)
+    _common.set_host(_Host(_Graph(), backend=_Backend()))
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["neighborhood", "--entity", "repository:pie", "--detail", "full"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "fixture-secret" not in result.output
+    assert "fixture-cookie" not in result.output
+    body = _assert_graph_envelope(json.loads(result.output), "graph.neighborhood")
+    assert body["nodes"][0]["properties"]["owner"] == "potpie-ai"
+    assert body["nodes"][0]["properties"]["source_ref"] == "test:repository"
+
+
 def test_graph_neighborhood_defaults_to_relation_summary() -> None:
     _common.set_json(True)
     _common.set_host(_Host(_Graph(), backend=_Backend()))
@@ -2481,6 +2509,74 @@ def test_graph_neighborhood_defaults_to_relation_summary() -> None:
     assert body["relations"][0]["to_key"] == "service:api"
     assert body["relations"][0]["source_refs"] == ["repo:manifest"]
     assert body["relations"][0]["truth"] == "source_observation"
+
+
+def test_neighborhood_full_text_shows_bounded_extra_detail_and_hidden_counts() -> None:
+    payload = {
+        "entity_key": "service:web", "identity_status": "exact", "detail": "full",
+        "node_count": 7, "truncated": True,
+        "relations": [
+            {"predicate": "DEPENDS_ON", "from": "service:web", "to": f"service:{i}",
+             "source_refs": [], "fact": f"dependency {i}"}
+            for i in range(25)
+        ],
+        "nodes": [
+            {"key": f"service:{i}", "labels": ["Service"], "properties": {"name": f"Node {i}"}}
+            for i in range(7)
+        ],
+        "edges": [
+            {"from": "service:web", "to": f"service:{i}",
+             "predicate": "DEPENDS_ON", "properties": {"confidence": 0.9}}
+            for i in range(25)
+        ],
+    }
+
+    text = graph._neighborhood_human(payload)
+
+    assert "5 relations hidden" in text
+    assert "Node 0" in text
+    assert '"confidence":0.9' in text
+    assert "2 node details hidden" in text
+    assert "20 edge details hidden" in text
+    assert "completeness is unknown" in text
+
+
+def test_neighborhood_byte_budget_preserves_fix_fields_and_exact_route() -> None:
+    payload = {
+        "entity_key": "fix:cookie", "identity_status": "exact", "detail": "full",
+        "depth": 2, "direction": "both", "limit": 20,
+        "predicates": ["VERIFIED"], "truncated": False,
+        "node_count": 2,
+        "relations": [
+            {"predicate": "VERIFIED", "from_key": "activity:check",
+             "to_key": "fix:cookie", "fact": "verified " + "x" * 3_000,
+             "source_refs": ["test:verification"]}
+            for _ in range(20)
+        ],
+        "nodes": [
+            {"key": "fix:cookie", "labels": ["Fix"], "properties": {
+                "root_cause": "Shared cookie name across daemons",
+                "fix_steps": ["Use a per-daemon cookie suffix"],
+                "verification_status": "passed", "unrelated": "x" * 8_000,
+            }},
+            {"key": "activity:check", "labels": ["Activity"], "properties": {}},
+        ],
+        "edges": [
+            {"predicate": "VERIFIED", "from": "activity:check", "to": "fix:cookie",
+             "properties": {"fact": "x" * 3_000}}
+            for _ in range(20)
+        ],
+    }
+    payload["relation_count"] = len(payload["relations"])
+
+    bounded = graph._bound_neighborhood_payload(payload, pot_id="p")
+
+    assert len(json.dumps(bounded, ensure_ascii=False).encode()) <= 32_768
+    assert bounded["omitted_relation_count"] > 0
+    assert bounded["omitted_field_count"] > 0
+    assert bounded["nodes"][0]["properties"]["root_cause"] == "Shared cookie name across daemons"
+    assert bounded["nodes"][0]["properties"]["fix_steps"] == ["Use a per-daemon cookie suffix"]
+    assert "--predicate VERIFIED --unbounded --pot p" in bounded["recommended_next_action"]
 
 
 def test_graph_describe_returns_executable_view_contract() -> None:

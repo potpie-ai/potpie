@@ -176,8 +176,8 @@ The V1 agent wrappers (`resolve`/`search`/`record`) and `status` ride the same
 graph internals as the workbench; they are not a "legacy V1 surface waiting on V2."
 
 ```bash
-potpie resolve <task> [--intent feature] [--include <csv>] [--mode fast|balanced|verify|deep] [--pot <ref>]
-potpie search  <query> [--include <csv>] [--intent <name>] [--pot <ref>]
+potpie resolve <task> [--intent feature] [--include <csv>] [--mode fast|balanced|verify|deep] [--limit 12] [--pot <ref>]
+potpie search  <query> [--include <csv>] [--intent <name>] [--limit 12] [--pot <ref>]
 potpie record  --type <kind> --summary <text> [--detail <k>=<v>]… [--scope <k:v>] [--pot <ref>]
 potpie status  [--intent <name>] [--harness claude] [--pot <ref>]
 
@@ -194,6 +194,12 @@ potpie ui      [--open/--no-open] [--pot <ref>]
 ```
 
 - **`resolve` / `search` / `record`** → `host.agent_context.{resolve,search,record}`.
+  Read `--limit` caps the final ranked envelope across all searched families;
+  metadata reports returned and omitted counts per family. Readers still use
+  the same limit as their candidate budget, so no exact global count is implied.
+  Agent evidence has a 32 KiB serialized response budget; omitted item and field
+  counts explain trimming. Narrow the family or follow a returned entity or
+  resource ID to fetch the relevant detail.
   `record --type` accepts the structured record types (preference/policy/bug_pattern/
   fix/verification/decision) plus free-form; it goes through semantic validation and
   the record→semantic bridge ([writing.md](./writing.md)). Those schemas validate
@@ -387,8 +393,8 @@ potpie cloud skills sync [--agent <id>]
 
 ```bash
 potpie resource import <dir> --doc <slug> [--source-ref <uri>] [--source-kind <fmt>] [--pot <ref>]
-potpie resource get    <id> [<id>...] [--with-neighbors] [--pot <ref>]
-potpie resource list   --doc <slug> [--section <slug>] [--pot <ref>]
+potpie resource get    <id> [<id>...] [--with-neighbors] [--full] [--pot <ref>]
+potpie resource list   --doc <slug> [--section <slug>] [--limit 10] [--full] [--pot <ref>]
 potpie resource rm     <slug> [--confirm] [--pot <ref>]
 ```
 
@@ -400,6 +406,14 @@ rejected or crashed import leaves the prior revision exactly as it was. `get` re
 embedding. It takes several ids at once and `--with-neighbors` expands each to the chunks
 either side *within the same section*, both resolved host-side so a multi-chunk read stays
 one round trip.
+
+`resource list` returns up to ten sections by default in manifest order, with
+the total and omitted section counts. Its exact `--section` follow-up preserves
+the selected pot; raise `--limit` when more of the manifest is needed. `get`
+and `list` have 32 KiB response budgets and name omitted chunks, sections, or
+fields. `--full` bypasses the byte budget for an explicitly chosen chunk or
+section. Credential-like JSON metadata values are redacted in both modes;
+legitimate owner and source fields remain available. Stored bytes are unchanged.
 
 `import` writes both halves of a document: bytes to the store, then structure to the
 graph — a `Document` entity owning one `DocumentSection` per division, joined by
@@ -680,7 +694,11 @@ potpie graph repair [--semantic-index] [--entity-summaries] [--entity-labels] \
 
 - **`graph neighborhood`** is the **Traverse** axis (first-class), backed by
   `backend.inspection.neighborhood`. `graph inspect` is a legacy alias that warns
-  toward `neighborhood`.
+  toward `neighborhood`. Full text shows bounded node and edge properties;
+  full JSON retains the existing `relations`, `nodes`, and `edges` fields. The
+  normal JSON slice has a 32 KiB byte budget with omitted counts and an exact
+  `--unbounded` follow-up. Named graph reads keep answer-bearing fix fields
+  under the same budget and point to the exact entity when detail is omitted.
 - Unbuilt capabilities surface as the structured not-implemented contract via
   `_require_backend_capability`. Per-profile coverage is in
   [architecture.md](./architecture.md).

@@ -165,6 +165,39 @@ def test_search_passes_an_explicit_intent_through():
     assert json.loads(result.stdout)["intent"] == "debugging"
 
 
+def test_search_limit_is_a_total_budget_passed_to_the_service():
+    host = _host()
+    result = CliRunner().invoke(_app(), ["search", "graph", "--limit", "1"])
+
+    assert result.exit_code == 0, result.stdout
+    assert host.agent_context.requests[0].max_items == 1
+
+
+def test_search_limit_caps_response_from_an_older_daemon():
+    host = _host()
+    _common.set_json(True)
+
+    def old_search(request):
+        return AgentEnvelope(
+            pot_id=request.pot_id, intent="docs",
+            items=tuple(EvidenceItem(
+                include=family, candidate_key=f"claim:{index}", score=1 - index / 10,
+                payload={"fact": f"fact {index}"}, coverage_status="complete",
+            ) for index, family in enumerate(("docs", "docs", "resources"))),
+            coverage=(CoverageReport(include="docs", status="complete"),
+                      CoverageReport(include="resources", status="complete")),
+            metadata={"searched_families": ["docs", "resources"]},
+        )
+
+    host.agent_context.search = old_search
+    result = CliRunner().invoke(_app(), ["search", "graph", "--limit", "1"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert [item["candidate_key"] for item in payload["items"]] == ["claim:0"]
+    assert payload["metadata"]["omitted_by_total_budget"] == {"docs": 1, "resources": 1}
+
+
 def test_search_leaves_the_intent_unset_by_default():
     """Unset, not the string 'unknown': normalization is the service's job, and
     the CLI has no business duplicating that vocabulary."""

@@ -19,6 +19,9 @@ repository or infer rich facts from prose for you.
 Text output for reads; `--json` for `propose`, `commit`, `resource import`,
 and anything you parse. `graph describe --examples` renders only with `--json`
 and shows read commands only: the write payload shape is `graph mutation-template`.
+When a command's JSON is saved to a file, parse it with a JSON decoder (for
+example, `json.load`) and print only the fields needed for the task. Do not
+regex-match or reprint an entire minified JSON object to inspect one field.
 
 ## Protocol contracts and decoder questions
 
