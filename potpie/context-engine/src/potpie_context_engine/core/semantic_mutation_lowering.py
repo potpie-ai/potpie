@@ -30,6 +30,7 @@ from potpie_context_engine.core.graph_contract import (
     evidence_strength_for_truth,
     make_claim_key,
     normalize_entity_key,
+    resolve_origin_trust,
 )
 from potpie_context_engine.core.graph_entity_summary import compact_entity_summary
 from potpie_context_engine.core.graph_mutations import (
@@ -688,6 +689,9 @@ def _claim_properties(
 ) -> dict[str, object]:
     truth = truth_override or op.truth or DEFAULT_TRUTH_CLASS
     evidence_strength = evidence_strength_for_truth(truth)
+    origin_trust = resolve_origin_trust(
+        declared=op.origin_trust, context=request.origin_trust
+    )
     fact = op.description or _synthesize_fact(subject_key, predicate, object_key)
     source_refs = [ev.source_ref for ev in op.evidence]
     evidence_dicts = [
@@ -699,6 +703,7 @@ def _claim_properties(
         "claim_key": claim_key,
         "subgraph": subgraph,
         "truth": truth,
+        "origin_trust": origin_trust,
         "evidence_strength": evidence_strength,
         "confidence": op.confidence if op.confidence is not None else 1.0,
         "fact": fact,

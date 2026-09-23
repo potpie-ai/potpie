@@ -313,24 +313,64 @@ async def sync_one_project_source(
     raise HTTPException(status_code=400, detail="unsupported_provider")
 
 
+_UNSIGNED_WEBHOOKS_OPT_IN = "CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS"
+_linear_unsigned_warned = False
+
+
+def _linear_webhook_auth_failure(
+    *,
+    secret: str,
+    signature: str | None,
+    body: bytes,
+    allow_unsigned: bool,
+) -> str | None:
+    if not secret:
+        if allow_unsigned:
+            return None
+        return (
+            "linear webhook signature required: LINEAR_WEBHOOK_SECRET "
+            "is not configured (set it, or set "
+            f"{_UNSIGNED_WEBHOOKS_OPT_IN}=1 for local dev only)"
+        )
+    if not signature:
+        return "missing_signature"
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature.strip()):
+        return "invalid_signature"
+    return None
+
+
 @router.post("/webhooks/linear")
 async def linear_sources_webhook(
     request: Request,
     db: Session = Depends(get_db),
     linear_signature: str | None = Header(default=None, alias="Linear-Signature"),
 ) -> dict[str, Any]:
+    global _linear_unsigned_warned
     raw = await request.body()
     secret = (os.getenv("LINEAR_WEBHOOK_SECRET") or "").strip()
-    if secret and not linear_signature:
-        raise HTTPException(status_code=401, detail="missing_signature")
-    if secret and linear_signature:
-        expected = hmac.new(
-            secret.encode("utf-8"),
-            raw,
-            hashlib.sha256,
-        ).hexdigest()
-        if not hmac.compare_digest(expected, linear_signature.strip()):
-            raise HTTPException(status_code=401, detail="invalid_signature")
+    allow_unsigned = os.getenv(_UNSIGNED_WEBHOOKS_OPT_IN, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    auth_error = _linear_webhook_auth_failure(
+        secret=secret,
+        signature=linear_signature,
+        body=raw,
+        allow_unsigned=allow_unsigned,
+    )
+    if auth_error:
+        raise HTTPException(status_code=401, detail=auth_error)
+    if not secret and allow_unsigned and not _linear_unsigned_warned:
+        logger.warning(
+            "SECURITY: LINEAR_WEBHOOK_SECRET is unset and "
+            "%s is enabled - linear webhooks are being accepted "
+            "UNAUTHENTICATED. Never use this in a network-reachable deployment.",
+            _UNSIGNED_WEBHOOKS_OPT_IN,
+        )
+        _linear_unsigned_warned = True
     try:
         payload = json.loads(raw.decode("utf-8") or "{}")
     except json.JSONDecodeError:

@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from potpie_context_engine.core.graph_contract import (
+    fence_untrusted_text,
+    is_untrusted_origin,
+    origin_trust_or_default,
+)
 from potpie_context_engine.core.ports.graph_service import (
     normalize_read_detail,
     normalize_read_relations,
@@ -359,8 +364,11 @@ def _item_bullet_lines(
 ) -> list[str]:
     entity_type = item.get("entity_type") or "?"
     entity_key = _item_entity_key(item)
+    trust = origin_trust_or_default(item.get("origin_trust"))
     summary = _display_fact(item.get("summary") or entity_key or "", ctx)
-    meta_parts: list[str] = []
+    if is_untrusted_origin(trust) and item.get("summary"):
+        summary = fence_untrusted_text(str(item.get("summary") or ""), trust)
+    meta_parts: list[str] = [f"origin_trust={trust}"]
     if item.get("score") is not None:
         meta_parts.append(f"score={item.get('score')}")
     if ctx.detail == "full":
@@ -371,7 +379,11 @@ def _item_bullet_lines(
     meta = f"  {'  '.join(meta_parts)}" if meta_parts else ""
     lines = [f"  • [{entity_type}] {entity_key or summary}{meta}"]
     if entity_key and summary and summary != entity_key:
-        lines.append(f"    {summary}")
+        if is_untrusted_origin(trust) and "\n" in summary:
+            for fence_line in summary.splitlines():
+                lines.append(f"    {fence_line}")
+        else:
+            lines.append(f"    {summary}")
     refs = _string_list(item.get("source_refs"))
     if refs:
         lines.append(f"    refs: {', '.join(refs)}")
@@ -470,14 +482,24 @@ def _format_relations_full_lines(item: Mapping[str, Any], *, indent: str) -> lis
         direction = f"{from_key} → {to_key}" if from_key or to_key else ""
         lines.append(f"{indent}↳ {predicate} {direction}".rstrip())
         fact = rel.get("fact")
+        trust = origin_trust_or_default(rel.get("origin_trust"))
         if fact:
-            lines.append(f"{indent}  fact: {fact}")
+            if is_untrusted_origin(trust):
+                lines.append(f"{indent}  origin_trust={trust}")
+                for fence_line in fence_untrusted_text(
+                    str(fact), trust
+                ).splitlines():
+                    lines.append(f"{indent}  {fence_line}")
+            else:
+                lines.append(f"{indent}  fact: {fact}")
         refs = _string_list(rel.get("source_refs"))
         if refs:
             lines.append(f"{indent}  refs: {', '.join(refs)}")
         truth = rel.get("truth")
         if truth:
             lines.append(f"{indent}  truth: {truth}")
+        if not is_untrusted_origin(trust) and rel.get("origin_trust"):
+            lines.append(f"{indent}  origin_trust={trust}")
     return lines
 
 

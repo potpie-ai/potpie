@@ -8,7 +8,10 @@ import math
 from datetime import datetime
 from typing import Any, Iterable, Mapping
 
-from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
+from potpie_context_engine.core.graph_contract import (
+    evidence_strength_for_truth,
+    origin_trust_or_default,
+)
 from potpie_context_engine.core.ports.claim_query import ClaimRow
 
 # Edge properties that are part of the canonical V1.5 contract or backend system
@@ -46,6 +49,7 @@ CONTRACT_EDGE_KEYS = frozenset(
         "subgraph",
         "subject_key",
         "truth",
+        "origin_trust",
         "uuid",
         "valid_at",
         "valid_from",
@@ -180,6 +184,7 @@ def row_from_record(rec: Mapping[str, Any]) -> ClaimRow:
         evidence=_evidence_tuple(props.get("evidence")),
         graph_contract_version=_coerce_str(props.get("graph_contract_version")),
         ontology_version=_coerce_str(props.get("ontology_version")),
+        origin_trust=origin_trust_or_default(_coerce_str(props.get("origin_trust"))),
     )
 
 
