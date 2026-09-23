@@ -30,6 +30,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
+from pathlib import Path
 from typing import Any
 
 # Nudge events understood by `potpie graph nudge` (must match potpie_context_engine.domain.nudge.NudgeEvent).
@@ -170,10 +173,22 @@ def _first(payload: dict[str, Any], *paths: str) -> Any:
 
 
 def session_id_of(payload: dict[str, Any]) -> str:
-    value = _first(payload, "session_id", "sessionId", "conversation_id", "session.id")
+    value = _first(
+        payload,
+        "session_id",
+        "sessionId",
+        "conversation_id",
+        "conversationId",
+        "session.id",
+    )
     if value:
         return str(value)
-    env = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("POTPIE_SESSION_ID")
+    env = (
+        os.environ.get("CLAUDE_SESSION_ID")
+        or os.environ.get("CURSOR_SESSION_ID")
+        or os.environ.get("CODEX_SESSION_ID")
+        or os.environ.get("POTPIE_SESSION_ID")
+    )
     return env or "default"
 
 
@@ -187,11 +202,313 @@ def file_path_of(payload: dict[str, Any]) -> str | None:
         "tool_input.file_path",
         "tool_input.path",
         "toolInput.file_path",
+        "toolInput.path",
         "params.file_path",
         "file_path",
+        "filePath",
         "path",
+        "edit.file_path",
+        "edit.filePath",
+        "edit.path",
+    )
+    if value:
+        return str(value)
+    edits = payload.get("edits")
+    if isinstance(edits, list) and edits:
+        first = edits[0]
+        if isinstance(first, dict):
+            edit_path = (
+                first.get("file_path") or first.get("filePath") or first.get("path")
+            )
+            if edit_path:
+                return str(edit_path)
+    return None
+
+
+def _edit_path(edit: dict[str, Any]) -> str | None:
+    value = _first(
+        edit,
+        "file_path",
+        "filePath",
+        "path",
+        "target_path",
+        "targetPath",
     )
     return str(value) if value else None
+
+
+def _line_number(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        number = int(value.strip())
+        return number if number > 0 else None
+    if isinstance(value, dict):
+        for key in ("line", "line_number", "lineNumber"):
+            number = _line_number(value.get(key))
+            if number is not None:
+                return number
+    return None
+
+
+def _line_range_of_edit(edit: dict[str, Any]) -> str | None:
+    for key in ("lines", "line_range", "lineRange"):
+        value = edit.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, dict):
+            start = next(
+                (
+                    _line_number(value.get(key))
+                    for key in ("start", "line_start", "start_line", "startLine")
+                ),
+                None,
+            )
+            end = next(
+                (
+                    _line_number(value.get(key))
+                    for key in ("end", "line_end", "end_line", "endLine")
+                ),
+                None,
+            )
+            if start is not None:
+                return f"{start}-{end or start}"
+    range_value = edit.get("range")
+    if isinstance(range_value, str) and range_value.strip():
+        return range_value.strip()
+    if isinstance(range_value, dict):
+        start = next(
+            (
+                _line_number(range_value.get(key))
+                for key in ("start", "line_start", "start_line", "startLine")
+            ),
+            None,
+        )
+        end = next(
+            (
+                _line_number(range_value.get(key))
+                for key in ("end", "line_end", "end_line", "endLine")
+            ),
+            None,
+        )
+        if start is not None:
+            return f"{start}-{end or start}"
+    start = next(
+        (
+            _line_number(edit.get(key))
+            for key in ("line_start", "start_line", "startLine")
+        ),
+        None,
+    )
+    end = next(
+        (_line_number(edit.get(key)) for key in ("line_end", "end_line", "endLine")),
+        None,
+    )
+    if start is not None:
+        return f"{start}-{end or start}"
+    return None
+
+
+def _edit_snippet(edit: dict[str, Any]) -> str | None:
+    value = _first(
+        edit,
+        "new_string",
+        "newString",
+        "replacement",
+        "snippet",
+        "content",
+    )
+    return str(value) if value else None
+
+
+_PATCH_FILE_RE = re.compile(
+    r"^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(?P<path>.+?)\s*$"
+)
+_PATCH_HUNK_RE = re.compile(
+    r"^@@\s+-\d+(?:,\d+)?\s+\+(?P<start>\d+)(?:,(?P<count>\d+))?\s+@@"
+)
+
+
+def _apply_patch_edits(command: str) -> list[dict[str, Any]]:
+    """Extract one line-span edit record per file from an apply_patch command."""
+    records: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    def flush() -> None:
+        nonlocal current
+        if current is None:
+            return
+        start = current.get("line_start")
+        end = current.get("line_end")
+        if start is None and current.get("add_lines", 0):
+            start, end = 1, current["add_lines"]
+        if start is not None:
+            records.append(
+                {
+                    "path": current["path"],
+                    "line_start": start,
+                    "line_end": end or start,
+                }
+            )
+        current = None
+
+    for line in command.splitlines():
+        file_match = _PATCH_FILE_RE.match(line)
+        if file_match:
+            flush()
+            current = {"path": file_match.group("path"), "add_lines": 0}
+            continue
+        if current is None:
+            continue
+        hunk_match = _PATCH_HUNK_RE.match(line)
+        if hunk_match:
+            start = int(hunk_match.group("start"))
+            count = int(hunk_match.group("count") or "1")
+            end = start + max(count, 1) - 1
+            current["line_start"] = (
+                start
+                if current.get("line_start") is None
+                else min(current["line_start"], start)
+            )
+            current["line_end"] = max(current.get("line_end") or end, end)
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            current["add_lines"] += 1
+    flush()
+    return records
+
+
+def _nested_edits(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    edits: list[dict[str, Any]] = []
+    for key in (
+        "edits",
+        "tool_input.edits",
+        "toolInput.edits",
+        "tool_response.edits",
+        "toolResponse.edits",
+    ):
+        node: Any = payload
+        for part in key.split("."):
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(part)
+        if isinstance(node, list):
+            edits.extend(edit for edit in node if isinstance(edit, dict))
+    return edits
+
+
+def _normalize_edit_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize hook payloads into per-file records for lineage capture."""
+    edits: list[dict[str, Any]] = []
+    command = command_of(payload)
+    if command:
+        edits.extend(_apply_patch_edits(command))
+        # Some Bash wrappers pass the structured edit list as JSON in command.
+        try:
+            decoded = json.loads(command)
+        except (TypeError, ValueError):
+            decoded = None
+        if isinstance(decoded, dict):
+            edits.extend(_nested_edits(decoded))
+        elif isinstance(decoded, list):
+            edits.extend(edit for edit in decoded if isinstance(edit, dict))
+    edits.extend(_nested_edits(payload))
+    if not edits and (_edit_path(payload) or file_path_of(payload)):
+        edits.append(payload)
+
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for edit in edits:
+        path = _edit_path(edit) or file_path_of(edit)
+        if not path:
+            continue
+        record = dict(edit)
+        record["path"] = path
+        key = (path, _line_range_of_edit(record), _edit_snippet(record))
+        if key not in seen:
+            normalized.append(record)
+            seen.add(key)
+    return normalized
+
+
+def prompt_of(payload: dict[str, Any]) -> str | None:
+    value = _first(
+        payload,
+        "prompt",
+        "prompt_text",
+        "user_prompt",
+        "user_message",
+        "userMessage",
+        "message",
+        "content",
+        "text",
+    )
+    return str(value) if value else None
+
+
+def snippet_of(payload: dict[str, Any]) -> str | None:
+    value = _first(
+        payload,
+        "tool_input.new_string",
+        "tool_input.content",
+        "toolInput.new_string",
+        "toolInput.content",
+    )
+    return str(value) if value else None
+
+
+def infer_line_range(path: str | None, snippet: str | None) -> str | None:
+    if not path or not snippet:
+        return None
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if snippet:
+        idx = text.find(snippet)
+        if idx >= 0:
+            start = text[:idx].count("\n") + 1
+            end = start + snippet.count("\n")
+            return f"{start}-{max(end, start)}"
+    return None
+
+
+def build_lineage_argv(
+    potpie_bin: str,
+    *,
+    session: str,
+    harness: str,
+    remember_prompt: bool = False,
+    prompt_file: str | None = None,
+    path: str | None = None,
+    lines: str | None = None,
+    pot: str | None = None,
+) -> list[str]:
+    argv = [
+        potpie_bin,
+        "--json",
+        "lineage",
+        "capture",
+        "--session",
+        session,
+        "--harness",
+        harness,
+        "--fail-open",
+    ]
+    if remember_prompt:
+        argv.append("--remember-prompt")
+    if prompt_file:
+        argv += ["--prompt-file", prompt_file]
+    if path:
+        argv += ["--path", path]
+    if lines:
+        argv += ["--lines", lines]
+    if pot:
+        argv += ["--pot", pot]
+    return argv
 
 
 def command_of(payload: dict[str, Any]) -> str | None:
@@ -394,6 +711,22 @@ def build_argv(
     return argv
 
 
+def render_cursor_output(event_hint: str, nudge_result: Any) -> tuple[str, int]:
+    """Shape a nudge result into Cursor hook JSON. Always exit 0 (never block)."""
+    if not isinstance(nudge_result, dict):
+        return "", 0
+    if isinstance(nudge_result.get("result"), dict):
+        nudge_result = nudge_result["result"]
+    if not nudge_result.get("ok") or nudge_result.get("silent"):
+        return "", 0
+    text = nudge_result.get("inject_context") or nudge_result.get("instruction")
+    if not text:
+        return "", 0
+    if event_hint == "stop":
+        return json.dumps({"followup_message": str(text)}), 0
+    return json.dumps({"additional_context": str(text)}), 0
+
+
 def render_output(claude_event: str, nudge_result: Any) -> tuple[str, int]:
     """Shape a nudge result into harness hook output. Always exit 0 (never block)."""
     if not isinstance(nudge_result, dict):
@@ -449,8 +782,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--event",
         required=True,
-        help="hook hint: session_start|pre_edit|bash_pre|bash_post|stop "
-        "(or a direct nudge event)",
+        help="hook hint: session_start|pre_edit|bash_pre|bash_post|stop|"
+        "user_prompt|post_edit (or a direct nudge event)",
     )
     parser.add_argument("--pot", default=os.environ.get("POTPIE_POT"))
     parser.add_argument("--limit", type=int, default=None)
@@ -463,6 +796,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         payload = _read_stdin_payload()
+        hint = str(args.event or "").strip()
+        if hint == "user_prompt":
+            return _run_lineage_capture(args, payload, hint)
+        if hint in {"post_edit", "bash_post"}:
+            capture_code = _run_lineage_capture(args, payload, hint)
+            if hint == "post_edit":
+                return capture_code
+
         nudge_event, fields = resolve_nudge_event(args.event, payload)
         if nudge_event is None:
             _debug(f"no nudge for hint={args.event!r}; staying silent")
@@ -500,8 +841,12 @@ def main(argv: list[str] | None = None) -> int:
             _debug(f"unparseable nudge output: {proc.stdout[:200]!r}")
             return 0
 
-        claude_event = hook_event_name_of(payload, nudge_event)
-        out, code = render_output(claude_event, result)
+        harness = str(args.harness or "claude").strip().lower()
+        if harness in {"cursor", "codex"}:
+            out, code = render_cursor_output(hint, result)
+        else:
+            claude_event = hook_event_name_of(payload, nudge_event)
+            out, code = render_output(claude_event, result)
         if out:
             sys.stdout.write(out)
         return code
@@ -510,6 +855,102 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except Exception as exc:  # noqa: BLE001 - a hook must never break the session
         _debug(f"unexpected error: {exc!r}")
+        return 0
+
+
+def _run_lineage_capture(args: Any, payload: dict[str, Any], hint: str) -> int:
+    """Fail-open lineage capture. Never blocks Write/Edit or prompt submit."""
+    binary = shutil.which(args.potpie_bin) or args.potpie_bin
+    if shutil.which(args.potpie_bin) is None and not os.path.exists(binary):
+        _debug(f"potpie binary {args.potpie_bin!r} not found; staying silent")
+        return 0
+    session = session_id_of(payload)
+    harness = str(getattr(args, "harness", None) or "claude")
+    prompt_file = None
+    try:
+        if hint == "user_prompt":
+            prompt = prompt_of(payload)
+            if not prompt:
+                _debug("user_prompt with empty prompt; staying silent")
+                return 0
+            handle = tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                suffix=".prompt",
+                delete=False,
+            )
+            try:
+                handle.write(prompt)
+                handle.close()
+                prompt_file = handle.name
+                cmd = build_lineage_argv(
+                    binary,
+                    session=session,
+                    harness=harness,
+                    remember_prompt=True,
+                    prompt_file=prompt_file,
+                    pot=args.pot,
+                )
+                _debug(f"lineage: {' '.join(cmd)}")
+                subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=float(os.environ.get("POTPIE_HOOK_TIMEOUT", "15")),
+                    check=False,
+                )
+            finally:
+                if prompt_file:
+                    try:
+                        os.unlink(prompt_file)
+                    except OSError:
+                        pass
+            return 0
+
+        edit_payloads = _normalize_edit_payloads(payload)
+        if not edit_payloads:
+            _debug("post_edit with no edits; staying silent")
+            return 0
+        batch_deadline = time.monotonic() + float(
+            os.environ.get("POTPIE_HOOK_TIMEOUT", "15")
+        )
+        captured = 0
+        for edit in edit_payloads:
+            path = _edit_path(edit) or file_path_of(edit)
+            if not path:
+                continue
+            lines = _line_range_of_edit(edit) or infer_line_range(
+                path, _edit_snippet(edit) or snippet_of(edit)
+            )
+            if not lines:
+                _debug(f"post_edit with no known range for {path!r}; skipping")
+                continue
+            remaining = batch_deadline - time.monotonic()
+            if remaining <= 0:
+                _debug("lineage batch deadline reached; stopping capture")
+                break
+            cmd = build_lineage_argv(
+                binary,
+                session=session,
+                harness=harness,
+                path=path,
+                lines=lines,
+                pot=args.pot,
+            )
+            _debug(f"lineage: {' '.join(cmd)}")
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=remaining,
+                check=False,
+            )
+            captured += 1
+        if not captured:
+            _debug("post_edit had no captureable edits; staying silent")
+        return 0
+    except Exception as exc:  # noqa: BLE001
+        _debug(f"lineage capture failed open: {exc!r}")
         return 0
 
 

@@ -30,6 +30,7 @@ def test_initial_view_map_present() -> None:
         "decisions.active_decisions",
         "code_topology.ownership_by_path",
         "knowledge.document_context",
+        "provenance.lineage",
     }
     assert expected <= set(GRAPH_VIEWS)
 
@@ -57,6 +58,7 @@ def test_use_case_views_are_backed() -> None:
     assert view_spec("debugging.prior_occurrences").backed
     assert view_spec("infra_topology.service_neighborhood").backed
     assert view_spec("features.feature_context").backed
+    assert view_spec("provenance.lineage").backed
 
 
 def test_traversal_flag_only_on_neighborhood_views() -> None:
@@ -64,6 +66,7 @@ def test_traversal_flag_only_on_neighborhood_views() -> None:
     assert traversal == {
         "infra_topology.service_neighborhood",
         "features.feature_context",
+        "provenance.lineage",
     }
 
 

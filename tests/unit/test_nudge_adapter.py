@@ -67,6 +67,8 @@ def test_file_path_and_command_accessors_tolerate_shapes() -> None:
     assert adapter.file_path_of({"tool_input": {"file_path": "a.py"}}) == "a.py"
     assert adapter.file_path_of({"toolInput": {"file_path": "b.py"}}) == "b.py"
     assert adapter.file_path_of({"path": "c.py"}) == "c.py"
+    assert adapter.file_path_of({"filePath": "d.py"}) == "d.py"
+    assert adapter.file_path_of({"edits": [{"file_path": "e.py"}]}) == "e.py"
     assert adapter.file_path_of({}) is None
     assert adapter.command_of({"tool_input": {"command": "ls"}}) == "ls"
     assert adapter.command_of({"command": "pwd"}) == "pwd"
@@ -306,6 +308,22 @@ def test_render_output_stop_uses_system_message() -> None:
     assert "hookSpecificOutput" not in parsed
 
 
+def test_render_cursor_output_additional_context_and_stop() -> None:
+    out, code = adapter.render_cursor_output(
+        "pre_edit",
+        {"ok": True, "silent": False, "inject_context": "PREF: use retries"},
+    )
+    assert code == 0
+    parsed = json.loads(out)
+    assert "retries" in parsed["additional_context"]
+
+    stop_out, _ = adapter.render_cursor_output(
+        "stop",
+        {"ok": True, "silent": False, "instruction": "capture provenance"},
+    )
+    assert json.loads(stop_out)["followup_message"] == "capture provenance"
+
+
 def test_hook_event_name_authoritative_then_fallback() -> None:
     assert (
         adapter.hook_event_name_of({"hook_event_name": "PreToolUse"}, "pre_edit")
@@ -413,3 +431,158 @@ def test_subprocess_non_deploy_bash_does_not_call_potpie(tmp_path: Path) -> None
     )
     assert proc.returncode == 0
     assert "SHOULD-NOT-APPEAR" not in proc.stdout
+
+
+def test_prompt_of_reads_common_shapes() -> None:
+    assert adapter.prompt_of({"prompt": "add retries"}) == "add retries"
+    assert adapter.prompt_of({"prompt_text": "hello"}) == "hello"
+    assert adapter.prompt_of({}) is None
+
+
+def test_build_lineage_argv_remember_prompt(tmp_path: Path) -> None:
+    prompt_file = str(tmp_path / "prompt.txt")
+    argv = adapter.build_lineage_argv(
+        "potpie",
+        session="sess-1",
+        harness="claude",
+        remember_prompt=True,
+        prompt_file=prompt_file,
+        pot="demo",
+    )
+    assert argv[:4] == ["potpie", "--json", "lineage", "capture"]
+    assert "--remember-prompt" in argv
+    assert "--fail-open" in argv
+    assert "--prompt-file" in argv and prompt_file in argv
+    assert "--session" in argv and "sess-1" in argv
+
+
+def test_post_edit_captures_each_edit_with_only_known_ranges(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(adapter.shutil, "which", lambda _name: "/usr/bin/potpie")
+    monkeypatch.setattr(adapter.subprocess, "run", fake_run)
+    args = types.SimpleNamespace(potpie_bin="potpie", pot=None, harness="claude")
+    payload = {
+        "edits": [
+            {"path": "a.py", "line_start": 2, "line_end": 3, "new_string": "x"},
+            {
+                "file_path": "b.py",
+                "range": {"start": 7, "end": 8},
+                "replacement": "y",
+            },
+            {"path": "unknown.py", "replacement": "no range"},
+        ]
+    }
+
+    assert adapter._run_lineage_capture(args, payload, "post_edit") == 0
+    assert [cmd[cmd.index("--path") + 1] for cmd in calls] == ["a.py", "b.py"]
+    assert [cmd[cmd.index("--lines") + 1] for cmd in calls] == ["2-3", "7-8"]
+
+
+def test_normalize_apply_patch_command_into_per_file_edits() -> None:
+    payload = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": """apply_patch <<'PATCH'
+*** Begin Patch
+*** Update File: src/a.py
+@@ -10,2 +10,3 @@
+ old
+-removed
++added
+*** Add File: src/new.py
++new file
+*** End Patch
+PATCH""",
+        },
+    }
+
+    edits = adapter._normalize_edit_payloads(payload)
+
+    assert edits == [
+        {"path": "src/a.py", "line_start": 10, "line_end": 12},
+        {"path": "src/new.py", "line_start": 1, "line_end": 1},
+    ]
+
+
+def test_lineage_capture_handles_bash_patch_and_structured_edits(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(adapter.shutil, "which", lambda _name: "/usr/bin/potpie")
+    monkeypatch.setattr(adapter.subprocess, "run", fake_run)
+    args = types.SimpleNamespace(potpie_bin="potpie", pot=None, harness="codex")
+    payload = {
+        "tool_input": {
+            "command": "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: a.py\n@@ -2,1 +2,2 @@\n+x\n*** End Patch\nPATCH",
+        },
+        "tool_response": {"edits": [{"path": "b.py", "line_start": 4, "line_end": 5}]},
+    }
+
+    assert adapter._run_lineage_capture(args, payload, "bash_post") == 0
+    assert [cmd[cmd.index("--path") + 1] for cmd in calls] == ["a.py", "b.py"]
+    assert [cmd[cmd.index("--lines") + 1] for cmd in calls] == ["2-3", "4-5"]
+
+
+def test_lineage_capture_uses_one_batch_deadline(monkeypatch) -> None:
+    calls: list[float] = []
+    now = [100.0]
+
+    def monotonic() -> float:
+        return now[0]
+
+    def fake_run(cmd, **kwargs):
+        calls.append(kwargs["timeout"])
+        if len(calls) == 1:
+            now[0] = 108.0
+        elif len(calls) == 2:
+            now[0] = 116.0
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        adapter, "time", types.SimpleNamespace(monotonic=monotonic), raising=False
+    )
+    monkeypatch.setenv("POTPIE_HOOK_TIMEOUT", "15")
+    monkeypatch.setattr(adapter.shutil, "which", lambda _name: "/usr/bin/potpie")
+    monkeypatch.setattr(adapter.subprocess, "run", fake_run)
+    args = types.SimpleNamespace(potpie_bin="potpie", pot=None, harness="claude")
+    payload = {
+        "edits": [
+            {"path": "a.py", "line_start": 1, "line_end": 1},
+            {"path": "b.py", "line_start": 2, "line_end": 2},
+            {"path": "c.py", "line_start": 3, "line_end": 3},
+        ]
+    }
+
+    assert adapter._run_lineage_capture(args, payload, "post_edit") == 0
+    assert calls == [15.0, 7.0]
+
+
+def test_infer_line_range_does_not_fall_back_to_full_file(tmp_path: Path) -> None:
+    path = tmp_path / "edited.py"
+    path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    assert adapter.infer_line_range(str(path), "missing") is None
+    assert adapter.infer_line_range(str(path), None) is None
+
+
+def test_post_edit_never_blocks_when_potpie_fails(tmp_path: Path) -> None:
+    binary = tmp_path / "potpie"
+    binary.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    binary.chmod(0o755)
+    target = tmp_path / "foo.py"
+    target.write_text("x = 1\n" * 20, encoding="utf-8")
+    proc = _run_adapter(
+        ["--event", "post_edit", "--potpie-bin", str(binary)],
+        stdin=json.dumps(
+            {"session_id": "s1", "tool_input": {"file_path": str(target)}}
+        ),
+    )
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""

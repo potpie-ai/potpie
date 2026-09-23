@@ -14,6 +14,7 @@ from potpie.cli.read_presenter import (
     render_items_table,
     render_timeline_table,
 )
+from potpie_context_engine.core.graph_contract import ONTOLOGY_VERSION
 from potpie_context_engine.core.ports.graph_service import GraphReadResult
 
 pytestmark = pytest.mark.unit
@@ -22,7 +23,7 @@ pytestmark = pytest.mark.unit
 def _timeline_result() -> GraphReadResult:
     return GraphReadResult(
         graph_contract_version="v1.5",
-        ontology_version="2026-06-graph",
+        ontology_version=ONTOLOGY_VERSION,
         view="recent_changes.timeline",
         subgraph="recent_changes",
         read_shape="entity_relations",

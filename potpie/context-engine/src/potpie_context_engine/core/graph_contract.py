@@ -31,7 +31,7 @@ from enum import StrEnum
 # --- Versions ---------------------------------------------------------------
 
 GRAPH_CONTRACT_VERSION = "v1.5"
-ONTOLOGY_VERSION = "2026-06-graph"
+ONTOLOGY_VERSION = "2026-09-graph"
 
 # Contract versions a V1.5 daemon will accept on an inbound mutation payload.
 SUPPORTED_GRAPH_CONTRACT_VERSIONS: frozenset[str] = frozenset({"v1.5"})

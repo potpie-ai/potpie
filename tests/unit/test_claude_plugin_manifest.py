@@ -49,13 +49,20 @@ def _hooks() -> dict:
 
 def test_hooks_cover_the_four_v15_event_classes() -> None:
     hooks = _hooks()
-    assert set(hooks) == {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
+    assert set(hooks) == {
+        "SessionStart",
+        "PreToolUse",
+        "PostToolUse",
+        "UserPromptSubmit",
+        "Stop",
+    }
     # PreToolUse wires both an edit matcher and a Bash matcher.
     matchers = {entry.get("matcher") for entry in hooks["PreToolUse"]}
     assert any(m and "Write" in m and "Edit" in m for m in matchers)
     assert "Bash" in matchers
-    # PostToolUse wires Bash (the red→green / failure path).
-    assert {entry.get("matcher") for entry in hooks["PostToolUse"]} == {"Bash"}
+    post_matchers = {entry.get("matcher") for entry in hooks["PostToolUse"]}
+    assert any(m and "Write" in m and "Edit" in m for m in post_matchers)
+    assert "Bash" in post_matchers
 
 
 def _all_hook_commands() -> list[str]:
@@ -69,7 +76,9 @@ def _all_hook_commands() -> list[str]:
 
 def test_every_hook_calls_the_adapter_via_plugin_root() -> None:
     commands = _all_hook_commands()
-    assert len(commands) == 5  # SessionStart, 2×PreToolUse, PostToolUse, Stop
+    assert (
+        len(commands) == 7
+    )  # SessionStart, 2×PreToolUse, 2×PostToolUse, UserPromptSubmit, Stop
     for cmd in commands:
         assert "potpie_nudge.py" in cmd
         assert "${CLAUDE_PLUGIN_ROOT}" in cmd
@@ -100,6 +109,7 @@ def test_adapter_and_skill_files_exist() -> None:
         "potpie-debug-memory",
         "potpie-source-ingestion",
         "potpie-repo-baseline",
+        "potpie-provenance",
     ):
         assert (PLUGIN / "skills" / skill_id / "SKILL.md").is_file()
     assert (PLUGIN / "commands" / "potpie-feature.md").is_file()
@@ -142,6 +152,7 @@ def test_shared_plugin_and_agent_skills_do_not_drift() -> None:
         "potpie-project-preferences",
         "potpie-repo-baseline",
         "potpie-source-ingestion",
+        "potpie-provenance",
     ):
         agent = (
             TEMPLATES / "agent_bundle" / ".agents" / "skills" / skill_id / "SKILL.md"

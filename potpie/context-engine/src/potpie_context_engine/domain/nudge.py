@@ -158,9 +158,12 @@ NUDGE_POLICIES: dict[str, NudgePolicy] = {
         instruction=(
             "End of task. Capture durable learnings as graph claims via "
             "`potpie graph mutate`: new preferences (POLICY_APPLIES_TO), decisions "
-            "(DECIDED), and fixes (RESOLVED). Decide the truth class, resolve entity "
-            "identity with `graph search-entities` first, and write descriptions for "
-            "retrieval, not display."
+            "(DECIDED), and fixes (RESOLVED). If this turn produced a spec or "
+            "generated code, also follow the potpie-provenance skill: record "
+            "`spec_requirement` / `generation_link` (IMPLEMENTS) so `potpie why` "
+            "can trace the file back to the prompt. Decide the truth class, resolve "
+            "entity identity with `graph search-entities` first, and write "
+            "descriptions for retrieval, not display."
         ),
     ),
 }
