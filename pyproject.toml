@@ -130,6 +130,7 @@ override-dependencies = [
     # transitive genai-prices client stack on patched releases.
     "httpx2>=2.12.0",
     "httpcore2>=2.10.0",
+    "soupsieve>=2.9.0",
 ]
 
 [tool.uv.workspace]
