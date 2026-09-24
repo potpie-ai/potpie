@@ -46,7 +46,8 @@ injects nothing and exits cleanly, so a hook problem can never block your sessio
 `hooks/potpie_nudge.py` and replacing `${CLAUDE_PLUGIN_ROOT}` with the directory
 path. See `hooks/hooks.json` for the exact event→command mapping.
 
-`potpie install --agent claude-plugin` drops this whole directory into your repo.
+`potpie skills install --agent claude-plugin --scope project` drops this whole
+directory into your repo under `.claude/potpie-plugin/`.
 
 ## Skills
 
