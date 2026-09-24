@@ -1,8 +1,5 @@
 {
   "spokeId": "potpie",
   "docsPath": "docs",
-  "contractVersion": 1,
-  "versioning": {
-    "enabled": true
-  }
+  "documentationContractVersion": 1
 }

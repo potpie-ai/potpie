@@ -11,7 +11,7 @@ function fixture({ version = '2.0.2', config = {} } = {}) {
   const configPath = join(root, 'docs/config.json');
   const pyprojectPath = join(root, 'pyproject.toml');
   writeFileSync(configPath, JSON.stringify({
-    spokeId: 'potpie', docsPath: 'docs', contractVersion: 1, versioning: { enabled: true }, ...config,
+    spokeId: 'potpie', docsPath: 'docs', documentationContractVersion: 1, ...config,
   }));
   writeFileSync(pyprojectPath, `[project]\nversion = "${version}"\n`);
   return { configPath, pyprojectPath };
@@ -27,6 +27,6 @@ describe('release readiness', () => {
     assert.throws(() => assertReleaseReady({ ...fixture(), tag: 'v2.0.3' }), /must equal/);
     assert.throws(() => assertReleaseReady({ ...fixture({ version: '2.0' }), tag: 'v2.0' }), /MAJOR.MINOR.PATCH/);
     assert.throws(() => assertReleaseReady({ ...fixture({ version: '2.0.2-rc.1' }), tag: 'v2.0.2-rc.1' }), /MAJOR.MINOR.PATCH/);
-    assert.throws(() => assertReleaseReady({ ...fixture({ config: { versioning: { enabled: false } } }), tag: 'v2.0.2' }), /opt into/);
+    assert.throws(() => assertReleaseReady({ ...fixture({ config: { documentationContractVersion: 2 } }), tag: 'v2.0.2' }), /contract version/);
   });
 });

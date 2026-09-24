@@ -28,8 +28,7 @@ function makeSpoke(files, config) {
     JSON.stringify({
       spokeId: 'demo',
       docsPath: 'docs',
-      contractVersion: 1,
-      versioning: { enabled: true },
+      documentationContractVersion: 1,
       ...config,
     }),
   );
