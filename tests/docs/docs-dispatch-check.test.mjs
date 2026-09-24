@@ -14,8 +14,7 @@ function makeInputs(changedPaths, docsPath = 'docs', spokeId = 'demo') {
   writeFileSync(configPath, JSON.stringify({
     spokeId,
     docsPath,
-    contractVersion: 1,
-    versioning: { enabled: true },
+    documentationContractVersion: 1,
   }));
   writeFileSync(changedFilesPath, `${changedPaths.join('\n')}\n`);
   return { configPath, changedFilesPath };

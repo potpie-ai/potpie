@@ -7,8 +7,7 @@ const KEBAB_CASE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
  * @returns {{
  *   spokeId: string,
  *   docsPath: string,
- *   contractVersion: number,
- *   versioning: { enabled: true },
+ *   documentationContractVersion: number,
  * }}
  */
 export function loadDocsConfig(configPath) {
@@ -42,17 +41,13 @@ export function loadDocsConfig(configPath) {
     throw new Error('docsPath must be a relative directory without ..');
   }
 
-  if (raw.contractVersion !== 1) {
-    throw new Error('contractVersion must be supported version 1');
-  }
-  if (!raw.versioning || raw.versioning.enabled !== true) {
-    throw new Error('versioning.enabled must be true');
+  if (raw.documentationContractVersion !== 1) {
+    throw new Error('documentationContractVersion must be supported version 1');
   }
 
   return {
     spokeId,
     docsPath: normalizedDocsPath,
-    contractVersion: raw.contractVersion,
-    versioning: { enabled: true },
+    documentationContractVersion: raw.documentationContractVersion,
   };
 }

@@ -7,8 +7,8 @@ export function assertReleaseReady({ configPath, pyprojectPath, tag }) {
   if (config.spokeId !== 'potpie' || config.docsPath !== 'docs') {
     throw new Error('docs/config.json must match the Hub Potpie identity and docs path');
   }
-  if (config.contractVersion !== 1 || config.versioning?.enabled !== true) {
-    throw new Error('docs/config.json must opt into supported versioning contract 1');
+  if (config.documentationContractVersion !== 1) {
+    throw new Error('docs/config.json must declare supported documentation contract version 1');
   }
   const pyproject = readFileSync(pyprojectPath, 'utf8');
   const project = /\[project\]([\s\S]*?)(?:\n\[|$)/.exec(pyproject)?.[1] || '';
