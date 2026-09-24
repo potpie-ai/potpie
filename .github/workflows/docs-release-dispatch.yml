@@ -1,0 +1,76 @@
+name: Dispatch published documentation release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to replay
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Select published stable release
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          DRAFT: ${{ github.event.release.draft }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "release" ] && { [ "$DRAFT" = "true" ] || [ "$PRERELEASE" = "true" ]; }; then
+            echo "Published release is draft or prerelease; no stable documentation dispatch."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sha="$(git rev-list -n 1 "$TAG")"
+          [ -n "$sha" ] || { echo "::error::Unable to resolve release tag $TAG"; exit 1; }
+          {
+            echo "skip=false"
+            echo "tag=$TAG"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify documentation release readiness
+        if: steps.release.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: node scripts/check-docs-release-readiness.mjs --tag "$TAG"
+
+      - name: Mint Hub dispatch token
+        id: hub_token
+        if: steps.release.outputs.skip != 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.DOCS_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DOCS_GITHUB_APP_PRIVATE_KEY }}
+          owner: potpie-ai
+          repositories: docs
+          permission-contents: write
+
+      - name: Send release dispatch to Hub
+        if: steps.release.outputs.skip != 'true'
+        env:
+          HUB_DISPATCH_TOKEN: ${{ steps.hub_token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [ -n "${HUB_DISPATCH_TOKEN:-}" ] || { echo "::error::GitHub App token was not minted. Confirm the App is installed on potpie-ai/docs with Contents: write."; exit 1; }
+          payload="$(node -e 'console.log(JSON.stringify({event_type:"spoke-release-published",client_payload:{repository:"potpie-ai/potpie",spoke_id:"potpie",tag:process.env.TAG,sha:process.env.SHA,prerelease:false}}))')"
+          code="$(curl -sS -o /tmp/dispatch-response.json -w "%{http_code}" -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${HUB_DISPATCH_TOKEN}" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/potpie-ai/docs/dispatches" -d "$payload")"
+          [ "$code" = "204" ] || { echo "::error::Hub release dispatch failed with HTTP $code"; head -c 2000 /tmp/dispatch-response.json; exit 1; }
