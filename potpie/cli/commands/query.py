@@ -21,8 +21,12 @@ from potpie_context_engine.requests import SearchRequest as EngineSearchRequest
 from potpie.cli.commands._common import (
     activation_command_outcome,
     contract,
+    current_repo_identity_for_cli,
     emit,
+    enrich_with_pot_guidance,
     get_engine_client,
+    get_root_runtime,
+    resolve_pot_scope,
     run_engine_operation,
 )
 from potpie.cli.telemetry.onboarding_events import (
@@ -73,7 +77,26 @@ def register(root: typer.Typer) -> None:
                 item_count=len(env.items),
                 confidence=env.overall_confidence,
             )
-            emit(_envelope_payload(env), human=_envelope_human(env))
+            payload = _envelope_payload(env)
+            human = _envelope_human(env)
+
+            host = get_root_runtime()
+            resolved_pot_id, resolved_via = resolve_pot_scope(host, pot)
+
+            repo = (
+                current_repo_identity_for_cli()
+                if resolved_via in {"repo_default", "linked_repo"}
+                else None
+            )
+
+            payload, human = enrich_with_pot_guidance(
+                host,
+                resolved_pot_id,
+                payload,
+                human=human,
+                repo=repo,
+            )
+            emit(payload, human=human)
 
     @root.command()
     def search(

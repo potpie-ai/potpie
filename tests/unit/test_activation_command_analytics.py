@@ -121,6 +121,63 @@ def test_context_commands_emit_canonical_activation_events(
     assert "private-repo" not in captured_properties
 
 
+def test_resolve_empty_pot_emits_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    envelope = _envelope(item_count=0, confidence="low")
+
+    client = SimpleNamespace(
+        resolve=lambda _request: envelope,
+    )
+
+    monkeypatch.setattr(query, "get_engine_client", lambda _pot: client)
+    monkeypatch.setattr(query, "run_engine_operation", lambda result: result)
+
+    monkeypatch.setattr(query, "get_root_runtime", lambda: object())
+    monkeypatch.setattr(
+        query,
+        "resolve_pot_scope",
+        lambda _host, _pot: ("pot_empty", "repo_default"),
+    )
+    monkeypatch.setattr(
+        query,
+        "current_repo_identity_for_cli",
+        lambda: "github.com/example/repo",
+    )
+
+    def guidance(
+        _host,
+        pot_id,
+        payload,
+        *,
+        human,
+        repo,
+    ):
+        assert pot_id == "pot_empty"
+        assert repo == "github.com/example/repo"
+
+        warning = "pot has 0 claims; run ingestion"
+
+        return (
+            {
+                **payload,
+                "warnings": [warning],
+                "recommended_next_action": warning,
+            },
+            f"{human}\n! {warning}",
+        )
+
+    monkeypatch.setattr(query, "enrich_with_pot_guidance", guidance)
+
+    result = runner.invoke(
+        _query_app(),
+        ["resolve", "understand the architecture"],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "items=0" in result.stdout
+    assert "pot has 0 claims; run ingestion" in result.stdout
+
 def test_non_activation_command_emits_no_activation_events(
     fake_sink: _FakeSink,
     monkeypatch: pytest.MonkeyPatch,
