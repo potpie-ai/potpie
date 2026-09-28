@@ -190,7 +190,7 @@ flowchart TB
   cg_be --> cg_insp
   cg_be --> cg_an
   cg_be --> cg_snap
-  cg_be -. "profile · capabilities() · provision(plan)" .-> cg_meta["bundle members"]
+  cg_be -. "profile · capabilities() · provision()" .-> cg_meta["bundle members"]
 ```
 
 - **Canonical:** `mutation` (`apply`/`apply_async`, `invalidate`, `reset_pot`,
@@ -203,9 +203,9 @@ flowchart TB
   (`counts`/`freshness`/`quality`/`repair`), `snapshot` (`export`/`import_`).
 - **Bundle members:** `profile` (string), `capabilities() -> BackendCapabilities`
   (a frozen dataclass declaring which of the six are *really* implemented vs
-  fail-closed — read by `backend status`/`doctor`), and `provision(plan:
-  SetupPlan) -> StepResult` (the setup seam where a backend stands up its own
-  store idempotently).
+  fail-closed — read by `backend status`/`doctor`), and `provision() ->
+  BackendProvisionResult` (`domain/ports/provisioning.py`; the setup seam where a
+  backend stands up its own store idempotently).
 
 Two workbench stores also live under `domain/ports/graph/` but are **not** part
 of the six-cap bundle: `inbox_store.py` and `plan_store.py`.
@@ -337,8 +337,9 @@ There is **no `NotImplementedError` gate** on FalkorDB anywhere — the old
 `potpie setup` is the idempotent first-run flow. The CLI builds a `SetupPlan`
 (config, storage, daemon, default `default` pot, source registration, skills),
 ensures the daemon first when in daemon mode (`host.daemon.ensure()`), and each
-backend self-provisions its store through `provision(plan: SetupPlan) ->
-StepResult`. Re-running is safe; each step is `ensure`-shaped and reports `done |
+backend self-provisions its store through `provision() ->
+BackendProvisionResult`, which `potpie/setup/orchestrator.py` wraps into the
+`backend.provision` `StepResult`. Re-running is safe; each step is `ensure`-shaped and reports `done |
 skipped | not_implemented | failed`.
 
 Two corrections worth stating here:
@@ -472,7 +473,7 @@ Graph Service owns graph operations, and `GraphBackend` owns physical storage.
 | Graph backend | `domain/ports/graph/` + a backend adapter | Implement the canonical ports, preserve `group_id` pot isolation, pass conformance; declare real caps in `capabilities()`. |
 | Skill | `potpie/skills/` catalog + `AgentTargetPort` adapter | Keep skill content harness-neutral; it is not graph data. See [skills.md](./skills.md). |
 | Pot behavior | `potpie/pots/` | Preserve the first-setup active `default` pot. |
-| Setup / lifecycle step | the component's `provision`/bespoke method + `potpie/setup/orchestrator.py` sequence | Return a `StepResult`; raise `CapabilityNotImplemented` until built. |
+| Setup / lifecycle step | the component's `provision`/bespoke method + `potpie/setup/orchestrator.py` sequence | Return a `StepResult` (graph backends return `BackendProvisionResult`, which the orchestrator wraps); raise `CapabilityNotImplemented` until built. |
 
 Do not bypass the read trunk, query physical stores from CLI/readers, make a
 projection a second source of truth, put service logic in the daemon shell, or
