@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -73,6 +74,26 @@ async def test_selector_resolution_uses_exact_context_identity() -> None:
     assert explicit.value.value == "pot-1"
     assert isinstance(active, Success)
     assert active.value.value == "pot-2"
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_runs_on_event_loop_thread() -> None:
+    observed_threads: list[int] = []
+
+    def search(_request) -> dict[str, int]:
+        observed_threads.append(threading.get_ident())
+        return {"matches": 1}
+
+    operations = LocalEngineOperations(
+        SimpleNamespace(agent_context=SimpleNamespace(search=search))
+    )
+
+    result = await operations.search(
+        ContextIdentity("pot-1"), SearchRequest(query="refund policy")
+    )
+
+    assert result == Success({"matches": 1})
+    assert observed_threads == [threading.get_ident()]
 
 
 @pytest.mark.anyio

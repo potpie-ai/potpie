@@ -41,7 +41,7 @@ FULL_PROFILES = ["in_memory", "embedded"]
 
 # Profiles with the canonical source-of-truth ports wired and projections
 # deliberately fail-closed until implemented.
-PARTIAL_PROFILES = ["neo4j", "falkordb", "falkordb_lite"]
+PARTIAL_PROFILES = ["neo4j", "falkordb", "falkordb_lite", "ladybug"]
 
 
 def _build(profile, tmp_path):
@@ -51,6 +51,18 @@ def _build(profile, tmp_path):
         )
 
         return EmbeddedGraphBackend(home=tmp_path)
+    if profile == "ladybug":
+        from types import SimpleNamespace
+
+        settings = SimpleNamespace(
+            is_enabled=lambda: True,
+            ladybug_path=lambda: str(tmp_path / "ladybug.lbdb"),
+            graph_db_backend=lambda: "ladybug",
+        )
+        backend = build_backend(profile, settings=settings)
+        # Ladybug is schema-first; empty MATCH fails until DDL exists.
+        assert backend.provision().ok
+        return backend
     return build_backend(profile)
 
 
@@ -270,6 +282,13 @@ def test_partial_backend_profiles_fail_closed_for_unbuilt_projections(
         # ``potpie graph inspect``) over the canonical RELATES_TO edges.
         "falkordb": {"mutation", "claim_query", "semantic", "analytics", "inspection"},
         "falkordb_lite": {
+            "mutation",
+            "claim_query",
+            "semantic",
+            "analytics",
+            "inspection",
+        },
+        "ladybug": {
             "mutation",
             "claim_query",
             "semantic",

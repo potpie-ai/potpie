@@ -248,7 +248,8 @@ class LocalEngineOperations:
                     freshness_preference=request.freshness_preference,
                     metadata=request.metadata,
                 )
-            )
+            ),
+            offload=False,
         )
 
     async def search(
@@ -266,7 +267,8 @@ class LocalEngineOperations:
                     max_items=request.max_items,
                     metadata=request.metadata,
                 )
-            )
+            ),
+            offload=False,
         )
 
     async def record(
@@ -826,9 +828,12 @@ class LocalEngineOperations:
             )
         )
 
-    async def _call(self, call: Callable[[], object]) -> Outcome[object]:
+    async def _call(
+        self, call: Callable[[], object], *, offload: bool = True
+    ) -> Outcome[object]:
         try:
-            return Success(await asyncio.to_thread(call))
+            result = await asyncio.to_thread(call) if offload else call()
+            return Success(result)
         except CapabilityNotImplemented as exc:
             return Failure(
                 DomainError(

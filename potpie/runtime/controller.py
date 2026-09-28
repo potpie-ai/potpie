@@ -256,14 +256,10 @@ class DaemonController:
             environment = dict(os.environ)
             environment.update(boot.launch.environment)
             try:
-                process = await asyncio.create_subprocess_exec(
-                    *boot.launch.command,
-                    cwd=boot.launch.cwd,
+                process = await self._spawn_daemon_process(
+                    boot.launch,
                     env=environment,
-                    stdin=asyncio.subprocess.DEVNULL,
-                    stdout=log_target,
-                    stderr=asyncio.subprocess.STDOUT,
-                    start_new_session=True,
+                    log_target=log_target,
                 )
             except (OSError, ValueError) as exc:
                 await self._close_observer(boot.observer)
@@ -525,6 +521,46 @@ class DaemonController:
         os.chmod(path, 0o600)
         self._log_handle = os.fdopen(descriptor, "ab")  # noqa: PTH123
         return self._log_handle
+
+    @staticmethod
+    async def _spawn_daemon_process(
+        launch: DaemonLaunchSpec,
+        *,
+        env: Mapping[str, str],
+        log_target: object,
+    ):
+        """Spawn the detached daemon child (POSIX session / Windows process group)."""
+        import sys
+
+        common = {
+            "cwd": launch.cwd,
+            "env": env,
+            "stdin": asyncio.subprocess.DEVNULL,
+            "stdout": log_target,
+            "stderr": asyncio.subprocess.STDOUT,
+        }
+        if sys.platform == "win32":
+            # CREATE_NEW_PROCESS_GROUP keeps the daemon out of the parent's
+            # console Ctrl+C group; CREATE_NO_WINDOW avoids a flash console.
+            create_new_process_group = 0x00000200
+            create_no_window = 0x08000000
+            return await asyncio.create_subprocess_exec(
+                *launch.command,
+                creationflags=create_new_process_group | create_no_window,
+                **common,
+            )
+        try:
+            return await asyncio.create_subprocess_exec(
+                *launch.command,
+                start_new_session=True,
+                **common,
+            )
+        except ValueError:
+            # Some platforms reject start_new_session; retry without.
+            return await asyncio.create_subprocess_exec(
+                *launch.command,
+                **common,
+            )
 
     async def _close_log_target(self) -> None:
         handle, self._log_handle = self._log_handle, None

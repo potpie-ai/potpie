@@ -75,6 +75,79 @@ def context_engine_falkordb_lite_path() -> str:
     return str(base / "context_graph" / "falkordb.db")
 
 
+def context_engine_ladybug_path() -> str:
+    v = (
+        os.getenv("CONTEXT_ENGINE_LADYBUG_PATH") or os.getenv("LADYBUG_PATH") or ""
+    ).strip()
+    if v:
+        return v
+    home = (os.getenv("CONTEXT_ENGINE_HOME") or "").strip()
+    base = Path(home).expanduser() if home else Path.home() / ".potpie"
+    return str(base / "context_graph" / "ladybug.lbdb")
+
+
+def _env_int(name: str, default: int, *, lo: int = 1, hi: int = 10_000) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        v = int(raw)
+    except ValueError:
+        return default
+    return max(lo, min(hi, v))
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return raw in ("1", "true", "yes", "on")
+
+
+def context_engine_ladybug_vector_efs() -> int:
+    return _env_int("CONTEXT_ENGINE_LADYBUG_VECTOR_EFS", 200, lo=32, hi=2000)
+
+
+def context_engine_ladybug_vector_efc() -> int:
+    return _env_int("CONTEXT_ENGINE_LADYBUG_VECTOR_EFC", 200, lo=32, hi=2000)
+
+
+def context_engine_ladybug_vector_mu() -> int:
+    return _env_int("CONTEXT_ENGINE_LADYBUG_VECTOR_MU", 30, lo=4, hi=256)
+
+
+def context_engine_ladybug_vector_ml() -> int:
+    return _env_int("CONTEXT_ENGINE_LADYBUG_VECTOR_ML", 60, lo=8, hi=512)
+
+
+def context_engine_ladybug_vector_pu() -> float:
+    raw = (os.getenv("CONTEXT_ENGINE_LADYBUG_VECTOR_PU") or "").strip()
+    if not raw:
+        return 0.05
+    try:
+        v = float(raw)
+    except ValueError:
+        return 0.05
+    return max(0.0, min(1.0, v))
+
+
+def context_engine_ladybug_vector_metric() -> str:
+    v = (os.getenv("CONTEXT_ENGINE_LADYBUG_VECTOR_METRIC") or "cosine").strip().lower()
+    if v in ("cosine", "l2", "l2sq", "dotproduct"):
+        return v
+    return "cosine"
+
+
+def context_engine_ladybug_vector_cache_embeddings() -> bool:
+    return _env_bool("CONTEXT_ENGINE_LADYBUG_VECTOR_CACHE_EMBEDDINGS", True)
+
+
+def context_engine_ladybug_vector_normalize_embeddings() -> bool:
+    return _env_bool("CONTEXT_ENGINE_LADYBUG_VECTOR_NORMALIZE", True)
+
+
 class EnvContextEngineSettings(ContextEngineSettingsPort):
     def is_enabled(self) -> bool:
         raw = os.getenv("CONTEXT_GRAPH_ENABLED")
@@ -119,6 +192,33 @@ class EnvContextEngineSettings(ContextEngineSettingsPort):
 
     def falkordb_lite_path(self) -> str:
         return context_engine_falkordb_lite_path()
+
+    def ladybug_path(self) -> str:
+        return context_engine_ladybug_path()
+
+    def ladybug_vector_efs(self) -> int:
+        return context_engine_ladybug_vector_efs()
+
+    def ladybug_vector_efc(self) -> int:
+        return context_engine_ladybug_vector_efc()
+
+    def ladybug_vector_mu(self) -> int:
+        return context_engine_ladybug_vector_mu()
+
+    def ladybug_vector_ml(self) -> int:
+        return context_engine_ladybug_vector_ml()
+
+    def ladybug_vector_pu(self) -> float:
+        return context_engine_ladybug_vector_pu()
+
+    def ladybug_vector_metric(self) -> str:
+        return context_engine_ladybug_vector_metric()
+
+    def ladybug_vector_cache_embeddings(self) -> bool:
+        return context_engine_ladybug_vector_cache_embeddings()
+
+    def ladybug_vector_normalize_embeddings(self) -> bool:
+        return context_engine_ladybug_vector_normalize_embeddings()
 
     def backfill_max_prs_per_run(self) -> int:
         raw = os.getenv("CONTEXT_GRAPH_BACKFILL_MAX_PRS_PER_RUN", "100").strip()
