@@ -520,6 +520,44 @@ _SUBGRAPH_DEFINITIONS: dict[str, dict[str, Any]] = {
             ),
         ),
     },
+    "provenance": {
+        "purpose": "Trace generated code back to the prompt, spec, and session that produced it.",
+        "when_to_use": (
+            "Use when asking which chat prompt or spec produced a file or line range.",
+        ),
+        "entity_types": (
+            "GenerationSession",
+            "PromptTurn",
+            "SpecRequirement",
+            "CodeAsset",
+            "Document",
+        ),
+        "relation_types": (
+            "IN_SESSION",
+            "GENERATED_FROM",
+            "DERIVED_FROM",
+            "IMPLEMENTS",
+            "MODIFIES",
+            "USED_CONTEXT",
+        ),
+        "keywords": (
+            "provenance",
+            "lineage",
+            "prompt",
+            "spec",
+            "trace",
+            "why",
+            "generated",
+            "session",
+            "traceability",
+        ),
+        "examples": (
+            ExampleCommand(
+                command="potpie graph read --subgraph provenance --view lineage --scope path:src/app.py --json",
+                description="Read generation lineage for a code path.",
+            ),
+        ),
+    },
     "admin": {
         "purpose": "Operator-only inspection of the canonical graph slice.",
         "when_to_use": (
@@ -728,6 +766,31 @@ _VIEW_OVERRIDES: dict[str, dict[str, Any]] = {
         "supported_filters": ("scope", "query", "service", "repo", "path", "file_path"),
         "keywords": ("docs", "document", "runbook", "reference", "note"),
     },
+    "provenance.lineage": {
+        "purpose": "Return the prompt, spec, and session that generated a code span.",
+        "when_to_use": (
+            "Use after an agent write, or when asking which prompt produced a file or line range.",
+        ),
+        "result_shape": "flat_claims",
+        "required_any_scope": ("scope", "path", "query", "repo"),
+        "optional_scope": ("scope", "path", "query"),
+        "supported_filters": (
+            "scope",
+            "path",
+            "file_path",
+            "query",
+            "repo",
+            "anchor_entity_key",
+        ),
+        "keywords": (
+            "provenance",
+            "lineage",
+            "prompt",
+            "spec",
+            "why",
+            "generated",
+        ),
+    },
     "admin.inspection_slice": {
         "purpose": "Return the raw canonical graph slice for operator inspection.",
         "when_to_use": (
@@ -748,7 +811,8 @@ _SUBGRAPH_TIE_BREAKER: dict[str, int] = {
     "features": 4,
     "code_topology": 5,
     "knowledge": 6,
-    "admin": 7,
+    "provenance": 7,
+    "admin": 8,
 }
 
 

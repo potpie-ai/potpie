@@ -88,6 +88,11 @@ certificates
 .taskmaster/
 thoughts/
 .codex/
+# Shipped harness hook templates (parent .cursor/ / .codex/ rules ignore these otherwise).
+!potpie/cli/templates/agent_bundle/.cursor/
+!potpie/cli/templates/agent_bundle/.cursor/**
+!potpie/cli/templates/agent_bundle/.codex/
+!potpie/cli/templates/agent_bundle/.codex/**
 worktrees/
 .repos/
 .repos_local/

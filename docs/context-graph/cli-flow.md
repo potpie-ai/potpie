@@ -350,8 +350,8 @@ potpie graph search-entities [<query> | --query <text>] \
 ```
 
 - **`graph catalog`** returns the live contract (versions, commands, 7 truth classes,
-  the 10 mutation ops — all `APPLICABLE`, 6 source authorities, the 9 views, the
-  public 24 entity types and 25 predicates). **`--task <text>`** reorders views by
+  the 10 mutation ops — all `APPLICABLE`, 6 source authorities, the 10 views, the
+  public 27 entity types and 31 predicates). **`--task <text>`** reorders views by
   task relevance (`ranked_catalog_views`) and adds `task_ranking` metadata to the
   output (including `--profile read`); `--subgraph` filters, `--profile full|read`
   and `--format auto|table` shape output. See [ontology.md](./ontology.md) for the
@@ -362,7 +362,7 @@ potpie graph search-entities [<query> | --query <text>] \
   context-free typed metadata operation: no selected pot, engine construction,
   or Resource Manager lease is required.
 - **`graph read`** is the **Retrieve** axis — resolves a named `<subgraph>.<view>`
-  (one of the 9 views), validates required scope/filters, then routes through the one
+  (one of the 10 views), validates required scope/filters, then routes through the one
   read trunk to an `AgentEnvelope` of ranked evidence. There is **no server-side
   answer synthesis**. `timeline recent` is the same path as
   `graph read --subgraph recent_changes --view timeline`. Reader/ranking/view detail

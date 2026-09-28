@@ -225,6 +225,24 @@ _VIEW_LIST: tuple[GraphViewSpec, ...] = (
         inline_relations=(),
         ranking_inputs=("semantic_similarity",),
     ),
+    _v(
+        "provenance",
+        "lineage",
+        v1_include="generation_lineage",
+        description="Which prompt, spec, and generation session produced a code span. "
+        "Walk GENERATED_FROM / IMPLEMENTS / IN_SESSION from a CodeAsset.",
+        inputs=("scope", "path", "query"),
+        inline_relations=(
+            "GENERATED_FROM",
+            "IMPLEMENTS",
+            "IN_SESSION",
+            "DERIVED_FROM",
+            "MODIFIES",
+            "USED_CONTEXT",
+        ),
+        ranking_inputs=("recency",),
+        traversal=True,
+    ),
 )
 
 

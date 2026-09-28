@@ -31,6 +31,7 @@ from potpie.cli.commands import (
 from potpie.cli.commands import query as query_cmds
 from potpie.cli.commands import skills as skills_cmds
 from potpie.cli.commands import ui as ui_cmds
+from potpie.cli.commands import lineage as lineage_cmds
 from potpie.cli.commands._common import (
     EXIT_VALIDATION,
     bootstrap_output_flags_from_argv,
@@ -118,6 +119,7 @@ def build_app() -> typer.Typer:
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).
     query_cmds.register(app)
+    lineage_cmds.register(app)
     bootstrap.register(app)
     auth_cmds.register(app)
     ui_cmds.register(app)

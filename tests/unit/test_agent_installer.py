@@ -52,7 +52,11 @@ def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:
 
     result = install_agent_bundle(repo)
 
-    expected = {rel.as_posix() for rel, _ in iter_template_files()}
+    expected = {
+        rel.as_posix()
+        for rel, _ in iter_template_files()
+        if not rel.as_posix().startswith((".cursor/", ".codex/"))
+    }
     created = set(result.created)
     assert created == expected
     assert not result.updated
@@ -449,6 +453,24 @@ def test_install_agent_bundle_cursor_writes_cursor_skills(tmp_path: Path) -> Non
     skill = repo / ".cursor" / "skills" / "potpie-cli" / "SKILL.md"
     assert skill.exists()
     assert "potpie" in skill.read_text(encoding="utf-8").lower()
+    assert (repo / ".cursor" / "hooks.json").exists()
+    adapter = repo / ".cursor" / "hooks" / "potpie_nudge.py"
+    assert adapter.exists()
+    assert adapter.stat().st_mode & 0o111
+
+
+def test_install_agent_bundle_codex_writes_hooks(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+
+    result = install_agent_bundle(repo, agent="codex")
+
+    assert "AGENTS.md" in result.created
+    assert (repo / ".codex" / "hooks.json").exists()
+    assert (repo / ".codex" / "hooks" / "potpie_nudge.py").exists()
+    assert (repo / ".agents" / "skills" / "potpie-cli" / "SKILL.md").exists()
+    assert ".codex/hooks/potpie_nudge.py" in result.created
 
 
 def test_install_agent_bundle_opencode_writes_opencode_skills(tmp_path: Path) -> None:

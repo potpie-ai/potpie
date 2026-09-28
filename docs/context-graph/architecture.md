@@ -18,7 +18,7 @@ ingestion/nudge in [ingestion-nudge.md](./ingestion-nudge.md).
 The single most important framing fact: the `potpie graph …` workbench is
 **shipped today** as the V1.5 surface. The string `v2` survives only as the
 workbench *envelope* version (`GRAPH_WORKBENCH_CONTRACT_VERSION="v2"`); the data
-plane is `GRAPH_CONTRACT_VERSION="v1.5"` / `ONTOLOGY_VERSION="2026-06-graph"`.
+plane is `GRAPH_CONTRACT_VERSION="v1.5"` / `ONTOLOGY_VERSION="2026-09-graph"`.
 Both the legacy `resolve`/`search`/`record` wrappers and the full workbench ship
 now. The **canonical write door is `graph propose` → `graph commit --verify`**;
 `graph mutate` is a legacy wrapper over it (see [Writing the graph, high

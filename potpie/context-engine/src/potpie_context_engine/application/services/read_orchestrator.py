@@ -25,6 +25,9 @@ from potpie_context_engine.application.readers.coding_preferences import (
 from potpie_context_engine.application.readers.decisions import DecisionsReader
 from potpie_context_engine.application.readers.docs import DocsReader
 from potpie_context_engine.application.readers.features import FeaturesReader
+from potpie_context_engine.application.readers.generation_lineage import (
+    GenerationLineageReader,
+)
 from potpie_context_engine.application.readers.infra_topology import InfraTopologyReader
 from potpie_context_engine.application.readers.owners import OwnersReader
 from potpie_context_engine.application.readers.prior_bugs import PriorBugsReader
@@ -71,6 +74,7 @@ class ReadOrchestrator:
             "decisions": DecisionsReader(claim_query=cq, ranker=rk),
             "owners": OwnersReader(claim_query=cq, ranker=rk),
             "docs": DocsReader(claim_query=cq, ranker=rk),
+            "generation_lineage": GenerationLineageReader(claim_query=cq, ranker=rk),
             # Visualization read: the whole canonical partition (all RELATES_TO,
             # incl. generic RELATED_TO) for the graph explorer — not a UC slice.
             "raw_graph": RawGraphReader(claim_query=cq, ranker=rk),

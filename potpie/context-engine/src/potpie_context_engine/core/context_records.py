@@ -108,6 +108,42 @@ class VerificationRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class PromptTurnRecord:
+    """A harness prompt turn. Body is stored off-graph; the key is a content hash."""
+
+    prompt_key: str
+    session_key: str
+    harness: str = "unknown"
+    session_id: str = "default"
+    role: str = "user"
+    used_context_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SpecRequirementRecord:
+    """A draft or final requirement derived from a prompt."""
+
+    spec_key: str
+    prompt_key: str | None = None
+    derived_from_key: str | None = None
+    status: str = "draft"
+    title: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationLinkRecord:
+    """A code span generated from a prompt (and optionally a spec)."""
+
+    code_asset_key: str
+    prompt_key: str
+    spec_key: str | None = None
+    session_key: str | None = None
+    path: str | None = None
+    line_start: int | None = None
+    line_end: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class FreeFormRecord:
     """Fallback for record types without a structured schema yet.
 
@@ -126,6 +162,9 @@ StructuredRecord = (
     | PreferenceRecord
     | DecisionRecord
     | VerificationRecord
+    | PromptTurnRecord
+    | SpecRequirementRecord
+    | GenerationLinkRecord
     | FreeFormRecord
 )
 
@@ -142,6 +181,9 @@ _RECORD_TYPE_TO_BUILDER: dict[str, str] = {
     "policy": "_build_preference",  # alias — policy uses preference shape
     "decision": "_build_decision",
     "verification": "_build_verification",
+    "prompt_turn": "_build_prompt_turn",
+    "spec_requirement": "_build_spec_requirement",
+    "generation_link": "_build_generation_link",
 }
 
 _RECORD_TYPE_TO_CLASS: dict[str, type[Any]] = {
@@ -151,6 +193,9 @@ _RECORD_TYPE_TO_CLASS: dict[str, type[Any]] = {
     "policy": PreferenceRecord,
     "decision": DecisionRecord,
     "verification": VerificationRecord,
+    "prompt_turn": PromptTurnRecord,
+    "spec_requirement": SpecRequirementRecord,
+    "generation_link": GenerationLinkRecord,
 }
 
 
@@ -370,6 +415,89 @@ def _build_verification(
     )
 
 
+def _build_prompt_turn(*, summary: str, details: Mapping[str, Any]) -> PromptTurnRecord:
+    del summary
+    record_type = "prompt_turn"
+    prompt_key = _require_non_empty_string(
+        details.get("prompt_key"), "prompt_key", record_type
+    )
+    session_key = _require_non_empty_string(
+        details.get("session_key"), "session_key", record_type
+    )
+    return PromptTurnRecord(
+        prompt_key=prompt_key,
+        session_key=session_key,
+        harness=_optional_string(details.get("harness")) or "unknown",
+        session_id=_optional_string(details.get("session_id")) or "default",
+        role=_optional_string(details.get("role")) or "user",
+        used_context_keys=_string_tuple(
+            details.get("used_context_keys"), "used_context_keys", record_type
+        ),
+    )
+
+
+def _build_spec_requirement(
+    *, summary: str, details: Mapping[str, Any]
+) -> SpecRequirementRecord:
+    del summary
+    record_type = "spec_requirement"
+    spec_key = _require_non_empty_string(
+        details.get("spec_key"), "spec_key", record_type
+    )
+    status = (_optional_string(details.get("status")) or "draft").lower()
+    if status not in {"draft", "final", "superseded"}:
+        raise ContextRecordValidationError(
+            record_type, "status must be one of draft, final, superseded"
+        )
+    return SpecRequirementRecord(
+        spec_key=spec_key,
+        prompt_key=_optional_string(details.get("prompt_key")),
+        derived_from_key=_optional_string(details.get("derived_from_key")),
+        status=status,
+        title=_optional_string(details.get("title")),
+    )
+
+
+def _build_generation_link(
+    *, summary: str, details: Mapping[str, Any]
+) -> GenerationLinkRecord:
+    del summary
+    record_type = "generation_link"
+    return GenerationLinkRecord(
+        code_asset_key=_require_non_empty_string(
+            details.get("code_asset_key"), "code_asset_key", record_type
+        ),
+        prompt_key=_require_non_empty_string(
+            details.get("prompt_key"), "prompt_key", record_type
+        ),
+        spec_key=_optional_string(details.get("spec_key")),
+        session_key=_optional_string(details.get("session_key")),
+        path=_optional_string(details.get("path")),
+        line_start=_optional_int(details.get("line_start"), "line_start", record_type),
+        line_end=_optional_int(details.get("line_end"), "line_end", record_type),
+    )
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _optional_int(value: Any, field_name: str, record_type: str) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ContextRecordValidationError(
+            record_type, f"{field_name!r} must be an integer"
+        ) from exc
+
+
 def _validate_scope_kind(value: Any, record_type: str) -> str | None:
     if value is None or value == "":
         return None
@@ -386,6 +514,9 @@ _BUILDERS = {
     "_build_preference": _build_preference,
     "_build_decision": _build_decision,
     "_build_verification": _build_verification,
+    "_build_prompt_turn": _build_prompt_turn,
+    "_build_spec_requirement": _build_spec_requirement,
+    "_build_generation_link": _build_generation_link,
 }
 
 
@@ -395,10 +526,13 @@ __all__ = [
     "DecisionRecord",
     "FixRecord",
     "FreeFormRecord",
+    "GenerationLinkRecord",
     "PREFERENCE_AUDIENCES",
     "PREFERENCE_STRENGTHS",
     "PreferenceRecord",
+    "PromptTurnRecord",
     "SCOPE_KINDS",
+    "SpecRequirementRecord",
     "StructuredRecord",
     "VERIFICATION_OUTCOMES",
     "VerificationRecord",

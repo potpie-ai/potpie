@@ -19,6 +19,7 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
     HashingEmbedder,
 )
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_engine.core.graph_contract import ONTOLOGY_VERSION
 from potpie_context_engine.core.ports.agent_context import (
     RecordRequest,
     ResolveRequest,
@@ -309,7 +310,7 @@ def test_record_and_graph_mutate_produce_same_metadata() -> None:
     assert row.subgraph == "decisions"
     assert row.graph_contract_version == "v1.5"
     assert row.claim_key
-    assert row.ontology_version == "2026-06-graph"
+    assert row.ontology_version == ONTOLOGY_VERSION
 
 
 def test_free_form_record_falls_back_to_related_to() -> None:

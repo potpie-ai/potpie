@@ -34,7 +34,7 @@ pytestmark = pytest.mark.unit
 
 def test_versions() -> None:
     assert GRAPH_CONTRACT_VERSION == "v1.5"
-    assert ONTOLOGY_VERSION == "2026-06-graph"
+    assert ONTOLOGY_VERSION == "2026-09-graph"
 
 
 def test_ontology_version_mirrors_contract() -> None:
