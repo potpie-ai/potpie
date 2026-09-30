@@ -19,6 +19,5 @@ export function assertReleaseReady({ configPath, pyprojectPath, tag }) {
   if (typeof tag !== 'string' || tag !== `v${version}`) {
     throw new Error(`Release tag must equal v${version}`);
   }
-  const [major, minor] = version.split('.');
-  return { version, track: `${major}.${minor}` };
+  return { version };
 }

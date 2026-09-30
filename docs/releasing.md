@@ -11,6 +11,8 @@ description: How a Potpie release updates documentation.
 
 Do not edit `docs/config.json` during a normal release. It is one-time Hub integration metadata. The `documentationContractVersion` field opts the repository into the supported documentation contract; it is not the Potpie release version and is not bumped for each release.
 
-Documentation is published as maintained major/minor tracks. For example, releases `v2.0.1` and `v2.0.2` both update `/products/potpie/2.0/`; `v2.1.0` creates `/products/potpie/2.1/`. Exact patch URLs redirect to their track, rather than preserving separate patch snapshots.
+Each eligible stable GitHub Release publishes its own exact documentation version. For example, `v2.0.1` publishes `/products/potpie/2.0.1/`, and `v2.0.2` publishes `/products/potpie/2.0.2/`. The product root and `latest` redirect to the highest numeric version; legacy `/2.0/` links redirect to the highest retained `2.0.x` release.
 
-Draft and prerelease GitHub Releases do not publish stable documentation. The release workflow validates the matching tag and reports the derived documentation track before notifying the Docs Hub.
+Draft and prerelease GitHub Releases do not publish stable documentation. The release workflow validates the matching tag and reports the exact documentation route before notifying the Docs Hub.
+
+Every successful release rebuild also refreshes `/products/potpie/next/` from current `main`.

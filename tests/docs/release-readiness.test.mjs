@@ -18,9 +18,9 @@ function fixture({ version = '2.0.2', config = {} } = {}) {
 }
 
 describe('release readiness', () => {
-  test('accepts a matching stable tag and reports its docs track', () => {
+  test('accepts a matching stable tag and reports its exact docs version', () => {
     const paths = fixture();
-    assert.deepEqual(assertReleaseReady({ ...paths, tag: 'v2.0.2' }), { version: '2.0.2', track: '2.0' });
+    assert.deepEqual(assertReleaseReady({ ...paths, tag: 'v2.0.2' }), { version: '2.0.2' });
   });
 
   test('rejects mismatched, incomplete, prerelease, and invalid contract releases', () => {
