@@ -54,6 +54,7 @@ from potpie_context_engine.application.services.nudge_service import NudgeServic
 from potpie.pots.local_service import (
     LocalPotManagementService,
 )
+from potpie_context_engine.application.services.resource_service import ResourceService
 from potpie.setup.orchestrator import (
     DefaultSetupOrchestrator,
 )
@@ -172,6 +173,13 @@ def build_local_runtime(
             cursors=LocalLedgerCursorStore(),
         )
 
+        resources = ResourceService(graph=graph)
+        graph.wire_chunk_search(
+            lambda pot_id, query, limit: resources.search_chunks(
+                pot_id=pot_id, query=query, limit=limit
+            )
+        )
+
         engine_services = LocalEngineServices(
             pots=pots,
             agent_context=agent_context,
@@ -179,6 +187,7 @@ def build_local_runtime(
             graph_workbench=graph_workbench,
             backend=selected_backend,
             nudge=nudge,
+            resources=resources,
         )
         return LocalRuntimeComposition(
             root=RootRuntimeServices(
