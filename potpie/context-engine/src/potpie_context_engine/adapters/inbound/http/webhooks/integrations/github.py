@@ -18,6 +18,9 @@ from potpie_context_engine.adapters.outbound.postgres.session import (
 )
 from potpie_context_engine.adapters.inbound.http.deps import get_container_or_503
 from potpie_context_engine.core.actor import Actor
+from potpie_context_engine.core.graph_contract import (
+    trust_tier_from_github_author_association,
+)
 from potpie_context_engine.domain.ingestion_event_models import (
     IngestionSubmissionRequest,
 )
@@ -86,6 +89,11 @@ async def github_webhook(request: Request):
 
     delivery_id = headers.get("x-github-delivery") or ""
     sender_login = (event.payload.get("sender_login") or "").strip() or None
+    association = event.payload.get("author_association")
+    origin_trust = trust_tier_from_github_author_association(
+        association if isinstance(association, str) else None
+    )
+    event.payload["origin_trust"] = origin_trust
     actor = Actor(
         user_id=f"webhook:github:{delivery_id}"
         if delivery_id
@@ -93,6 +101,7 @@ async def github_webhook(request: Request):
         surface="webhook",
         client_name=f"github:{sender_login}" if sender_login else "github",
         auth_method="webhook_signature",
+        trust_tier=origin_trust,
     )
 
     session = factory()
@@ -112,6 +121,7 @@ async def github_webhook(request: Request):
             provider=event.provider,
             provider_host=event.provider_host,
             actor=actor,
+            metadata={"origin_trust": origin_trust},
         )
         receipt = svc.submit(req)
         session.commit()

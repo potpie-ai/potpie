@@ -162,6 +162,7 @@ def claim_payload(
         "claim_key": row.claim_key,
         "subgraph": row.subgraph,
         "truth": row.truth,
+        "origin_trust": row.origin_trust,
         "description": row.description,
         "fact": row.fact,
         "environment": (

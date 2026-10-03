@@ -122,6 +122,7 @@ def test_row_parsing_maps_reserved_and_extras() -> None:
     assert row.claim_key == "claim:p1:owned-by:web"
     assert row.subgraph == "infra_topology"
     assert row.truth == "source_observation"
+    assert row.origin_trust == "unknown"
     assert row.confidence == pytest.approx(0.97)
     assert row.description == "web ownership comes from CODEOWNERS"
     assert row.environment == "prod"

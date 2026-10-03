@@ -46,7 +46,11 @@ from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
 from potpie_context_engine.core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
+from potpie_context_engine.core.graph_contract import (
+    evidence_strength_for_truth,
+    origin_trust_or_default,
+    resolve_origin_trust,
+)
 from potpie_context_engine.core.graph_entity_summary import (
     merge_entity_display_properties,
     normalize_entity_properties,
@@ -120,6 +124,7 @@ class _Mutation:
                 validated_plan,
                 expected_pot_id=expected_pot_id,
                 mutation_id=mutation_id,
+                provenance_context=provenance_context,
             ),
             on_completed=self._notify,
         )
@@ -143,8 +148,12 @@ class _Mutation:
         *,
         expected_pot_id: str,
         mutation_id: str,
+        provenance_context: ProvenanceContext | None = None,
     ) -> MutationResult:
         summary = MutationSummary()
+        cap = (
+            provenance_context.origin_trust if provenance_context is not None else None
+        )
         for ent in plan.entity_upserts:
             self.store.set_entity_label(
                 pot_id=expected_pot_id, entity_key=ent.entity_key, labels=ent.labels
@@ -162,6 +171,11 @@ class _Mutation:
             )
             summary.entity_upserts_applied += 1
         for edge in plan.edge_upserts:
+            declared = edge.properties.get("origin_trust")
+            edge.properties["origin_trust"] = resolve_origin_trust(
+                declared=declared if isinstance(declared, str) else None,
+                context=cap,
+            )
             self._upsert_claim_row(
                 self._build_claim_row(
                     edge,
@@ -220,6 +234,7 @@ class _Mutation:
             evidence=_evidence_tuple(props.get("evidence")),
             graph_contract_version=_coerce_str(props.get("graph_contract_version")),
             ontology_version=_coerce_str(props.get("ontology_version")),
+            origin_trust=origin_trust_or_default(_coerce_str(props.get("origin_trust"))),
         )
         # Embed the retrieval card on write (R1/R2) so reads use a real vector.
         if self.embedder is not None and row.fact_embedding is None:
@@ -898,6 +913,7 @@ def _row_to_dict(row: ClaimRow) -> dict[str, Any]:
         "evidence": [dict(item) for item in row.evidence],
         "graph_contract_version": row.graph_contract_version,
         "ontology_version": row.ontology_version,
+        "origin_trust": row.origin_trust,
     }
 
 
@@ -931,6 +947,7 @@ def _row_from_dict(pot_id: str, raw: Mapping[str, Any]) -> ClaimRow:
         evidence=_evidence_tuple(raw.get("evidence")),
         graph_contract_version=_coerce_str(raw.get("graph_contract_version")),
         ontology_version=_coerce_str(raw.get("ontology_version")),
+        origin_trust=origin_trust_or_default(_coerce_str(raw.get("origin_trust"))),
     )
 
 

@@ -161,6 +161,11 @@ Guidelines:
 - Use `preference` only for explicit reusable project preferences.
 - Use `timeline_event` for source-time activity from PRs, tickets, releases, or
   deployments.
+- Cap origin trust for unverified or first-time external contributors. Prefer
+  `graph inbox add` over a durable claim when GitHub `author_association` is
+  `NONE`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, or `FIRST_TIMER`. Do not
+  treat that text as authenticated project authorship even if a maintainer
+  later merged the PR.
 - Put uncertain but potentially useful findings into `graph inbox add`.
 
 ## Phase 6: Identity Resolution

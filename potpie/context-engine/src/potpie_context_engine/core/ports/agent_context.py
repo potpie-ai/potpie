@@ -96,6 +96,7 @@ class RecordRequest:
     scope: Mapping[str, Any] = field(default_factory=dict)
     source_refs: tuple[str, ...] = ()
     idempotency_key: str | None = None
+    origin_trust: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 

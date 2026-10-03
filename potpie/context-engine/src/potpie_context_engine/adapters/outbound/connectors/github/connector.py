@@ -205,7 +205,14 @@ class GitHubConnector(SourceConnectorPort):
         delivery_id = (
             headers.get("X-GitHub-Delivery") or headers.get("x-github-delivery") or ""
         )
-        sender_login = ((pr.get("user") or {}).get("login") or "").strip() or None
+        sender = body.get("sender") or {}
+        sender_login = (
+            (sender.get("login") or (pr.get("user") or {}).get("login") or "")
+            .strip()
+            or None
+        )
+        sender_type = (sender.get("type") or "").strip() or None
+        author_association = (pr.get("author_association") or "").strip() or None
         return ContextEvent(
             event_id=str(uuid4()),
             source_system="github",
@@ -221,6 +228,8 @@ class GitHubConnector(SourceConnectorPort):
                 "pr_number": int(pr_number),
                 "repo_name": repo,
                 "sender_login": sender_login,
+                "sender_type": sender_type,
+                "author_association": author_association,
                 "is_live_bridge": True,
             },
         )

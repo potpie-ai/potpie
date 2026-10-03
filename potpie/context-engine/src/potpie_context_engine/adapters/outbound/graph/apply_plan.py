@@ -22,6 +22,9 @@ from potpie_context_engine.core.definition import (
     GraphDefinition,
 )
 from potpie_context_engine.core.errors import ReconciliationApplyError
+from potpie_context_engine.core.graph_contract import (
+    resolve_origin_trust,
+)
 from potpie_context_engine.core.graph_mutations import (
     ProvenanceContext,
     ProvenanceRef,
@@ -33,6 +36,18 @@ from potpie_context_engine.core.reconciliation import (
     MutationSummary,
 )
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
+
+
+def _stamp_edge_origin_trust(
+    plan: MutationBatch, context: ProvenanceContext | None
+) -> None:
+    cap = context.origin_trust if context is not None else None
+    for edge in plan.edge_upserts:
+        declared = edge.properties.get("origin_trust")
+        edge.properties["origin_trust"] = resolve_origin_trust(
+            declared=declared if isinstance(declared, str) else None,
+            context=cap,
+        )
 
 
 def _stable_batch_source_id(plan: MutationBatch) -> str:
@@ -127,6 +142,7 @@ async def apply_mutation_batch(
         else str(uuid4())
     )
     graph_updated_at = datetime.now(timezone.utc)
+    _stamp_edge_origin_trust(plan, provenance_context)
     prov = _build_provenance(
         plan,
         pot_id=expected_pot_id,
