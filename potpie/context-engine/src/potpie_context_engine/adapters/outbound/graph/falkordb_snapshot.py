@@ -3,23 +3,38 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
+from potpie_context_core.graph_snapshot import (
+    normalize_snapshot_payload,
+    validate_snapshot_merge,
+)
+from potpie_context_core.ports.graph.snapshot import SnapshotManifest
 from redis.exceptions import ResponseError, WatchError
 
-from potpie_context_core.graph_snapshot import normalize_snapshot_payload, validate_snapshot_merge
-from potpie_context_core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
-from potpie_context_engine.adapters.outbound.graph.falkordb_atomic import _ensure_state, current_version
+from potpie_context_engine.adapters.outbound.graph.falkordb_atomic import (
+    _ensure_state,
+    current_version,
+)
 from potpie_context_engine.adapters.outbound.graph.native_snapshot import (
-    claim_row, entity_row, imported_manifest, payload_from_rows, read_payload,
-    stored_claim, stored_entity, write_payload,
+    claim_row,
+    entity_row,
+    imported_manifest,
+    payload_from_rows,
+    read_payload,
+    stored_claim,
+    stored_entity,
     validate_native_snapshot_properties,
+    write_payload,
 )
 
+from .falkordb_connection import transaction_client
+
 _LABEL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
-_ENTITIES = "MATCH (e:Entity {group_id:$pot}) RETURN e.entity_key,labels(e),properties(e) ORDER BY e.entity_key"
-_CLAIMS = "MATCH (:Entity {group_id:$pot})-[r:RELATES_TO {group_id:$pot}]->(:Entity {group_id:$pot}) RETURN properties(r) ORDER BY r.claim_key,r.name,r.subject_key,r.object_key,r.source_ref"
+_ENTITIES = "MATCH (e:Entity {group_id:$pot}) WHERE coalesce(e.retired,false)=false RETURN e.entity_key,labels(e),properties(e) ORDER BY e.entity_key"
+_CLAIMS = "MATCH (a:Entity {group_id:$pot})-[r:RELATES_TO {group_id:$pot}]->(b:Entity {group_id:$pot}) WHERE coalesce(r.retired,false)=false AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false RETURN properties(r) ORDER BY r.claim_key,r.name,r.subject_key,r.object_key,r.source_ref"
 
 
 class FalkorDBSnapshot:
@@ -32,21 +47,33 @@ class FalkorDBSnapshot:
     def export_data(self, *, pot_id: str) -> dict[str, Any]:
         graph = self._graph()
         while True:
-            pipe = graph.client.pipeline()
+            pipe = transaction_client(graph).pipeline()
             try:
                 pipe.watch(graph.name)
                 try:
-                    entities = graph.ro_query(_ENTITIES, params={"pot": pot_id}).result_set
+                    entities = graph.ro_query(
+                        _ENTITIES, params={"pot": pot_id}
+                    ).result_set
                     claims = graph.ro_query(_CLAIMS, params={"pot": pot_id}).result_set
                 except ResponseError as exc:
                     if "empty key" not in str(exc).lower():
                         raise
                     entities, claims = [], []
+                from .falkordb_journal import _state
+                from .journal_snapshot_policy import require_snapshot_identity
+
+                if _state(graph, pot_id, pipe) is not None:
+                    require_snapshot_identity(
+                        props.get("claim_key") for (props,) in claims
+                    )
                 pipe.multi()
                 pipe.execute()
                 return payload_from_rows(
                     pot_id=pot_id,
-                    entity_rows=(entity_row(key, labels, props) for key, labels, props in entities),
+                    entity_rows=(
+                        entity_row(key, labels, props)
+                        for key, labels, props in entities
+                    ),
                     claim_rows=(claim_row(props) for (props,) in claims),
                 )
             except WatchError:
@@ -54,11 +81,21 @@ class FalkorDBSnapshot:
             finally:
                 pipe.reset()
 
-    def import_data(self, *, pot_id: str, payload: Mapping[str, Any]) -> SnapshotManifest:
+    def import_data(
+        self, *, pot_id: str, payload: Mapping[str, Any]
+    ) -> SnapshotManifest:
         incoming = normalize_snapshot_payload(payload, target_pot_id=pot_id)
         validate_native_snapshot_properties(incoming)
         _validate_labels(incoming)
         graph = self._graph()
+        from potpie_context_core.graph_journal import JournalError
+
+        from .falkordb_journal import _state
+
+        if _state(graph, pot_id) is not None:
+            raise JournalError(
+                "snapshot import is unsupported while journal capture is active"
+            )
         existing = self.export_data(pot_id=pot_id)
         validate_snapshot_merge(
             existing_entities=existing["entities"],
@@ -69,9 +106,17 @@ class FalkorDBSnapshot:
             return imported_manifest("memory", incoming, pot_id=pot_id)
         _ensure_state(graph, pot_id)
         while True:
-            pipe = graph.client.pipeline()
+            pipe = transaction_client(graph).pipeline()
             try:
                 pipe.watch(graph.name)
+                from potpie_context_core.graph_journal import JournalError
+
+                from .falkordb_journal import _state
+
+                if _state(graph, pot_id, pipe) is not None:
+                    raise JournalError(
+                        "snapshot import is unsupported while journal capture is active"
+                    )
                 before = current_version(graph, pot_id)
                 existing = self.export_data(pot_id=pot_id)
                 validate_snapshot_merge(
@@ -84,7 +129,8 @@ class FalkorDBSnapshot:
                 query, params = _import_query(incoming, pot_id=pot_id, expected=before)
                 pipe.multi()
                 pipe.execute_command(
-                    "GRAPH.QUERY", graph.name,
+                    "GRAPH.QUERY",
+                    graph.name,
                     graph._build_params_header(params) + query,
                     "--compact",
                 )
@@ -101,15 +147,22 @@ class FalkorDBSnapshot:
     def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
         result = self.import_data(pot_id=pot_id, payload=read_payload(source))
         return SnapshotManifest(
-            pot_id=result.pot_id, location=str(source), format_version=result.format_version,
-            entity_count=result.entity_count, claim_count=result.claim_count,
+            pot_id=result.pot_id,
+            location=str(source),
+            format_version=result.format_version,
+            entity_count=result.entity_count,
+            claim_count=result.claim_count,
             metadata=result.metadata,
         )
 
 
-def _import_query(payload: Mapping[str, Any], *, pot_id: str, expected: int) -> tuple[str, dict[str, Any]]:
+def _import_query(
+    payload: Mapping[str, Any], *, pot_id: str, expected: int
+) -> tuple[str, dict[str, Any]]:
     params: dict[str, Any] = {"pot": pot_id, "expected": expected}
-    clauses = ["MATCH (v:PotpieRevision {pot_id:$pot}) WHERE v.version=$expected"]
+    clauses = [
+        "MATCH (v:PotpieRevision {pot_id:$pot}) WHERE v.version=$expected AND v.journal IS NULL"
+    ]
     for index, entity in enumerate(payload["entities"]):
         key, labels, props = stored_entity(entity, pot_id)
         params[f"ek{index}"] = key

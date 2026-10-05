@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
 import importlib
 import inspect
 import logging
 import threading
+from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
+from potpie_context_core.commit_service import GraphCommitService, GraphCommitSurface
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
@@ -321,12 +323,17 @@ class _PlanStoreBridge(_StoreBridge):
         request_fingerprint = kwargs["request_fingerprint"]
         with self._reservation_lock:
             for existing in self.list(pot_id=record.pot_id):
-                key = str(existing.original_payload.get("idempotency_key") or "").strip()
+                key = str(
+                    existing.original_payload.get("idempotency_key") or ""
+                ).strip()
                 if key != idempotency_key or not existing.reserves_idempotency:
                     continue
                 from potpie_context_core.workbench_service import _request_fingerprint
 
-                if _request_fingerprint(existing.original_payload) != request_fingerprint:
+                if (
+                    _request_fingerprint(existing.original_payload)
+                    != request_fingerprint
+                ):
                     raise ValueError(
                         f"idempotency_key {idempotency_key!r} is already bound to "
                         f"plan {existing.plan_id!r} with different content"
@@ -403,10 +410,14 @@ class _BackendBridge:
     def snapshot(self) -> _SnapshotPortBridge:
         return self._snapshot
 
+    @property
+    def journal(self):
+        return getattr(self._backend, "journal", None)
+
     def capabilities(self) -> Any:
         return self._backend.capabilities()
 
-    def bind_definition(self, definition: GraphDefinition) -> "_BackendBridge":
+    def bind_definition(self, definition: GraphDefinition) -> _BackendBridge:
         return _BackendBridge(self._backend.bind_definition(definition))
 
 
@@ -422,7 +433,7 @@ class NoOpGraphObserver:
 
 
 @dataclass(frozen=True, slots=True)
-class GraphRuntime:
+class GraphRuntime(GraphCommitSurface):
     """One fully wired graph runtime sharing one definition and policy."""
 
     backend: GraphBackend
@@ -434,6 +445,8 @@ class GraphRuntime:
     observability: GraphObserver
     graph: Any
     workbench: GraphWorkbenchService
+    commit_mirror: Any = None
+    commit_service: Any = None
 
     def _notify(self, event: str, fields: Mapping[str, Any]) -> None:
         try:
@@ -762,6 +775,11 @@ def build_graph_runtime(
     reconciliation_config: ReconciliationConfig | None = None,
     resource_index: Any = None,
     resource_store: Any = None,
+    commit_mirror: Any = None,
+    preview_store: Any = None,
+    commit_host: str = "local",
+    commit_actor: Any = None,
+    commit_authorize: Any = None,
 ) -> GraphRuntime:
     """Validate composition and return the single supported graph runtime.
 
@@ -843,6 +861,22 @@ def build_graph_runtime(
             "potpie-context-engine is required to build the default graph "
             "implementation"
         ) from exc
+    if resource_store is not None and hasattr(backend, "resource_exists"):
+        from potpie_context_core.ports.resource_store import ResourceStoreError
+
+        def resource_exists(pot_id: str, ref: str) -> bool:
+            try:
+                return (
+                    len(resource_store.get_many(pot_id=pot_id, resource_ids=(ref,)))
+                    == 1
+                )
+            except ResourceStoreError:
+                return False
+
+        backend.resource_exists = resource_exists
+        # The reference mutation adapter holds its own injected callback.
+        if hasattr(backend.mutation, "resource_exists"):
+            backend.mutation.resource_exists = resource_exists
     runtime_backend = _BackendBridge(backend)
     runtime_plan_store = _PlanStoreBridge(plan_store)
     runtime_inbox_store = (
@@ -865,6 +899,21 @@ def build_graph_runtime(
         resource_index=resource_index,
         **({"resource_store": resource_store} if resource_store is not None else {}),
     )
+    import getpass
+
+    async def local_authorize(pot_id, access):
+        if access not in {"read", "write", "admin"}:
+            raise ValueError("unknown commit access")
+
+    commits = GraphCommitService(
+        journal=runtime_backend.journal,
+        mirror=commit_mirror,
+        previews=preview_store,
+        host=commit_host,
+        actor=commit_actor or (lambda: "local:" + getpass.getuser()),
+        authorize=commit_authorize or local_authorize,
+    )
+    workbench.commit_service = commits
     return GraphRuntime(
         backend=runtime_backend,
         plan_store=runtime_plan_store,
@@ -875,6 +924,8 @@ def build_graph_runtime(
         observability=observer,
         graph=graph,
         workbench=workbench,
+        commit_mirror=commit_mirror,
+        commit_service=commits,
     )
 
 

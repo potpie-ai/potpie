@@ -16,14 +16,16 @@ silent stub.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from typing import Any
+
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     claim_is_applicable,
     embedding_score,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.retrieval_card import (
     build_retrieval_card,
@@ -79,13 +81,30 @@ class InMemoryClaimQueryStore:
         }
 
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
-        return dict(self.entity_property_index.get((pot_id, entity_key), {}))
+        properties = self.entity_property_index.get((pot_id, entity_key), {})
+        return {} if properties.get("retired", False) else dict(properties)
 
     # ------------------------------------------------------------------
     # ClaimQueryPort
     # ------------------------------------------------------------------
     def find_claims(self, filter_: ClaimQueryFilter) -> list[ClaimRow]:
-        candidates = [row for row in self.rows if row.pot_id == filter_.pot_id]
+        candidates = [
+            row
+            for row in self.rows
+            if row.pot_id == filter_.pot_id
+            and (
+                filter_.include_retired
+                or (
+                    not row.retired
+                    and not self.entity_property_index.get(
+                        (row.pot_id, row.subject_key), {}
+                    ).get("retired", False)
+                    and not self.entity_property_index.get(
+                        (row.pot_id, row.object_key), {}
+                    ).get("retired", False)
+                )
+            )
+        ]
         candidates = [row for row in candidates if _matches_filter(row, filter_, self)]
 
         if filter_.fact_query:
@@ -101,7 +120,9 @@ class InMemoryClaimQueryStore:
         out: dict[str, tuple[str, ...]] = {}
         for key in entity_keys:
             labels = self.entity_label_index.get((pot_id, key))
-            if labels:
+            if labels and not self.entity_property_index.get((pot_id, key), {}).get(
+                "retired", False
+            ):
                 out[key] = labels
         return out
 
@@ -180,8 +201,14 @@ def _matches_filter(
         haystack = " ".join(
             str(value)
             for value in (
-                row.subject_key, row.object_key, row.claim_key, row.fact,
-                row.description, row.source_ref, row.source_refs, row.properties,
+                row.subject_key,
+                row.object_key,
+                row.claim_key,
+                row.fact,
+                row.description,
+                row.source_ref,
+                row.source_refs,
+                row.properties,
             )
             if value is not None
         ).lower()
@@ -193,8 +220,14 @@ def _matches_filter(
         haystack = " ".join(
             str(value)
             for value in (
-                row.subject_key, row.object_key, row.claim_key, row.fact,
-                row.description, row.source_ref, row.source_refs, row.properties,
+                row.subject_key,
+                row.object_key,
+                row.claim_key,
+                row.fact,
+                row.description,
+                row.source_ref,
+                row.source_refs,
+                row.properties,
             )
             if value is not None
         ).lower()

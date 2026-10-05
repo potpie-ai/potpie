@@ -766,6 +766,7 @@ def graph_read(
             )
         )
         from potpie_context_core.ports.graph_service import bound_graph_read_result
+
         # Leave space for the workbench envelope wrapped around the read body.
         result = bound_graph_read_result(result, pot_id=pot_id, max_bytes=30_720)
         _emit_graph_read(
@@ -1596,7 +1597,11 @@ def graph_neighborhood(
     direction: str = typer.Option("both", "--direction"),
     limit: int = typer.Option(50, "--limit"),
     detail: str = typer.Option("summary", "--detail", help="summary | full"),
-    unbounded: bool = typer.Option(False, "--unbounded", help="Return the complete selected slice even if it exceeds the normal output budget."),
+    unbounded: bool = typer.Option(
+        False,
+        "--unbounded",
+        help="Return the complete selected slice even if it exceeds the normal output budget.",
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.neighborhood") as ctx:
@@ -1644,8 +1649,12 @@ def graph_neighborhood(
         relations = [_neighborhood_relation(edge) for edge in sl.edges]
         anchor_present = any(node.key == entity for node in sl.nodes)
         identity_status = (
-            "exact" if relations else "missing" if not anchor_present
-            else "no_matching_relations" if predicates or normalized_direction != "both"
+            "exact"
+            if relations
+            else "missing"
+            if not anchor_present
+            else "no_matching_relations"
+            if predicates or normalized_direction != "both"
             else "isolated"
         )
         payload = {
@@ -1681,7 +1690,10 @@ def graph_neighborhood(
             ]
         if identity_status == "missing":
             from potpie_context_core.cli_commands import graph_search_entities_command
-            payload["recommended_next_action"] = graph_search_entities_command(entity, pot_id=pot_id)
+
+            payload["recommended_next_action"] = graph_search_entities_command(
+                entity, pot_id=pot_id
+            )
         if not unbounded:
             payload = _bound_neighborhood_payload(payload, pot_id=pot_id)
         _emit_graph_result(
@@ -3378,19 +3390,29 @@ def _neighborhood_human(payload: Mapping[str, Any]) -> str:
         fact = rel.get("fact") or f"{rel.get('from')} -> {rel.get('to')}"
         lines.append(f"  • {rel.get('predicate')} [{refs}] {fact}")
     if len(relations) > 20:
-        lines.append(f"  … {len(relations) - 20} relations hidden; use --json for the returned slice.")
+        lines.append(
+            f"  … {len(relations) - 20} relations hidden; use --json for the returned slice."
+        )
     if payload.get("omitted_relation_count"):
-        lines.append(f"  … {payload['omitted_relation_count']} relations omitted by output budget.")
+        lines.append(
+            f"  … {payload['omitted_relation_count']} relations omitted by output budget."
+        )
     if payload.get("detail") == "full":
         nodes = list(payload.get("nodes") or ())
         edges = list(payload.get("edges") or ())
-        anchor = next((node for node in nodes if node.get("key") == payload.get("entity_key")), None)
+        anchor = next(
+            (node for node in nodes if node.get("key") == payload.get("entity_key")),
+            None,
+        )
         displayed_nodes = ([anchor] if anchor else []) + [
             node for node in nodes if node is not anchor
-        ][:4 if anchor else 5]
+        ][: 4 if anchor else 5]
         answer_fields = (
-            "root_cause", "fix_steps", "verification_status",
-            "resolution_status", "source_status",
+            "root_cause",
+            "fix_steps",
+            "verification_status",
+            "resolution_status",
+            "source_status",
         )
         for node in displayed_nodes:
             properties = dict(node["properties"])
@@ -3401,26 +3423,34 @@ def _neighborhood_human(payload: Mapping[str, Any]) -> str:
             if node is anchor:
                 for field in answer_fields:
                     if field in properties:
-                        rendered, omitted = _bounded_neighborhood_answer(properties[field])
+                        rendered, omitted = _bounded_neighborhood_answer(
+                            properties[field]
+                        )
                         lines.append(f"    {field}: {rendered}")
                         if omitted:
                             lines.append(f"    {field} omitted: {omitted}")
         if len(nodes) > len(displayed_nodes):
-            lines.append(f"  … {len(nodes) - len(displayed_nodes)} node details hidden; use --json for the returned slice.")
+            lines.append(
+                f"  … {len(nodes) - len(displayed_nodes)} node details hidden; use --json for the returned slice."
+            )
         for edge in edges[:5]:
             lines.append(
                 f"  edge {edge['from']} {edge['predicate']} {edge['to']} "
                 f"properties={_bounded_neighborhood_properties(edge['properties'])}"
             )
         if len(edges) > 5:
-            lines.append(f"  … {len(edges) - 5} edge details hidden; use --json for the returned slice.")
+            lines.append(
+                f"  … {len(edges) - 5} edge details hidden; use --json for the returned slice."
+            )
     if payload.get("truncated"):
         lines.append("Bounded neighborhood; completeness is unknown beyond this slice.")
     return "\n".join(lines)
 
 
 def _bounded_neighborhood_properties(properties: Mapping[str, Any]) -> str:
-    rendered = json.dumps(dict(properties), ensure_ascii=False, default=str, separators=(",", ":"))
+    rendered = json.dumps(
+        dict(properties), ensure_ascii=False, default=str, separators=(",", ":")
+    )
     return rendered if len(rendered) <= 320 else rendered[:317] + "…"
 
 
@@ -3429,10 +3459,14 @@ def _bounded_neighborhood_answer(value: Any) -> tuple[str, str | None]:
         selected = [str(item)[:500] for item in value[:12]]
         omitted = len(value) - len(selected)
         clipped = sum(max(0, len(str(item)) - 500) for item in value[:12])
-        note = ", ".join(part for part in (
-            f"{omitted} items" if omitted else "",
-            f"{clipped} characters" if clipped else "",
-        ) if part)
+        note = ", ".join(
+            part
+            for part in (
+                f"{omitted} items" if omitted else "",
+                f"{clipped} characters" if clipped else "",
+            )
+            if part
+        )
         return json.dumps(selected, ensure_ascii=False), note or None
     rendered = str(value)
     if len(rendered) > 2_000:
@@ -3443,7 +3477,9 @@ def _bounded_neighborhood_answer(value: Any) -> tuple[str, str | None]:
 _NEIGHBORHOOD_OUTPUT_BUDGET_BYTES = 32_768
 
 
-def _bound_neighborhood_payload(payload: dict[str, Any], *, pot_id: str) -> dict[str, Any]:
+def _bound_neighborhood_payload(
+    payload: dict[str, Any], *, pot_id: str
+) -> dict[str, Any]:
     def size(value: dict[str, Any]) -> int:
         return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
 
@@ -3466,6 +3502,7 @@ def _bound_neighborhood_payload(payload: dict[str, Any], *, pot_id: str) -> dict
         if len(row.get("source_refs") or ()) > 12:
             omitted_fields += 1
         row["source_refs"] = list(row.get("source_refs") or ())[:12]
+
     def bound_value(value: Any) -> Any:
         nonlocal omitted_fields
         if isinstance(value, str):
@@ -3479,12 +3516,12 @@ def _bound_neighborhood_payload(payload: dict[str, Any], *, pot_id: str) -> dict
         if isinstance(value, Mapping):
             return {key: bound_value(item) for key, item in value.items()}
         return value
+
     for row in [*nodes, *edges]:
         properties = row.get("properties")
         if isinstance(properties, Mapping):
             row["properties"] = {
-                key: bound_value(value)
-                for key, value in properties.items()
+                key: bound_value(value) for key, value in properties.items()
             }
     total_relations = len(relations)
     total_nodes = len(nodes)
@@ -3499,13 +3536,21 @@ def _bound_neighborhood_payload(payload: dict[str, Any], *, pot_id: str) -> dict
         nodes[:] = [node for node in nodes if node.get("key") in visible_keys]
     if size(bounded) > _NEIGHBORHOOD_OUTPUT_BUDGET_BYTES - 2_048:
         essential = {
-            "name", "summary", "description", "root_cause", "fix_steps",
-            "verification_status", "resolution_status", "source_status",
+            "name",
+            "summary",
+            "description",
+            "root_cause",
+            "fix_steps",
+            "verification_status",
+            "resolution_status",
+            "source_status",
         }
         for node in nodes:
             properties = node.get("properties")
             if isinstance(properties, Mapping):
-                node["properties"] = {key: value for key, value in properties.items() if key in essential}
+                node["properties"] = {
+                    key: value for key, value in properties.items() if key in essential
+                }
                 omitted_fields += len(properties) - len(node["properties"])
         for edge in edges:
             omitted_fields += len(edge.get("properties") or ())
@@ -3520,9 +3565,19 @@ def _bound_neighborhood_payload(payload: dict[str, Any], *, pot_id: str) -> dict
     bounded["output_budget_bytes"] = _NEIGHBORHOOD_OUTPUT_BUDGET_BYTES
     bounded["truncated"] = True
     tokens = [
-        "potpie", "graph", "neighborhood", "--entity", payload["entity_key"],
-        "--depth", str(payload["depth"]), "--direction", payload["direction"],
-        "--limit", str(payload["limit"]), "--detail", payload["detail"],
+        "potpie",
+        "graph",
+        "neighborhood",
+        "--entity",
+        payload["entity_key"],
+        "--depth",
+        str(payload["depth"]),
+        "--direction",
+        payload["direction"],
+        "--limit",
+        str(payload["limit"]),
+        "--detail",
+        payload["detail"],
     ]
     if payload.get("predicates"):
         tokens.extend(("--predicate", ",".join(payload["predicates"])))
@@ -3732,17 +3787,32 @@ def _emit_graph_read(
         fallback = payload.get("fallback_context")
         if fallback:
             from dataclasses import replace
-            human += "\n\n" + fallback["label"] + "\n" + _read_human(
-                replace(result, items=tuple(fallback.get("items", ())),
+
+            human += (
+                "\n\n"
+                + fallback["label"]
+                + "\n"
+                + _read_human(
+                    replace(
+                        result,
+                        items=tuple(fallback.get("items", ())),
                         coverage=tuple(fallback.get("coverage", ())),
-                        quality=fallback.get("quality", {}), ok=True,
+                        quality=fallback.get("quality", {}),
+                        ok=True,
                         effective_request=fallback.get("effective_request", {}),
-                        fallback_context={}),
-                format_=normalized_format, sort=sort, dedupe=dedupe, event_limit=event_limit,
+                        fallback_context={},
+                    ),
+                    format_=normalized_format,
+                    sort=sort,
+                    dedupe=dedupe,
+                    event_limit=event_limit,
+                )
             )
         if human_prefix:
             human = "\n".join((human_prefix, human))
-        _emit_graph_result(ctx, payload, human=human, warnings=warnings, adjustments=adjustments)
+        _emit_graph_result(
+            ctx, payload, human=human, warnings=warnings, adjustments=adjustments
+        )
         raise typer.Exit(code=EXIT_VALIDATION)
 
     if not is_json():
@@ -4165,14 +4235,18 @@ def _read_human(
     dedupe: str = "auto",
     event_limit: int | None = None,
 ) -> str:
-    body = _read_human_body(result, format_=format_, sort=sort, dedupe=dedupe, event_limit=event_limit)
+    body = _read_human_body(
+        result, format_=format_, sort=sort, dedupe=dedupe, event_limit=event_limit
+    )
     effective = getattr(result, "effective_request", {})
     lines = []
     if effective:
         scope = effective.get("scope") or "selected pot"
         lines.append(f"scope={scope} limit={effective.get('limit')}")
         if effective.get("since") or effective.get("until"):
-            lines.append(f"window={effective.get('since') or 'unbounded'} .. {effective.get('until') or 'unbounded'}")
+            lines.append(
+                f"window={effective.get('since') or 'unbounded'} .. {effective.get('until') or 'unbounded'}"
+            )
     for report in result.coverage:
         meta = report.get("metadata", {})
         if report.get("completeness") in {"truncated", "unknown"}:
@@ -4194,7 +4268,9 @@ def _read_human(
     return "\n".join([*lines, body])
 
 
-def _read_human_body(result, *, format_: str, sort: str, dedupe: str, event_limit: int | None) -> str:
+def _read_human_body(
+    result, *, format_: str, sort: str, dedupe: str, event_limit: int | None
+) -> str:
     ctx = build_presentation_context(
         result,
         format_=format_,
@@ -4820,3 +4896,8 @@ def _quality_human(result) -> str:
 
 
 __all__ = ["backend_app", "graph_app", "timeline_app"]
+
+
+from potpie.cli.commands.graph_commits import register_commit_commands
+
+register_commit_commands(graph_app)

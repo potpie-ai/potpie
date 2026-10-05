@@ -9,9 +9,27 @@ shim details stay in outbound adapters.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, replace
-from typing import Any, Mapping
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from typing import Any
+
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_core.errors import (
+    CapabilityNotImplemented,
+    GraphMutationVersionConflict,
+)
+from potpie_context_core.graph_mutations import InvalidationOp, ProvenanceContext
+from potpie_context_core.lifecycle import DONE, FAILED, SetupPlan, StepResult
+from potpie_context_core.ports.claim_query import ClaimQueryPort
+from potpie_context_core.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.mutation import (
+    BackendReadiness,
+    MutationExecutionLookup,
+    MutationExecutionState,
+)
+from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
@@ -22,11 +40,22 @@ from potpie_context_engine.adapters.outbound.graph.apply_plan import (
 from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import (
     ClaimQueryAnalytics,
 )
+from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
+    ClaimQuerySemanticSearch,
+)
 from potpie_context_engine.adapters.outbound.graph.backends.falkordb_analytics import (
     FalkorDBAnalytics,
 )
-from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
-    ClaimQuerySemanticSearch,
+from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
+    ENTITY_LABEL_REPAIR_LIMIT,
+    ENTITY_LABEL_SCAN_CYPHER,
+    canonical_label_changes,
+    repaired_entity_labels,
+)
+from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
+    ENTITY_SUMMARY_REPAIR_LIMIT,
+    ENTITY_SUMMARY_SCAN_CYPHER,
+    repaired_entity_properties,
 )
 from potpie_context_engine.adapters.outbound.graph.falkordb_inspection import (
     FalkorDBInspection,
@@ -39,34 +68,7 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     FalkorDBGraphWriter,
     _records_from_result,
 )
-from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
-    ENTITY_SUMMARY_REPAIR_LIMIT,
-    ENTITY_SUMMARY_SCAN_CYPHER,
-    ENTITY_SUMMARY_UPDATE_CYPHER,
-    repaired_entity_properties,
-)
-from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
-    ENTITY_LABEL_REPAIR_LIMIT,
-    ENTITY_LABEL_SCAN_CYPHER,
-    canonical_label_changes,
-    repaired_entity_labels,
-)
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_core.errors import CapabilityNotImplemented
-from potpie_context_core.errors import GraphMutationVersionConflict
-from potpie_context_core.graph_mutations import ProvenanceContext
-from potpie_context_core.graph_mutations import InvalidationOp
-from potpie_context_core.lifecycle import DONE, FAILED, SetupPlan, StepResult
-from potpie_context_core.ports.claim_query import ClaimQueryPort
-from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.mutation import BackendReadiness
-from potpie_context_core.ports.graph.mutation import (
-    MutationExecutionLookup,
-    MutationExecutionState,
-)
-from potpie_context_core.reconciliation import MutationBatch, MutationResult
-from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 _PROFILE = "falkordb"
 _LITE_PROFILE = "falkordb_lite"
@@ -364,6 +366,7 @@ class FalkorDBGraphBackend:
         default_factory=MutationExecutionRegistry,
         repr=False,
     )
+    resource_exists: Any = None
     _claim_query: ClaimQueryPort = field(init=False)
     _mutation: _FalkorDBMutation = field(init=False)
     _semantic: ClaimQuerySemanticSearch = field(init=False)
@@ -408,6 +411,19 @@ class FalkorDBGraphBackend:
         """Compatibility alias for old ingestion paths that seed via writer."""
         assert self.writer is not None
         return self.writer
+
+    @property
+    def journal(self):
+        from potpie_context_engine.adapters.outbound.graph.falkordb_journal import (
+            FalkorJournal,
+        )
+
+        return FalkorJournal(
+            self.graph_provider(),
+            self.definition,
+            profile=self.profile_name,
+            resource_exists=self.resource_exists,
+        )
 
     @property
     def claim_query(self) -> ClaimQueryPort:
@@ -511,15 +527,30 @@ class FalkorDBGraphBackend:
             )
             if fixed is None:
                 continue
-            result = graph.query(
-                ENTITY_SUMMARY_UPDATE_CYPHER,
-                params={"gid": pot_id, "key": key, "props": fixed},
+            from potpie_context_core.graph_mutations import EntityUpsert
+            from potpie_context_core.journal_context import (
+                JournalWriteContext,
+                journal_write_context,
             )
-            records = _records_from_result(result)
-            if not records:
-                repaired += 1
-                continue
-            repaired += int(records[0].get("cnt") or 0)
+
+            labels = tuple(
+                row.get("labels")
+                or self.claim_query.entity_labels(
+                    pot_id=pot_id, entity_keys=(key,)
+                ).get(key, ())
+            )
+            with journal_write_context(
+                JournalWriteContext(origin="repair", required_access="admin")
+            ):
+                result = self.mutation.compare_and_apply(
+                    MutationBatch(
+                        summary="Repair entity summary",
+                        entity_upserts=[EntityUpsert(key, labels, fixed)],
+                    ),
+                    expected_pot_id=pot_id,
+                    expected_version=self.mutation.current_version(pot_id),
+                )
+            repaired += result.mutation_summary.entity_upserts_applied
         return repaired
 
     def _repair_entity_labels(self, pot_id: str) -> int:
@@ -558,14 +589,24 @@ class FalkorDBGraphBackend:
                 clauses.extend(f"SET e:{label}" for label in add)
                 if not clauses:
                     continue
-                result = graph.query(
-                    "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
-                    + " ".join(clauses)
-                    + " RETURN count(e) AS cnt",
-                    params={"gid": pot_id, "key": key},
+                from potpie_context_core.graph_mutations import EntityUpsert
+                from potpie_context_core.journal_context import (
+                    JournalWriteContext,
+                    journal_write_context,
                 )
-                records = _records_from_result(result)
-                repaired += int(records[0].get("cnt") or 0) if records else 1
+
+                with journal_write_context(
+                    JournalWriteContext(origin="repair", required_access="admin")
+                ):
+                    result = self.mutation.compare_and_apply(
+                        MutationBatch(
+                            summary="Repair entity labels",
+                            entity_upserts=[EntityUpsert(key, tuple(fixed))],
+                        ),
+                        expected_pot_id=pot_id,
+                        expected_version=self.mutation.current_version(pot_id),
+                    )
+                repaired += result.mutation_summary.entity_upserts_applied
             after = str(rows[-1].get("key") or "")
         return repaired
 

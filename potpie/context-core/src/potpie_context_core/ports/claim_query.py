@@ -14,9 +14,10 @@ computed read annotations.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,8 @@ class ClaimRow:
     evidence: tuple[Mapping[str, Any], ...] = ()
     graph_contract_version: str | None = None
     ontology_version: str | None = None
+    record_id: str = ""
+    retired: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +82,7 @@ class ClaimQueryFilter:
     valid_at_after: datetime | None = None
     valid_at_before: datetime | None = None
     include_invalidated: bool = False
+    include_retired: bool = False
     as_of: datetime | None = None
     source_system_in: tuple[str, ...] = ()
     limit: int | None = None

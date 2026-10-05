@@ -1,31 +1,31 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
-from datetime import datetime, timedelta, timezone
 import json
 import multiprocessing
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 import pytest
-
-from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
-    InMemoryGraphBackend,
-)
-from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
-    EmbeddedGraphBackend,
-)
-from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
-    LocalJsonGraphPlanStore,
-)
-from potpie_context_core.workbench_service import (
-    GraphWorkbenchService,
-)
 from potpie_context_core.graph_plans import (
     GraphMutationPlanRecord,
     GraphMutationPlanStatus,
 )
 from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_core.workbench_service import (
+    GraphWorkbenchService,
+)
+
+from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
+    EmbeddedGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+    LocalJsonGraphPlanStore,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -726,8 +726,8 @@ def test_commit_verify_reads_back_a_timeline_event(tmp_path) -> None:
     assert backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
 
 
-def test_commit_verify_flags_quality_regression() -> None:
-    workbench, _backend, _store = _service()
+def test_commit_verify_flags_orphan_regression_after_singleton_supersession() -> None:
+    workbench, backend, _store = _service()
     first = workbench.propose(_owner_payload("team:platform"), pot_id=POT)
     committed_first = workbench.commit(first.plan_id, pot_id=POT, verify=True)
     assert committed_first.verification is not None
@@ -740,7 +740,20 @@ def test_commit_verify_flags_quality_regression() -> None:
     assert committed_second.verification is not None
     assert committed_second.verification.ok is False
     assert committed_second.verification.status == "degraded"
-    assert "conflicting_claims" in committed_second.verification.quality_regressions
+    # The prior owner is retained but invalidated, matching native singleton
+    # semantics. Its newly orphaned entity still produces a quality regression.
+    assert "conflicting_claims" not in committed_second.verification.quality_regressions
+    assert "orphan_entities" in committed_second.verification.quality_regressions
+    current = backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id=POT, predicate_in=("OWNED_BY",))
+    )
+    assert [row.object_key for row in current] == ["team:product"]
+    history = backend.claim_query.find_claims(
+        ClaimQueryFilter(
+            pot_id=POT, predicate_in=("OWNED_BY",), include_invalidated=True
+        )
+    )
+    assert len(history) == 2
     assert committed_second.recommended_next_action
 
 
@@ -1260,6 +1273,23 @@ def test_history_by_mutation_returns_plan_and_claim_rows() -> None:
     assert claim_entry.mutation_id == committed.mutation_id
     assert claim_entry.claim_key in committed.claim_keys
     assert claim_entry.source_refs == ("repo:manifest",)
+
+
+def test_plan_only_history_preserves_plan_when_claims_fill_the_page() -> None:
+    workbench, _backend, _store = _service()
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    committed = workbench.commit(proposal.plan_id, pot_id=POT)
+
+    history = workbench.history(pot_id=POT, limit=1, include_claims=False)
+
+    assert len(history.entries) == 1
+    entry = history.entries[0]
+    assert entry.kind == "plan"
+    assert entry.status == "committed"
+    assert entry.plan_id == proposal.plan_id
+    assert entry.mutation_id == committed.mutation_id
+    assert entry.payload["diff"]["claims_asserted"] == len(committed.claim_keys)
+    assert workbench.history(pot_id="other", include_claims=False).entries == ()
 
 
 def test_history_by_entity_includes_invalidated_claims() -> None:

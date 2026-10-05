@@ -5,8 +5,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from potpie_context_core.graph_contract import evidence_strength_for_truth
 from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
@@ -40,6 +41,8 @@ CONTRACT_EDGE_KEYS = frozenset(
         "object_key",
         "observed_at",
         "ontology_version",
+        "record_id",
+        "retired",
         "__potpie_snapshot_properties_v2",
         "__potpie_snapshot_claim_fields_v2",
         "source_ref",
@@ -70,6 +73,25 @@ def claim_is_applicable(row: ClaimRow, *, as_of: datetime | None = None) -> bool
     if invalid_at is not None and point >= invalid_at:
         return False
     return True
+
+
+def claim_matches_time_filter(
+    row: ClaimRow, filter_: ClaimQueryFilter, *, query_time: datetime
+) -> bool:
+    """Compare instants rather than the lexical order of stored ISO offsets."""
+    if not filter_.include_invalidated and not claim_is_applicable(
+        row, as_of=query_time
+    ):
+        return False
+    if filter_.valid_at_after is not None and (
+        row.valid_at is None or _as_utc(row.valid_at) < _as_utc(filter_.valid_at_after)
+    ):
+        return False
+    return (
+        filter_.valid_at_before is None
+        or row.valid_at is None
+        or _as_utc(row.valid_at) <= _as_utc(filter_.valid_at_before)
+    )
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -203,6 +225,8 @@ def row_from_record(rec: Mapping[str, Any]) -> ClaimRow:
         evidence=_evidence_tuple(props.get("evidence")),
         graph_contract_version=_coerce_str(props.get("graph_contract_version")),
         ontology_version=_coerce_str(props.get("ontology_version")),
+        record_id=str(props.get("record_id") or ""),
+        retired=bool(props.get("retired", False)),
     )
 
 
@@ -249,7 +273,8 @@ def stamp_scored_rows(scored: Iterable[tuple[float, ClaimRow]]) -> list[ClaimRow
 # reply size (and, on redis backends, RESP parse time) of every claim scan.
 FIND_CLAIMS_CYPHER = """
 MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
-WHERE ($preds IS NULL OR r.name IN $preds)
+WHERE ($include_retired OR (coalesce(r.retired,false)=false AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false))
+  AND ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
@@ -304,22 +329,22 @@ def vector_filter_is_selective(filter_: ClaimQueryFilter) -> bool:
 
 ENTITY_LABELS_CYPHER = """
 MATCH (e:Entity {group_id: $gid})
-WHERE e.entity_key IN $keys
+WHERE e.entity_key IN $keys AND coalesce(e.retired,false)=false
 RETURN e.entity_key AS key, labels(e) AS labels
 """
 
 
 __all__ = [
+    "CONTRACT_EDGE_KEYS",
     "ENTITY_LABELS_CYPHER",
     "FIND_CLAIMS_CYPHER",
-    "CONTRACT_EDGE_KEYS",
     "RESERVED_EDGE_KEYS",
     "embedding_score",
     "iso",
     "parse_dt",
     "row_from_record",
-    "stamp_similarity",
     "stamp_scored_rows",
+    "stamp_similarity",
     "vector_candidate_k",
     "vector_filter_is_selective",
     "vector_property",

@@ -12,56 +12,30 @@ embeddings, and traversal is naive — but the *contract* is complete.
 
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import threading
 import uuid
+from collections.abc import Iterable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
-    InMemoryClaimQueryStore,
-    card_for_row,
-)
-from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
-    CONTRACT_EDGE_KEYS,
-)
-from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
-    ENTITY_SUMMARY_TARGET,
-    repaired_entity_properties,
-    wants_entity_summary_repair,
-)
-from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
-    ENTITY_LABEL_TARGET,
-    repaired_entity_labels,
-    wants_entity_label_repair,
-)
-from potpie_context_engine.adapters.outbound.graph.document_key_repair import (
-    document_key_finding,
-    wants_document_key_repair,
-)
-from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
-    MutationExecutionRegistry,
-)
-from potpie_context_core.reconciliation_validation import (
-    validate_reconciliation_plan,
-)
+from potpie_context_core.errors import GraphMutationVersionConflict
 from potpie_context_core.graph_contract import evidence_strength_for_truth
-from potpie_context_core.graph_snapshot import (
-    build_snapshot_payload,
-    normalize_snapshot_payload,
-    validate_snapshot_merge,
-)
 from potpie_context_core.graph_entity_summary import (
     merge_entity_display_properties,
     normalize_entity_properties,
 )
 from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.graph_snapshot import (
+    build_snapshot_payload,
+    normalize_snapshot_payload,
+    validate_snapshot_merge,
+)
 from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
 from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
-from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_core.ports.graph.analytics import RepairFinding, RepairReport
 from potpie_context_core.ports.graph.backend import BackendCapabilities
 from potpie_context_core.ports.graph.inspection import (
@@ -73,7 +47,6 @@ from potpie_context_core.ports.graph.mutation import (
     BackendReadiness,
     MutationExecutionState,
 )
-from potpie_context_core.errors import GraphMutationVersionConflict
 from potpie_context_core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_core.reconciliation import (
     MutationBatch,
@@ -81,6 +54,35 @@ from potpie_context_core.reconciliation import (
     MutationSummary,
 )
 from potpie_context_core.reconciliation_config import ReconciliationConfig
+from potpie_context_core.reconciliation_validation import (
+    validate_reconciliation_plan,
+)
+
+from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
+    MutationExecutionRegistry,
+)
+from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
+    CONTRACT_EDGE_KEYS,
+)
+from potpie_context_engine.adapters.outbound.graph.document_key_repair import (
+    document_key_finding,
+    wants_document_key_repair,
+)
+from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
+    ENTITY_LABEL_TARGET,
+    repaired_entity_labels,
+    wants_entity_label_repair,
+)
+from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
+    ENTITY_SUMMARY_TARGET,
+    repaired_entity_properties,
+    wants_entity_summary_repair,
+)
+from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
+    InMemoryClaimQueryStore,
+    card_for_row,
+)
+from potpie_context_engine.domain.ports.embedder import EmbedderPort
 
 _PROFILE = "in_memory"
 
@@ -97,6 +99,8 @@ class _Mutation:
     )
     state_lock: threading.RLock = field(default_factory=threading.RLock)
     revisions: dict[str, int] = field(default_factory=dict)
+    journal_data: dict[str, Any] = field(default_factory=dict)
+    resource_exists: Any = None
 
     def _notify(self) -> None:
         if self.on_change is not None:
@@ -126,6 +130,18 @@ class _Mutation:
                 if provenance_context is not None and provenance_context.mutation_id
                 else uuid.uuid4().hex
             )
+            from potpie_context_engine.adapters.outbound.graph.memory_journal import (
+                MemoryJournal,
+            )
+
+            if MemoryJournal(self).journal_state(expected_pot_id) is not None:
+                return MemoryJournal(self).apply(
+                    validated_plan,
+                    original_plan=plan,
+                    pot_id=expected_pot_id,
+                    mutation_id=mutation_id,
+                    provenance=provenance_context,
+                )
             prior = self.execution_registry.lookup(
                 plan,
                 expected_pot_id=expected_pot_id,
@@ -284,6 +300,7 @@ class _Mutation:
             evidence=_evidence_tuple(props.get("evidence")),
             graph_contract_version=_coerce_str(props.get("graph_contract_version")),
             ontology_version=_coerce_str(props.get("ontology_version")),
+            record_id=uuid.uuid4().hex,
         )
         # Embed the retrieval card on write (R1/R2) so reads use a real vector.
         if self.embedder is not None and row.fact_embedding is None:
@@ -294,31 +311,32 @@ class _Mutation:
         return row
 
     def _upsert_claim_row(self, row: ClaimRow) -> None:
-        """MERGE the claim by identity instead of blindly appending.
+        """Merge a live incarnation; retain invalidated/retired incarnations."""
+        from potpie_context_core.graph_journal import JournalError
 
-        The canonical Neo4j/FalkorDB writers ``MERGE`` on claim identity, so
-        re-applying the same batch updates the same edge. Mirror that here: an
-        existing live row with the same ``claim_key`` (or the same
-        source_ref + predicate + endpoints) is replaced, not duplicated.
-
-        Note the ``invalid_at is not None`` skip: a retracted row is not a merge
-        target, so re-asserting a retracted claim appends a fresh live row and
-        leaves the tombstone as history. The canonical writers cannot do that —
-        their MERGE key is identical for both rows — so they revive the
-        tombstone in place instead and stamp ``revived_at``. The observable
-        contract is the same (the claim is live again); only the shape of the
-        retained history differs.
-        """
         now = datetime.now(timezone.utc)
         review_marker = row.properties.get("evidence_review_required") is True
+        matches = []
         for i, existing in enumerate(self.store.rows):
-            if existing.pot_id != row.pot_id or (
-                not review_marker
-                and existing.invalid_at is not None
-                and existing.invalid_at <= now
+            if (
+                existing.retired
+                or existing.pot_id != row.pot_id
+                or (
+                    not review_marker
+                    and existing.invalid_at is not None
+                    and existing.invalid_at <= now
+                )
             ):
                 continue
-            same_claim = bool(row.claim_key and existing.claim_key == row.claim_key)
+            same_claim = bool(
+                row.claim_key
+                and existing.claim_key == row.claim_key
+                and existing.predicate == row.predicate
+                and existing.subject_key == row.subject_key
+                and existing.object_key == row.object_key
+                and existing.source_ref == row.source_ref
+                and existing.environment == row.environment
+            )
             same_source_edge = bool(
                 not (row.claim_key and existing.claim_key)
                 and row.source_ref
@@ -329,11 +347,41 @@ class _Mutation:
                 and existing.environment == row.environment
             )
             if same_claim or same_source_edge:
-                if existing.invalid_at is not None and row.invalid_at is None:
-                    row = replace(row, invalid_at=existing.invalid_at)
-                self.store.rows[i] = row
-                return
-        self.store.add(row)
+                matches.append((i, existing))
+        if len(matches) > 1:
+            raise JournalError("ambiguous claim incarnation")
+        if matches:
+            index, existing = matches[0]
+            if existing.invalid_at is not None and row.invalid_at is None:
+                row = replace(row, invalid_at=existing.invalid_at)
+            self.store.rows[index] = replace(
+                row, record_id=existing.record_id or row.record_id
+            )
+        else:
+            self.store.add(row)
+        if (
+            row.predicate in self.definition.singleton_predicates
+            and row.evidence_strength == "deterministic"
+        ):
+            invalid_at = row.valid_at or now
+            for i, previous in enumerate(self.store.rows):
+                if (
+                    previous.pot_id == row.pot_id
+                    and not previous.retired
+                    and previous.subject_key == row.subject_key
+                    and previous.predicate == row.predicate
+                    and previous.object_key != row.object_key
+                    and previous.invalid_at is None
+                ):
+                    self.store.rows[i] = replace(
+                        previous,
+                        invalid_at=invalid_at,
+                        properties={
+                            **previous.properties,
+                            "superseded_by_object": row.object_key,
+                            "supersession_reason": "singleton_predicate",
+                        },
+                    )
 
     def _apply_edge_deletes(self, plan: MutationBatch, *, pot_id: str) -> int:
         """Drop claims targeted by ``plan.edge_deletes``.
@@ -348,6 +396,18 @@ class _Mutation:
             (edge.edge_type.upper(), edge.from_entity_key, edge.to_entity_key)
             for edge in plan.edge_deletes
         }
+        if self.journal_data.get("states", {}).get(pot_id) is not None:
+            count = 0
+            for i, row in enumerate(self.store.rows):
+                if (
+                    row.pot_id == pot_id
+                    and not row.retired
+                    and (row.predicate.upper(), row.subject_key, row.object_key)
+                    in targets
+                ):
+                    self.store.rows[i] = replace(row, retired=True)
+                    count += 1
+            return count
         before = len(self.store.rows)
         self.store.rows = [
             row
@@ -380,7 +440,7 @@ class _Mutation:
                 entity_targets[inv.target_entity_key] = invalid_at
         count = 0
         for i, row in enumerate(self.store.rows):
-            if row.pot_id != pot_id or row.invalid_at is not None:
+            if row.retired or row.pot_id != pot_id or row.invalid_at is not None:
                 continue
             triple = (row.predicate.upper(), row.subject_key, row.object_key)
             invalid_at = claim_targets.get(row.claim_key) or edge_targets.get(triple)
@@ -414,11 +474,26 @@ class _Mutation:
         self, *, pot_id: str, claim_keys: Sequence[str], reason: str | None = None
     ) -> int:
         with self.state_lock:
+            if self.journal_data.get("states", {}).get(pot_id) is not None:
+                from potpie_context_core.graph_mutations import InvalidationOp
+
+                result = self.apply(
+                    MutationBatch(
+                        invalidations=[
+                            InvalidationOp(
+                                reason=reason or "direct invalidation",
+                                target_claim_keys=tuple(claim_keys),
+                            )
+                        ]
+                    ),
+                    expected_pot_id=pot_id,
+                )
+                return result.mutation_summary.invalidations_applied
             keys = set(claim_keys)
             invalidated = 0
             now = datetime.now(timezone.utc)
             for i, row in enumerate(self.store.rows):
-                if row.pot_id != pot_id or row.invalid_at is not None:
+                if row.retired or row.pot_id != pot_id or row.invalid_at is not None:
                     continue
                 if (
                     (row.claim_key and row.claim_key in keys)
@@ -434,6 +509,12 @@ class _Mutation:
 
     def reset_pot(self, pot_id: str) -> dict[str, Any]:
         with self.state_lock:
+            if self.journal_data.get("states", {}).get(pot_id) is not None:
+                from potpie_context_core.graph_journal import JournalError
+
+                raise JournalError(
+                    "reset is unsupported while journal capture is active"
+                )
             before = len(self.store.rows)
             self.store.rows = [r for r in self.store.rows if r.pot_id != pot_id]
             for key in [k for k in self.store.entity_label_index if k[0] == pot_id]:
@@ -506,11 +587,20 @@ class _Inspection:
         predicates: tuple[str, ...] = (),
         limit: int | None = None,
     ) -> GraphSlice:
+        if self.store.entity_property_index.get((pot_id, entity_key), {}).get(
+            "retired", False
+        ):
+            return GraphSlice(pot_id=pot_id)
         seen_nodes: dict[str, GraphNode] = {}
         identity = (pot_id, entity_key)
-        if (identity in self.store.entity_label_index or identity in self.store.entity_property_index
-                or any(row.pot_id == pot_id and entity_key in (row.subject_key, row.object_key)
-                       for row in self.store.rows)):
+        if (
+            identity in self.store.entity_label_index
+            or identity in self.store.entity_property_index
+            or any(
+                row.pot_id == pot_id and entity_key in (row.subject_key, row.object_key)
+                for row in self.store.rows
+            )
+        ):
             seen_nodes[entity_key] = self._node(pot_id, entity_key)
         edges: list[GraphEdge] = []
         seen_edges: set[tuple[str, ...]] = set()
@@ -528,7 +618,7 @@ class _Inspection:
                 break
             visited_frontier.update(current)
             for row in self.store.rows:
-                if row.pot_id != pot_id:
+                if row.retired or row.pot_id != pot_id:
                     continue
                 if row.invalid_at is not None:
                     # Invalidated claims are history, not current structure; the
@@ -544,7 +634,7 @@ class _Inspection:
                     row.subject_key,
                     row.predicate,
                     row.object_key,
-                    str(row.claim_key or ""),
+                    row.record_id or str(row.claim_key or ""),
                 )
                 if edge_key not in seen_edges:
                     seen_edges.add(edge_key)
@@ -578,7 +668,7 @@ class _Inspection:
         # Naive BFS over undirected claim edges.
         adjacency: dict[str, list[ClaimRow]] = {}
         for row in self.store.rows:
-            if row.pot_id != pot_id:
+            if row.retired or row.invalid_at is not None or row.pot_id != pot_id:
                 continue
             adjacency.setdefault(row.subject_key, []).append(row)
             adjacency.setdefault(row.object_key, []).append(row)
@@ -633,8 +723,10 @@ class _Analytics:
     on_change: Any = None
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
 
+    mutation: Any = None
+
     def _rows(self, pot_id: str) -> list[ClaimRow]:
-        return [r for r in self.store.rows if r.pot_id == pot_id]
+        return [r for r in self.store.rows if r.pot_id == pot_id and not r.retired]
 
     def counts(self, pot_id: str) -> Mapping[str, int]:
         rows = self._rows(pot_id)
@@ -664,6 +756,14 @@ class _Analytics:
         }
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
+        if self.mutation is not None and self.mutation.journal_data.get(
+            "states", {}
+        ).get(pot_id):
+            from potpie_context_engine.adapters.outbound.graph.memory_journal import (
+                repair_journaled,
+            )
+
+            return repair_journaled(self, pot_id, targets)
         repaired: dict[str, int] = {}
         findings: list[RepairFinding] = []
         if wants_entity_summary_repair(targets):
@@ -751,6 +851,7 @@ class _Snapshot:
     store: InMemoryClaimQueryStore
     revisions: dict[str, int]
     state_lock: threading.RLock
+    journal_data: dict[str, Any]
 
     def export(self, *, pot_id: str, destination: str) -> SnapshotManifest:
         payload = self.export_data(pot_id=pot_id)
@@ -766,14 +867,38 @@ class _Snapshot:
 
     def export_data(self, *, pot_id: str) -> dict[str, Any]:
         with self.state_lock:
-            rows = [r for r in self.store.rows if r.pot_id == pot_id]
+            rows = [
+                r
+                for r in self.store.rows
+                if r.pot_id == pot_id
+                and not r.retired
+                and not any(
+                    self.store.entity_property_index.get((pot_id, key), {}).get(
+                        "retired", False
+                    )
+                    for key in (r.subject_key, r.object_key)
+                )
+            ]
             keys = {key for row in rows for key in (row.subject_key, row.object_key)}
-            keys.update(key for pid, key in self.store.entity_label_index if pid == pot_id)
-            keys.update(key for pid, key in self.store.entity_property_index if pid == pot_id)
+            keys.update(
+                key for pid, key in self.store.entity_label_index if pid == pot_id
+            )
+            keys.update(
+                key for pid, key in self.store.entity_property_index if pid == pot_id
+            )
+            keys = {
+                key
+                for key in keys
+                if not self.store.entity_property_index.get((pot_id, key), {}).get(
+                    "retired", False
+                )
+            }
             entities = [
                 {
                     "key": key,
-                    "labels": list(self.store.entity_label_index.get((pot_id, key), ())),
+                    "labels": list(
+                        self.store.entity_label_index.get((pot_id, key), ())
+                    ),
                     "properties": self.store.entity_properties(
                         pot_id=pot_id, entity_key=key
                     ),
@@ -781,9 +906,22 @@ class _Snapshot:
                 for key in keys
             ]
             claims = [
-                {**_row_to_dict(row), "evidence_strength": row.evidence_strength}
+                {
+                    **{
+                        k: v
+                        for k, v in _row_to_dict(row).items()
+                        if k not in {"record_id", "retired"}
+                    },
+                    "evidence_strength": row.evidence_strength,
+                }
                 for row in rows
             ]
+            if self.journal_data.get("states", {}).get(pot_id) is not None:
+                from potpie_context_engine.adapters.outbound.graph.journal_snapshot_policy import (
+                    require_snapshot_identity,
+                )
+
+                require_snapshot_identity(row.claim_key for row in rows)
             return build_snapshot_payload(
                 pot_id=pot_id, entities=entities, claims=claims
             )
@@ -791,13 +929,21 @@ class _Snapshot:
     def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
         with open(source, encoding="utf-8") as fh:
             payload = json.load(fh)
-        return replace(self.import_data(pot_id=pot_id, payload=payload), location=source)
+        return replace(
+            self.import_data(pot_id=pot_id, payload=payload), location=source
+        )
 
     def import_data(
         self, *, pot_id: str, payload: Mapping[str, Any]
     ) -> SnapshotManifest:
         normalized = normalize_snapshot_payload(payload, target_pot_id=pot_id)
         with self.state_lock:
+            if self.journal_data.get("states", {}).get(pot_id) is not None:
+                from potpie_context_core.graph_journal import JournalError
+
+                raise JournalError(
+                    "snapshot import is unsupported while journal capture is active"
+                )
             existing = self.export_data(pot_id=pot_id)
             validate_snapshot_merge(
                 existing_entities=existing["entities"],
@@ -806,8 +952,14 @@ class _Snapshot:
             )
             entity_keys = {row["key"] for row in existing["entities"]}
             claim_keys = {row["claim_key"] for row in existing["claims"]}
-            new_entities = [row for row in normalized["entities"] if row["key"] not in entity_keys]
-            new_claims = [row for row in normalized["claims"] if row["claim_key"] not in claim_keys]
+            new_entities = [
+                row for row in normalized["entities"] if row["key"] not in entity_keys
+            ]
+            new_claims = [
+                row
+                for row in normalized["claims"]
+                if row["claim_key"] not in claim_keys
+            ]
             prepared_rows = list(self.store.rows) + [
                 _row_from_dict(pot_id, row) for row in new_claims
             ]
@@ -816,7 +968,9 @@ class _Snapshot:
             for entity in new_entities:
                 prepared_labels[(pot_id, entity["key"])] = tuple(entity["labels"])
                 if entity["properties"]:
-                    prepared_properties[(pot_id, entity["key"])] = dict(entity["properties"])
+                    prepared_properties[(pot_id, entity["key"])] = dict(
+                        entity["properties"]
+                    )
             self.store.rows[:] = prepared_rows
             self.store.entity_label_index.clear()
             self.store.entity_label_index.update(prepared_labels)
@@ -852,6 +1006,8 @@ class InMemoryGraphBackend:
         repr=False,
     )
     revisions: dict[str, int] = field(default_factory=dict)
+    journal_data: dict[str, Any] = field(default_factory=dict)
+    resource_exists: Any = None
     state_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     _mutation: _Mutation = field(init=False)
     _semantic: _Semantic = field(init=False)
@@ -873,6 +1029,8 @@ class InMemoryGraphBackend:
             execution_registry=self.execution_registry,
             revisions=self.revisions,
             state_lock=self.state_lock,
+            journal_data=self.journal_data,
+            resource_exists=self.resource_exists,
         )
         self._semantic = _Semantic(self.store)
         self._inspection = _Inspection(self.store)
@@ -880,8 +1038,11 @@ class InMemoryGraphBackend:
             self.store,
             on_change=self.on_change,
             definition=self.definition,
+            mutation=self._mutation,
         )
-        self._snapshot = _Snapshot(self.store, self.revisions, self.state_lock)
+        self._snapshot = _Snapshot(
+            self.store, self.revisions, self.state_lock, self.journal_data
+        )
 
     @property
     def match_mode(self) -> str:
@@ -894,6 +1055,14 @@ class InMemoryGraphBackend:
     @property
     def mutation(self) -> _Mutation:
         return self._mutation
+
+    @property
+    def journal(self):
+        from potpie_context_engine.adapters.outbound.graph.memory_journal import (
+            MemoryJournal,
+        )
+
+        return MemoryJournal(self._mutation)
 
     @property
     def claim_query(self) -> InMemoryClaimQueryStore:
@@ -946,6 +1115,8 @@ class InMemoryGraphBackend:
             execution_registry=self.execution_registry,
             revisions=self.revisions,
             state_lock=self.state_lock,
+            journal_data=self.journal_data,
+            resource_exists=self.resource_exists,
         )
 
 
@@ -953,6 +1124,7 @@ def _edge(row: ClaimRow) -> GraphEdge:
     properties = {
         **dict(row.properties),
         "claim_key": row.claim_key,
+        "record_id": row.record_id,
         "subgraph": row.subgraph,
         "truth": row.truth,
         "confidence": row.confidence,
@@ -1065,6 +1237,8 @@ def _row_to_dict(row: ClaimRow) -> dict[str, Any]:
         "evidence": [dict(item) for item in row.evidence],
         "graph_contract_version": row.graph_contract_version,
         "ontology_version": row.ontology_version,
+        "record_id": row.record_id,
+        "retired": row.retired,
     }
 
 
@@ -1099,6 +1273,8 @@ def _row_from_dict(pot_id: str, raw: Mapping[str, Any]) -> ClaimRow:
         evidence=_evidence_tuple(raw.get("evidence")),
         graph_contract_version=_coerce_str(raw.get("graph_contract_version")),
         ontology_version=_coerce_str(raw.get("ontology_version")),
+        record_id=str(raw.get("record_id") or ""),
+        retired=bool(raw.get("retired", False)),
     )
 
 

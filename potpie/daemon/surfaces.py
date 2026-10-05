@@ -142,6 +142,12 @@ READ_ONLY_RPC_MEMBERS: Final[dict[str, frozenset[str]]] = {
     "graph_workbench": frozenset(
         {
             "history",
+            "commits",
+            "commits_async",
+            "commit_show",
+            "commit_show_async",
+            "journal_status",
+            "journal_status_async",
             "inbox_list",
             "inbox_show",
             "quality",

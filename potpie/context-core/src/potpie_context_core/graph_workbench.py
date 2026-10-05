@@ -27,11 +27,19 @@ GRAPH_WORKBENCH_COMMANDS: tuple[str, ...] = (
     "commit",
     "bulk",
     "history",
+    "journal-status",
+    "commits",
+    "commit-show",
+    "revert",
+    "rollback",
+    "apply-preview",
     "inbox",
     "quality",
 )
 
 GRAPH_WORKBENCH_ADMIN_COMMANDS: tuple[str, ...] = (
+    "disable-rollback",
+    "rebuild-commits",
     "repair",
     "export",
     "import",

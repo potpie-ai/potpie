@@ -18,9 +18,22 @@ store is SQLite + a local vector index.
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, TypeVar
+from typing import Any, TypeVar
+
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_core.errors import GraphMutationVersionConflict
+from potpie_context_core.graph_mutations import ProvenanceContext
+from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
+from potpie_context_core.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.mutation import MutationExecutionState
+from potpie_context_core.ports.graph.snapshot import SnapshotManifest
+from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
     locked_json_store,
@@ -35,20 +48,11 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
     dump_store,
     load_store,
 )
-from potpie_context_core.errors import GraphMutationVersionConflict
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
 )
 from potpie_context_engine.adapters.outbound.pots.local_pot_store import default_home
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_core.graph_mutations import ProvenanceContext
-from potpie_context_core.lifecycle import DONE, SetupPlan, StepResult
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
-from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.mutation import MutationExecutionState
-from potpie_context_core.ports.graph.snapshot import SnapshotManifest
-from potpie_context_core.reconciliation import MutationBatch, MutationResult
-from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 _PROFILE = "embedded"
 _T = TypeVar("_T")
@@ -56,7 +60,7 @@ _T = TypeVar("_T")
 
 @dataclass(slots=True)
 class _EmbeddedMutation:
-    backend: "EmbeddedGraphBackend"
+    backend: EmbeddedGraphBackend
 
     def apply(
         self,
@@ -123,7 +127,7 @@ class _EmbeddedMutation:
 
 @dataclass(slots=True)
 class _EmbeddedAnalytics:
-    backend: "EmbeddedGraphBackend"
+    backend: EmbeddedGraphBackend
 
     def counts(self, pot_id: str):
         return self.backend._inner.analytics.counts(pot_id)
@@ -142,7 +146,7 @@ class _EmbeddedAnalytics:
 
 @dataclass(slots=True)
 class _EmbeddedSnapshot:
-    backend: "EmbeddedGraphBackend"
+    backend: EmbeddedGraphBackend
 
     def export(self, *, pot_id: str, destination: str) -> SnapshotManifest:
         payload = self.export_data(pot_id=pot_id)
@@ -204,6 +208,8 @@ class EmbeddedGraphBackend:
     _analytics: _EmbeddedAnalytics = field(init=False)
     _snapshot: _EmbeddedSnapshot = field(init=False)
     _revisions: dict[str, int] = field(default_factory=dict, init=False)
+    _journal_data: dict[str, Any] = field(default_factory=dict, init=False)
+    resource_exists: Any = None
 
     def __post_init__(self) -> None:
         loaded_store, loaded_registry = self._load_state()
@@ -217,6 +223,8 @@ class EmbeddedGraphBackend:
             definition=self.definition,
             execution_registry=registry,
             revisions=dict(self._revisions),
+            journal_data=deepcopy(self._journal_data),
+            resource_exists=self.resource_exists,
         )
         self._mutation = _EmbeddedMutation(self)
         self._analytics = _EmbeddedAnalytics(self)
@@ -236,10 +244,19 @@ class EmbeddedGraphBackend:
         try:
             with open(self._path, encoding="utf-8") as fh:
                 payload = json.load(fh)
-        except (FileNotFoundError, json.JSONDecodeError):
+        except FileNotFoundError:
             payload = {}
         if not isinstance(payload, dict):
-            payload = {}
+            raise TypeError("embedded graph state must be an object")
+        from potpie_context_core.graph_journal import decode_journal
+
+        journal_data = (
+            decode_journal(payload["graph_journal"])
+            if "graph_journal" in payload
+            else {}
+        )
+        self._journal_data.clear()
+        self._journal_data.update(journal_data)
         raw_revisions = payload.get("graph_revisions") or {}
         self._revisions = (
             {str(key): int(value) for key, value in raw_revisions.items()}
@@ -259,15 +276,30 @@ class EmbeddedGraphBackend:
         registry: MutationExecutionRegistry,
         *,
         revisions: dict[str, int] | None = None,
+        journal_data: dict[str, Any] | None = None,
     ) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
         payload = dump_store(store)
         payload["mutation_receipts"] = execution_receipts_to_json(registry.completed())
-        payload["graph_revisions"] = dict(revisions or self._revisions)
+        payload["graph_revisions"] = dict(
+            revisions if revisions is not None else self._revisions
+        )
+        from potpie_context_core.graph_journal import encode_journal
+
+        payload["graph_journal"] = encode_journal(
+            journal_data if journal_data is not None else self._journal_data
+        )
         tmp = self._path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
+            json.dump(payload, fh, allow_nan=False)
+            fh.flush()
+            os.fsync(fh.fileno())
         tmp.replace(self._path)
+        descriptor = os.open(self.home, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
 
     def _apply_once(
         self,
@@ -305,9 +337,14 @@ class EmbeddedGraphBackend:
                 provenance_context=provenance_context,
                 reconciliation_config=reconciliation_config,
             )
-            self._write_state(inner.store, registry, revisions=inner.revisions)
+            self._write_state(
+                inner.store,
+                registry,
+                revisions=inner.revisions,
+                journal_data=inner.journal_data,
+            )
             self._revisions = dict(inner.revisions)
-            self._adopt_state(inner.store, registry)
+            self._adopt_state(inner.store, registry, journal_data=inner.journal_data)
             return result
 
     def _current_version(self, pot_id: str) -> int:
@@ -326,9 +363,14 @@ class EmbeddedGraphBackend:
             store, registry = self._load_state()
             inner = self._transaction_backend(store, registry)
             result = operation(inner)
-            self._write_state(inner.store, registry, revisions=inner.revisions)
+            self._write_state(
+                inner.store,
+                registry,
+                revisions=inner.revisions,
+                journal_data=inner.journal_data,
+            )
             self._revisions = dict(inner.revisions)
-            self._adopt_state(inner.store, registry)
+            self._adopt_state(inner.store, registry, journal_data=inner.journal_data)
             return result
 
     def _transaction_backend(
@@ -343,13 +385,21 @@ class EmbeddedGraphBackend:
             definition=self.definition,
             execution_registry=registry,
             revisions=dict(self._revisions),
+            journal_data=deepcopy(self._journal_data),
+            resource_exists=self.resource_exists,
         )
 
     def _adopt_state(
         self,
         store: InMemoryClaimQueryStore,
         registry: MutationExecutionRegistry,
+        journal_data: dict[str, Any] | None = None,
     ) -> None:
+        if journal_data is not None:
+            self._journal_data.clear()
+            self._journal_data.update(deepcopy(journal_data))
+        self._inner.journal_data.clear()
+        self._inner.journal_data.update(deepcopy(self._journal_data))
         _replace_store(self._inner.store, store, embedder=self.embedder)
         self._inner.execution_registry.replace_completed(registry.completed())
         self._inner.revisions.clear()
@@ -376,6 +426,14 @@ class EmbeddedGraphBackend:
     @property
     def profile(self) -> str:
         return _PROFILE
+
+    @property
+    def journal(self):
+        from potpie_context_engine.adapters.outbound.graph.embedded_journal import (
+            EmbeddedJournal,
+        )
+
+        return EmbeddedJournal(self)
 
     @property
     def claim_query(self):
@@ -419,6 +477,7 @@ class EmbeddedGraphBackend:
             definition=definition,
             shared_store=self._inner.store,
             shared_execution_registry=self._inner.execution_registry,
+            resource_exists=self.resource_exists,
         )
 
     def provision(self, plan: SetupPlan) -> StepResult:

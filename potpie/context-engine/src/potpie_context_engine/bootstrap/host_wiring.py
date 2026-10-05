@@ -259,9 +259,32 @@ def build_host_shell(
         # bytes here, structure through the same write door every other
         # mutation uses. The claim query is the read side of the same join: what
         # else points at a section before it is removed, and did the write land.
+        from dataclasses import replace
+
+        from potpie_context_engine.adapters.outbound.graph.local_commit_mirror import (
+            LocalCommitMirror,
+        )
+        from potpie_context_engine.adapters.outbound.pots.local_pot_store import (
+            default_home,
+        )
+
+        from potpie_context_engine.adapters.outbound.graph.local_rollback_previews import (
+            LocalRollbackPreviews,
+        )
+
+        mirror = LocalCommitMirror(default_home() / "graph_commits.sqlite")
+        commits = graph_runtime.commit_service
+        commits.host = f"local:{default_home().resolve()}"
+        commits.mirror = mirror
+        commits.previews = LocalRollbackPreviews(
+            default_home() / "rollback_previews.sqlite"
+        )
+        graph_runtime = replace(graph_runtime, commit_mirror=mirror)
+
         resources = ResourceFacade(
             store=resource_store,
             graph=graph,
+            journal=getattr(graph_runtime.backend, "journal", None),
             claims=backend.claim_query,
             snapshot=graph_runtime.backend.snapshot,
             # The same index the read trunk answers ``--include resources``
@@ -302,6 +325,7 @@ def build_host_shell(
             backend=backend,
             ledger=ledger,
             resources=resources,
+            commit_mirror=graph_runtime.commit_mirror,
             nudge=nudge,
             daemon=daemon,
             config=config,

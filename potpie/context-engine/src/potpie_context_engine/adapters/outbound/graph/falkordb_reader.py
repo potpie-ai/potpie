@@ -15,16 +15,16 @@ to the labeled lexical scorer so local/dev profiles still return useful rows.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
-from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
-    _records_from_result,
-    build_falkordb_graph,
-)
+from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
+
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     ENTITY_LABELS_CYPHER,
     FIND_CLAIMS_CYPHER,
+    claim_matches_time_filter,
     iso,
     row_from_record,
     stamp_scored_rows,
@@ -32,7 +32,10 @@ from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import 
     vector_candidate_k,
     vector_filter_is_selective,
 )
-from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
+    _records_from_result,
+    build_falkordb_graph,
+)
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
@@ -49,6 +52,7 @@ CALL db.idx.vector.queryRelationships(
     vecf32($embedding)
 ) YIELD relationship AS r, score
 WHERE r.group_id = $gid
+  AND ($include_retired OR coalesce(r.retired,false)=false)
   AND ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
@@ -72,7 +76,7 @@ LIMIT $limit
 
 _ENTITY_PROPERTIES_CYPHER = """
 MATCH (e:Entity {group_id: $gid})
-WHERE e.entity_key = $key
+WHERE e.entity_key = $key AND coalesce(e.retired,false)=false
 RETURN properties(e) AS props
 LIMIT 1
 """
@@ -81,6 +85,24 @@ LIMIT 1
 def _distance_to_similarity(distance: float) -> float:
     """FalkorDB vector queries return distance; readers expect similarity."""
     return max(0.0, min(1.0, 1.0 - distance))
+
+
+def _matches_exact_text(row: ClaimRow, needles: tuple[str, ...]) -> bool:
+    if not needles:
+        return True
+    haystack = " ".join(
+        value or ""
+        for value in (
+            row.subject_key,
+            row.object_key,
+            row.claim_key,
+            row.fact,
+            row.description,
+            row.source_ref,
+            *row.source_refs,
+        )
+    ).lower()
+    return any(needle.lower() in haystack for needle in needles)
 
 
 class FalkorDBClaimQueryStore:
@@ -116,6 +138,7 @@ class FalkorDBClaimQueryStore:
         self._graph = None
 
     def find_claims(self, filter_: ClaimQueryFilter) -> list[ClaimRow]:
+        query_time = filter_.as_of or datetime.now(timezone.utc)
         params = {
             "gid": filter_.pot_id,
             "preds": list(filter_.predicate_in) or None,
@@ -127,25 +150,36 @@ class FalkorDBClaimQueryStore:
             "mutation_ids": list(filter_.mutation_id_in) or None,
             "source_refs": list(filter_.source_ref_in) or None,
             "sources": list(filter_.source_system_in) or None,
-            "exact_text": [value.lower() for value in filter_.exact_text_in] or None,
+            # FalkorDBLite 4.18.3 corrupts memory when concatenating the claim
+            # identity fields inside ANY. Match hydrated rows before limiting.
+            "exact_text": None,
             "exact_pattern": filter_.exact_text_pattern,
             "environments": [value.lower() for value in filter_.environment_in] or None,
             "truths": [value.lower() for value in filter_.truth_in] or None,
             "endpoint_label": filter_.endpoint_label,
-            "include_invalid": bool(filter_.include_invalidated),
+            # Stored source-authored timestamps retain their timezone offsets.
+            # Cypher string comparisons cannot order those instants reliably;
+            # apply validity after hydration, before ranking and limiting.
+            "include_invalid": True,
+            "include_retired": bool(filter_.include_retired),
             "as_of": iso(filter_.as_of),
-            "query_time": iso(filter_.as_of or datetime.now(timezone.utc)),
-            "va_after": iso(filter_.valid_at_after),
-            "va_before": iso(filter_.valid_at_before),
+            "query_time": iso(query_time),
+            "va_after": None,
+            "va_before": None,
             "subject_label": filter_.subject_label,
             "object_label": filter_.object_label,
         }
         if filter_.fact_query and self._embedder is not None:
-            rows = self._find_claims_vector(filter_, params)
+            rows = self._find_claims_vector(filter_, params, query_time=query_time)
             if rows:
                 return rows
 
-        rows = self._find_claims_lexical(params)
+        rows = [
+            row
+            for row in self._find_claims_lexical(params)
+            if claim_matches_time_filter(row, filter_, query_time=query_time)
+            and _matches_exact_text(row, filter_.exact_text_in)
+        ]
 
         if filter_.fact_query:
             rows = stamp_similarity(rows, filter_.fact_query)
@@ -159,13 +193,19 @@ class FalkorDBClaimQueryStore:
         return [row_from_record(rec) for rec in _records_from_result(result)]
 
     def _find_claims_vector(
-        self, filter_: ClaimQueryFilter, params: Mapping[str, object]
+        self,
+        filter_: ClaimQueryFilter,
+        params: Mapping[str, object],
+        *,
+        query_time: datetime,
     ) -> list[ClaimRow]:
         assert filter_.fact_query is not None
         assert self._embedder is not None
         limit = filter_.limit if filter_.limit is not None and filter_.limit > 0 else 10
         k = vector_candidate_k(limit, selective=vector_filter_is_selective(filter_))
-        label_filtered = bool(filter_.subject_label or filter_.object_label)
+        label_filtered = bool(
+            filter_.subject_label or filter_.object_label or not filter_.include_retired
+        )
         try:
             vector_params = {
                 **dict(params),
@@ -173,22 +213,23 @@ class FalkorDBClaimQueryStore:
                     float(x) for x in self._embedder.embed(filter_.fact_query)
                 ],
                 "k": k,
-                # Label filters run in Python below, so keep the full candidate
-                # set until they have been applied.
-                "limit": k if label_filtered else limit,
+                # Validity and label filters run in Python below.
+                "limit": k,
             }
             result = self._get_graph().query(
                 _VECTOR_CLAIMS_CYPHER, params=vector_params
             )
         except Exception:
             return []
-        scored = [
-            (
-                _distance_to_similarity(float(rec.get("score", 1.0))),
-                row_from_record(rec),
-            )
-            for rec in _records_from_result(result)
-        ]
+        scored = []
+        for rec in _records_from_result(result):
+            row = row_from_record(rec)
+            if claim_matches_time_filter(
+                row, filter_, query_time=query_time
+            ) and _matches_exact_text(row, filter_.exact_text_in):
+                scored.append(
+                    (_distance_to_similarity(float(rec.get("score", 1.0))), row)
+                )
         if label_filtered:
             scored = self._filter_by_entity_labels(filter_, scored)
         return stamp_scored_rows(scored[:limit])
@@ -203,6 +244,10 @@ class FalkorDBClaimQueryStore:
         labels = self.entity_labels(pot_id=filter_.pot_id, entity_keys=keys)
 
         def keep(row: ClaimRow) -> bool:
+            if not filter_.include_retired and (
+                row.subject_key not in labels or row.object_key not in labels
+            ):
+                return False
             if filter_.subject_label is not None and filter_.subject_label not in (
                 labels.get(row.subject_key) or ()
             ):
@@ -235,7 +280,7 @@ class FalkorDBClaimQueryStore:
         keys = list(entity_keys)
         if not keys:
             return {}
-        query = "MATCH (e:Entity {group_id: $gid}) WHERE e.entity_key IN $keys RETURN e.entity_key AS key, properties(e) AS props"
+        query = "MATCH (e:Entity {group_id: $gid}) WHERE e.entity_key IN $keys AND coalesce(e.retired,false)=false RETURN e.entity_key AS key, properties(e) AS props"
         records = _records_from_result(
             self._get_graph().query(query, params={"gid": pot_id, "keys": keys})
         )
@@ -263,4 +308,4 @@ def _public_entity_properties(props: Any) -> dict[str, Any]:
     }
 
 
-__all__ = ["FalkorDBClaimQueryStore", "_VECTOR_CLAIMS_CYPHER"]
+__all__ = ["_VECTOR_CLAIMS_CYPHER", "FalkorDBClaimQueryStore"]

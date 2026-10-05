@@ -1757,7 +1757,9 @@ def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
     )
 
 
-def test_graph_read_rejects_conflicting_fully_qualified_view_before_service_call() -> None:
+def test_graph_read_rejects_conflicting_fully_qualified_view_before_service_call() -> (
+    None
+):
     # A qualified --view that names a *different* subgraph than --subgraph is
     # a conflict: both targets are named and nothing is read. (An agreeing or
     # absent --subgraph is an exact alias and executes once; see
@@ -2117,7 +2119,13 @@ def test_graph_catalog_declares_admin_commands_the_backend_cannot_run() -> None:
     assert result.exit_code == 0
     emitted = json.loads(result.output)
     body = _assert_graph_envelope(emitted, "graph.catalog")
-    assert body["admin_commands"] == ["repair", "export", "import"]
+    assert body["admin_commands"] == [
+        "disable-rollback",
+        "rebuild-commits",
+        "repair",
+        "export",
+        "import",
+    ]
     assert body["admin_command_support"] == {
         "repair": False,
         "export": False,
@@ -2466,11 +2474,18 @@ def test_full_neighborhood_diagnostic_redacts_credential_metadata(monkeypatch) -
     def neighborhood(self, *, pot_id, entity_key, **kwargs):
         return GraphSlice(
             pot_id=pot_id,
-            nodes=(GraphNode(key=entity_key, labels=("Repository",), properties={
-                "owner": "potpie-ai", "source_ref": "test:repository",
-                "temp_clone_token": "fixture-secret",
-                "sessionCookie": "fixture-cookie",
-            }),),
+            nodes=(
+                GraphNode(
+                    key=entity_key,
+                    labels=("Repository",),
+                    properties={
+                        "owner": "potpie-ai",
+                        "source_ref": "test:repository",
+                        "temp_clone_token": "fixture-secret",
+                        "sessionCookie": "fixture-cookie",
+                    },
+                ),
+            ),
             edges=(),
         )
 
@@ -2513,20 +2528,36 @@ def test_graph_neighborhood_defaults_to_relation_summary() -> None:
 
 def test_neighborhood_full_text_shows_bounded_extra_detail_and_hidden_counts() -> None:
     payload = {
-        "entity_key": "service:web", "identity_status": "exact", "detail": "full",
-        "node_count": 7, "truncated": True,
+        "entity_key": "service:web",
+        "identity_status": "exact",
+        "detail": "full",
+        "node_count": 7,
+        "truncated": True,
         "relations": [
-            {"predicate": "DEPENDS_ON", "from": "service:web", "to": f"service:{i}",
-             "source_refs": [], "fact": f"dependency {i}"}
+            {
+                "predicate": "DEPENDS_ON",
+                "from": "service:web",
+                "to": f"service:{i}",
+                "source_refs": [],
+                "fact": f"dependency {i}",
+            }
             for i in range(25)
         ],
         "nodes": [
-            {"key": f"service:{i}", "labels": ["Service"], "properties": {"name": f"Node {i}"}}
+            {
+                "key": f"service:{i}",
+                "labels": ["Service"],
+                "properties": {"name": f"Node {i}"},
+            }
             for i in range(7)
         ],
         "edges": [
-            {"from": "service:web", "to": f"service:{i}",
-             "predicate": "DEPENDS_ON", "properties": {"confidence": 0.9}}
+            {
+                "from": "service:web",
+                "to": f"service:{i}",
+                "predicate": "DEPENDS_ON",
+                "properties": {"confidence": 0.9},
+            }
             for i in range(25)
         ],
     }
@@ -2543,27 +2574,45 @@ def test_neighborhood_full_text_shows_bounded_extra_detail_and_hidden_counts() -
 
 def test_neighborhood_byte_budget_preserves_fix_fields_and_exact_route() -> None:
     payload = {
-        "entity_key": "fix:cookie", "identity_status": "exact", "detail": "full",
-        "depth": 2, "direction": "both", "limit": 20,
-        "predicates": ["VERIFIED"], "truncated": False,
+        "entity_key": "fix:cookie",
+        "identity_status": "exact",
+        "detail": "full",
+        "depth": 2,
+        "direction": "both",
+        "limit": 20,
+        "predicates": ["VERIFIED"],
+        "truncated": False,
         "node_count": 2,
         "relations": [
-            {"predicate": "VERIFIED", "from_key": "activity:check",
-             "to_key": "fix:cookie", "fact": "verified " + "x" * 3_000,
-             "source_refs": ["test:verification"]}
+            {
+                "predicate": "VERIFIED",
+                "from_key": "activity:check",
+                "to_key": "fix:cookie",
+                "fact": "verified " + "x" * 3_000,
+                "source_refs": ["test:verification"],
+            }
             for _ in range(20)
         ],
         "nodes": [
-            {"key": "fix:cookie", "labels": ["Fix"], "properties": {
-                "root_cause": "Shared cookie name across daemons",
-                "fix_steps": ["Use a per-daemon cookie suffix"],
-                "verification_status": "passed", "unrelated": "x" * 8_000,
-            }},
+            {
+                "key": "fix:cookie",
+                "labels": ["Fix"],
+                "properties": {
+                    "root_cause": "Shared cookie name across daemons",
+                    "fix_steps": ["Use a per-daemon cookie suffix"],
+                    "verification_status": "passed",
+                    "unrelated": "x" * 8_000,
+                },
+            },
             {"key": "activity:check", "labels": ["Activity"], "properties": {}},
         ],
         "edges": [
-            {"predicate": "VERIFIED", "from": "activity:check", "to": "fix:cookie",
-             "properties": {"fact": "x" * 3_000}}
+            {
+                "predicate": "VERIFIED",
+                "from": "activity:check",
+                "to": "fix:cookie",
+                "properties": {"fact": "x" * 3_000},
+            }
             for _ in range(20)
         ],
     }
@@ -2574,24 +2623,42 @@ def test_neighborhood_byte_budget_preserves_fix_fields_and_exact_route() -> None
     assert len(json.dumps(bounded, ensure_ascii=False).encode()) <= 32_768
     assert bounded["omitted_relation_count"] > 0
     assert bounded["omitted_field_count"] > 0
-    assert bounded["nodes"][0]["properties"]["root_cause"] == "Shared cookie name across daemons"
-    assert bounded["nodes"][0]["properties"]["fix_steps"] == ["Use a per-daemon cookie suffix"]
-    assert "--predicate VERIFIED --unbounded --pot p" in bounded["recommended_next_action"]
+    assert (
+        bounded["nodes"][0]["properties"]["root_cause"]
+        == "Shared cookie name across daemons"
+    )
+    assert bounded["nodes"][0]["properties"]["fix_steps"] == [
+        "Use a per-daemon cookie suffix"
+    ]
+    assert (
+        "--predicate VERIFIED --unbounded --pot p" in bounded["recommended_next_action"]
+    )
 
 
 def test_neighborhood_cli_byte_budget_includes_workbench_envelope(monkeypatch) -> None:
     def neighborhood(self, *, pot_id, entity_key, **kwargs):
         return GraphSlice(
             pot_id=pot_id,
-            nodes=(GraphNode(key=entity_key, labels=("Fix",), properties={
-                "root_cause": "Shared cookie name", "fix_steps": ["Use a per-daemon suffix"],
-                "diagnostic": "x" * 8_000,
-            }),),
-            edges=tuple(GraphEdge(
-                predicate="VERIFIED", from_key=entity_key,
-                to_key=f"activity:check-{index}",
-                properties={"fact": "x" * 3_000, "source_refs": ["test:fix"]},
-            ) for index in range(30)),
+            nodes=(
+                GraphNode(
+                    key=entity_key,
+                    labels=("Fix",),
+                    properties={
+                        "root_cause": "Shared cookie name",
+                        "fix_steps": ["Use a per-daemon suffix"],
+                        "diagnostic": "x" * 8_000,
+                    },
+                ),
+            ),
+            edges=tuple(
+                GraphEdge(
+                    predicate="VERIFIED",
+                    from_key=entity_key,
+                    to_key=f"activity:check-{index}",
+                    properties={"fact": "x" * 3_000, "source_refs": ["test:fix"]},
+                )
+                for index in range(30)
+            ),
         )
 
     monkeypatch.setattr(_Inspection, "neighborhood", neighborhood)

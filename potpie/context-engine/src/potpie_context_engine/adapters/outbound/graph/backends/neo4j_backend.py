@@ -20,10 +20,23 @@ is actually selected.
 
 from __future__ import annotations
 
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
-import uuid
+
+from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
+from potpie_context_core.graph_mutations import InvalidationOp, ProvenanceContext
+from potpie_context_core.lifecycle import SetupPlan, StepResult
+from potpie_context_core.ports.claim_query import ClaimQueryPort
+from potpie_context_core.ports.graph.backend import BackendCapabilities
+from potpie_context_core.ports.graph.mutation import (
+    BackendReadiness,
+    MutationExecutionLookup,
+    MutationExecutionState,
+)
+from potpie_context_core.reconciliation import MutationBatch, MutationResult
+from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
@@ -31,37 +44,25 @@ from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
 from potpie_context_engine.adapters.outbound.graph.backends._unimplemented import (
     UnimplementedInspection,
 )
-from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
-    ClaimQuerySemanticSearch,
-)
 from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import (
     ClaimQueryAnalytics,
 )
-from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
-from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
-from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
-    ENTITY_SUMMARY_REPAIR_LIMIT,
-    ENTITY_SUMMARY_SCAN_CYPHER,
-    ENTITY_SUMMARY_UPDATE_CYPHER,
-    repaired_entity_properties,
+from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
+    ClaimQuerySemanticSearch,
 )
+from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
 from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     ENTITY_LABEL_REPAIR_LIMIT,
     ENTITY_LABEL_SCAN_CYPHER,
     canonical_label_changes,
     repaired_entity_labels,
 )
-from potpie_context_core.graph_mutations import InvalidationOp, ProvenanceContext
-from potpie_context_core.lifecycle import SetupPlan, StepResult
-from potpie_context_core.ports.claim_query import ClaimQueryPort
-from potpie_context_core.ports.graph.backend import BackendCapabilities
-from potpie_context_core.ports.graph.mutation import BackendReadiness
-from potpie_context_core.ports.graph.mutation import (
-    MutationExecutionLookup,
-    MutationExecutionState,
+from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
+    ENTITY_SUMMARY_REPAIR_LIMIT,
+    ENTITY_SUMMARY_SCAN_CYPHER,
+    ENTITY_SUMMARY_UPDATE_CYPHER,
+    repaired_entity_properties,
 )
-from potpie_context_core.reconciliation import MutationBatch, MutationResult
-from potpie_context_core.reconciliation_config import ReconciliationConfig
 
 _PROFILE = "neo4j"
 
@@ -355,6 +356,14 @@ class Neo4jGraphBackend:
     @property
     def profile(self) -> str:
         return _PROFILE
+
+    @property
+    def journal(self):
+        from potpie_context_engine.adapters.outbound.graph.unavailable_journal import (
+            UnavailableJournal,
+        )
+
+        return UnavailableJournal("Neo4j journal and rollback are deferred")
 
     @property
     def graph_writer(self) -> Any:

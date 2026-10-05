@@ -179,7 +179,10 @@ class DaemonRpcClient:
             return self._session_or_open().post(
                 url,
                 json=payload,
-                headers={"Authorization": f"Bearer {token}"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Potpie-Journal-Version": "1",
+                },
                 timeout=deadline,
             )
         except httpx.TimeoutException as exc:

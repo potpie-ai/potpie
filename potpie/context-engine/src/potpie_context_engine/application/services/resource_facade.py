@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from potpie_context_core.ports.claim_query import ClaimQueryFilter, ClaimQueryPort
-from potpie_context_core.ports.graph_service import GraphService
 from potpie_context_core.ports.graph.snapshot import GraphSnapshotPort, SnapshotManifest
+from potpie_context_core.ports.graph_service import GraphService
 from potpie_context_core.ports.resource_index import (
     DEFAULT_DRAIN_BUDGET,
     DrainReport,
@@ -31,13 +31,13 @@ from potpie_context_core.ports.resource_store import (
     Chunk,
     DocumentManifest,
     ImportFiles,
+    ResourceBatchResult,
     ResourceStoreError,
     ResourceStorePort,
     ResourceStoreStatus,
     SectionManifest,
     format_resource_id,
     parse_resource_id,
-    ResourceBatchResult,
 )
 from potpie_context_core.resource_projection import project_chunk
 from potpie_context_core.resource_to_semantic import (
@@ -58,6 +58,8 @@ from potpie_context_core.semantic_mutations import (
     SemanticMutationRequest,
     SemanticMutationResult,
 )
+
+from .resource_journal import journal_resource_workflow, reject_journal_admin
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,7 @@ class ResourceFacade:
     drain: Any = None
     """The background drain, when one is running, so writes can nudge it."""
     snapshot: GraphSnapshotPort | None = None
+    journal: Any = None
 
     def export_snapshot(self, *, pot_id: str) -> dict[str, Any]:
         """Export graph and document revisions as one portable bundle."""
@@ -98,12 +101,16 @@ class ResourceFacade:
 
         return export_archive(self, pot_id=pot_id)
 
-    def import_snapshot(self, *, pot_id: str, payload: dict[str, Any]) -> SnapshotManifest:
+    def import_snapshot(
+        self, *, pot_id: str, payload: dict[str, Any]
+    ) -> SnapshotManifest:
         """Restore validated graph data and its original document text."""
+        reject_journal_admin(self, pot_id, "resource snapshot import")
         from .snapshot_archive import import_archive
 
         return import_archive(self, pot_id=pot_id, payload=payload)
 
+    @journal_resource_workflow
     def import_dir(
         self,
         *,
@@ -212,9 +219,7 @@ class ResourceFacade:
                             for section in changed_sections
                             for chunk in section.chunks
                             for ref in (
-                                format_resource_id(
-                                    prior.doc, section.slug, chunk.seq
-                                ),
+                                format_resource_id(prior.doc, section.slug, chunk.seq),
                                 format_resource_id(
                                     prior.doc,
                                     section.slug,
@@ -227,7 +232,9 @@ class ResourceFacade:
                 )
             )
             sections = tuple(
-                dict.fromkeys((*sections, *(section.slug for section in changed_sections)))
+                dict.fromkeys(
+                    (*sections, *(section.slug for section in changed_sections))
+                )
             )
             reason = f"document {prior.doc!r} changed in revision {current.revision}"
         if not refs or not sections or not reason:
@@ -241,8 +248,10 @@ class ResourceFacade:
         )
         if not errors:
             cleared = self.store.clear_pending_review(
-                pot_id=pot_id, slug=current.doc,
-                expected_revision=current.revision, expected_refs=refs,
+                pot_id=pot_id,
+                slug=current.doc,
+                expected_revision=current.revision,
+                expected_refs=refs,
             )
             if cleared.revision == current.revision and not cleared.pending_review_refs:
                 current = replace(
@@ -329,8 +338,11 @@ class ResourceFacade:
             )
         keys = {key for row in rows for key in (row.subject_key, row.object_key)}
         labels = self.claims.entity_labels(pot_id=pot_id, entity_keys=keys)
+
         def concrete_type(key: str) -> str | None:
-            concrete = sorted(label for label in labels.get(key, ()) if label != "Entity")
+            concrete = sorted(
+                label for label in labels.get(key, ()) if label != "Entity"
+            )
             return concrete[0] if concrete else None
 
         operations = []
@@ -391,14 +403,14 @@ class ResourceFacade:
                     approved_by="resource_evidence_lifecycle",
                 )
             )
-        except Exception as exc:  # noqa: BLE001 - report partial lifecycle failure
+        except Exception as exc:
             logger.exception("failed to persist evidence review markers")
             return (f"evidence review markers were not persisted: {exc}",)
         if not result.ok:
-            errors = tuple(
-                issue.message or issue.code for issue in result.issues
-            ) or tuple(result.warnings) or (
-                result.detail or "graph rejected evidence review markers",
+            errors = (
+                tuple(issue.message or issue.code for issue in result.issues)
+                or tuple(result.warnings)
+                or (result.detail or "graph rejected evidence review markers",)
             )
             logger.warning("failed to persist evidence review markers: %s", errors)
             return errors
@@ -434,7 +446,12 @@ class ResourceFacade:
             report = self.index.index_document(
                 pot_id=pot_id,
                 manifest=manifest,
-                chunks=tuple(project_chunk(chunk) for chunk in self.store.get_many(pot_id=pot_id, resource_ids=resource_ids)),
+                chunks=tuple(
+                    project_chunk(chunk)
+                    for chunk in self.store.get_many(
+                        pot_id=pot_id, resource_ids=resource_ids
+                    )
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - see the docstring
             logger.warning("resource index write failed for %s: %s", manifest.doc, exc)
@@ -502,7 +519,11 @@ class ResourceFacade:
         return tuple(key for key in keys if key not in live)
 
     def get(
-        self, *, pot_id: str, resource_ids: tuple[str, ...], with_neighbors: bool = False,
+        self,
+        *,
+        pot_id: str,
+        resource_ids: tuple[str, ...],
+        with_neighbors: bool = False,
     ) -> tuple[Chunk, ...] | ResourceBatchResult:
         """One host read keeps successful roots and reports every failed id.
 
@@ -510,10 +531,12 @@ class ResourceFacade:
         stores keep their existing all-success path; only failed reads use the
         compatibility per-root collector, entirely inside this host call.
         """
-        from potpie_context_core.resource_reads import read_batch
         from potpie_context_core.ports.resource_store import (
-            RESOURCE_GET_MAX_IDS, RESOURCE_BATCH_TOO_LARGE, RESOURCE_READ_BUDGET_EXCEEDED,
+            RESOURCE_BATCH_TOO_LARGE,
+            RESOURCE_GET_MAX_IDS,
+            RESOURCE_READ_BUDGET_EXCEEDED,
         )
+        from potpie_context_core.resource_reads import read_batch
 
         if len(resource_ids) > RESOURCE_GET_MAX_IDS:
             raise ResourceStoreError(
@@ -523,11 +546,20 @@ class ResourceFacade:
             )
         native = getattr(self.store, "get_batch", None)
         if callable(native):
-            result = native(pot_id=pot_id, resource_ids=resource_ids, with_neighbors=with_neighbors)
+            result = native(
+                pot_id=pot_id, resource_ids=resource_ids, with_neighbors=with_neighbors
+            )
         else:
             try:
-                ids = self._with_neighbors(pot_id=pot_id, resource_ids=resource_ids) if with_neighbors else resource_ids
-                return tuple(project_chunk(chunk) for chunk in self.store.get_many(pot_id=pot_id, resource_ids=ids))
+                ids = (
+                    self._with_neighbors(pot_id=pot_id, resource_ids=resource_ids)
+                    if with_neighbors
+                    else resource_ids
+                )
+                return tuple(
+                    project_chunk(chunk)
+                    for chunk in self.store.get_many(pot_id=pot_id, resource_ids=ids)
+                )
             except ResourceStoreError:
                 remaining_calls = 64
 
@@ -544,8 +576,15 @@ class ResourceFacade:
                 result = read_batch(
                     resource_ids,
                     pot_id=pot_id,
-                    read=lambda value: bounded_call(self.store.get, pot_id=pot_id, resource_id=value),
-                    sections=lambda chunk: bounded_call(self.store.list, pot_id=pot_id, slug=chunk.doc, revision=chunk.revision),
+                    read=lambda value: bounded_call(
+                        self.store.get, pot_id=pot_id, resource_id=value
+                    ),
+                    sections=lambda chunk: bounded_call(
+                        self.store.list,
+                        pot_id=pot_id,
+                        slug=chunk.doc,
+                        revision=chunk.revision,
+                    ),
                     with_neighbors=with_neighbors,
                 )
         safe_result = replace(
@@ -561,6 +600,7 @@ class ResourceFacade:
     def current_manifest(self, *, pot_id: str, slug: str) -> DocumentManifest:
         return self.store.current_manifest(pot_id=pot_id, slug=slug)
 
+    @journal_resource_workflow
     def delete(self, *, pot_id: str, slug: str) -> ResourceDeleteResult:
         """Remove one document's bytes and retract every claim about it.
 
@@ -617,13 +657,17 @@ class ResourceFacade:
                 review_marker_errors=review_errors,
             )
         cleared = self.store.clear_pending_review(
-            pot_id=pot_id, slug=slug, expected_revision=manifest.revision,
+            pot_id=pot_id,
+            slug=slug,
+            expected_revision=manifest.revision,
             expected_refs=evidence_refs,
         )
         if cleared.pending_review_refs:
             return ResourceDeleteResult(
                 removed=False,
-                review_marker_errors=("document changed while evidence review was being recorded; retry deletion",),
+                review_marker_errors=(
+                    "document changed while evidence review was being recorded; retry deletion",
+                ),
             )
         graph_result = None
         if self.graph is not None and sections:
@@ -704,6 +748,7 @@ class ResourceFacade:
         return tuple(found.values())
 
     def purge_pot(self, pot_id: str) -> bool:
+        reject_journal_admin(self, pot_id, "resource purge")
         if self.index is not None:
             try:
                 self.index.purge_pot(pot_id)
@@ -778,7 +823,9 @@ class ResourceFacade:
         for slug in slugs:
             self.index.drop_document(pot_id=pot_id, slug=slug)
             sections = self.store.list(pot_id=pot_id, slug=slug)
-            manifest = self._current_manifest(pot_id=pot_id, slug=slug) or DocumentManifest(
+            manifest = self._current_manifest(
+                pot_id=pot_id, slug=slug
+            ) or DocumentManifest(
                 pot_id=pot_id,
                 doc=slug,
                 # The store's ``list`` returns sections, not the document's
@@ -793,7 +840,9 @@ class ResourceFacade:
                 pot_id=pot_id,
                 resource_ids=tuple(
                     format_resource_id(
-                        slug, section.slug, ref.seq,
+                        slug,
+                        section.slug,
+                        ref.seq,
                         revision=manifest.revision or None,
                     )
                     for section in sections
@@ -808,7 +857,8 @@ class ResourceFacade:
                 )
             reports.append(
                 self.index.index_document(
-                    pot_id=pot_id, manifest=manifest,
+                    pot_id=pot_id,
+                    manifest=manifest,
                     chunks=tuple(project_chunk(chunk) for chunk in chunks),
                 )
             )

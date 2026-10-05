@@ -14,6 +14,7 @@ import logging
 import threading
 from typing import Any, Callable
 
+from potpie_context_core.commit_service import GraphCommitSurface
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION, GraphDefinition
 from potpie_context_core.semantic_mutation_lowering import lower_semantic_request
 from potpie_context_core.semantic_mutation_validator import validate_semantic_request
@@ -128,7 +129,7 @@ _CROSS_CUTTING_RESULT_KEYS = frozenset(
 )
 
 
-class GraphWorkbenchService:
+class GraphWorkbenchService(GraphCommitSurface):
     """Graph V2 workbench workflow layer above the backend write door."""
 
     def __init__(
@@ -1102,6 +1103,7 @@ class GraphWorkbenchService:
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 50,
+        include_claims: bool = True,
     ) -> GraphHistoryResult:
         """Return read-only plan and claim history for a bounded filter."""
         request = GraphHistoryRequest(
@@ -1130,7 +1132,11 @@ class GraphWorkbenchService:
         )
         entries = [_history_entry_from_plan(record) for record in records]
 
-        rows, unsupported = _history_claim_rows(self.backend, request, records)
+        rows, unsupported = (
+            _history_claim_rows(self.backend, request, records)
+            if include_claims
+            else ((), ())
+        )
         entries.extend(_history_entry_from_claim(row) for row in rows)
         entries = _dedupe_history_entries(entries)
         entries.sort(key=_history_sort_key, reverse=True)
@@ -3642,7 +3648,10 @@ def _stale_reasons(row: ClaimRow, *, now: datetime) -> list[str]:
     if row.properties.get("evidence_review_required"):
         reasons.append(
             "evidence needs review: "
-            + str(row.properties.get("evidence_review_reason") or "source changed or disappeared")
+            + str(
+                row.properties.get("evidence_review_reason")
+                or "source changed or disappeared"
+            )
         )
     return reasons
 

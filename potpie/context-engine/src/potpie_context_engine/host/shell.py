@@ -30,10 +30,16 @@ managed profile swaps the wiring without changing this facade.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
+from potpie.daemon.lifecycle import Daemon
+from potpie_context_core.ports.agent_context import AgentContextPort
+from potpie_context_core.ports.graph.backend import GraphBackend
+from potpie_context_core.ports.graph_service import GraphService
 from potpie_context_core.workbench_service import (
     GraphWorkbenchService,
 )
+
 from potpie_context_engine.application.services.nudge_service import NudgeService
 
 # Re-exported, not defined here: ``ResourceFacade`` is an application service,
@@ -42,8 +48,6 @@ from potpie_context_engine.application.services.nudge_service import NudgeServic
 # facade. Moving the class and keeping the name is what lets both hosts build
 # it from one definition.
 from potpie_context_engine.application.services.resource_facade import ResourceFacade
-from potpie_context_core.ports.agent_context import AgentContextPort
-from potpie_context_core.ports.graph.backend import GraphBackend
 from potpie_context_engine.domain.ports.install import Installer
 from potpie_context_engine.domain.ports.ledger.client import (
     EventLedgerClientPort,
@@ -52,13 +56,11 @@ from potpie_context_engine.domain.ports.ledger.client import (
 from potpie_context_engine.domain.ports.ledger.cursor import LedgerCursorStorePort
 from potpie_context_engine.domain.ports.services.auth import AuthService
 from potpie_context_engine.domain.ports.services.config import ConfigService
-from potpie_context_core.ports.graph_service import GraphService
 from potpie_context_engine.domain.ports.services.pot_management import (
     PotManagementService,
 )
 from potpie_context_engine.domain.ports.services.setup import SetupOrchestrator
 from potpie_context_engine.domain.ports.services.skill_manager import SkillManager
-from potpie.daemon.lifecycle import Daemon
 
 
 @dataclass(slots=True)
@@ -122,6 +124,7 @@ class HostShell:
     installer: Installer
     auth: AuthService
     setup: SetupOrchestrator
+    commit_mirror: Any = None
     profile: str = "local"
 
 

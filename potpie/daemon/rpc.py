@@ -9,11 +9,12 @@ normal attribute access and local helper methods such as ``to_dict()``.
 from __future__ import annotations
 
 import importlib
+from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 TYPE_KEY = "__potpie_rpc_type__"
 _ALLOWED_CLASS_MODULE_PREFIXES = (
@@ -82,11 +83,15 @@ def decode(value: Any) -> Any:
 
 def _load_class(ref: str) -> type:
     module_name, qualname = ref.split(":", 1)
-    if not module_name.startswith(_ALLOWED_CLASS_MODULE_PREFIXES):
+    if module_name == "potpie_context_core.graph_restore" or not module_name.startswith(
+        _ALLOWED_CLASS_MODULE_PREFIXES
+    ):
         raise TypeError(f"RPC class module not allowed: {module_name}")
     obj: Any = importlib.import_module(module_name)
     for part in qualname.split("."):
         obj = getattr(obj, part)
+    if isinstance(obj, type) and obj.__module__ == "potpie_context_core.graph_restore":
+        raise TypeError("internal restore types cannot be decoded from RPC input")
     if not isinstance(obj, type):
         raise TypeError(f"RPC class reference is not a class: {ref}")
     return obj

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from datetime import datetime, timezone
-import json
 
 from falkordb import QueryResult
-from redis.exceptions import ResponseError, WatchError
-
 from potpie_context_core.definition import DEFAULT_GRAPH_DEFINITION
 from potpie_context_core.errors import GraphMutationVersionConflict
 from potpie_context_core.ports.graph.mutation import (
@@ -17,25 +15,29 @@ from potpie_context_core.ports.graph.mutation import (
 )
 from potpie_context_core.reconciliation import MutationResult, MutationSummary
 from potpie_context_core.reconciliation_validation import validate_reconciliation_plan
+from redis.exceptions import ResponseError, WatchError
+
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionReuseError,
     mutation_batch_fingerprint,
 )
 from potpie_context_engine.adapters.outbound.graph.apply_plan import _build_provenance
 from potpie_context_engine.adapters.outbound.graph.cypher import (
-    _coerce_props_for_neo4j,
+    _REVIVE_CLAUSE,
     _clean_entity_text,
+    _coerce_props_for_neo4j,
+    _conditional_revive_clause,
     _embedding_props,
     _iso,
     _render_fact,
-    _REVIVE_CLAUSE,
-    _conditional_revive_clause,
     _split_edge_properties,
     _stable_source_ref,
     coherent_entity_labels,
     compact_entity_summary,
     evidence_strength_for_truth,
 )
+
+from .falkordb_connection import transaction_client
 
 _STATE = "PotpieRevision"
 _RECEIPT = "PotpieMutationReceipt"
@@ -69,12 +71,20 @@ def reset_pot(graph, pot_id: str) -> dict[str, int | bool]:
     """Delete canonical pot entities and advance revision in one graph command."""
     _ensure_state(graph, pot_id)
     while True:
-        pipe = graph.client.pipeline()
+        pipe = transaction_client(graph).pipeline()
         try:
             pipe.watch(graph.name)
+            from potpie_context_core.graph_journal import JournalError
+
+            from .falkordb_journal import _state
+
+            if _state(graph, pot_id, pipe) is not None:
+                raise JournalError(
+                    "reset is unsupported while journal capture is active"
+                )
             before = current_version(graph, pot_id)
             query = graph._build_params_header({"pot": pot_id, "expected": before}) + (
-                f"MATCH (v:{_STATE} {{pot_id:$pot}}) WHERE v.version=$expected "
+                f"MATCH (v:{_STATE} {{pot_id:$pot}}) WHERE v.version=$expected AND v.journal IS NULL "
                 "OPTIONAL MATCH (n:Entity {group_id:$pot}) WITH v,collect(n) AS nodes "
                 "FOREACH (item IN nodes | DETACH DELETE item) "
                 "SET v.version=v.version+1 RETURN size(nodes),v.version"
@@ -334,7 +344,11 @@ def _compile(
                 f"[r{i}c:RELATES_TO {{group_id:$pot,name:$in{i},object_key:$it{i}}}]->() "
                 f"WHERE r{i}c.invalid_at IS NULL"
             )
-        aliases = [f"r{i}{suffix}" for suffix in ("a", "b", "c") if any(f"r{i}{suffix}" in match for match in matches)]
+        aliases = [
+            f"r{i}{suffix}"
+            for suffix in ("a", "b", "c")
+            if any(f"r{i}{suffix}" in match for match in matches)
+        ]
         updates = " ".join(
             f"FOREACH (_ IN CASE WHEN {alias} IS NULL THEN [] ELSE [1] END | SET {alias} += $ip{i})"
             for alias in aliases
@@ -406,8 +420,10 @@ def _compile(
     invalid_expr = "+".join(f"ic{i}" for i in range(len(plan.invalidations))) or "0"
     clauses += [
         "SET v.version=v.version+1",
-        f"CREATE (receipt:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid,fingerprint:$fingerprint,payload:$payload,"
-        f"entities:{entity_expr},edges:{edge_expr},deletes:{delete_expr},invalidations:{invalid_expr}}})",
+        (
+            f"CREATE (receipt:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid,fingerprint:$fingerprint,payload:$payload,"
+            f"entities:{entity_expr},edges:{edge_expr},deletes:{delete_expr},invalidations:{invalid_expr}}})"
+        ),
         f"RETURN v.version,{entity_expr} AS entities,{edge_expr} AS edges,{delete_expr} AS deletes,{invalid_expr} AS invalidations",
     ]
     return (
@@ -438,12 +454,12 @@ def apply_atomic(
     reconciliation_config=None,
     embedder=None,
 ):
+    fingerprint = mutation_batch_fingerprint(plan)
     plan = deepcopy(plan)
     validate_reconciliation_plan(
         plan, expected_pot_id, definition=definition, config=reconciliation_config
     )
     mutation_id = provenance_context.mutation_id
-    fingerprint = mutation_batch_fingerprint(plan)
     now = datetime.now(timezone.utc)
     provenance = _build_provenance(
         plan,
@@ -453,7 +469,7 @@ def apply_atomic(
         graph_updated_at=now,
     )
     _ensure_state(graph, expected_pot_id)
-    pipe = graph.client.pipeline()
+    pipe = transaction_client(graph).pipeline()
     try:
         pipe.watch(graph.name)
         current, stored_fp, payload, entities, edges, deletes, invalidations = (
@@ -492,6 +508,24 @@ def apply_atomic(
             definition=definition,
             embedder=embedder,
         )
+        params["journal_generated_event"] = (
+            plan.event_ref is None and provenance_context.source_event_id is None
+        )
+        params["journal_generated_valid_from"] = (
+            provenance_context.event_occurred_at is None
+        )
+        from .falkordb_journal import FalkorJournal, _state
+
+        state = _state(graph, expected_pot_id, pipe)
+        if state is not None:
+            return FalkorJournal(graph, definition).apply(
+                plan,
+                pipe=pipe,
+                state=state,
+                params=params,
+                fingerprint=fingerprint,
+                actor=provenance_context.actor_user_id or "system",
+            )
         pipe.multi()
         pipe.execute_command(
             "GRAPH.QUERY",
