@@ -65,7 +65,14 @@ def mount_ui_static(app: FastAPI) -> bool:
         code = request.query_params.get(HANDOFF_PARAM)
         if code is not None:
             return _redeem(request, code)
-        return FileResponse(index) if served else HTMLResponse(_PLACEHOLDER)
+        # The shell names hashed assets that change whenever the UI is rebuilt.
+        # Revalidate it so browsers cannot retain references to removed bundles.
+        headers = {"Cache-Control": "no-cache"}
+        return (
+            FileResponse(index, headers=headers)
+            if served
+            else HTMLResponse(_PLACEHOLDER, headers=headers)
+        )
 
     if served:
         app.mount("/ui", StaticFiles(directory=str(dist), html=True), name="ui")

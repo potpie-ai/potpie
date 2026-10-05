@@ -6,6 +6,8 @@ export interface GraphNode {
   caption: string;
   summary?: string;
   properties: Record<string, unknown>;
+  diff_status?: string;
+  ghost?: boolean;
   // runtime-only (added client-side for layout/sizing)
   degree?: number;
   x?: number;
@@ -14,9 +16,11 @@ export interface GraphNode {
 
 export interface GraphEdge {
   id: string;
+  record_id?: string;
   source: string | GraphNode;
   target: string | GraphNode;
   predicate: string;
+  diff_status?: string;
 }
 
 export interface GraphData {

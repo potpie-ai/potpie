@@ -558,14 +558,15 @@ def test_catalog_serves_the_workbench_contract_the_cli_serves(real_graph_client)
 def test_a_refused_read_is_not_a_200(real_graph_client):
     """`ok: false` under a 200 is a failure no client sees.
 
-    `features.feature_context` requires a scope key; asked without one the
+    `infra_topology.service_neighborhood` requires a service scope; asked without one the
     workbench refuses. The SPA's `jget` — and curl, and anything else scripting
     this API — branches on the status line, so the refusal arrived as a
     successful response holding zero items and rendered as an empty graph: "this
     pot knows nothing" instead of "name a feature or a repo".
     """
     response = real_graph_client.get(
-        "/api/read", params={"subgraph": "features", "view": "feature_context"}
+        "/api/read",
+        params={"subgraph": "infra_topology", "view": "service_neighborhood"},
     )
 
     assert response.status_code == 400

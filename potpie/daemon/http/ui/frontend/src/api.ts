@@ -6,10 +6,17 @@ import type {
   StatusResponse,
 } from "./types";
 
+import type { CommitDetail, CommitHeader, CommitPage, JournalStatus, PreviewResult } from "./commitTypes";
+import type { PlanHistoryPage } from "./commitTypes";
+
 const BASE = "/ui/api";
 
 function errorDetail(detail: unknown, fallback: string): string {
   if (typeof detail === "string" && detail) return detail;
+  if (detail && typeof detail === "object" && "reasons" in detail) {
+    const reasons = (detail as { reasons: { message: string }[] }).reasons;
+    return reasons.map(reason => reason.message).join("; ");
+  }
   if (detail !== undefined && detail !== null) {
     try {
       return JSON.stringify(detail);
@@ -20,13 +27,28 @@ function errorDetail(detail: unknown, fallback: string): string {
   return fallback;
 }
 
+export class CommitApiError extends Error {
+  constructor(message: string, readonly code: string) { super(message); }
+}
+
+async function failedResponse(response: Response): Promise<never> {
+  const body = await response.json().catch(() => ({}));
+  throw new CommitApiError(errorDetail(body?.detail, `request failed (${response.status})`), body?.detail?.status || "request_failed");
+}
+
 async function jget<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(errorDetail(body?.detail, `request failed (${res.status})`));
-  }
-  return body as T;
+  if (!res.ok) return failedResponse(res);
+  return res.json() as Promise<T>;
+}
+
+async function jpost<T>(path: string, payload: object): Promise<T> {
+  const response = await fetch(`${BASE}${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) return failedResponse(response);
+  return response.json() as Promise<T>;
 }
 
 /** Build a query string from defined params only.
@@ -42,6 +64,12 @@ function qs(params: Record<string, string | number | undefined>): string {
 }
 
 export const api = {
+  mutationHistory: (pot: string, host: Origin, limit = 50) => jget<PlanHistoryPage>(`/mutation-history${qs({ pot, host, limit })}`),
+  commits: (pot: string, host: Origin, cursor?: string) => jget<CommitPage>(`/commits${qs({ pot, host, cursor })}`),
+  commit: (commit_id: string, pot: string, host: Origin, offset = 0) => jget<CommitDetail>(`/commit${qs({ pot, host, commit_id, offset })}`),
+  journal: (pot: string, host: Origin) => jget<JournalStatus>(`/journal${qs({ pot, host })}`),
+  preview: (target_commit_id: string, mode: "revert" | "rollback", expected_head: string, pot: string, host: Origin) => jpost<PreviewResult>("/rollback/preview", { target_commit_id, mode, expected_head, pot, host }),
+  applyPreview: (preview_id: string, pot: string, host: Origin) => jpost<{ commit: CommitHeader }>("/rollback/apply", { preview_id, pot, host }),
   pots: () => jget<PotsResponse>("/pots"),
 
   usePot: async (ref: string, host?: Origin) => {

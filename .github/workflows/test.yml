@@ -223,12 +223,25 @@ jobs:
         # uvicorn, keyring, sentence-transformers and pygithub.
         run: uv sync --frozen --all-packages --all-extras --no-cache
 
+      - name: Start durable journal crash fixture
+        run: |
+          docker run -d --name pie-journal-crash-ci -p 127.0.0.1:6381:6379 -e BROWSER=0 -e 'REDIS_ARGS=--appendonly yes --appendfsync always' falkordb/falkordb:v4.16.0
+          for attempt in $(seq 1 30); do
+            if docker exec pie-journal-crash-ci redis-cli ping | grep -q PONG; then exit 0; fi
+            sleep 1
+          done
+          docker logs pie-journal-crash-ci
+          exit 1
+
       - name: Run context-engine package tests
         working-directory: potpie/context-engine
         env:
           POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
           ENV: "development"
           PROTOCOL_TEST_FALKORDB_URL: redis://127.0.0.1:6380
+          POTPIE_JOURNAL_FALKOR_PORT: "6380"
+          POTPIE_JOURNAL_CRASH_CONTAINER: pie-journal-crash-ci
+          POTPIE_JOURNAL_CRASH_PORT: "6381"
           PROTOCOL_TEST_NEO4J_URI: bolt://127.0.0.1:7687
           PROTOCOL_TEST_NEO4J_USERNAME: neo4j
           PROTOCOL_TEST_NEO4J_PASSWORD: protocol-test
@@ -386,3 +399,17 @@ jobs:
       - name: Run sandbox local integration tests
         working-directory: potpie/sandbox
         run: uv run --project . --extra daytona pytest tests/integration/test_docker_runtime.py tests/e2e/test_local_subprocess_e2e.py
+
+  graph-commits-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Validate explorer diffs and build
+        working-directory: potpie/daemon/http/ui/frontend
+        run: |
+          npm ci
+          node --test tests/commitDiff.test.ts
+          npm run build

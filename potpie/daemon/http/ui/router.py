@@ -227,7 +227,14 @@ def _slice_to_graph(sl: Any) -> dict[str, Any]:
     for e in sl.edges:
         edges.append(
             {
-                "id": f"{e.from_key}|{e.predicate}|{e.to_key}",
+                "id": e.properties.get("record_id")
+                or e.properties.get("uuid")
+                or f"{e.from_key}|{e.predicate}|{e.to_key}"
+                + (
+                    f"|{e.properties['claim_key']}"
+                    if e.properties.get("claim_key")
+                    else ""
+                ),
                 "source": e.from_key,
                 "target": e.to_key,
                 "predicate": e.predicate,
@@ -555,6 +562,13 @@ def build_ui_api_router(host: Any) -> APIRouter:
 
         return _guarded(go)
 
+    from potpie.daemon.http.ui.commits import build_commit_router
+
+    router.include_router(
+        build_commit_router(
+            host, guarded=_guarded, host_for=_host_for, resolve_pot=_resolve_pot
+        )
+    )
     return router
 
 

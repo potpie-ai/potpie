@@ -18,7 +18,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from potpie.cli import hosts
@@ -34,6 +33,22 @@ BEARER = {"Authorization": f"Bearer {TOKEN}"}
 #: later without an entry here fails rather than quietly shipping open.
 API_CALLS: dict[tuple[str, str], dict[str, Any]] = {
     ("GET", "/ui/api/pots"): {},
+    ("GET", "/ui/api/commits"): {},
+    ("GET", "/ui/api/mutation-history"): {},
+    ("GET", "/ui/api/commit"): {"params": {"commit_id": "c1"}},
+    ("GET", "/ui/api/journal"): {},
+    ("POST", "/ui/api/rollback/preview"): {
+        "json": {
+            "host": "local",
+            "pot": "pot_1",
+            "target_commit_id": "c1",
+            "expected_head": "c1",
+            "mode": "revert",
+        }
+    },
+    ("POST", "/ui/api/rollback/apply"): {
+        "json": {"host": "local", "pot": "pot_1", "preview_id": "p1"}
+    },
     ("POST", "/ui/api/pots/use"): {"json": {"ref": "default"}},
     ("POST", "/ui/api/handoff"): {},
     ("GET", "/ui/api/catalog"): {},
@@ -118,10 +133,31 @@ class _Backend:
     inspection = _Inspection()
 
 
+class _Workbench:
+    def history(self, **kwargs):
+        return {"ok": True, "entries": []}
+
+    def commits(self, **kwargs):
+        return {"ok": True, "headers": []}
+
+    def commit_show(self, *args, **kwargs):
+        return {"ok": True, "changes": []}
+
+    def journal_status(self, **kwargs):
+        return {"ok": True, "state": None}
+
+    def revert_preview(self, *args, **kwargs):
+        return {"ok": True, "preview": {}}
+
+    def apply_preview(self, *args, **kwargs):
+        return {"ok": True, "commit": {}}
+
+
 class _Host:
     def __init__(self) -> None:
         self.pots = _Pots()
         self.graph = _Graph()
+        self.graph_workbench = _Workbench()
         self.backend = _Backend()
 
 
@@ -165,11 +201,13 @@ def authorized(app) -> TestClient:
 
 
 def _api_routes(app) -> set[tuple[str, str]]:
+    # FastAPI may keep included routers lazy; OpenAPI enumerates their routes.
     return {
-        (method, route.path)
-        for route in app.routes
-        if isinstance(route, APIRoute) and route.path.startswith("/ui/api")
-        for method in (route.methods or set()) - {"HEAD", "OPTIONS"}
+        (method.upper(), path)
+        for path, methods in app.openapi()["paths"].items()
+        if path.startswith("/ui/api")
+        for method in methods
+        if method.upper() in {"GET", "POST"}
     }
 
 
@@ -436,3 +474,4 @@ def test_the_spa_shell_loads_without_a_credential(
 
     assert response.status_code == 200
     assert "set-cookie" not in response.headers
+    assert response.headers["cache-control"] == "no-cache"
