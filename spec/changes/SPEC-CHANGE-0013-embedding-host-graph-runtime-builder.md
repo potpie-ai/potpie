@@ -41,16 +41,19 @@ to serve them.
 |---|---|---|---|
 | clarify | CE-001 | CE-001 | Keep the façade finite and thin while stating that the embedding-host composition surface is separate from it. |
 | clarify | CE-012 | CE-012 | Scope typed outcomes to `ContextEngine` façade operations; graph-runtime operations keep their existing result values. |
-| add | — | CE-035 | Export the supported graph-runtime builder and runtime type from the engine API. |
+| add | — | CE-035 | Export the supported graph-runtime builder, runtime type, and resource facade with its runtime constructor from the engine API. |
 | add | — | CE-036 | Complete composition through construction arguments without post-construction mutation. |
-| add | — | CE-037 | Require an explicit context identity on every context-addressing runtime operation. |
+| add | — | CE-037 | Require an explicit context identity on every supported operation that addresses one context. |
 | add | — | CE-038 | Keep embedding-host composition independent of daemon, CLI, and root product modules. |
 
 ## Semantic Diff
 
 Revision 2 would add one supported composition surface beside the
-`ContextEngine` façade and leave the façade, its ADR-0008 catalog, and every
-other behavior unchanged. Until acceptance, `spec/modules/context-engine.md`
+`ContextEngine` façade and change no other behavior. It adds no façade methods
+and does not decide the façade catalog. The façade methods implemented outside
+the ADR-0008 catalog await their own public-API decision, recorded as
+`OQ-CE-API-002`; like ADR-0008, that decision needs a decision record rather
+than this change record. Until acceptance, `spec/modules/context-engine.md`
 stays at revision 1; this record carries the proposed text.
 
 Proposed behavior nodes:
@@ -69,28 +72,29 @@ CE-012 [active]: Every `ContextEngine` façade operation MUST return a typed tra
   @ CE-011
   @ SYS-007
 
-CE-035 [active]: Context Engine MUST export `build_graph_runtime` and `GraphRuntime` from `potpie_context_engine.api` as the supported composition surface for an embedding host that supplies its own graph backend and plan and inbox stores.
+CE-035 [active]: Context Engine MUST export `build_graph_runtime`, `GraphRuntime`, and `ResourceFacade` with its `ResourceFacade.from_runtime` constructor from `potpie_context_engine.api` as the supported composition surface for an embedding host that supplies its own graph backend and plan and inbox stores.
   > authority [active]: user:dsantra
   > decision [active]: decision:ADR-0013
   @ CE-001
   @ CE-003
   ~ potpie/context-engine/src/potpie_context_engine/api.py
 
-CE-036 [active]: The graph-runtime builder MUST accept every host-supplied dependency and wiring choice, including graph definition, resource, and commit-history wiring, as an explicit construction argument, and composition MUST NOT require the host to mutate the returned runtime or its collaborators.
+CE-036 [active]: The graph-runtime builder and `ResourceFacade.from_runtime` MUST accept every host-supplied dependency and wiring choice, including graph definition, resource, and commit-history wiring, as explicit construction arguments, and composition MUST NOT require the host to mutate the returned runtime, the resource facade, or their collaborators.
   > authority [active]: user:dsantra
   > decision [active]: decision:ADR-0013
   @ CE-022
   @ CE-035
   ~ potpie/context-engine/src/potpie_context_engine/core/runtime.py
+  ~ potpie/context-engine/src/potpie_context_engine/application/services/resource_facade.py
 
-CE-037 [active]: Every supported graph-runtime operation that addresses context data MUST take its context identity as an explicit per-call argument and MUST NOT derive it from process-global or active-selection state.
+CE-037 [active]: Every supported graph-runtime or resource-facade operation that addresses one context's data MUST take that context identity as an explicit per-call argument and MUST NOT derive it from process-global or active-selection state.
   > authority [active]: user:dsantra
   > decision [active]: decision:ADR-0003
   > decision [active]: decision:ADR-0013
   @ CE-009
   @ CE-035
 
-CE-038 [active]: An embedding host MUST be able to compose and use the supported graph runtime without importing Potpie daemon, CLI, or root product modules.
+CE-038 [active]: An embedding host MUST be able to compose and use the supported graph runtime and resource facade without importing Potpie daemon, CLI, or root product modules.
   > authority [active]: user:dsantra
   > decision [active]: decision:ADR-0013
   @ CE-002
@@ -103,25 +107,27 @@ Proposed prose changes in the module:
   composition surface for embedding hosts that bring their own graph backend
   and stores."
 - Actors And Permissions: add the row "Embedding host | Supplies its own graph
-  backend and stores, composes a multi-context graph runtime through the
-  supported builder, and authenticates callers and authorizes each context
-  before invoking it".
-- Data And State Model: add "A graph runtime holds no context identity. It
-  shares one definition, policy, and set of borrowed dependencies across every
-  context it serves."
+  backend and stores, composes a multi-context graph runtime and resource
+  facade through the supported constructors, and authenticates callers and
+  authorizes each context before invoking it".
+- Data And State Model: add "A graph runtime and its resource facade hold no
+  context identity. They share one definition, policy, and set of borrowed
+  dependencies across every context they serve."
 - Scope And Non-Goals: replace "Parsing and public extensions remain outside
   scope" with "Parsing and public extensions remain outside scope; the
   embedding-host builder accepts a `GraphDefinition` value and publishes no
   extension registration."
 
-The exact builder parameters and the supported runtime catalog are recorded in
-ADR-0013, as ADR-0008 records the façade catalog.
+The exact builder parameters and the supported runtime and resource-facade
+catalogs are recorded in ADR-0013, as ADR-0008 records the façade catalog.
 
 ## Compatibility, Security, And Failure Impact
 
 The export is additive. In the builder, every argument after `definition`
 becomes keyword-only; existing callers already pass those arguments by
-keyword. The package root keeps exporting only the `ContextEngine` surface.
+keyword. `ResourceFacade.from_runtime` replaces setting the graph service,
+claim query, snapshot port, and journal on a constructed facade. The package
+root keeps exporting only the `ContextEngine` surface.
 
 Commit-history authorization fails closed. An embedding host that omits
 `commit_authorize` gets a runtime that refuses commit history, rollback
@@ -148,7 +154,8 @@ authorization callback propagates to the caller unchanged.
 | Artifact or behavior | Required change | No-change reason | Reviewed by |
 |---|---|---|---|
 | ADR-0006 | ADR-0013 supersedes only its "no public promise" consequence, and only for `build_graph_runtime` and `GraphRuntime`. | The immutable accepted ADR is not edited; its other deferrals remain. | team:potpie |
-| ADR-0002, ADR-0008 | — | The façade, its construction model, and its method catalog are unchanged. | team:potpie |
+| ADR-0002, ADR-0008 | — | This change adds no façade methods and leaves the construction model and the ADR-0008 catalog as decided. | team:potpie |
+| `ContextEngine` methods outside the ADR-0008 catalog | Record `reset_context`, the eight resource methods, and the ten commit-history methods as `OQ-CE-API-002` for their own public-API decision; this change neither accepts nor rejects them. | — | team:potpie |
 | CE-005 through CE-010 | — | They govern `ContextEngine` instances. A graph runtime is not one; it holds no context identity, and CE-037 requires the identity per call. | team:potpie |
 | CE-018, SYS-015 | — | `GraphExtension` stays internal and no extension registration is published. | team:potpie |
 | CE-020, CE-021 | — | They govern the façade. The runtime catalog is enumerated in ADR-0013, and its attributes are typed by exported ports. | team:potpie |
@@ -157,8 +164,8 @@ authorization callback propagates to the caller unchanged.
 | SYS-001, SYS-016 | — | Embedding hosts are direct compatible hosts, not the Potpie-hosted path, and the builder is an in-process library API, not a transport. | team:potpie |
 | SYS-008 | — | The host authenticates and authorizes before calling. The commit-history callback is host code that the runtime invokes for access known only during the operation. | team:potpie |
 | SPEC-GLOSSARY | — | "Host" already covers software that constructs Context Engine and supplies its dependencies. | team:potpie |
-| Engine API and builder | Export `build_graph_runtime` and `GraphRuntime`, make wiring after `definition` keyword-only, document the stable members, and validate callback arguments. | — | team:potpie |
-| Engine tests | Restore the public runtime conformance suite, test composition from the supported API with host-owned async stores and commit policy, and lock the export layer. | — | team:potpie |
+| Engine API and builder | Export `build_graph_runtime`, `GraphRuntime`, and `ResourceFacade`, compose the facade through `ResourceFacade.from_runtime`, make builder wiring after `definition` keyword-only, document the stable members, and validate callback arguments. | — | team:potpie |
+| Engine tests | Restore the public runtime conformance suite, test composition from the supported API with host-owned async stores and commit policy, test facade composition from a runtime, and lock the export layer. | — | team:potpie |
 | Root tests | Lock that the pot and auth values import without daemon, CLI, or runtime modules. | — | team:potpie |
 | Conformance validator | On acceptance, raise the covered active-behavior count from 195 to 199. | Not changed while proposed. | team:potpie |
 
