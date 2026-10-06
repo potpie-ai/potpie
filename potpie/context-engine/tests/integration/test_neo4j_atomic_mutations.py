@@ -1,4 +1,9 @@
-"""Run with POTPIE_TEST_NEO4J_URI pointed at a disposable local test database."""
+"""Atomic Neo4j mutations against a disposable test server.
+
+Reads the same ``PROTOCOL_TEST_NEO4J_URI``/``_USERNAME``/``_PASSWORD`` variables
+as the other server-backed suites, which CI sets for its Neo4j service; without
+them the module is skipped. Never point them at a database you want to keep.
+"""
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -31,8 +36,8 @@ from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        not os.environ.get("POTPIE_TEST_NEO4J_URI"),
-        reason="requires disposable Neo4j URI",
+        not os.environ.get("PROTOCOL_TEST_NEO4J_URI"),
+        reason="PROTOCOL_TEST_NEO4J_URI must name a disposable test server",
     ),
 ]
 
@@ -42,13 +47,13 @@ class Settings:
         return True
 
     def neo4j_uri(self):
-        return os.environ["POTPIE_TEST_NEO4J_URI"]
+        return os.environ["PROTOCOL_TEST_NEO4J_URI"]
 
     def neo4j_user(self):
-        return "neo4j"
+        return os.environ.get("PROTOCOL_TEST_NEO4J_USERNAME", "neo4j")
 
     def neo4j_password(self):
-        return "unused-in-disposable-auth-disabled-database"
+        return os.environ.get("PROTOCOL_TEST_NEO4J_PASSWORD", "")
 
 
 def _batch(value):
