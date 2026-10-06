@@ -208,6 +208,14 @@ relevance, and an explicit passage `--query-threshold` is refused with
   pot's documents and index rows only after the graph reset succeeded, and reports
   `resources_purged`: `true` or `false` from the store, `null` when no resource
   store is composed.
+- While graph journal capture is active for a pot, reset and archive are refused
+  with `journal_capture_active` before anything changes: they would discard the
+  pot's commit history mid-generation, and no command retires a journal yet. The
+  graph reset and the document purge each refuse on their own as well; the single
+  check up front is what keeps a teardown from stopping between them. Document
+  imports and removals on such a pot are journaled resource workflows: each one
+  is a rollback barrier, and a restore re-checks every `potpie://res/` citation it
+  would bring back against the store.
 - `source remove` does not touch documents. A source row is not a key into the
   store (`source_ref` is a free-form URI); use `resource rm` or pot teardown.
 - `source add` takes a closed kind table. Document kinds (`pdf`, `spreadsheet`,

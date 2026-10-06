@@ -30,6 +30,18 @@ def hard_reset_pot(
     """
     out: dict[str, Any] = {"pot_id": pot_id, "ok": False}
 
+    # Refused before any ledger row goes: the graph reset would refuse a pot
+    # whose journal is capturing, and stopping there would leave the ledgers
+    # cleared and the graph intact.
+    capturing = getattr(context_graph, "journal_capture_active", None)
+    if callable(capturing) and capturing(pot_id) is True:
+        out["error"] = "journal_capture_active"
+        out["detail"] = (
+            "hard reset is refused while graph journal capture is active for "
+            "this pot; it would discard the pot's commit history"
+        )
+        return out
+
     if reconciliation_ledger is not None:
         out["reconciliation_rows_deleted"] = reconciliation_ledger.delete_all_for_pot(
             pot_id
