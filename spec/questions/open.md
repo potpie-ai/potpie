@@ -8,7 +8,7 @@ owners:
 
 # Context Runtime Open Questions
 
-Four questions remain intentionally deferred and are not referenced by active
+Five questions remain intentionally deferred and are not referenced by active
 behavior nodes. Nine implementation-readiness questions are resolved by
 ADR-0007 through ADR-0009. Each deferred question becomes a separate decision
 before an implementation commit depends on its answer.
@@ -22,6 +22,15 @@ OQ-CE-API-001 [resolved]: What exact operation groups and synchronous or asynchr
   option: operation objects with one canonical execution model
   decision-trigger: before proposing the public ContextEngine API implementation contract
   resolution: ADR-0008
+
+OQ-CE-API-002 [deferred]: Which ContextEngine façade methods outside the ADR-0008 catalog join it: `reset_context`, the resource methods `resource_import`, `resource_get`, `resource_list`, `resource_rm`, `resource_status`, `resource_index_status`, `resource_index_build`, and `resource_index_rebuild`, and the commit-history methods `commit_status`, `verify_commit`, `journal_status`, `commits`, `commit_show`, `revert_preview`, `rollback_preview`, `apply_preview`, `disable_rollback`, and `rebuild_commits`?
+  > decision [active]: decision:ADR-0008
+  owner: team:potpie
+  option: accept every implemented method as one catalog extension
+  option: decide each family separately: context reset, resources, and commit history
+  option: keep some families off the façade and serve them only through Potpie-owned services
+  decision-trigger: before façade methods outside the ADR-0008 catalog merge to main
+  resolution: null
 
 OQ-RM-LIFETIME-001 [resolved]: What reuse, eviction, and idle-shutdown policy should govern Resource Manager engine and resource lifetimes?
   > decision [superseded]: decision:ADR-0006
