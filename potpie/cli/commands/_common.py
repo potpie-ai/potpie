@@ -736,6 +736,8 @@ def _record_cli_contract_metrics(
 
     attributes = _cli_metric_attributes(result=result, error_code=error_code)
     duration_ms = max((time.perf_counter() - started_at) * 1000.0, 0.0)
+    # No flush here: the CLI routes these to the telemetry spool, which a
+    # detached flusher ships after the command has already answered.
     try:
         sentry_metrics_runtime.count(
             "ce.cli.invocations_total",
@@ -749,11 +751,6 @@ def _record_cli_contract_metrics(
         )
     except Exception:  # noqa: BLE001
         pass
-    finally:
-        try:
-            sentry_metrics_runtime.flush(timeout=2.0)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def _cli_metric_attributes(

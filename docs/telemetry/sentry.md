@@ -50,6 +50,33 @@ Sentry initializes directly through `sentry-sdk` with:
 
 The CLI never calls `sentry_sdk.set_user()`.
 
+## Delivery
+
+A CLI command never waits on the network for telemetry. It appends its
+metrics and analytics events to a local spool:
+
+```text
+$XDG_CONFIG_HOME/potpie/telemetry/spool.jsonl
+~/.config/potpie/telemetry/spool.jsonl
+```
+
+When the command exits, it starts a detached flusher
+(`python -m potpie.cli.telemetry.flush`) that sends the spool and then exits.
+The daemon starts the flusher right after it spools an event. Only one flusher
+runs at a time. The spool file has `0600` permissions and never holds a DSN or
+an API key. It is capped at 512 KiB, and a failed send drops its records
+instead of retrying them.
+
+The CLI process initializes `sentry-sdk` only to report an unexpected failure.
+The flusher initializes it to send metrics. Both use a short-lived profile: no
+auto-enabling integrations and a one-second shutdown timeout. The daemon keeps
+the SDK defaults.
+
+When telemetry is disabled, by preference or with
+`POTPIE_TELEMETRY_DISABLED=1`, nothing is spooled. The flusher also checks the
+settings again and drops anything already spooled. `potpie telemetry disable`
+deletes the pending spool.
+
 ## Identity State
 
 Reusable non-secret telemetry identity is stored globally:
