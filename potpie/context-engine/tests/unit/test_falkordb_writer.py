@@ -714,17 +714,23 @@ def test_shutdown_stops_owned_servers_and_forgets_them(tmp_path) -> None:
     reparented to init, holding the db file until reboot.
     """
     _OWNED_SERVERS.clear()
-    calls: list[dict] = []
+    calls: list[tuple[str, object]] = []
     owner = SimpleNamespace(
         connection=SimpleNamespace(
             cleanupregistry=True,
-            shutdown=lambda **kwargs: calls.append(kwargs),
+            set_retry=lambda retry: calls.append(("retries", retry.get_retries())),
+            shutdown=lambda **kwargs: calls.append(("shutdown", kwargs)),
         )
     )
     _remember_owned_server(owner, str(tmp_path / "owned.db"))
 
     assert shutdown_embedded_servers() == 1
-    assert calls == [{"save": True, "now": True, "force": True}]
+    # Retries go off first: the server answers SHUTDOWN by dropping the
+    # connection, and redis-py would back off for seconds before accepting it.
+    assert calls == [
+        ("retries", 0),
+        ("shutdown", {"save": True, "now": True, "force": True}),
+    ]
     # Idempotent: a second stop has nothing left to do.
     assert shutdown_embedded_servers() == 0
 
@@ -736,7 +742,9 @@ def test_shutdown_survives_a_server_that_is_already_gone(tmp_path) -> None:
         raise ConnectionError("server already gone")
 
     owner = SimpleNamespace(
-        connection=SimpleNamespace(cleanupregistry=True, shutdown=_boom)
+        connection=SimpleNamespace(
+            cleanupregistry=True, set_retry=lambda _retry: None, shutdown=_boom
+        )
     )
     _remember_owned_server(owner, str(tmp_path / "gone.db"))
 
