@@ -29,6 +29,7 @@ from potpie.daemon.http.ui.auth import (
     ui_auth,
 )
 
+from potpie.daemon.client import HostOutdated
 from potpie_context_core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
@@ -262,6 +263,17 @@ def build_ui_api_router(host: Any) -> APIRouter:
             return fn()
         except HTTPException:
             raise
+        except HostOutdated as exc:
+            # Structured, unlike the plain 501 below: the SPA falls back to the
+            # older view instead of reporting an error the user cannot fix here.
+            raise HTTPException(
+                status_code=501,
+                detail={
+                    "status": "host_outdated",
+                    "message": exc.detail,
+                    "recommended_next_action": exc.recommended_next_action,
+                },
+            ) from exc
         except CapabilityNotImplemented as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         except PotNotFound as exc:

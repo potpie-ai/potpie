@@ -12,7 +12,15 @@ const planTitle = (plan: SavedPlan) => {
     : `${diff.claims_asserted} claims to add · ${diff.claims_retracted} to retract`;
 };
 
-export default function PlanHistory({ pot, host }: { pot: string; host: Origin }) {
+const NO_JOURNAL_NOTICE =
+  "Native journal coverage has not started for this pot. Saved plans show " +
+  "mutation status and scope. Before/after comparisons and rollback are unavailable.";
+
+export default function PlanHistory({ pot, host, notice = NO_JOURNAL_NOTICE }: {
+  pot: string;
+  host: Origin;
+  notice?: string;
+}) {
   const [page, setPage] = useState<PlanHistoryPage | null>(null);
   const [selected, setSelected] = useState<string>();
   const [query, setQuery] = useState("");
@@ -96,10 +104,7 @@ export default function PlanHistory({ pot, host }: { pot: string; host: Origin }
       </aside>
       <div className="commit-detail">
         <div className="commit-detail-content saved-plan-detail">
-          <p className="commit-notice warning" role="status">
-            Native journal coverage has not started for this pot. Saved plans show
-            mutation status and scope. Before/after comparisons and rollback are unavailable.
-          </p>
+          <p className="commit-notice warning" role="status">{notice}</p>
           {error && <p className="commit-notice error-notice" role="alert">{error}</p>}
           {page?.warnings.map(warning => <p key={warning} className="commit-notice warning">{warning}</p>)}
           {detail && <>

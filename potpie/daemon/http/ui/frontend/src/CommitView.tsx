@@ -39,6 +39,7 @@ export default function CommitView({ pot, host, onApplied }: Props) {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [outdated, setOutdated] = useState(false);
   const [selectedCommit, setSelectedCommit] = useState<string | undefined>();
   const [selectedRecord, setSelectedRecord] = useState<string | null>(null);
   const alive = useRef(true);
@@ -48,18 +49,28 @@ export default function CommitView({ pot, host, onApplied }: Props) {
 
   const reload = useCallback(async () => {
     const token = ++historyRequest.current;
-    const [commits, status, graph] = await Promise.all([
-      api.commits(pot, host),
-      api.journal(pot, host),
-      api
-        .graph(pot, host)
-        .then((data) => ({ data, error: "" }))
-        .catch((error) => ({
-          data: { nodes: [], edges: [] },
-          error: errorText(error),
-        })),
-    ]);
+    let loaded;
+    try {
+      loaded = await Promise.all([
+        api.commits(pot, host),
+        api.journal(pot, host),
+        api
+          .graph(pot, host)
+          .then((data) => ({ data, error: "" }))
+          .catch((error) => ({
+            data: { nodes: [], edges: [] },
+            error: errorText(error),
+          })),
+      ]);
+    } catch (e) {
+      // A host older than commit history still has saved plans to show.
+      if (!(e instanceof CommitApiError) || e.code !== "host_outdated") throw e;
+      if (alive.current && historyRequest.current === token) setOutdated(true);
+      return null;
+    }
+    const [commits, status, graph] = loaded;
     if (alive.current && historyRequest.current === token) {
+      setOutdated(false);
       setPage(commits);
       setJournal(status);
       setContext(graph.data);
@@ -312,6 +323,20 @@ export default function CommitView({ pot, host, onApplied }: Props) {
       setContext((previous) => mergeContext(previous, graph));
   }
   const enabled = Boolean(journal?.state?.rollback_enabled && !pending);
+  if (outdated) {
+    return (
+      <PlanHistory
+        key={`${host}:${pot}`}
+        pot={pot}
+        host={host}
+        notice={
+          "This host runs an older Potpie without commit history. Saved plans " +
+          "show mutation status and scope; commits, comparisons and rollback " +
+          "appear here once the host is updated."
+        }
+      />
+    );
+  }
   if (page?.coverage.legacy_only && page.headers.length === 0) {
     return <PlanHistory key={`${host}:${pot}`} pot={pot} host={host} />;
   }

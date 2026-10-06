@@ -9,8 +9,8 @@ normal attribute access and local helper methods such as ``to_dict()``.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
+from collections.abc import Iterator, Mapping
+from dataclasses import MISSING, Field, fields, is_dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -24,16 +24,28 @@ _ALLOWED_CLASS_MODULE_PREFIXES = (
 )
 
 
-def encode(value: Any) -> Any:
-    """Encode common domain values into JSON-compatible data."""
+def encode(value: Any, *, omit_defaults: bool = False) -> Any:
+    """Encode common domain values into JSON-compatible data.
+
+    ``omit_defaults`` leaves out every dataclass field still at its default.
+    The decoder rebuilds objects with a strict ``cls(**raw)``, so a field the
+    receiver's build does not have is fatal even when it carries the default —
+    which made every added field, however optional, a break for an older peer
+    (``ClaimQueryFilter.include_retired`` against a server that predates it).
+    Requests are encoded this way: a call that does not use a new field sends
+    exactly what an older client would, and one that does still fails loudly,
+    because an older host cannot honour it. The receiver supplies its own
+    default for an omitted field, so changing a wire field's default is a
+    behaviour change for peers on the other side of that change.
+    """
     if is_dataclass(value) and not isinstance(value, type):
         cls = value.__class__
         return {
             TYPE_KEY: "dataclass",
             "class": f"{cls.__module__}:{cls.__qualname__}",
             "value": {
-                field.name: encode(getattr(value, field.name))
-                for field in fields(value)
+                field.name: encode(item, omit_defaults=omit_defaults)
+                for field, item in _wire_fields(value, omit_defaults=omit_defaults)
             },
         }
     if isinstance(value, datetime):
@@ -48,12 +60,43 @@ def encode(value: Any) -> Any:
     if isinstance(value, Path):
         return {TYPE_KEY: "path", "value": str(value)}
     if isinstance(value, tuple):
-        return {TYPE_KEY: "tuple", "items": [encode(item) for item in value]}
+        return {
+            TYPE_KEY: "tuple",
+            "items": [encode(item, omit_defaults=omit_defaults) for item in value],
+        }
     if isinstance(value, (list, set, frozenset)):
-        return [encode(item) for item in value]
+        return [encode(item, omit_defaults=omit_defaults) for item in value]
     if isinstance(value, Mapping):
-        return {str(key): encode(item) for key, item in value.items()}
+        return {
+            str(key): encode(item, omit_defaults=omit_defaults)
+            for key, item in value.items()
+        }
     return value
+
+
+def _wire_fields(
+    value: Any, *, omit_defaults: bool
+) -> Iterator[tuple[Field[Any], Any]]:
+    for field in fields(value):
+        item = getattr(value, field.name)
+        if omit_defaults and _is_default(field, item):
+            continue
+        yield field, item
+
+
+def _is_default(field: Field[Any], item: Any) -> bool:
+    """Is ``item`` this field's default? Unsure means no: the field is sent."""
+    if field.default is not MISSING:
+        default = field.default
+    elif field.default_factory is not MISSING:
+        default = field.default_factory()
+    else:
+        return False
+    try:
+        # The type check keeps ``0``/``0.0`` from passing for ``False``.
+        return type(item) is type(default) and bool(item == default)
+    except Exception:  # noqa: BLE001 - an odd __eq__ only costs sending the field
+        return False
 
 
 def decode(value: Any) -> Any:

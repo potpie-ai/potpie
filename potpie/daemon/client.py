@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Final
@@ -20,7 +21,7 @@ from potpie_context_core.errors import (
 )
 from potpie.daemon import negotiation
 from potpie.daemon.lifecycle import Daemon
-from potpie.daemon.rpc import decode, encode
+from potpie.daemon.rpc import TYPE_KEY, decode, encode
 
 #: Statuses that mean the endpoint answered *and* refused the credential.
 #:
@@ -67,9 +68,45 @@ _VALIDATION_CODES: Final[frozenset[str]] = frozenset(
     {"validation_error", "value_error"}
 )
 
+#: Python's own wording when a host's build lacks a keyword or dataclass field
+#: the caller sent: ``GraphWorkbenchService.history() got an unexpected keyword
+#: argument 'include_claims'``, ``ClaimQueryFilter.__init__() got ...``. A host
+#: cannot say it is older in any structured way — the older it is, the less it
+#: knows — so this sentence is the evidence, and it only counts when both the
+#: function and the name are ones this call sent.
+_UNEXPECTED_ARGUMENT: Final = re.compile(
+    r"([\w.]+)\(\) got an unexpected keyword argument '([^']+)'"
+)
+
 
 class RpcDeadlineExceeded(ContextEngineDisabled):
     """The client stopped waiting; remote completion is unknown."""
+
+
+class HostOutdated(CapabilityNotImplemented):
+    """The host runs an older Potpie than this client and lacks what was asked.
+
+    A capability answer, not a fault: everything the host already supports
+    keeps working, and the call succeeds once the host is updated. ``argument``
+    names the keyword or dataclass field the host refused, or is ``None`` when
+    it has no such method at all — which is what lets a caller retry an older
+    feature without a newer optional argument.
+    """
+
+    def __init__(
+        self, capability: str, *, label: str, argument: str | None = None
+    ) -> None:
+        self.argument = argument
+        missing = f"'{argument}' for this call" if argument else "this call"
+        super().__init__(
+            capability,
+            detail=f"{label} runs an older Potpie that does not support {missing}",
+            recommended_next_action=(
+                "update that host to this client's Potpie version; until then, "
+                "everything it already supports keeps working (for the local "
+                "daemon, run 'potpie daemon restart')"
+            ),
+        )
 
 
 @dataclass(slots=True)
@@ -112,11 +149,14 @@ class DaemonRpcClient:
         try:
             discovery = self._rpc_discovery()
             url = f"{discovery['base_url'].rstrip('/')}/rpc"
+            # Defaults stay off the wire so a host older than this client can
+            # still decode every call that does not use what it lacks; see
+            # :func:`potpie.daemon.rpc.encode`.
             payload = {
                 "surface": surface,
                 "method": method,
-                "args": encode(args),
-                "kwargs": encode(kwargs),
+                "args": encode(args, omit_defaults=True),
+                "kwargs": encode(kwargs, omit_defaults=True),
             }
             # The deadline rides on the surface rather than on a keyword argument
             # because ``**kwargs`` is forwarded verbatim to the remote method — any
@@ -131,6 +171,8 @@ class DaemonRpcClient:
                 ),
                 url,
                 surface=surface,
+                method=method,
+                sent=_sent_names(payload["args"], payload["kwargs"]),
             )
         finally:
             # The CLI memoizes the host's read-only answers for the process
@@ -219,7 +261,15 @@ class DaemonRpcClient:
     def close(self) -> None:
         self._forget_endpoint()
 
-    def _result(self, response: httpx.Response, url: str, *, surface: str) -> Any:
+    def _result(
+        self,
+        response: httpx.Response,
+        url: str,
+        *,
+        surface: str,
+        method: str | None = None,
+        sent: frozenset[tuple[str, str]] = frozenset(),
+    ) -> Any:
         """The decoded result, or the error the response carries.
 
         The credential check runs *before* the body is parsed. A managed host
@@ -230,6 +280,9 @@ class DaemonRpcClient:
 
         ``surface`` rides along so a refusal can be checked against what this
         host said it serves, rather than against the shape of its prose.
+        ``method`` and ``sent`` (the argument and field names this call put on
+        the wire) let a refusal from a host older than this client be told
+        apart from a host fault; see :func:`_host_outdated`.
         """
         if response.status_code in _CREDENTIAL_REFUSED:
             raise _credential_refused(
@@ -247,6 +300,8 @@ class DaemonRpcClient:
                 label=self.label,
                 surface=surface,
                 host_serves=self._host_serves,
+                method=method,
+                sent=sent,
             )
         return decode(data.get("result"))
 
@@ -482,6 +537,79 @@ def _surface_not_served(surface: str, label: str) -> CapabilityNotImplemented:
     )
 
 
+def _sent_names(args: Any, kwargs: Any) -> frozenset[tuple[str, str]]:
+    """``(owner, name)`` for every keyword and dataclass field an encoded call sent.
+
+    ``owner`` is ``""`` for the method's own keywords and the class name for a
+    dataclass field. A plain mapping's keys are data, not names a host could
+    refuse, so they are walked through but not collected.
+    """
+    sent: set[tuple[str, str]] = set()
+
+    def walk(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                walk(item)
+        elif isinstance(value, dict):
+            marker = value.get(TYPE_KEY)
+            fields = value.get("value")
+            if marker == "dataclass" and isinstance(fields, dict):
+                qualname = str(value.get("class", "")).partition(":")[2]
+                owner = qualname.rpartition(".")[2]
+                sent.update((owner, name) for name in fields)
+                walk(list(fields.values()))
+            elif marker == "tuple":
+                walk(value.get("items") or [])
+            elif marker is None:
+                walk(list(value.values()))
+
+    walk(args)
+    walk(kwargs)
+    if isinstance(kwargs, dict) and TYPE_KEY not in kwargs:
+        sent.update(("", name) for name in kwargs)
+    return frozenset(sent)
+
+
+def _host_outdated(
+    code: str,
+    message: str,
+    *,
+    label: str,
+    surface: str | None,
+    method: str | None,
+    sent: frozenset[tuple[str, str]],
+) -> HostOutdated | None:
+    """A refusal that means "this host predates the call", or ``None``.
+
+    Two shapes, both checked against what this call actually asked for, so a
+    host's own bug is never retold as its age:
+
+    * a keyword the called method does not take, or a field a sent dataclass's
+      ``__init__`` does not take (``ClaimQueryFilter.__init__() got an
+      unexpected keyword argument 'include_retired'``);
+    * the method itself, refused by name by a managed service's allowlist
+      ("invalid RPC member: commits").
+    """
+    if not surface or not method or method.startswith("_"):
+        return None
+    capability = f"{surface}.{method}"
+    unexpected = _UNEXPECTED_ARGUMENT.search(message)
+    if unexpected:
+        callee, name = unexpected.groups()
+        owner, _, function = callee.rpartition(".")
+        if function == "__init__":
+            sent_by = owner.rpartition(".")[2]
+        elif function in (method, f"{method}_async"):
+            sent_by = ""
+        else:
+            sent_by = None
+        if sent_by is not None and (sent_by, name) in sent:
+            return HostOutdated(capability, label=label, argument=name)
+    if code in _VALIDATION_CODES and message == f"invalid RPC member: {method}":
+        return HostOutdated(capability, label=label)
+    return None
+
+
 def _raise_remote_error(
     data: dict[str, Any],
     *,
@@ -490,6 +618,8 @@ def _raise_remote_error(
     label: str = "Potpie daemon",
     surface: str | None = None,
     host_serves: Callable[[str], bool | None] | None = None,
+    method: str | None = None,
+    sent: frozenset[tuple[str, str]] = frozenset(),
 ) -> None:
     """Re-raise a remote failure as the domain error it started out as.
 
@@ -509,6 +639,10 @@ def _raise_remote_error(
     published about itself — see :mod:`potpie.daemon.negotiation`. Both are
     optional so a caller decoding a recorded envelope (tests, replay) gets the
     un-negotiated behaviour rather than a new required argument.
+
+    ``method`` and ``sent`` identify what this call asked for, so a host older
+    than this client is reported as :class:`HostOutdated` rather than as a
+    broken daemon or a caller mistake.
     """
     if status_code is not None and status_code in _CREDENTIAL_REFUSED:
         raise _credential_refused(
@@ -522,6 +656,11 @@ def _raise_remote_error(
     message = str(error.get("message") or f"{label} request failed.")
     detail = error.get("detail")
     next_action = error.get("recommended_next_action")
+    outdated = _host_outdated(
+        code, message, label=label, surface=surface, method=method, sent=sent
+    )
+    if outdated is not None:
+        raise outdated
     if code == "not_implemented":
         raise CapabilityNotImplemented(
             str(error.get("capability") or message),
@@ -591,4 +730,4 @@ def _raise_remote_error(
     raise exc
 
 
-__all__ = ["DaemonRpcClient", "RemoteHostShell", "RemoteSurface"]
+__all__ = ["DaemonRpcClient", "HostOutdated", "RemoteHostShell", "RemoteSurface"]

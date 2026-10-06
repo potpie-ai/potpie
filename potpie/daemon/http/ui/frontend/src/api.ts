@@ -17,6 +17,10 @@ function errorDetail(detail: unknown, fallback: string): string {
     const reasons = (detail as { reasons: { message: string }[] }).reasons;
     return reasons.map(reason => reason.message).join("; ");
   }
+  if (detail && typeof detail === "object" && "message" in detail) {
+    const message = (detail as { message: unknown }).message;
+    if (typeof message === "string" && message) return message;
+  }
   if (detail !== undefined && detail !== null) {
     try {
       return JSON.stringify(detail);

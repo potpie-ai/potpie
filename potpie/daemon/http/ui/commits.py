@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, ConfigDict
 
+from potpie.daemon.client import HostOutdated
 from potpie.daemon.http.ui.auth import require_same_origin
 
 
@@ -28,12 +29,20 @@ class ApplyBody(BaseModel):
 def build_commit_router(local_host, *, guarded, host_for, resolve_pot):
     router = APIRouter()
 
-    def call(origin, pot, method, *args, **kwargs):
+    def call(origin, pot, method, *args, optional=None, **kwargs):
+        """``optional`` kwargs refine the answer; a host too old for one is
+        asked again without it rather than losing a feature it does have."""
+
         def run():
             host, _ = host_for(local_host, origin)
-            result = getattr(host.graph_workbench, method)(
-                *args, pot_id=resolve_pot(host, pot), **kwargs
-            )
+            invoke = getattr(host.graph_workbench, method)
+            pot_id = resolve_pot(host, pot)
+            try:
+                result = invoke(*args, pot_id=pot_id, **kwargs, **(optional or {}))
+            except HostOutdated as exc:
+                if exc.argument is None or exc.argument not in (optional or {}):
+                    raise
+                result = invoke(*args, pot_id=pot_id, **kwargs)
             result = jsonable_encoder(result)
             if not result.get("ok", True):
                 status = result.get("status")
@@ -74,7 +83,11 @@ def build_commit_router(local_host, *, guarded, host_for, resolve_pot):
         limit: int = Query(50, ge=1, le=200),
     ):
         # Saved plans are audit evidence, not reconstructable journal receipts.
-        return call(host, pot, "history", limit=limit, include_claims=False)
+        # Hosts that predate ``include_claims`` send the claims too; the view
+        # does not read them.
+        return call(
+            host, pot, "history", limit=limit, optional={"include_claims": False}
+        )
 
     @router.post("/api/rollback/preview", dependencies=[Depends(require_same_origin)])
     def preview(body: PreviewBody):
