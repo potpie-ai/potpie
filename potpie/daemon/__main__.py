@@ -10,13 +10,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
 
 from potpie.daemon.discovery import (
     remove_daemon_runtime_records,
     write_daemon_credential,
 )
-from potpie.daemon.http.ui import build_ui_api_router, mount_ui_static
+from potpie.daemon.http.ui import build_ui_app
 from potpie.runtime import CanonicalDaemonRuntime, RuntimeEndpoint
 from potpie.runtime.clients import TypedEngineOperationHandler
 from potpie.runtime.composition import LocalRuntimeComposition, build_local_runtime
@@ -73,7 +72,9 @@ async def _run() -> None:
 
     composition = build_local_runtime()
     resource_manager = build_local_resource_manager(composition.engine)
-    ui_server = _build_ui_server(composition=composition, port=ui_port)
+    ui_server = _build_ui_server(
+        composition=composition, port=ui_port, bearer_token=bearer_token
+    )
     ui_task = asyncio.create_task(ui_server.serve())
     runtime = CanonicalDaemonRuntime(
         endpoint=endpoint,
@@ -150,18 +151,17 @@ def _stop_embedded_graph_servers() -> None:
 
 
 def _build_ui_server(
-    *, composition: LocalRuntimeComposition, port: int
+    *, composition: LocalRuntimeComposition, port: int, bearer_token: str
 ) -> uvicorn.Server:
-    app = FastAPI(title="potpie-daemon-ui")
-    app.include_router(
-        build_ui_api_router(
-            pots=composition.root.pots,
-            graph=composition.engine.graph,
-            backend=composition.engine.backend,
-        ),
-        prefix="/ui",
+    # The explorer takes the same per-boot secret as the typed endpoint: the
+    # CLI reads it from the owner-only credential file and spends it on a
+    # single-use browser handoff, so no second secret store is needed.
+    app = build_ui_app(
+        pots=composition.root.pots,
+        graph=composition.engine.graph,
+        backend=composition.engine.backend,
+        bearer_token=bearer_token,
     )
-    mount_ui_static(app)
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
