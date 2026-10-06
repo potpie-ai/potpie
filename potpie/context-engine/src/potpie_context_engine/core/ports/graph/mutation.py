@@ -50,6 +50,29 @@ class MutationExecutionLookup:
 
 
 @runtime_checkable
+class AtomicGraphMutationPort(Protocol):
+    """Optional datastore-wide optimistic concurrency capability.
+
+    The version check, canonical batch, next version and durable receipt must
+    share one atomic boundary. Completed retries return the original receipt
+    before checking the now-outdated expected version. A different body using
+    that mutation ID is rejected. A stale new write raises
+    ``GraphMutationVersionConflict`` without applying any of its operations.
+    """
+
+    def current_version(self, pot_id: str) -> int: ...
+
+    def compare_and_apply(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> MutationResult: ...
+
+
+@runtime_checkable
 class GraphMutationPort(Protocol):
     """Apply typed mutation plans and lifecycle operations to the claim store."""
 
@@ -106,6 +129,7 @@ class GraphMutationPort(Protocol):
 
 
 __all__ = [
+    "AtomicGraphMutationPort",
     "BackendReadiness",
     "GraphMutationPort",
     "MutationExecutionLookup",

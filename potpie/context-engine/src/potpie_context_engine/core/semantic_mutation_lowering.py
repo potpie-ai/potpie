@@ -72,6 +72,7 @@ def lower_semantic_request(
     plan: SemanticMutationPlan,
     *,
     definition: GraphDefinition | None = None,
+    claim_query=None,
 ) -> SemanticMutationPlan:
     """Lower the plan's accepted ops into ``plan.batch`` + ``plan.provenance``.
 
@@ -81,13 +82,13 @@ def lower_semantic_request(
     """
     token = _CURRENT_DEFINITION.set(definition or DEFAULT_GRAPH_DEFINITION)
     try:
-        return _lower_semantic_request(request, plan)
+        return _lower_semantic_request(request, plan, claim_query=claim_query)
     finally:
         _CURRENT_DEFINITION.reset(token)
 
 
 def _lower_semantic_request(
-    request: SemanticMutationRequest, plan: SemanticMutationPlan
+    request: SemanticMutationRequest, plan: SemanticMutationPlan, *, claim_query=None
 ) -> SemanticMutationPlan:
     batch = MutationBatch()
     provenance = _provenance_from_request(request)
@@ -98,12 +99,19 @@ def _lower_semantic_request(
 
     for outcome in plan.accepted_ops:
         op = request.operations[outcome.op_index]
+        first_invalidation = len(batch.invalidations)
         claim_keys = _lower_op(
             op,
             request=request,
             batch=batch,
             entity_by_key=entity_by_key,
+            claim_query=claim_query,
         )
+        if outcome.op_index in plan.correction_targets:
+            for invalidation in batch.invalidations[first_invalidation:]:
+                invalidation.target_claim_keys = plan.correction_targets[
+                    outcome.op_index
+                ]
         new_accepted.append(
             LoweredOperation(
                 op_index=outcome.op_index,
@@ -134,6 +142,7 @@ def _lower_op(
     request: SemanticMutationRequest,
     batch: MutationBatch,
     entity_by_key: dict[str, EntityUpsert],
+    claim_query=None,
 ) -> list[str]:
     name = op.op
     if name == SemanticMutationOp.upsert_entity.value:
@@ -171,7 +180,12 @@ def _lower_op(
             entity_by_key=entity_by_key,
         )
     if name == SemanticMutationOp.patch_entity.value:
-        _lower_patch_entity(op, entity_by_key=entity_by_key)
+        _lower_patch_entity(
+            op,
+            entity_by_key=entity_by_key,
+            claim_query=claim_query,
+            pot_id=request.pot_id,
+        )
         return []
     if name == SemanticMutationOp.transition_state.value:
         return _lower_transition_state(
@@ -226,6 +240,9 @@ def _lower_claim(
         discriminator=_discriminator(op, request),
         environment=op.environment,
     )
+    preserved_claim_key = op.extra.get("_preserve_claim_key")
+    if isinstance(preserved_claim_key, str) and preserved_claim_key.strip():
+        claim_key = preserved_claim_key.strip()
     props = _claim_properties(
         op,
         request=request,
@@ -263,7 +280,10 @@ def _lower_event(
             GraphEntityRef(
                 key=normalize_entity_key(f"activity:{_short(anchor)}"),
                 type="Activity",
-                properties={"verb_class": op.verb, "occurred_at": op.occurred_at},
+                properties={
+                    "verb_class": op.verb,
+                    "occurred_at": _utc_iso(op.occurred_at) if op.occurred_at else None,
+                },
                 description=op.description,
             ),
             entity_by_key,
@@ -273,7 +293,7 @@ def _lower_event(
     if op.verb:
         activity.properties.setdefault("verb_class", op.verb)
     if op.occurred_at:
-        activity.properties.setdefault("occurred_at", op.occurred_at)
+        activity.properties["occurred_at"] = _utc_iso(op.occurred_at)
 
     subgraph = op.subgraph or "recent_changes"
     claim_keys: list[str] = []
@@ -323,7 +343,7 @@ def _lower_event(
 
 def _lower_retract(op: SemanticMutation, *, batch: MutationBatch) -> None:
     reason = op.reason or "retracted via semantic mutation"
-    valid_to = op.valid_until or _now_iso()
+    valid_to = _utc_iso(op.valid_until) if op.valid_until else _now_iso()
     if op.op == SemanticMutationOp.end_relation_validity.value and not (
         op.subject is not None and op.predicate and op.object is not None
     ):
@@ -402,7 +422,7 @@ def _lower_supersede_claim(
             target_edge=(predicate, old_subject_key, old_object_key),
             reason=reason,
             superseded_by_key=replacement_key,
-            valid_to=op.valid_until or _now_iso(),
+            valid_to=_utc_iso(op.valid_until) if op.valid_until else _now_iso(),
         )
     )
     return claim_keys
@@ -496,10 +516,47 @@ def _lower_patch_entity(
     op: SemanticMutation,
     *,
     entity_by_key: dict[str, EntityUpsert],
+    claim_query=None,
+    pot_id: str,
 ) -> None:
     if op.subject is None:
         return
     props = dict(op.patch)
+    if "protocols" in _CURRENT_DEFINITION.get().extensions:
+        from potpie_context_engine.core.protocols import PREFIXES, normalize_properties
+
+        label = op.subject.type or _CURRENT_DEFINITION.get().entity_by_key_prefix.get(
+            op.subject.key.partition(":")[0]
+        )
+        if label in PREFIXES:
+            previous = entity_by_key.get(op.subject.key)
+            stored = (
+                dict(
+                    claim_query.entity_properties(
+                        pot_id=pot_id, entity_key=op.subject.key
+                    )
+                )
+                if claim_query is not None
+                else {}
+            )
+            if previous is not None:
+                stored.update(previous.properties)
+            corrections = normalize_properties(stored, label).get(
+                "correction_evidence", {}
+            )
+            corrections = dict(corrections) if isinstance(corrections, Mapping) else {}
+            evidence = [
+                {
+                    **dict(ev.metadata),
+                    "source_ref": ev.source_ref,
+                    "authority": ev.authority,
+                }
+                for ev in op.evidence
+            ]
+            props["correction_evidence"] = {
+                **corrections,
+                **{key: evidence for key in op.patch},
+            }
     if op.reason:
         props["last_patch_reason"] = op.reason
     if op.expected_entity_version:
@@ -691,10 +748,10 @@ def _claim_properties(
     fact = op.description or _synthesize_fact(subject_key, predicate, object_key)
     source_refs = [ev.source_ref for ev in op.evidence]
     evidence_dicts = [
-        {"source_ref": ev.source_ref, "authority": ev.authority, **dict(ev.metadata)}
+        {**dict(ev.metadata), "source_ref": ev.source_ref, "authority": ev.authority}
         for ev in op.evidence
     ]
-    valid_at = _valid_at_for_claim(op, truth=truth)
+    valid_at = _utc_iso(_valid_at_for_claim(op, truth=truth))
     props: dict[str, object] = {
         "claim_key": claim_key,
         "subgraph": subgraph,
@@ -711,7 +768,7 @@ def _claim_properties(
         else (request.idempotency_key or claim_key),
         "valid_at": valid_at,
         "valid_from": valid_at,
-        "observed_at": op.observed_at or _now_iso(),
+        "observed_at": _utc_iso(op.observed_at) if op.observed_at else _now_iso(),
         "created_by": _actor_dict(request),
         "graph_contract_version": request.graph_contract_version
         or GRAPH_CONTRACT_VERSION,
@@ -728,10 +785,20 @@ def _claim_properties(
     if op.verb:
         props["verb_class"] = op.verb
     if op.occurred_at:
-        props["occurred_at"] = op.occurred_at
+        props["occurred_at"] = _utc_iso(op.occurred_at)
     if op.valid_until:
-        props["valid_until"] = op.valid_until
+        props["valid_until"] = _utc_iso(op.valid_until)
     props.update(_structured_claim_fields_for(op))
+    preserved = op.extra.get("_preserve_claim_properties")
+    if isinstance(preserved, Mapping):
+        for key, value in preserved.items():
+            props.setdefault(str(key), value)
+    preserved_fact = op.extra.get("_preserve_claim_fact")
+    if isinstance(preserved_fact, str):
+        props["fact"] = preserved_fact
+    preserved_source_system = op.extra.get("_preserve_source_system")
+    if isinstance(preserved_source_system, str):
+        props["source_system"] = preserved_source_system
     # Carry the scope hierarchy for the readers (R4) when the subject/object
     # properties or op extras name a code scope.
     code_scope = _code_scope_for(op)
@@ -767,6 +834,9 @@ def _structured_claim_fields_for(op: SemanticMutation) -> dict[str, object]:
         "verification_status",
         "resolution_status",
         "change_kind",
+        "evidence_review_required",
+        "evidence_review_reason",
+        "evidence_review_refs",
         "ticket_key",
         "pr_number",
     )
@@ -838,6 +908,9 @@ def _actor_dict(request: SemanticMutationRequest) -> dict[str, str]:
 def _discriminator(
     op: SemanticMutation, request: SemanticMutationRequest
 ) -> str | None:
+    internal = op.extra.get("_claim_discriminator")
+    if isinstance(internal, str) and internal.strip():
+        return internal.strip()
     if op.evidence:
         return op.evidence[0].source_ref
     return request.idempotency_key
@@ -863,12 +936,40 @@ _CATEGORY_SUBGRAPH = {
     "ownership": "code_topology",
     "people": "code_topology",
     "timeline": "recent_changes",
+    "knowledge": "knowledge",
     "generic": "admin",
 }
+# Entity categories are coarser than subgraphs (``evidence`` covers both the
+# soft-fail fallbacks and ingested documents), so labels whose slice differs
+# from their category default are pinned here. Mirrors the validator's map.
+_ENTITY_TYPE_SUBGRAPH = {
+    "Document": "knowledge",
+    "DocumentSection": "knowledge",
+}
+
+
+def claim_subgraph_names() -> frozenset[str]:
+    """Every ``subgraph`` value the lowering can stamp on a claim.
+
+    Exposed so a filter such as ``search-entities --subgraph`` can be checked
+    against the vocabulary that was actually written, rather than against the
+    read-view names alone (``memory`` and ``admin`` are slices, not views).
+    """
+    return frozenset(
+        {
+            *_MEMORY_PREDICATE_SUBGRAPH.values(),
+            *_CATEGORY_SUBGRAPH.values(),
+            *_ENTITY_TYPE_SUBGRAPH.values(),
+            "memory",
+        }
+    )
 
 
 def _subgraph_for_predicate(predicate: str) -> str:
     pred = (predicate or "").strip().upper()
+    mapped = _CURRENT_DEFINITION.get().predicate_subgraphs.get(pred)
+    if mapped is not None:
+        return mapped
     if pred in _MEMORY_PREDICATE_SUBGRAPH:
         return _MEMORY_PREDICATE_SUBGRAPH[pred]
     spec = _edge_spec(pred)
@@ -879,6 +980,8 @@ def _subgraph_for_predicate(predicate: str) -> str:
 
 def _subgraph_for_entity(ref: GraphEntityRef | None) -> str:
     label = _label_for(ref, "Observation") if ref is not None else "Observation"
+    if label in _ENTITY_TYPE_SUBGRAPH:
+        return _ENTITY_TYPE_SUBGRAPH[label]
     spec = _entity_types().get(label)
     if spec is None:
         return "admin"
@@ -900,6 +1003,13 @@ def _short(text: str, *, length: int = 12) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _utc_iso(value: str) -> str:
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 __all__ = ["lower_semantic_request"]
