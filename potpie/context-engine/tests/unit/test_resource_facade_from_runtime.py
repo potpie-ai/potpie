@@ -98,3 +98,47 @@ def test_an_import_through_the_composed_facade_lands_in_the_runtime(tmp_path) ->
         ClaimQueryFilter(pot_id="p", predicate_in=("SECTION_OF",))
     )
     assert [row.subject_key for row in rows] == ["docsection:q3-review:body"]
+
+
+@pytest.mark.parametrize("protocols", [False, True])
+def test_protocol_source_protection_runs_only_with_the_protocol_extension(
+    tmp_path, monkeypatch, protocols
+) -> None:
+    from potpie_context_engine.application.services import protocol_resources
+    from potpie_context_engine.protocols import protocols_definition
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        protocol_resources,
+        "protect_protocol_source",
+        lambda *_a, **kwargs: calls.append(kwargs["slug"]),
+    )
+    store = InMemoryResourceStore()
+    runtime = build_graph_runtime(
+        build_test_backend(),
+        InMemoryGraphPlanStore(),
+        InMemoryGraphInboxStore(),
+        protocols_definition() if protocols else DEFAULT_GRAPH_DEFINITION,
+        resource_store=store,
+    )
+    facade = ResourceFacade.from_runtime(runtime, store=store)
+    directory = write_import_directory(
+        tmp_path / "in",
+        [
+            {
+                "slug": "body",
+                "title": "Body",
+                "summary": "what this section covers",
+                "ordinal": 0,
+                "content_hash": "body-v1",
+                "chunks": [{"label": "opening", "text": "alpha"}],
+            }
+        ],
+        source_ref="file:///q3.pdf",
+        source_kind="pdf",
+    )
+
+    facade.import_dir(pot_id="p", slug="q3-review", source_dir=directory)
+    facade.delete(pot_id="p", slug="q3-review")
+
+    assert calls == (["q3-review", "q3-review"] if protocols else [])

@@ -85,6 +85,8 @@ def test_the_composed_runtime_passes_explicit_commit_wiring(tmp_path: Path) -> N
     assert Path(commits.mirror.path).name == "graph_commits.sqlite"
     assert Path(commits.previews.path).name == "rollback_previews.sqlite"
     assert getpass.getuser() not in commits.host
+    # Document imports and removals are journaled resource workflows.
+    assert runtime.engine.resources.journal is not None
     # Composed but not granted: the runtime itself refuses to serve history.
     with pytest.raises(CommitAccessDenied):
         asyncio.run(commits.journal_status_async(pot_id="pot_1"))
