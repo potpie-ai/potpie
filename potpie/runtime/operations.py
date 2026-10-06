@@ -10,10 +10,15 @@ from types import MappingProxyType
 from typing import Any, Mapping, get_args, get_origin, get_type_hints
 
 from potpie_context_engine.requests import (
+    ApplyPreviewRequest,
     CatalogRequest,
     CommitRequest,
+    CommitShowRequest,
+    CommitStatusRequest,
+    CommitsRequest,
     DataPlaneStatusRequest,
     DescribeRequest,
+    DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
     HistoryRequest,
@@ -26,6 +31,7 @@ from potpie_context_engine.requests import (
     InboxMarkRejectedRequest,
     InboxShowRequest,
     InspectRequest,
+    JournalStatusRequest,
     MutateRequest,
     NeighborhoodRequest,
     NudgeRequest,
@@ -33,20 +39,29 @@ from potpie_context_engine.requests import (
     ProposeRequest,
     QualityRequest,
     ReadRequest,
+    RebuildCommitsRequest,
     RecordRequest,
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    RevertPreviewRequest,
+    RollbackPreviewRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
+    VerifyCommitRequest,
 )
 from potpie_context_engine.results import (
+    ApplyPreviewResult,
     CatalogResult,
     CommitResult,
+    CommitShowResult,
+    CommitStatusResult,
+    CommitsResult,
     DataPlaneStatusResult,
     DescribeResult,
+    DisableRollbackResult,
     ExportSnapshotResult,
     HistoryResult,
     ImportSnapshotResult,
@@ -58,6 +73,7 @@ from potpie_context_engine.results import (
     InboxMarkRejectedResult,
     InboxShowResult,
     InspectResult,
+    JournalStatusResult,
     MutateResult,
     NeighborhoodResult,
     NudgeResult,
@@ -65,14 +81,18 @@ from potpie_context_engine.results import (
     ProposeResult,
     QualityResult,
     ReadResult,
+    RebuildCommitsResult,
     RecordResult,
     RepairResult,
     ResetContextResult,
     ResolveResult,
+    RevertPreviewResult,
+    RollbackPreviewResult,
     SearchEntitiesResult,
     SearchResult,
     SubmitArtifactResult,
     SubmitEventResult,
+    VerifyCommitResult,
 )
 
 
@@ -107,6 +127,16 @@ class EngineOperation(StrEnum):
     SUBMIT_ARTIFACT = "submit_artifact"
     PROCESSING_STATUS = "processing_status"
     NUDGE = "nudge"
+    COMMIT_STATUS = "commit_status"
+    VERIFY_COMMIT = "verify_commit"
+    JOURNAL_STATUS = "journal_status"
+    COMMITS = "commits"
+    COMMIT_SHOW = "commit_show"
+    REVERT_PREVIEW = "revert_preview"
+    ROLLBACK_PREVIEW = "rollback_preview"
+    APPLY_PREVIEW = "apply_preview"
+    DISABLE_ROLLBACK = "disable_rollback"
+    REBUILD_COMMITS = "rebuild_commits"
 
 
 class DaemonControlOperation(StrEnum):
@@ -260,6 +290,65 @@ _SPECS = (
         _READ,
     ),
     OperationSpec(EngineOperation.NUDGE, NudgeRequest, NudgeResult, _WRITE),
+    # Graph commit history, journal and rollback. Status reads never write, so
+    # a caller that lost a commit's response may poll them without retrying it.
+    OperationSpec(
+        EngineOperation.COMMIT_STATUS,
+        CommitStatusRequest,
+        CommitStatusResult,
+        _READ,
+    ),
+    OperationSpec(
+        EngineOperation.VERIFY_COMMIT,
+        VerifyCommitRequest,
+        VerifyCommitResult,
+        _READ,
+    ),
+    OperationSpec(
+        EngineOperation.JOURNAL_STATUS,
+        JournalStatusRequest,
+        JournalStatusResult,
+        _READ,
+    ),
+    OperationSpec(EngineOperation.COMMITS, CommitsRequest, CommitsResult, _READ),
+    OperationSpec(
+        EngineOperation.COMMIT_SHOW, CommitShowRequest, CommitShowResult, _READ
+    ),
+    # A preview plans an inverse against the current HEAD and stores it
+    # server-side; it changes no graph state. It is exclusive so it is never
+    # planned against a HEAD that a concurrent write is moving. Only applying a
+    # preview changes the graph, so only that carries destructive intent.
+    OperationSpec(
+        EngineOperation.REVERT_PREVIEW,
+        RevertPreviewRequest,
+        RevertPreviewResult,
+        _WRITE,
+    ),
+    OperationSpec(
+        EngineOperation.ROLLBACK_PREVIEW,
+        RollbackPreviewRequest,
+        RollbackPreviewResult,
+        _WRITE,
+    ),
+    OperationSpec(
+        EngineOperation.APPLY_PREVIEW,
+        ApplyPreviewRequest,
+        ApplyPreviewResult,
+        _WRITE,
+        destructive=True,
+    ),
+    OperationSpec(
+        EngineOperation.DISABLE_ROLLBACK,
+        DisableRollbackRequest,
+        DisableRollbackResult,
+        _WRITE,
+    ),
+    OperationSpec(
+        EngineOperation.REBUILD_COMMITS,
+        RebuildCommitsRequest,
+        RebuildCommitsResult,
+        _WRITE,
+    ),
 )
 
 if len({spec.operation for spec in _SPECS}) != len(_SPECS):
@@ -270,6 +359,76 @@ if {spec.operation for spec in _SPECS} != set(EngineOperation):
 ENGINE_OPERATION_CATALOG: Mapping[EngineOperation, OperationSpec] = MappingProxyType(
     {spec.operation: spec for spec in _SPECS}
 )
+
+
+def _server_only_types() -> frozenset[type]:
+    """Journal and restore types that only the engine may construct.
+
+    A restore plan, its records, a stored preview and its request are rebuilt
+    and checked against persisted hashes on the server. A wire payload that
+    could carry one would let a caller choose what a rollback writes.
+    """
+
+    from potpie_context_engine.core.graph_journal import (
+        CommitReceipt,
+        JournalRecord,
+        RecordChange,
+        RollbackPreview,
+        RollbackRequest,
+    )
+    from potpie_context_engine.core.graph_restore import RestorePlan, RestoreRecord
+
+    return frozenset(
+        {
+            CommitReceipt,
+            JournalRecord,
+            RecordChange,
+            RestorePlan,
+            RestoreRecord,
+            RollbackPreview,
+            RollbackRequest,
+        }
+    )
+
+
+def _referenced_types(annotation: object, seen: set[type]) -> None:
+    for argument in get_args(annotation):
+        _referenced_types(argument, seen)
+    if isinstance(annotation, type) and annotation not in seen:
+        seen.add(annotation)
+        if is_dataclass(annotation):
+            try:
+                hints = get_type_hints(annotation)
+            except (NameError, TypeError) as exc:
+                # Fail closed: a field type nobody can resolve is a field type
+                # nobody has checked.
+                raise RuntimeError(
+                    f"cannot resolve the field types of {annotation.__qualname__}"
+                ) from exc
+            for hint in hints.values():
+                _referenced_types(hint, seen)
+
+
+def request_wire_types(request_type: type[EngineRequest]) -> frozenset[type]:
+    """Every type a decoded ``request_type`` payload can contain."""
+
+    seen: set[type] = set()
+    _referenced_types(request_type, seen)
+    return frozenset(seen)
+
+
+_SERVER_ONLY_INPUTS = {
+    spec.operation.value: sorted(
+        kind.__name__
+        for kind in request_wire_types(spec.request_type) & _server_only_types()
+    )
+    for spec in _SPECS
+}
+if any(_SERVER_ONLY_INPUTS.values()):
+    raise RuntimeError(
+        "operation requests must not carry server-only restore types: "
+        f"{ {op: kinds for op, kinds in _SERVER_ONLY_INPUTS.items() if kinds} }"
+    )
 
 DAEMON_CONTROL_SAFETY: Mapping[DaemonControlOperation, SafetyClass] = MappingProxyType(
     {
@@ -410,4 +569,5 @@ __all__ = [
     "SafetyClass",
     "operation_capabilities",
     "operation_catalog_fingerprint",
+    "request_wire_types",
 ]

@@ -16,6 +16,7 @@ from potpie.pots.resolution import (
     repo_source_index,
 )
 from potpie.runtime.clients import ClientOutcome
+from potpie.runtime.commit_access import commit_grant
 from potpie.runtime.operations import EngineOperation
 from potpie.runtime.resource_manager import (
     AuthenticatedActor,
@@ -37,6 +38,7 @@ from potpie_context_engine import (
     Outcome,
     Success,
 )
+from potpie_context_engine.core.commit_service import CommitAccessDenied
 from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
@@ -63,10 +65,15 @@ from potpie_context_engine.domain.ingestion_event_models import (
     IngestionSubmissionRequest,
 )
 from potpie_context_engine.requests import (
+    ApplyPreviewRequest,
     CatalogRequest,
     CommitRequest,
+    CommitShowRequest,
+    CommitStatusRequest,
+    CommitsRequest,
     DataPlaneStatusRequest,
     DescribeRequest,
+    DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
     HistoryRequest,
@@ -79,23 +86,32 @@ from potpie_context_engine.requests import (
     InboxMarkRejectedRequest,
     InboxShowRequest,
     InspectRequest,
+    JournalStatusRequest,
     MutateRequest,
     NeighborhoodRequest,
     NudgeRequest,
     ProposeRequest,
     QualityRequest,
     ReadRequest,
+    RebuildCommitsRequest,
     RecordRequest,
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    RevertPreviewRequest,
+    RollbackPreviewRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
     ProcessingStatusRequest,
+    VerifyCommitRequest,
 )
-from potpie_context_engine.results import DescribeResult, ResetContextResult
+from potpie_context_engine.results import (
+    DescribeResult,
+    GraphJournalResult,
+    ResetContextResult,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -520,6 +536,7 @@ class LocalEngineOperations:
                 pot_id=context.value,
                 approved_by=request.approved_by,
                 verify=request.verify,
+                defer_verification=request.defer_verification,
             )
         )
 
@@ -537,6 +554,7 @@ class LocalEngineOperations:
                 since=request.since,
                 until=request.until,
                 limit=request.limit,
+                include_claims=request.include_claims,
             )
         )
 
@@ -752,6 +770,158 @@ class LocalEngineOperations:
             )
         )
 
+    async def commit_status(
+        self, context: ContextIdentity, request: CommitStatusRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._services.graph_workbench.commit_status(
+                _required_value(request.plan_id, "plan_id"), pot_id=context.value
+            )
+        )
+
+    async def verify_commit(
+        self, context: ContextIdentity, request: VerifyCommitRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._services.graph_workbench.verify_commit(
+                _required_value(request.plan_id, "plan_id"), pot_id=context.value
+            )
+        )
+
+    async def journal_status(
+        self, context: ContextIdentity, request: JournalStatusRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._journal(
+            "journal_status",
+            context,
+            lambda commits: commits.journal_status_async(pot_id=context.value),
+        )
+
+    async def commits(
+        self, context: ContextIdentity, request: CommitsRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "commits",
+            context,
+            lambda commits: commits.commits_async(
+                pot_id=context.value,
+                cursor=request.cursor,
+                limit=request.limit,
+                actor=request.actor,
+                origin=request.origin,
+                logical_key=request.logical_key,
+            ),
+        )
+
+    async def commit_show(
+        self, context: ContextIdentity, request: CommitShowRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "commit_show",
+            context,
+            lambda commits: commits.commit_show_async(
+                _required_value(request.commit_id, "commit_id"),
+                pot_id=context.value,
+                offset=request.offset,
+                limit=request.limit,
+            ),
+        )
+
+    async def revert_preview(
+        self, context: ContextIdentity, request: RevertPreviewRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "revert_preview",
+            context,
+            lambda commits: commits.revert_preview_async(
+                _required_value(request.commit_id, "commit_id"),
+                pot_id=context.value,
+                expected_head=_required_value(request.expected_head, "expected_head"),
+            ),
+        )
+
+    async def rollback_preview(
+        self, context: ContextIdentity, request: RollbackPreviewRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "rollback_preview",
+            context,
+            lambda commits: commits.rollback_preview_async(
+                _required_value(request.target_commit_id, "target_commit_id"),
+                pot_id=context.value,
+                expected_head=_required_value(request.expected_head, "expected_head"),
+            ),
+        )
+
+    async def apply_preview(
+        self, context: ContextIdentity, request: ApplyPreviewRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "apply_preview",
+            context,
+            lambda commits: commits.apply_preview_async(
+                _required_value(request.preview_id, "preview_id"),
+                pot_id=context.value,
+            ),
+        )
+
+    async def disable_rollback(
+        self, context: ContextIdentity, request: DisableRollbackRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._journal(
+            "disable_rollback",
+            context,
+            lambda commits: commits.disable_rollback_async(pot_id=context.value),
+        )
+
+    async def rebuild_commits(
+        self, context: ContextIdentity, request: RebuildCommitsRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._journal(
+            "rebuild_commits",
+            context,
+            lambda commits: commits.rebuild_commits_async(pot_id=context.value),
+        )
+
+    async def _journal(
+        self,
+        operation: str,
+        context: ContextIdentity,
+        call: Callable[[Any], Awaitable[Any]],
+    ) -> Outcome[object]:
+        """Run one commit-service call inside this pot's commit grant.
+
+        Every call that reaches here passed the resource manager, which
+        authenticated the caller and authorized this operation for exactly
+        this pot, so the grant is scoped to that pot and nothing wider.
+        """
+
+        try:
+            with commit_grant(context.value):
+                value = await call(self._services.graph_workbench)
+        except CommitAccessDenied as exc:
+            return Failure(
+                DomainError(
+                    code="commit_access_denied",
+                    message=str(exc),
+                    details={"operation": operation},
+                )
+            )
+        except ValueError as exc:
+            return Failure(
+                DomainError(
+                    code="validation_error",
+                    message=str(exc),
+                    details={"operation": operation},
+                )
+            )
+        except Exception as exc:
+            return await self._dependency_failure(operation, exc)
+        return Success(GraphJournalResult.from_value(value))
+
     async def invoke(
         self,
         operation: EngineOperation,
@@ -792,6 +962,16 @@ class LocalEngineOperations:
             EngineOperation.SUBMIT_ARTIFACT: self.submit_artifact,
             EngineOperation.PROCESSING_STATUS: self.processing_status,
             EngineOperation.NUDGE: self.nudge,
+            EngineOperation.COMMIT_STATUS: self.commit_status,
+            EngineOperation.VERIFY_COMMIT: self.verify_commit,
+            EngineOperation.JOURNAL_STATUS: self.journal_status,
+            EngineOperation.COMMITS: self.commits,
+            EngineOperation.COMMIT_SHOW: self.commit_show,
+            EngineOperation.REVERT_PREVIEW: self.revert_preview,
+            EngineOperation.ROLLBACK_PREVIEW: self.rollback_preview,
+            EngineOperation.APPLY_PREVIEW: self.apply_preview,
+            EngineOperation.DISABLE_ROLLBACK: self.disable_rollback,
+            EngineOperation.REBUILD_COMMITS: self.rebuild_commits,
         }
         handler = handlers.get(operation)
         if handler is None:

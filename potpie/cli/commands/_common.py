@@ -21,6 +21,7 @@ import os
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Final, Iterator, Literal, Mapping, NoReturn, Sequence
 
@@ -314,7 +315,11 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
             )
             handshake = _run_engine_awaitable(client.handshake())
             if not getattr(handshake, "ok", False):
-                raise EngineClientError(handshake.error)
+                raise EngineClientError(
+                    _actionable_handshake_error(
+                        handshake.error, pid=connection.discovery.pid
+                    )
+                )
             _state["engine_daemon_client"] = client
             _state["engine_daemon_key"] = key
         return client
@@ -353,6 +358,38 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
         coordinator=coordinator,
         context_free_handler=context_free_handler,
     )
+
+
+def _actionable_handshake_error(error: object, *, pid: int) -> object:
+    """Name the repair when the running daemon is from another Potpie version.
+
+    Each release that adds an operation changes the catalog fingerprint, and a
+    daemon started by the previous install refuses the new CLI's handshake. The
+    daemon's own refusal only says the catalogs differ; say what to do.
+    """
+
+    if getattr(error, "code", None) != "operation_catalog_mismatch":
+        return error
+    try:
+        return replace(
+            error,
+            message=(
+                "The running Potpie daemon was started by a different Potpie "
+                "version and does not serve this version's operations."
+            ),
+            details={**dict(getattr(error, "details", {}) or {}), "pid": pid},
+            recommended_next_action=(
+                "run 'potpie daemon restart'; if the old daemon cannot be "
+                f"stopped, end process {pid} yourself and run 'potpie daemon start'"
+            ),
+        )
+    except TypeError:
+        return error
+
+
+def run_engine_outcome(awaitable):
+    """Run one async engine-client call and return its outcome unraised."""
+    return _run_engine_awaitable(awaitable)
 
 
 def run_engine_operation(awaitable):

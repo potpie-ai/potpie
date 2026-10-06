@@ -13,8 +13,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from potpie_context_engine.core.commit_service import (
+    UNNAMED_COMMIT_ACTOR,
     GraphCommitService,
     GraphCommitSurface,
+    deny_commit_access,
 )
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
@@ -799,6 +801,11 @@ def build_graph_runtime(
     legitimate deployment, and the read trunk substitutes a fail-closed profile
     that answers ``match_mode="disabled"`` rather than dropping the family from
     the advertised contract.
+
+    ``commit_actor`` names the principal recorded on restore receipts and bound
+    to rollback previews; ``commit_authorize(pot_id, access)`` decides commit
+    ``read``/``write``/``admin`` access and raises to refuse. Both belong to the
+    host. Without them, commit history and rollback are refused.
     """
 
     if not isinstance(definition, GraphDefinition):
@@ -909,19 +916,16 @@ def build_graph_runtime(
         resource_index=resource_index,
         **({"resource_store": resource_store} if resource_store is not None else {}),
     )
-    import getpass
-
-    async def local_authorize(pot_id, access):
-        if access not in {"read", "write", "admin"}:
-            raise ValueError("unknown commit access")
-
+    # Fail closed: a runtime composed without an explicit authorization serves
+    # no commit history and applies no rollback, and an unnamed actor is
+    # recorded as such rather than as whoever owns the process.
     commits = GraphCommitService(
         journal=runtime_backend.journal,
         mirror=commit_mirror,
         previews=preview_store,
         host=commit_host,
-        actor=commit_actor or (lambda: "local:" + getpass.getuser()),
-        authorize=commit_authorize or local_authorize,
+        actor=commit_actor or (lambda: UNNAMED_COMMIT_ACTOR),
+        authorize=commit_authorize or deny_commit_access,
     )
     workbench.commit_service = commits
     return GraphRuntime(

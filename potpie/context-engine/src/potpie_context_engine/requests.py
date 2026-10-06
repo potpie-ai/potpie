@@ -169,6 +169,9 @@ class CommitRequest(EngineRequest):
     plan_id: str = ""
     approved_by: str | None = None
     verify: bool = False
+    # Return the durable receipt before the slow readback; the caller verifies
+    # it separately so a failed check cannot hide a write that landed.
+    defer_verification: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +184,7 @@ class HistoryRequest(EngineRequest):
     since: datetime | None = None
     until: datetime | None = None
     limit: int = 50
+    include_claims: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +307,70 @@ class NudgeRequest(EngineRequest):
     path: str | None = None
     query: str | None = None
     limit: int = 5
+
+
+# -- graph commit history, journal and rollback -------------------------------
+#
+# Only identifiers cross this boundary. Restore plans, inverse records and
+# preview bodies are rebuilt and checked server-side; no request carries them.
+
+
+@dataclass(frozen=True, slots=True)
+class CommitStatusRequest(EngineRequest):
+    plan_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class VerifyCommitRequest(EngineRequest):
+    plan_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JournalStatusRequest(EngineRequest):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class CommitsRequest(EngineRequest):
+    cursor: str | None = None
+    limit: int = 50
+    actor: str | None = None
+    origin: str | None = None
+    logical_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CommitShowRequest(EngineRequest):
+    commit_id: str = ""
+    offset: int = 0
+    limit: int = 100
+
+
+@dataclass(frozen=True, slots=True)
+class RevertPreviewRequest(EngineRequest):
+    commit_id: str = ""
+    expected_head: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RollbackPreviewRequest(EngineRequest):
+    target_commit_id: str = ""
+    expected_head: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyPreviewRequest(EngineRequest):
+    preview_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DisableRollbackRequest(EngineRequest):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class RebuildCommitsRequest(EngineRequest):
+    pass
 
 
 def request_from_payload(

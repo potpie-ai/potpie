@@ -15,10 +15,15 @@ from potpie_context_engine.outcomes import (
     Success,
 )
 from potpie_context_engine.results import (
+    ApplyPreviewResult,
     CatalogResult,
     CommitResult,
+    CommitShowResult,
+    CommitStatusResult,
+    CommitsResult,
     DataPlaneStatusResult,
     DescribeResult,
+    DisableRollbackResult,
     ExportSnapshotResult,
     HistoryResult,
     ImportSnapshotResult,
@@ -30,6 +35,7 @@ from potpie_context_engine.results import (
     InboxMarkRejectedResult,
     InboxShowResult,
     InspectResult,
+    JournalStatusResult,
     MutateResult,
     NeighborhoodResult,
     NudgeResult,
@@ -37,20 +43,29 @@ from potpie_context_engine.results import (
     ProposeResult,
     QualityResult,
     ReadResult,
+    RebuildCommitsResult,
     RecordResult,
     RepairResult,
     ResetContextResult,
     ResolveResult,
+    RevertPreviewResult,
+    RollbackPreviewResult,
     SearchEntitiesResult,
     SearchResult,
     SubmitArtifactResult,
     SubmitEventResult,
+    VerifyCommitResult,
 )
 from potpie_context_engine.requests import (
+    ApplyPreviewRequest,
     CatalogRequest,
     CommitRequest,
+    CommitShowRequest,
+    CommitStatusRequest,
+    CommitsRequest,
     DataPlaneStatusRequest,
     DescribeRequest,
+    DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
     HistoryRequest,
@@ -63,6 +78,7 @@ from potpie_context_engine.requests import (
     InboxMarkRejectedRequest,
     InboxShowRequest,
     InspectRequest,
+    JournalStatusRequest,
     MutateRequest,
     NeighborhoodRequest,
     NudgeRequest,
@@ -70,14 +86,18 @@ from potpie_context_engine.requests import (
     ProposeRequest,
     QualityRequest,
     ReadRequest,
+    RebuildCommitsRequest,
     RecordRequest,
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    RevertPreviewRequest,
+    RollbackPreviewRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
+    VerifyCommitRequest,
 )
 
 
@@ -224,6 +244,46 @@ class WorkbenchOperations(Protocol):
     async def inbox_close(
         self, context: ContextIdentity, request: InboxCloseRequest
     ) -> InboxCloseResult | Outcome[InboxCloseResult]: ...
+
+    async def commit_status(
+        self, context: ContextIdentity, request: CommitStatusRequest
+    ) -> CommitStatusResult | Outcome[CommitStatusResult]: ...
+
+    async def verify_commit(
+        self, context: ContextIdentity, request: VerifyCommitRequest
+    ) -> VerifyCommitResult | Outcome[VerifyCommitResult]: ...
+
+    async def journal_status(
+        self, context: ContextIdentity, request: JournalStatusRequest
+    ) -> JournalStatusResult | Outcome[JournalStatusResult]: ...
+
+    async def commits(
+        self, context: ContextIdentity, request: CommitsRequest
+    ) -> CommitsResult | Outcome[CommitsResult]: ...
+
+    async def commit_show(
+        self, context: ContextIdentity, request: CommitShowRequest
+    ) -> CommitShowResult | Outcome[CommitShowResult]: ...
+
+    async def revert_preview(
+        self, context: ContextIdentity, request: RevertPreviewRequest
+    ) -> RevertPreviewResult | Outcome[RevertPreviewResult]: ...
+
+    async def rollback_preview(
+        self, context: ContextIdentity, request: RollbackPreviewRequest
+    ) -> RollbackPreviewResult | Outcome[RollbackPreviewResult]: ...
+
+    async def apply_preview(
+        self, context: ContextIdentity, request: ApplyPreviewRequest
+    ) -> ApplyPreviewResult | Outcome[ApplyPreviewResult]: ...
+
+    async def disable_rollback(
+        self, context: ContextIdentity, request: DisableRollbackRequest
+    ) -> DisableRollbackResult | Outcome[DisableRollbackResult]: ...
+
+    async def rebuild_commits(
+        self, context: ContextIdentity, request: RebuildCommitsRequest
+    ) -> RebuildCommitsResult | Outcome[RebuildCommitsResult]: ...
 
 
 class IngestionOperations(Protocol):
@@ -514,6 +574,74 @@ class ContextEngine:
     ) -> Outcome[InboxCloseResult]:
         return await self._invoke(
             "inbox_close", self._dependencies.workbench.inbox_close, request
+        )
+
+    async def commit_status(
+        self, request: CommitStatusRequest
+    ) -> Outcome[CommitStatusResult]:
+        return await self._invoke(
+            "commit_status", self._dependencies.workbench.commit_status, request
+        )
+
+    async def verify_commit(
+        self, request: VerifyCommitRequest
+    ) -> Outcome[VerifyCommitResult]:
+        return await self._invoke(
+            "verify_commit", self._dependencies.workbench.verify_commit, request
+        )
+
+    async def journal_status(
+        self, request: JournalStatusRequest
+    ) -> Outcome[JournalStatusResult]:
+        return await self._invoke(
+            "journal_status", self._dependencies.workbench.journal_status, request
+        )
+
+    async def commits(self, request: CommitsRequest) -> Outcome[CommitsResult]:
+        return await self._invoke(
+            "commits", self._dependencies.workbench.commits, request
+        )
+
+    async def commit_show(
+        self, request: CommitShowRequest
+    ) -> Outcome[CommitShowResult]:
+        return await self._invoke(
+            "commit_show", self._dependencies.workbench.commit_show, request
+        )
+
+    async def revert_preview(
+        self, request: RevertPreviewRequest
+    ) -> Outcome[RevertPreviewResult]:
+        return await self._invoke(
+            "revert_preview", self._dependencies.workbench.revert_preview, request
+        )
+
+    async def rollback_preview(
+        self, request: RollbackPreviewRequest
+    ) -> Outcome[RollbackPreviewResult]:
+        return await self._invoke(
+            "rollback_preview", self._dependencies.workbench.rollback_preview, request
+        )
+
+    async def apply_preview(
+        self, request: ApplyPreviewRequest
+    ) -> Outcome[ApplyPreviewResult]:
+        return await self._invoke(
+            "apply_preview", self._dependencies.workbench.apply_preview, request
+        )
+
+    async def disable_rollback(
+        self, request: DisableRollbackRequest
+    ) -> Outcome[DisableRollbackResult]:
+        return await self._invoke(
+            "disable_rollback", self._dependencies.workbench.disable_rollback, request
+        )
+
+    async def rebuild_commits(
+        self, request: RebuildCommitsRequest
+    ) -> Outcome[RebuildCommitsResult]:
+        return await self._invoke(
+            "rebuild_commits", self._dependencies.workbench.rebuild_commits, request
         )
 
     async def submit_event(

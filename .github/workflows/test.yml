@@ -216,11 +216,29 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --all-packages --no-cache
 
+      # Graph journal conformance runs against a private FalkorDB, and the
+      # crash test kills and restarts a disposable AOF-enabled one by name.
+      - name: Start graph journal FalkorDB fixtures
+        run: |
+          docker run -d --name journal-falkordb-ci -p 127.0.0.1:6382:6379 -e BROWSER=0 falkordb/falkordb:v4.16.0
+          docker run -d --name pie-journal-crash-ci -p 127.0.0.1:6381:6379 -e BROWSER=0 -e 'REDIS_ARGS=--appendonly yes --appendfsync always' falkordb/falkordb:v4.16.0
+          for container in journal-falkordb-ci pie-journal-crash-ci; do
+            ready=0
+            for attempt in $(seq 1 30); do
+              if docker exec "$container" redis-cli ping | grep -q PONG; then ready=1; break; fi
+              sleep 1
+            done
+            if [ "$ready" != 1 ]; then docker logs "$container"; exit 1; fi
+          done
+
       - name: Run context-engine package tests
         working-directory: potpie/context-engine
         env:
           POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
           ENV: "development"
+          POTPIE_JOURNAL_FALKOR_PORT: "6382"
+          POTPIE_JOURNAL_CRASH_CONTAINER: pie-journal-crash-ci
+          POTPIE_JOURNAL_CRASH_PORT: "6381"
         run: uv run --project . pytest tests -m "not premerge_journey"
 
   potpie-windows-unit:
@@ -324,3 +342,23 @@ jobs:
       - name: Run sandbox local integration tests
         working-directory: potpie/sandbox
         run: uv run --project . --extra daytona pytest tests/integration/test_docker_runtime.py tests/e2e/test_local_subprocess_e2e.py
+
+  graph-commits-ui:
+    # The explorer's commit diffs, presentation and mutation context are pure
+    # TypeScript; run every frontend test, then type-check and build.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Test and build the graph explorer
+        working-directory: potpie/daemon/http/ui/frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
