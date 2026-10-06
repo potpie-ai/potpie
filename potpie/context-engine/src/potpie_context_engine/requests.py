@@ -47,6 +47,8 @@ class SearchRequest(EngineRequest):
     mode: str = "fast"
     source_policy: str = "references_only"
     max_items: int = 12
+    intent: str | None = None
+    """Narrow the lookup to one intent's families; unset lets Potpie infer it."""
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -97,7 +99,8 @@ class ReadRequest(EngineRequest):
     source_refs: tuple[str, ...] = ()
     detail: str = "compact"
     relations: str = "summary"
-    query_threshold: float = 0.70
+    query_threshold: float | None = None
+    """Explicit similarity floor; ``None`` leaves filtering to the view's default."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +165,8 @@ class ResetContextRequest(EngineRequest):
 class ProposeRequest(EngineRequest):
     mutation: Mapping[str, Any] = field(default_factory=dict)
     ttl_seconds: int | None = None
+    approved_by: str | None = None
+    """User ref that pre-approves a review-required plan at propose time."""
 
 
 @dataclass(frozen=True, slots=True)
