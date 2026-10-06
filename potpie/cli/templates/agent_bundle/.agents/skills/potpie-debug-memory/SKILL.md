@@ -1,6 +1,6 @@
 ---
 name: potpie-debug-memory
-version: "4"
+version: "5"
 description: "Use while debugging or troubleshooting failures, flaky tests, incidents, production alerts, CI failures, local dev setup issues, repeated bugs, prior fixes, failed attempts, and verification history."
 ---
 
@@ -122,3 +122,14 @@ If the source may matter but the canonical update is uncertain, use
 
 Debug memory is harness-led: investigate and verify before writing. Do not use
 scanner-driven graph updates or record a bug/fix from filenames or logs alone.
+
+## Protocol definitions and codecs
+
+When the source or question concerns telegrams, message layouts, field/value
+meanings, revisions or decoder changes, check the catalog for
+`protocols.message_context` and, when it is advertised, follow
+[the shared protocol reference](../potpie-graph/references/protocols.md). The
+extension is opt-in (`potpie config set graph.protocols on`), so a catalog
+without it means protocol memory is off. Use explicit protocol reads alongside
+existing Service/CodeAsset context. Preserve immutable source evidence and
+partial coverage; capabilities do not establish traffic.

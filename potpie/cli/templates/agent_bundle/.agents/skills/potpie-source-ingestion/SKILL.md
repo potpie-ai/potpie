@@ -1,6 +1,6 @@
 ---
 name: potpie-source-ingestion
-version: "4"
+version: "5"
 description: "Use when the user explicitly asks to ingest, refresh, or deeply understand a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness performs todo-driven discovery, uses local/GitHub/integration tools and read-only subagents when available, builds evidence-backed semantic mutations, and writes through graph propose/verified commit. Document payloads (PDF, spreadsheet, markdown/HTML) route through the per-format potpie-resource-* skills and `potpie resource import`."
 ---
 
@@ -314,3 +314,14 @@ document covers is enough.
 - Logs and transcripts can record diagnostic signals, investigations, fixes, and
   verifications. Keep raw logs out of descriptions except for short distinctive
   error text.
+
+## Protocol definitions and codecs
+
+When the source or question concerns telegrams, message layouts, field/value
+meanings, revisions or decoder changes, check the catalog for
+`protocols.message_context` and, when it is advertised, follow
+[the shared protocol reference](../potpie-graph/references/protocols.md). The
+extension is opt-in (`potpie config set graph.protocols on`), so a catalog
+without it means protocol memory is off. Use explicit protocol reads alongside
+existing Service/CodeAsset context. Preserve immutable source evidence and
+partial coverage; capabilities do not establish traffic.

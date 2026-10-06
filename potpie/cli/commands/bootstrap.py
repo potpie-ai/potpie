@@ -68,9 +68,12 @@ from potpie.agent_context import (
     status_next_action,
 )
 from potpie.config.local import (
+    GRAPH_PROTOCOLS_KEY,
     KNOWN_CONFIG_KEYS,
+    SWITCH_VALUES,
     is_known_config_key,
     is_secret_config_key,
+    normalize_switch,
     public_config_value,
 )
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
@@ -639,17 +642,21 @@ def register(root: typer.Typer) -> None:
                 )
             if key == "resource_index":
                 value = _require_resource_index_profile(value)
+            if key == GRAPH_PROTOCOLS_KEY:
+                value = _require_switch(key, value)
             get_config_service().set(key, value)
             shown = public_config_value(key, value)
-            emit(
-                {
-                    "key": key,
-                    "value": shown,
-                    "redacted": is_secret_config_key(key) or shown != value,
-                    "persisted": True,
-                },
-                human=f"set {key}={shown}",
-            )
+            payload: dict[str, object] = {
+                "key": key,
+                "value": shown,
+                "redacted": is_secret_config_key(key) or shown != value,
+                "persisted": True,
+            }
+            human = f"set {key}={shown}"
+            if key in _STARTUP_CONFIG_KEYS:
+                payload.update(_STARTUP_CONFIG_NOTE)
+                human += f"\n{_STARTUP_CONFIG_NOTE['next_action']}"
+            emit(payload, human=human)
 
     @config_app.command("unset")
     def config_unset(key: str) -> None:
@@ -665,14 +672,14 @@ def register(root: typer.Typer) -> None:
                 key, argument="key", example="potpie config unset github_token"
             )
             removed = get_config_service().unset(key)
-            emit(
-                {"key": key, "removed": removed},
-                human=(
-                    f"unset {key}"
-                    if removed
-                    else f"{key} was not set (nothing removed)"
-                ),
+            payload: dict[str, object] = {"key": key, "removed": removed}
+            human = (
+                f"unset {key}" if removed else f"{key} was not set (nothing removed)"
             )
+            if removed and key in _STARTUP_CONFIG_KEYS:
+                payload.update(_STARTUP_CONFIG_NOTE)
+                human += f"\n{_STARTUP_CONFIG_NOTE['next_action']}"
+            emit(payload, human=human)
 
     root.add_typer(config_app, name="config")
 
@@ -760,6 +767,36 @@ def _resource_doctor_human(resources: dict, index: dict) -> str:
     else:
         index_line = f"resource index: unavailable — {index.get('detail')}"
     return f"{line}\n{index_line}"
+
+
+#: Keys the local runtime reads once, when it is composed. A daemon that is
+#: already running keeps serving the value it started with.
+_STARTUP_CONFIG_KEYS: frozenset[str] = frozenset({GRAPH_PROTOCOLS_KEY})
+_STARTUP_CONFIG_NOTE: dict[str, object] = {
+    "restart_required": True,
+    "next_action": (
+        "takes effect when the runtime next starts: "
+        "run 'potpie daemon restart' if a daemon is running"
+    ),
+}
+
+
+def _require_switch(key: str, value: str) -> str:
+    """``on`` or ``off`` for an on/off key, refusing anything else.
+
+    Refused here rather than read as off later: a typo would otherwise leave
+    the feature silently disabled with ``config get`` showing the typo.
+    """
+    normalized = normalize_switch(value)
+    if normalized is None:
+        fail(
+            code="validation_error",
+            message=f"{key} must be one of: {', '.join(SWITCH_VALUES)} (got {value!r})",
+            detail={"key": key, "values": list(SWITCH_VALUES)},
+            next_action=f"potpie config set {key} on",
+            exit_code=EXIT_VALIDATION,
+        )
+    return normalized
 
 
 def _require_resource_index_profile(value: str) -> str:

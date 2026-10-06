@@ -393,6 +393,38 @@ is owned by [`querying.md`](./querying.md).
   function exists, but **`graph catalog --task` is accepted and ignored in
   V1.5** — catalog returns the full ranked set.
 
+### 7.4 Optional protocol extension (off by default)
+
+The protocol ontology is the one optional extension, and nothing turns it on by
+default. A Potpie local runtime composes it when the `graph.protocols` config
+key is `on` (`potpie config set graph.protocols on`, then `potpie daemon
+restart` for a running daemon). An embedding host passes
+`potpie_context_engine.api.protocols_definition()` to `build_graph_runtime`
+itself. Making that factory and its identity helpers a supported API is
+proposed in `SPEC-CHANGE-0014`; no extension-registration hook is published.
+
+With it on, the catalog reports `extensions: {"protocols": "1"}` and adds:
+
+| Kind | Added |
+|---|---|
+| Subgraph | `protocols` |
+| Entity types | `Protocol` (a specification revision and profile), `ProtocolMessage` (a versioned message definition, never an observed exchange), `ProtocolField` (a full field path with sourced layout and typed values) |
+| Predicates | `DEFINES_MESSAGE`, `HAS_FIELD`, `CAN_SEND`, `CAN_RECEIVE`, `RESPONDS_TO`, `PROTOCOL_IMPLEMENTED_BY` |
+| View | `protocols.message_context`, include family `protocols` |
+
+Protocol keys are SHA-256 hashes of a versioned, typed identity tuple, minted
+with `potpie_context_engine.api.protocol_entity`: a revision or profile change is
+a new entity, and integer `2`, string `"2"` and `false` stay distinct. Writes go
+through the usual semantic plans with `subgraph: protocols`; no record type is
+added.
+
+With it off, none of that is advertised, protocol writes are refused as unknown
+types and predicates, and protocol-specific validation, journal restore checks
+and resource source protection do not run. Data written while it was on stays
+stored, and the view returns it once the key is back on. While off, removing or
+refreshing a source that protocol claims cite is not refused; when the key is
+back on, those claims read as unverified, never complete.
+
 ## 8. Source-of-truth, freshness & quality cues
 
 Each entity row declares a `fact_family`, `source_of_truth`, and
