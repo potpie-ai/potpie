@@ -45,6 +45,7 @@ from potpie_context_engine.domain.embedding_modes import (
     EXPLICIT_SENTENCE_TRANSFORMER_ALIASES,
     HASHING_EMBEDDER_ALIASES,
     SEMANTIC_EMBEDDER_ALIASES,
+    SEMANTIC_EMBEDDINGS_INSTALL_HINT,
     normalize_embedding_mode,
 )
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
@@ -316,7 +317,9 @@ def build_embedder() -> EmbedderPort | None:
     if choice in EXPLICIT_SENTENCE_TRANSFORMER_ALIASES:
         if not _sentence_transformers_installed():
             logger.warning(
-                "sentence-transformers is not installed; using local hashing embedder"
+                "sentence-transformers is not installed; using local hashing "
+                "embedder — %s",
+                SEMANTIC_EMBEDDINGS_INSTALL_HINT,
             )
             return HashingEmbedder()
         return _sentence_transformer_embedder()
