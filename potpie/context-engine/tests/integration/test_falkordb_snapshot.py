@@ -17,7 +17,9 @@ from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend imp
     EmbeddedGraphBackend,
 )
 
-client = pytest.importorskip("redislite.falkordb_client")
+from tests.embedded_falkordb import embedded_falkordb
+
+pytest.importorskip("redislite.falkordb_client")
 pytestmark = pytest.mark.integration
 
 
@@ -31,14 +33,8 @@ class Settings:
 
 @pytest.fixture()
 def graph(tmp_path: Path):
-    database = client.FalkorDB(str(tmp_path / "snapshot.db"))
-    try:
+    with embedded_falkordb(tmp_path / "snapshot.db") as database:
         yield database.select_graph("snapshot")
-    finally:
-        connection = getattr(database, "connection", None)
-        if connection is not None and getattr(connection, "cleanupregistry", False):
-            connection.shutdown(save=True, now=True, force=True)
-        database.close()
 
 
 def test_native_snapshot_round_trip_is_idempotent_and_advances_revision(graph) -> None:
