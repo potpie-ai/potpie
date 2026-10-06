@@ -7,6 +7,7 @@
     "dev": "vite",
     "audit": "npm audit --audit-level=moderate",
     "build": "tsc -b && vite build",
+    "test": "node --test tests/*.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

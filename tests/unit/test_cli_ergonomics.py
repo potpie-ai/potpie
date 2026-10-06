@@ -592,7 +592,9 @@ def test_pot_linked_summary_skips_graph_counts(monkeypatch) -> None:
 
 
 def test_ui_pot_option_opens_selected_pot_url(monkeypatch) -> None:
-    monkeypatch.setattr(ui, "_probe_ui", lambda base: None)
+    monkeypatch.setattr(ui, "_auth_headers", lambda daemon: {})
+    monkeypatch.setattr(ui, "_probe_ui", lambda base, headers: None)
+    monkeypatch.setattr(ui, "_handoff_code", lambda base, headers: ("code-1", None))
     pots_service = _Pots(
         [_Pot("p1", "shop", True)], {}, active=_Pot("p1", "shop", True)
     )
@@ -606,7 +608,7 @@ def test_ui_pot_option_opens_selected_pot_url(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["pot_id"] == "p1"
-    assert payload["url"] == "http://127.0.0.1:8765/ui?pot=p1"
+    assert payload["url"] == "http://127.0.0.1:8765/ui?pot=p1&k=code-1"
 
 
 def test_resolve_pot_prefers_active_when_among_multiple_matches(monkeypatch) -> None:
