@@ -18,6 +18,12 @@ from potpie.runtime.root_services import (
     RootRuntimeServices,
 )
 from potpie_context_engine.adapters.outbound.graph.backends import build_backend
+from potpie_context_engine.adapters.outbound.graph.local_commit_mirror import (
+    LocalCommitMirror,
+)
+from potpie_context_engine.adapters.outbound.graph.local_rollback_previews import (
+    LocalRollbackPreviews,
+)
 from potpie_context_engine.adapters.outbound.graph.inbox_stores import (
     LocalJsonGraphInboxStore,
 )
@@ -59,6 +65,12 @@ from potpie.skills.targets import (
     OpenCodeAgentTarget,
 )
 from potpie.agent_context import AgentContextService
+from potpie.config.local_paths import default_home
+from potpie.runtime.commit_access import (
+    authorize_local_commit,
+    local_commit_actor,
+    local_commit_host,
+)
 from potpie.auth.adapters.local_identity import LocalAuthService
 from potpie.config.local import LocalConfigService
 from potpie_context_engine.application.services.nudge_service import NudgeService
@@ -186,6 +198,7 @@ def build_local_runtime(
         resource_store = LocalResourceStore()
         resource_index = _resource_index()
         resource_drain = ResourceIndexDrain(index=resource_index)
+        home = default_home()
         graph_runtime = build_graph_runtime(
             selected_backend,
             LocalJsonGraphPlanStore(),
@@ -193,6 +206,14 @@ def build_local_runtime(
             reconciliation_config=reconciliation,
             resource_index=resource_index,
             resource_store=resource_store,
+            # Commit history: a rebuildable listing index and server-held
+            # rollback previews beside the graph, both under this home. Who may
+            # read or roll back is decided per typed operation (commit_access).
+            commit_mirror=LocalCommitMirror(home / "graph_commits.sqlite"),
+            preview_store=LocalRollbackPreviews(home / "rollback_previews.sqlite"),
+            commit_host=local_commit_host(home),
+            commit_actor=local_commit_actor,
+            commit_authorize=authorize_local_commit,
         )
         graph = graph_runtime.graph
         graph_workbench = graph_runtime.workbench
