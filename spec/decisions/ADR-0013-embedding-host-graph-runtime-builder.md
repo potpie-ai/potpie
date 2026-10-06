@@ -29,22 +29,24 @@ does not fit that host:
 
 - One instance is bound to one context identity (`CE-006`), so a multi-context
   service would construct and cache an engine per context.
-- Its construction takes `EngineDependencies` that a host can only assemble
-  from engine internals.
-- Its catalog excludes the plan, inbox, and commit-history workflows such a
-  service exposes.
+- Its construction takes `EngineDependencies`, whose operation groups are
+  implemented only by root `potpie` (`potpie/runtime/local_engine.py`), so a
+  host cannot compose an engine from the engine distribution alone.
 
 Such a host therefore imports `potpie_context_engine.core.runtime`, which has
 no compatibility promise, and patches the composed runtime after construction:
 the commit listing index, the rollback preview store, the host label, and the
-actor and authorization callbacks. Patching is fragile, and a missed
-authorization patch silently leaves the single-user default in place.
+actor and authorization callbacks. It also sets the runtime's graph service,
+claim query, snapshot port, and journal on its resource facade by hand.
+Patching is fragile, and a missed authorization patch left a permissive
+single-user default in place.
 
 ## Decision
 
-`potpie_context_engine.api` exports `build_graph_runtime` and `GraphRuntime`
-as the supported composition surface for embedding hosts. The package root
-continues to export only the context-bound `ContextEngine` surface.
+`potpie_context_engine.api` exports `build_graph_runtime`, `GraphRuntime`,
+and `ResourceFacade` as the supported composition surface for embedding hosts.
+The package root continues to export only the context-bound `ContextEngine`
+surface.
 
 The builder takes every dependency and wiring choice at construction:
 
@@ -109,6 +111,26 @@ composition details without a stability promise. Runtime operations return
 their existing result values, such as `GraphMutationCommitResult`, rather than
 `ContextEngine` outcomes.
 
+A host that serves documents composes `ResourceFacade` over the runtime with
+`ResourceFacade.from_runtime(runtime, *, store, index=None, drain=None)`. The
+facade takes the graph service, claim query, snapshot port, and journal from
+the runtime, so nothing is set on it afterwards. `store` and `index` are the
+instances passed to the builder as `resource_store` and `resource_index`;
+`drain` is the host's index drain, which the facade only signals and never
+starts or stops. The supported facade operations are:
+
+```text
+import_dir           get                  list                 current_manifest
+delete               purge_pot            status               index_status
+index_build          index_rebuild        export_snapshot      import_snapshot
+```
+
+Every facade operation that addresses one context takes it per call.
+`status`, `index_status`, and `index_build` called without a context address
+the whole store, so a multi-tenant host authorizes those calls separately.
+The facade's fields are composition details; `from_runtime` is the supported
+constructor.
+
 The builder is exported from the engine-level `potpie_context_engine.api`, not
 from `potpie_context_engine.core.api`, because it composes the engine's
 default graph-service implementation, which the core contract surface does not
@@ -119,10 +141,20 @@ value, and public extension registration remains deferred under `CE-018`,
 `SYS-015`, and ADR-0006.
 
 This decision supersedes only ADR-0006's consequence that existing runtime
-code creates no public promise, and only for `build_graph_runtime` and
-`GraphRuntime` with the catalog above. ADR-0006's other deferrals, including
-extensions and external-host transport, remain in force. The `ContextEngine`
-façade and the ADR-0008 catalog are unchanged.
+code creates no public promise, and only for `build_graph_runtime`,
+`GraphRuntime`, and `ResourceFacade` with the catalogs above. ADR-0006's other
+deferrals, including extensions and external-host transport, remain in force.
+
+This decision adds no `ContextEngine` methods and decides none. The façade
+already carries methods outside the ADR-0008 catalog: `reset_context`; the
+resource methods `resource_import`, `resource_get`, `resource_list`,
+`resource_rm`, `resource_status`, `resource_index_status`,
+`resource_index_build`, and `resource_index_rebuild`; and the commit-history
+methods `commit_status`, `verify_commit`, `journal_status`, `commits`,
+`commit_show`, `revert_preview`, `rollback_preview`, `apply_preview`,
+`disable_rollback`, and `rebuild_commits`. ADR-0008 requires a later public-API
+decision before any of them joins the catalog. That decision is recorded as
+`OQ-CE-API-002` and is left to its own decision record.
 
 ## Authority And Sources
 
@@ -137,6 +169,9 @@ façade and the ADR-0008 catalog are unchanged.
 
 - An embedding host composes from `potpie_context_engine.api` without daemon,
   CLI, or root product modules.
+- Accepting this decision neither accepts nor rejects the façade methods
+  implemented outside the ADR-0008 catalog; `OQ-CE-API-002` stays open until
+  its own decision.
 - Definition, resource, and commit-history wiring happens at construction.
   Mutating a composed runtime is unnecessary and unsupported.
 - Context Engine carries a second compatibility promise beside `ContextEngine`.
@@ -159,9 +194,18 @@ façade and the ADR-0008 catalog are unchanged.
 ### Grow the `ContextEngine` façade instead
 
 Per-context binding forces a multi-context host to construct and cache one
-engine per context, and serving inbox and commit history through the façade
-needs catalog additions beyond ADR-0008 for workflows that are host-facing
-rather than agent-facing.
+engine per context. The façade's operation groups are implemented only by root
+`potpie`, so the host would either depend on Potpie's local runtime or
+re-implement every group.
+
+### Decide the façade catalog additions here as well
+
+The façade methods added outside the ADR-0008 catalog serve the
+Potpie-hosted path through one bound context, not embedding hosts. Choosing
+them has its own options and consequences and, like ADR-0008, calls for a
+decision record rather than a contract revision. Folding it in here would make
+acceptance of the builder depend on an unrelated choice, which ADR-0006
+avoids.
 
 ### Add a separate engine-level composer with a narrower result type
 
@@ -185,7 +229,8 @@ and `SYS-015` defer.
   embedding-host composition surface.
 - Clarify `CE-012` to scope typed outcomes to `ContextEngine` façade
   operations.
-- Add `CE-035` for the supported builder and runtime exports.
+- Add `CE-035` for the supported builder, runtime, and resource-facade
+  exports.
 - Add `CE-036` for construction-time wiring without post-construction
   mutation.
 - Add `CE-037` for an explicit per-call context identity.
