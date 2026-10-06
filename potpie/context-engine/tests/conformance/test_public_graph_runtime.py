@@ -1,4 +1,11 @@
-"""Internal graph-runtime conformance behind the public ContextEngine facade."""
+"""Conformance of the supported graph-runtime builder for embedding hosts.
+
+The builder, the runtime type and every contract the scenarios exercise are
+imported from ``potpie_context_engine.api``. Only the extension fixture, the
+reconciliation context probe and host-side adapters come from elsewhere:
+``GraphExtension`` is deliberately not public, and backends and stores are what
+a host brings.
+"""
 
 from __future__ import annotations
 
@@ -8,43 +15,44 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from potpie_context_engine.core.api import (
+from potpie_context_engine.api import (
     DEFAULT_GRAPH_DEFINITION,
+    AsyncClaimQueryPort,
+    AsyncGraphInboxStorePort,
+    AsyncGraphPlanStorePort,
+    Candidate,
     ClaimQueryFilter,
+    ClaimQueryPort,
     EdgeTypeSpec,
     EntityTypeSpec,
+    GraphBackend,
     GraphCatalogRequest,
     GraphDescribeRequest,
+    GraphInboxStorePort,
     GraphMutationPlanStatus,
+    GraphMutationPort,
+    GraphPlanStorePort,
     GraphReadRequest,
     GraphReaderSpec,
+    GraphRuntime,
     GraphViewSpec,
     IdentityClass,
+    MutationBatch,
+    MutationResult,
+    ProvenanceContext,
+    RankedItem,
+    ReadResponse,
     ReconciliationConfig,
     SemanticMutationRequest,
+    build_graph_runtime,
 )
+
+# Extension registration is not a public contract (CE-018); the fixture builds
+# its extended definition from the internal type.
 from potpie_context_engine.core.definition import GraphExtension
-from potpie_context_engine.core.runtime import build_graph_runtime
-from potpie_context_engine.core.graph_mutations import ProvenanceContext
-from potpie_context_engine.core.ports.claim_query import (
-    AsyncClaimQueryPort,
-    ClaimQueryPort,
-)
-from potpie_context_engine.core.ports.graph.backend import GraphBackend
-from potpie_context_engine.core.ports.graph.inbox_store import (
-    AsyncGraphInboxStorePort,
-    GraphInboxStorePort,
-)
-from potpie_context_engine.core.ports.graph.mutation import GraphMutationPort
-from potpie_context_engine.core.ports.graph.plan_store import (
-    AsyncGraphPlanStorePort,
-    GraphPlanStorePort,
-)
-from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
 from potpie_context_engine.core.reconciliation_config import (
     current_reconciliation_config,
 )
-from potpie_context_engine.api import Candidate, RankedItem, ReadResponse
 from potpie_context_engine.testing import (
     InMemoryGraphBackend,
     InMemoryGraphInboxStore,
@@ -217,6 +225,7 @@ def test_public_runtime_extension_round_trip_and_status() -> None:
 def test_runtime_bridges_satisfy_advertised_runtime_protocols() -> None:
     runtime = build_test_graph_runtime(definition=_definition())
 
+    assert isinstance(runtime, GraphRuntime)
     assert isinstance(runtime.backend, GraphBackend)
     assert isinstance(runtime.backend.mutation, GraphMutationPort)
     assert isinstance(runtime.backend.claim_query, ClaimQueryPort)

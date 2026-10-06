@@ -7,6 +7,10 @@ from potpie_context_engine.core.api import __all__ as _CORE_API
 from potpie_context_engine.application.readers._common import ReadResponse
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
 from potpie_context_engine.composition import build_graph_service
+
+# Supported composition surface for embedding hosts that bring their own
+# backend and plan/inbox stores (see ``build_graph_runtime``).
+from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
 from potpie_context_engine.context_engine import (
     ContextEngine,
     ContextIdentity,
@@ -45,6 +49,7 @@ __all__ = [
     "ContextIdentity",
     "ContextOperations",
     "DefaultGraphService",
+    "GraphRuntime",
     "EngineConfig",
     "EngineDependencies",
     "EngineResource",
@@ -60,6 +65,7 @@ __all__ = [
     "ReadRequest",
     "ReadResponse",
     "TaskContext",
+    "build_graph_runtime",
     "build_graph_service",
     "protocols_definition",
 ]
