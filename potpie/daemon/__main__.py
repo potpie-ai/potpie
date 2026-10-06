@@ -50,11 +50,14 @@ def main() -> None:
 
 def _configure_daemon_product_analytics() -> None:
     try:
-        from potpie.cli.telemetry import settings
+        from potpie.cli.telemetry import settings, spool
         from potpie.cli.telemetry.context import bind_daemon_telemetry_context
         from potpie.cli.telemetry.product_analytics import configure_product_analytics
 
         configure_product_analytics(settings.load_product_analytics_settings())
+        # Events are spooled like the CLI's; the daemon has no command exit to
+        # ship them at, so each one starts the detached flusher right away.
+        spool.launch_after_append()
         bind_daemon_telemetry_context()
     except Exception:  # noqa: BLE001 — analytics must never block daemon start
         return

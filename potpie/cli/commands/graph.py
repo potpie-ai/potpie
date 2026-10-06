@@ -296,7 +296,6 @@ def _record_graph_command_telemetry(
             unit="millisecond",
             attributes=metric_attrs,
         )
-        sentry_metrics_runtime.flush(timeout=2.0)
     except Exception:  # noqa: BLE001 - Sentry metrics must never fail a command
         pass
 

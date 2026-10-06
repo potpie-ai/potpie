@@ -102,7 +102,6 @@ def build_app() -> typer.Typer:
         from potpie.runtime.settings import (
             ensure_runtime_environment_loaded,
         )
-        from potpie_context_engine.bootstrap import sentry_metrics_runtime
 
         set_json(json_)
         set_verbose(verbose)
@@ -111,9 +110,9 @@ def build_app() -> typer.Typer:
         configure_cli_logging(verbose)
 
         bind_telemetry_context(ctx, json_output=json_)
-        sentry_settings = settings.load_sentry_settings()
-        sentry_runtime.configure_cli_sentry(sentry_settings)
-        sentry_metrics_runtime.configure_metrics(sentry_settings)
+        # Arms crash capture and routes metrics to the telemetry spool; the
+        # Sentry SDK is initialised only if an unexpected error needs reporting.
+        sentry_runtime.configure_cli_sentry(settings.load_sentry_settings())
         configure_product_analytics(settings.load_product_analytics_settings())
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).
