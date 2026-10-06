@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from potpie.pots.resolution import repo_source_index
 from potpie_context_engine.domain.ports.ledger.client import (
     EventLedgerClientPort,
     LedgerPage,
@@ -63,6 +64,11 @@ class PotResourceService:
 
     def list_sources(self, *, pot_id: str):
         return self._backend.list_sources(pot_id=pot_id)
+
+    def list_repo_sources(self):
+        """The repo→pot index in one call; walks pot by pot only for a backend
+        that does not serve it."""
+        return repo_source_index(self._backend)
 
     def source_status(self, *, pot_id: str, source_id: str):
         return self._backend.source_status(pot_id=pot_id, source_id=source_id)

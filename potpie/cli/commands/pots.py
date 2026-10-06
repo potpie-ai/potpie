@@ -37,6 +37,7 @@ from potpie.cli.telemetry.onboarding_events import (
 )
 from potpie.cli.telemetry.usage_events import capture_usage_command_succeeded
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
+from potpie.pots.resolution import is_archived, match_pot_ref
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.requests import ResetContextRequest
 
@@ -55,6 +56,11 @@ def pot_list(
     ),
     managed: bool = typer.Option(False, "--managed", help="Managed-origin pots only."),
     all_: bool = typer.Option(False, "--all", help="Local + managed pots."),
+    archived: bool = typer.Option(
+        False,
+        "--archived",
+        help="Include archived pots (hidden by default; they cannot be used).",
+    ),
 ) -> None:
     with contract():
         # Managed-origin listing needs login + managed routing (HU3). '--managed'
@@ -67,14 +73,33 @@ def pot_list(
                 recommended_next_action="run 'potpie login'; managed routing lands in HU3",
             )
         pots = get_pot_service().list_pots()
+        # Archived pots are hidden unless asked for: every pot command refuses
+        # them, so listing them unmarked offers targets nothing accepts.
+        listed = len(pots)
+        pots = [p for p in pots if archived or not is_archived(p)]
+        hidden = listed - len(pots)
         payload: dict[str, object] = {
             "pots": [
-                {"id": p.pot_id, "name": p.name, "active": p.active, "origin": "local"}
+                {
+                    "id": p.pot_id,
+                    "name": p.name,
+                    "active": p.active,
+                    "archived": is_archived(p),
+                    "origin": "local",
+                }
                 for p in pots
             ],
         }
-        pot_rows = [f"{'*' if p.active else ' '} {p.name} ({p.pot_id})" for p in pots]
+        pot_rows = [
+            f"{'~' if is_archived(p) else '*' if p.active else ' '} {p.name} "
+            f"({p.pot_id}){'  archived' if is_archived(p) else ''}"
+            for p in pots
+        ]
         human_lines = ["Local", *(pot_rows or ["(no pots)"])]
+        if hidden:
+            human_lines.append(
+                f"  ({hidden} archived — see 'potpie pot list --archived')"
+            )
         if all_:
             payload["managed_pending"] = True
             human_lines.append("  (managed pots require 'potpie login' — HU3)")
@@ -226,15 +251,19 @@ def pot_create(
     with contract():
         host = get_root_runtime()
         pot = get_pot_service(host).create_pot(name=name, use=use)
+        # ``create`` reuses a live pot of the same name so ``setup`` can re-run.
+        # Saying "created" for a pot that already holds a project's memory reads
+        # as a fresh empty pot. A service that does not report the field keeps
+        # the old wording rather than claiming a reuse it never mentioned.
+        created = getattr(pot, "created", None)
         payload: dict[str, object] = {
             "id": pot.pot_id,
             "name": pot.name,
             "active": pot.active,
+            "created": created,
         }
-        human = (
-            f"created pot '{pot.name}' ({pot.pot_id})"
-            f"{' [active]' if pot.active else ''}"
-        )
+        verb = "using existing pot" if created is False else "created pot"
+        human = f"{verb} '{pot.name}' ({pot.pot_id}){' [active]' if pot.active else ''}"
         guidance_repo: str | None = repo
         if repo is not None:
             source = register_repo_source(
@@ -454,11 +483,95 @@ def pot_reset(
         )
 
 
+def _archive_target(host: Any, ref: str) -> tuple[Any, bool]:
+    """``(pot, already_archived)`` for ``pot archive <ref>``.
+
+    ``archive`` is the one command that accepts an archived pot: re-running it
+    clears whatever graph state the pot still holds (a pot archived before
+    archiving cleared anything keeps its data otherwise, with no command able
+    to reach it). A live pot always wins the ref. An id names its pot
+    exactly; a name can be shared by several archived pots, so it must then be
+    narrowed to an id.
+    """
+    pots = list(get_pot_service(host).list_pots())
+    live, archived = match_pot_ref(pots, ref)
+    if live is not None:
+        return live, False
+    if archived is None:
+        fail(
+            code="pot_not_found",
+            message=f"No pot matching '{ref}'.",
+            next_action="run 'potpie pot list --archived'",
+        )
+    if archived.pot_id != ref:
+        named = [p for p in pots if is_archived(p) and p.name == ref]
+        if len(named) > 1:
+            ids = ", ".join(p.pot_id for p in named)
+            fail(
+                code="ambiguous_pot",
+                message=f"'{ref}' names more than one archived pot: {ids}.",
+                next_action="pass the pot id: 'potpie pot archive <id> --confirm'",
+            )
+    return archived, True
+
+
 @pot_app.command("archive")
-def pot_archive(ref: str) -> None:
+def pot_archive(
+    ref: str,
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="Required: clears the pot's graph state, then retires the pot.",
+    ),
+) -> None:
+    """Clear a pot's graph state and retire it; an archived pot cannot be used.
+
+    Re-running it on an archived pot clears its graph state again and leaves it
+    archived.
+    """
     with contract():
-        pot = get_pot_service().archive_pot(ref=ref)
-        emit({"id": pot.pot_id, "archived": True}, human=f"archived '{pot.name}'")
+        host = get_root_runtime()
+        target, already_archived = _archive_target(host, ref)
+        pot_id = target.pot_id
+        label = f"'{target.name}' ({pot_id})"
+        prompt = (
+            f"{label} is already archived. Clear its graph state again?"
+            if already_archived
+            else (
+                f"Archive {label}? This clears its graph state, and the pot "
+                "cannot be used again afterwards."
+            )
+        )
+        confirmation = confirm_destructive_operation(
+            confirmed_by_flag=confirm,
+            prompt=prompt,
+            rerun_command=f"potpie pot archive {pot_id} --confirm",
+        )
+        # Clear first, flag second. The flag hides the pot from every command,
+        # so flagging a pot whose graph state survived would leave data that
+        # nothing can read or clear; a failed reset stops here instead.
+        result = run_engine_operation(
+            get_engine_client(pot_id).reset_context(
+                ResetContextRequest(),
+                confirmation=confirmation,
+            )
+        )
+        if already_archived:
+            pot = target
+            human = f"'{pot.name}' ({pot_id}) was already archived; graph state cleared"
+        else:
+            pot = get_pot_service(host).archive_pot(ref=pot_id)
+            human = f"archived '{pot.name}' (graph state cleared)"
+        emit(
+            {
+                "id": pot.pot_id,
+                "name": pot.name,
+                "archived": True,
+                "already_archived": already_archived,
+                "graph_reset": bool(result.reset),
+            },
+            human=human,
+        )
 
 
 @source_app.command("add")

@@ -29,6 +29,8 @@ import typer
 from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
+    PotArchived,
+    PotNameConflict,
     PotNotFound,
 )
 
@@ -37,6 +39,13 @@ from potpie.cli.repo_location import (
     current_git_remote as shared_current_git_remote,
     normalize_repo_ref as shared_normalize_repo_ref,
     repo_identity_key,
+)
+from potpie.pots.resolution import (
+    ARCHIVED_POT_NEXT_ACTION,
+    archived_pot_message,
+    is_archived,
+    match_pot_ref,
+    repo_source_index,
 )
 
 # --- exit codes (cli-flow.md output contract) -------------------------------
@@ -396,6 +405,8 @@ def activation_command_outcome(
         EngineClientError,
         CapabilityNotImplemented,
         ContextEngineDisabled,
+        PotArchived,
+        PotNameConflict,
         PotNotFound,
         ValueError,
     ) as exc:
@@ -426,13 +437,18 @@ def _activation_failure_category(exc: BaseException) -> str:
         return "not_implemented"
     if isinstance(exc, ContextEngineDisabled):
         return "unavailable"
-    if isinstance(exc, PotNotFound):
+    if isinstance(exc, (PotArchived, PotNotFound)):
         return "selection"
     return "validation"
 
 
 def _activation_cli_failure_category(error_code: str) -> str:
-    if error_code in {"ambiguous_pot", "no_active_pot", "pot_not_found"}:
+    if error_code in {
+        "ambiguous_pot",
+        "no_active_pot",
+        "pot_archived",
+        "pot_not_found",
+    }:
         return "selection"
     if error_code == "not_implemented":
         return "not_implemented"
@@ -636,6 +652,11 @@ def contract() -> Iterator[None]:
         error_code = code
         if code == "not_implemented":
             exit_code = EXIT_UNAVAILABLE
+        elif code == "pot_archived":
+            # A lifecycle refusal (the engine's authorizer admits only a graph
+            # reset on an archived pot), not a credential problem: exit 1 like
+            # every other `pot_archived`.
+            exit_code = EXIT_VALIDATION
         elif category in {"authentication", "authorization"}:
             exit_code = EXIT_AUTH
         elif category in {"selection", "domain"}:
@@ -671,6 +692,27 @@ def contract() -> Iterator[None]:
             next_action=getattr(exc, "recommended_next_action", None)
             or "check backend/daemon readiness with 'potpie doctor'",
             exit_code=EXIT_UNAVAILABLE,
+        )
+    except PotArchived as exc:
+        # Its own code, not `pot_not_found`: the ref resolved, and sending the
+        # operator to `pot list` for a pot that listing hides on purpose is the
+        # wrong repair.
+        result = "pot_archived"
+        error_code = "pot_archived"
+        fail(
+            code="pot_archived",
+            message=str(exc),
+            next_action=exc.recommended_next_action or ARCHIVED_POT_NEXT_ACTION,
+            exit_code=EXIT_VALIDATION,
+        )
+    except PotNameConflict as exc:
+        result = "pot_name_conflict"
+        error_code = "pot_name_conflict"
+        fail(
+            code="pot_name_conflict",
+            message=str(exc),
+            next_action=exc.recommended_next_action,
+            exit_code=EXIT_VALIDATION,
         )
     except PotNotFound as exc:
         result = "pot_not_found"
@@ -789,9 +831,15 @@ def resolve_pot_scope(
     """
     pots = get_pot_service(host)
     if explicit:
-        for pot in pots.list_pots():
-            if explicit in (pot.pot_id, pot.name):
-                return pot.pot_id, "explicit"
+        live, archived = match_pot_ref(pots.list_pots(), explicit)
+        if live is not None:
+            return live.pot_id, "explicit"
+        if archived is not None:
+            fail(
+                code="pot_archived",
+                message=archived_pot_message(archived),
+                next_action=ARCHIVED_POT_NEXT_ACTION,
+            )
         fail(
             code="pot_not_found",
             message=f"No pot matching '{explicit}'.",
@@ -1201,32 +1249,9 @@ def _pots_matching_current_repo(host: Any) -> list[tuple[str, str]]:
     except OSError:
         return []
     remote = _current_git_remote(cwd)
-    matches: list[tuple[str, str]] = []
-    try:
-        service = get_pot_service(host)
-        pots = list(service.list_pots())
-    except Exception:  # noqa: BLE001 - pot resolution should not mask commands
-        return []
-    for pot in pots:
-        try:
-            sources = service.list_sources(pot_id=pot.pot_id)
-        except Exception:  # noqa: BLE001
-            continue
-        for source in sources:
-            if getattr(source, "kind", None) != "repo":
-                continue
-            refs = {
-                str(getattr(source, "name", "") or "").strip(),
-                str(getattr(source, "location", "") or "").strip(),
-            }
-            if any(
-                _repo_source_matches_cwd(ref, cwd=cwd, remote=remote)
-                for ref in refs
-                if ref
-            ):
-                matches.append((pot.pot_id, pot.name))
-                break
-    return matches
+    return _pots_matching_repo_source(
+        host, lambda ref: _repo_source_matches_cwd(ref, cwd=cwd, remote=remote)
+    )
 
 
 def _pots_matching_repo_identity(
@@ -1234,27 +1259,35 @@ def _pots_matching_repo_identity(
 ) -> list[tuple[str, str]]:
     if not repo_identity:
         return []
+    return _pots_matching_repo_source(
+        host, lambda ref: repo_identity_key(ref) == repo_identity
+    )
+
+
+def _pots_matching_repo_source(
+    host: Any, matches_ref: Callable[[str], bool]
+) -> list[tuple[str, str]]:
+    """``(pot_id, name)`` for each live pot with a repo source ``matches_ref`` accepts.
+
+    Reads the repo→pot index in one control-plane call rather than asking each
+    pot for its sources. Matching stays here: whether a registered parent
+    directory contains the cwd, or which remote the tree has, is a client-side
+    fact. One entry per pot, in pot order, as the per-pot walk produced.
+    """
+    index = _safe_call(lambda: repo_source_index(get_pot_service(host)), [])
     matches: list[tuple[str, str]] = []
-    try:
-        service = get_pot_service(host)
-        pots = list(service.list_pots())
-    except Exception:  # noqa: BLE001
-        return []
-    for pot in pots:
-        try:
-            sources = service.list_sources(pot_id=pot.pot_id)
-        except Exception:  # noqa: BLE001
+    matched: set[str] = set()
+    for row in index or ():
+        pot_id = str(getattr(row, "pot_id", "") or "")
+        if not pot_id or pot_id in matched:
             continue
-        for source in sources:
-            if getattr(source, "kind", None) != "repo":
-                continue
-            refs = (
-                str(getattr(source, "name", "") or "").strip(),
-                str(getattr(source, "location", "") or "").strip(),
-            )
-            if any(repo_identity_key(ref) == repo_identity for ref in refs if ref):
-                matches.append((pot.pot_id, pot.name))
-                break
+        refs = (
+            str(getattr(row, "name", "") or "").strip(),
+            str(getattr(row, "location", "") or "").strip(),
+        )
+        if any(matches_ref(ref) for ref in dict.fromkeys(refs) if ref):
+            matches.append((pot_id, str(getattr(row, "pot_name", "") or pot_id)))
+            matched.add(pot_id)
     return matches
 
 
@@ -1277,7 +1310,12 @@ def repo_default_pot_id(host: Any, repo_identity: str | None) -> str | None:
     if not pot_id:
         return None
     pot_id = str(pot_id)
-    return pot_id if _pot_for_id(host, pot_id) is not None else None
+    pot = _pot_for_id(host, pot_id)
+    # A pointer at a pot that is gone or archived is stale, not authoritative:
+    # an archived pot's graph state was cleared, so routing there answers empty.
+    if pot is None or is_archived(pot):
+        return None
+    return pot_id
 
 
 def repo_default_matches(host: Any, repo_key: str | None, pot_id: str) -> bool:

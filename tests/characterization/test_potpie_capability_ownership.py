@@ -39,10 +39,12 @@ EXPECTED_CAPABILITY_SYMBOLS = {
         "PotAggregateStatus",
         "PotInfo",
         "PotManagementService",
+        "PotRepoSource",
         "SourceInfo",
     },
     "potpie/pots/local_service.py": {"LocalPotManagementService"},
     "potpie/pots/local_store.py": {"LocalPotStore"},
+    "potpie/pots/resolution.py": {"match_pot_ref", "repo_source_index"},
     "potpie/setup/contracts.py": {
         "NoOpSetupObserver",
         "SetupObserver",

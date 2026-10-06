@@ -73,6 +73,11 @@ uniformly across the surface.
   explicit `--pot` **>** repo-default binding **>** registered-repo match (active
   pot wins ties, else `ambiguous_pot`) **>** active pot, else `no_active_pot`.
   `source add` passes `infer_from_repo=False` (registration never infers a pot).
+  Archived pots never answer: an explicit ref that names only an archived pot
+  fails with `pot_archived`, and a repo default pointing at one reads as unset.
+  The registered-repo match reads the pot service's repo→pot index
+  (`list_repo_sources`) in one call and matches the working tree client-side;
+  the typed engine's repository selector uses the same index.
 
 `emit()`/`fail()` render the human and `--json` shapes. All commands support
 human output by default and `--json` for scripts/agents.
@@ -184,13 +189,13 @@ A Pot is the unit of tenancy/isolation; the pot id **is** the storage `group_id`
 Local setup creates and activates a `default` pot.
 
 ```bash
-potpie pot list [--local | --managed | --all]
+potpie pot list [--local | --managed | --all] [--archived]
 potpie pot info
 potpie pot create <name> [--repo .] [--use] [--also-default-for-current-repo]
 potpie pot use    <ref> [--also-default-for-current-repo]
 potpie pot rename <ref> <new-name>
 potpie pot reset  [<ref>] [--confirm]
-potpie pot archive <ref>
+potpie pot archive <ref> [--confirm]
 
 potpie pot linked  [--repo .] [--summary]
 potpie pot default show | set | clear [--repo .]
@@ -206,6 +211,29 @@ potpie source remove <id> [--pot <ref>]
   confirmation to that context, and dispatches `ResetContextRequest` through
   the selected daemon or in-process Context Engine. Pot metadata services do
   not open or reset graph backends.
+- **`pot archive`** clears the pot's graph state with the same confirmed
+  `ResetContextRequest` as `pot reset`, then retires the pot. The reset comes
+  first, so a failed reset leaves the pot live rather than hiding data nothing
+  can clear. It is idempotent: on an already-archived pot it clears the graph
+  state again, leaves the pot archived, and reports `already_archived: true`
+  (still behind `--confirm`). A live pot wins a name it shares with archived
+  pots; an archived pot is always reachable by its id, and a name shared by
+  several archived pots is refused as `ambiguous_pot`.
+- **`archived` is a terminal lifecycle state, enforced.** Archived pots are
+  hidden from `pot list` (a footer names the count; `--archived` shows them
+  marked `~`, and every JSON row carries `archived`), and `pot use` / `rename` /
+  `reset` / `default set`, `source add` and any `--pot` refuse them with
+  `pot_archived` (exit `1`). Their repo sources drop out of repo→pot matching,
+  the explorer UI neither lists nor selects them, and
+  `pot create <archived-name>` starts a fresh pot. At the typed engine
+  boundary a name never selects an archived pot, and an archived pot's id is
+  authorized for `reset_context` only.
+- **One name, one pot.** Pot names are unique among live pots and may not
+  equal any pot id (refs resolve against both): `rename` refuses either
+  collision, and `create` refuses an id-shaped name, with `pot_name_conflict`.
+  A blank name is a `validation_error`. `create` stays idempotent (reusing a
+  live pot by name is what makes `setup` re-runnable) and reports
+  `created: false` when it reused one.
 - **`pot linked` / `pot default`** manage the repo→pot binding consumed by
   `resolve_pot_id`. `pot linked --summary` skips per-pot graph counts for a faster
   repo-routing summary. `pot create`/`pot use --also-default-for-current-repo` set
