@@ -76,6 +76,9 @@ async def _run() -> None:
     stamp = build_info.build_stamp()
 
     composition = build_local_runtime()
+    # The daemon serves engine operations for its whole life, so it owns the
+    # resource-index drain: pending embeddings from earlier imports resume here.
+    composition.start_background_work()
     resource_manager = build_local_resource_manager(composition.engine)
     ui_server = _build_ui_server(
         composition=composition, port=ui_port, bearer_token=bearer_token
@@ -91,7 +94,9 @@ async def _run() -> None:
         ),
         ownership_lock_path=home / "daemon.runtime.lock",
         instance_id=instance_id,
-        shutdown_resources=_then_stop_embedded_graph_servers(resource_manager.shutdown),
+        shutdown_resources=_then_stop_embedded_graph_servers(
+            _then_close_composition(resource_manager.shutdown, composition)
+        ),
         after_ownership_acquired=lambda _ownership: write_daemon_credential(
             home, bearer_token
         ),
@@ -119,6 +124,28 @@ async def _run() -> None:
             await ui_task
         with contextlib.suppress(Exception):
             await runtime.stop()
+
+
+def _then_close_composition(
+    release_resources: Callable[[], Awaitable[object]],
+    composition: LocalRuntimeComposition,
+) -> Callable[[], Awaitable[object]]:
+    """Release the engine leases, then stop the drain and close the index.
+
+    After the leases, so no operation is mid-write when the index database
+    closes; the drain finishes its current batch or leaves it pending.
+    """
+
+    async def shutdown() -> object:
+        try:
+            return await release_resources()
+        finally:
+            try:
+                await asyncio.to_thread(composition.close)
+            except Exception:  # noqa: BLE001 - shutdown must not be what fails
+                logger.debug("runtime composition close failed", exc_info=True)
+
+    return shutdown
 
 
 def _then_stop_embedded_graph_servers(
