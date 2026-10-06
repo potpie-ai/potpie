@@ -1,0 +1,1403 @@
+"""CLI contract coverage for ``potpie resource``.
+
+The commands run through the typed engine boundary (``get_engine_client`` →
+``LocalEngineClient`` → ``LocalEngineOperations``) against the real
+``ResourceFacade`` over the in-memory store and a real graph runtime, so what is
+asserted here is the contract an agent sees — payload fields, error codes, exit
+codes, and the number of store round trips a read costs — not a mock's call log.
+"""
+
+# ruff: noqa: S101 - pytest unit tests use assertions intentionally.
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+from typer.testing import CliRunner
+
+from potpie.cli.commands import _common, resource
+from potpie.runtime import (
+    PROTOCOL_VERSION,
+    ContextSelector,
+    EngineOperation,
+    EngineOperationRequest,
+    FailureResponse,
+    SuccessResponse,
+    decode_response,
+    encode_response,
+)
+from potpie.runtime.local_engine import LocalEngineOperations
+from potpie_context_engine import ContextIdentity, DomainError, Failure, Success
+from potpie_context_engine.application.services.resource_facade import ResourceFacade
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.resource_index import (
+    DrainReport,
+    IndexReport,
+    ResourceIndexStatus,
+)
+from potpie_context_engine.core.ports.resource_store import (
+    RESOURCE_CHUNK_MAX_CHARS,
+    Chunk,
+    ChunkRef,
+    ResourceBatchResult,
+    ResourceReadOutcome,
+    ResourceStoreStatus,
+    SectionManifest,
+    format_resource_id,
+)
+from potpie_context_engine.core.resource_projection import project_resource_text
+from potpie_context_engine.requests import (
+    ResourceGetRequest,
+    ResourceImportRequest,
+    ResourceIndexBuildRequest,
+    ResourceIndexRebuildRequest,
+    ResourceIndexStatusRequest,
+    ResourceListRequest,
+    ResourceStatusRequest,
+)
+from potpie_context_engine.results import (
+    ResourceIndexRebuildResult,
+    ResourceListResult,
+)
+from potpie_context_engine.testing import (
+    InMemoryResourceStore,
+    build_test_graph_runtime,
+    write_import_directory,
+)
+
+pytestmark = pytest.mark.unit
+
+DOC = "q3-review"
+
+
+@pytest.fixture(autouse=True)
+def _reset_json_mode():
+    yield
+    _common.set_json(False)
+
+
+class _Pot:
+    pot_id = "p"
+    name = "default"
+    active = True
+    archived = False
+
+
+class _Pots:
+    def active_pot(self):
+        return _Pot()
+
+    def list_pots(self):
+        return [_Pot()]
+
+    def list_sources(self, *, pot_id):
+        return []
+
+    def list_repo_sources(self):
+        return []
+
+    def repo_default(self, *, repo):
+        return None
+
+
+class _CountingStore:
+    """Wraps the in-memory store and counts calls, one per store round trip."""
+
+    def __init__(self) -> None:
+        self.inner = InMemoryResourceStore()
+        self.calls: list[str] = []
+        self.import_kwargs: list[dict] = []
+
+    def import_dir(self, **kwargs):
+        self.calls.append("import_dir")
+        self.import_kwargs.append(dict(kwargs))
+        return self.inner.import_dir(**kwargs)
+
+    def get_many(self, **kwargs):
+        self.calls.append("get_many")
+        return self.inner.get_many(**kwargs)
+
+    def get(self, **kwargs):
+        self.calls.append("get")
+        return self.inner.get(**kwargs)
+
+    def list(self, **kwargs):
+        self.calls.append("list")
+        return self.inner.list(**kwargs)
+
+    def current_manifest(self, **kwargs):
+        self.calls.append("current_manifest")
+        return self.inner.current_manifest(**kwargs)
+
+    def set_pending_review(self, **kwargs):
+        self.calls.append("set_pending_review")
+        return self.inner.set_pending_review(**kwargs)
+
+    def clear_pending_review(self, **kwargs):
+        self.calls.append("clear_pending_review")
+        return self.inner.clear_pending_review(**kwargs)
+
+    def delete(self, **kwargs):
+        self.calls.append("delete")
+        return self.inner.delete(**kwargs)
+
+    def purge_pot(self, pot_id):
+        self.calls.append("purge_pot")
+        return self.inner.purge_pot(pot_id)
+
+    def status(self, **kwargs):
+        self.calls.append("status")
+        return self.inner.status(**kwargs)
+
+
+class _Host:
+    """The engine services the typed local client composes over."""
+
+    def __init__(self, store: _CountingStore, *, with_graph: bool = True) -> None:
+        self.pots = _Pots()
+        self.store = store
+        self.backend = SimpleNamespace(profile="in_memory")
+        # A real graph service, not a mock: an import lands through the
+        # ordinary write door, so the validator and lowerer have to be in the
+        # loop for the assertions to mean anything.
+        runtime = build_test_graph_runtime() if with_graph else None
+        self.runtime = runtime
+        self.graph = runtime.graph if runtime else None
+        self.resources = ResourceFacade(
+            store=store,
+            graph=self.graph,
+            claims=runtime.backend.claim_query if runtime else None,
+        )
+
+
+def _host(*, with_graph: bool = True) -> _Host:
+    host = _Host(_CountingStore(), with_graph=with_graph)
+    _common.set_runtime(host)
+    return host
+
+
+def _section(slug, *, chunks, summary="what this section covers", **overrides):
+    section = {
+        "slug": slug,
+        "title": slug.replace("-", " ").title(),
+        "summary": summary,
+        "ordinal": 0,
+        "content_hash": f"{slug}-v1",
+        "chunks": chunks,
+    }
+    section.update(overrides)
+    return section
+
+
+def _import_dir(root: Path, sections=None, **kwargs) -> Path:
+    return write_import_directory(
+        root,
+        sections
+        or [
+            _section(
+                "body",
+                chunks=[
+                    {"label": "opening", "text": "alpha"},
+                    {"label": "middle", "text": "beta"},
+                    {"label": "closing", "text": "gamma"},
+                ],
+            )
+        ],
+        source_ref=kwargs.pop("source_ref", "file:///q3.pdf"),
+        source_kind=kwargs.pop("source_kind", "pdf"),
+    )
+
+
+def _run(args, *, as_json=True):
+    if as_json:
+        _common.set_json(True)
+    return CliRunner().invoke(resource.resource_app, args)
+
+
+def _seed(tmp_path, sections=None) -> _Host:
+    host = _host()
+    directory = _import_dir(tmp_path / "in", sections)
+    result = _run(["import", str(directory), "--doc", DOC])
+    assert result.exit_code == 0, result.stdout
+    host.store.calls.clear()
+    return host
+
+
+# --- import -----------------------------------------------------------------
+
+
+def test_import_reports_the_document_and_its_sections(tmp_path):
+    _host()
+    directory = _import_dir(tmp_path / "in")
+
+    result = _run(["import", str(directory), "--doc", DOC])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["doc"] == DOC
+    assert payload["revision"] == 1
+    assert payload["source_ref"] == "file:///q3.pdf"
+    assert payload["source_kind"] == "pdf"
+    assert payload["section_count"] == 1
+    assert payload["chunk_count"] == 3
+    assert payload["sections_added"] == ["body"]
+    assert payload["sections_kept"] == []
+    assert payload["sections_changed"] == []
+    assert payload["sections_removed"] == []
+    assert payload["summary_pending"] == []
+
+
+def test_import_writes_the_document_structure_to_the_graph(tmp_path):
+    _host()
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    payload = json.loads(result.stdout)["graph"]
+    assert payload["written"] is True
+    assert payload["status"] == "applied"
+    assert payload["entity_key"] == f"document:{DOC}"
+    # Document upsert + one SECTION_OF claim.
+    assert payload["operations_applied"] == 2
+
+
+def test_import_says_so_when_no_graph_is_wired(tmp_path):
+    """Bytes without structure is a silent failure otherwise: ``get`` keeps
+    working while search returns nothing, and only the warning says why."""
+    _host(with_graph=False)
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    payload = json.loads(result.stdout)
+    assert payload["graph"]["written"] is False
+    assert payload["graph"]["status"] == "skipped"
+    assert any("search cannot find it" in w for w in payload["warnings"])
+
+
+def test_import_reports_written_false_when_claims_do_not_read_back(tmp_path):
+    """``graph.written`` must come from a read, not from the writer's opinion.
+
+    The writer counts submitted operations, so a mutation that applies onto an
+    existing tombstone returns ``status: applied`` while the claim stays
+    invisible to every read. That combination — bytes on disk, ``written:
+    true``, nothing findable — is the exact failure the graph block exists to
+    surface, so it is asserted against a claim query that reports the claim
+    missing rather than against a hypothetical.
+    """
+    host = _host()
+    real_find = host.runtime.backend.claim_query.find_claims
+
+    def _find_claims(filter_):
+        # Only the readback probe filters by claim_key; everything else is
+        # left alone so the import itself behaves normally.
+        if filter_.claim_key_in:
+            return []
+        return real_find(filter_)
+
+    host.resources.claims = MagicMock()
+    host.resources.claims.find_claims.side_effect = _find_claims
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["graph"]["status"] == "applied"
+    assert payload["graph"]["written"] is False
+    assert payload["graph"]["missing_claim_keys"]
+    assert any("cannot be read back" in w for w in payload["warnings"])
+
+
+def test_import_carries_chunk_ids_as_claim_evidence(tmp_path):
+    """R13: a section's search hit already holds the ids ``get`` takes."""
+    host = _host()
+
+    _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    rows = host.runtime.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id="p", predicate_in=("SECTION_OF",))
+    )
+    assert len(rows) == 1
+    assert set(rows[0].source_refs) == {
+        format_resource_id(DOC, "body", seq, revision=1) for seq in (0, 1, 2)
+    }
+
+
+def test_import_never_puts_chunk_text_in_the_graph(tmp_path):
+    """R1, asserted where it can actually be violated."""
+    host = _host()
+    directory = _import_dir(
+        tmp_path / "in",
+        [_section("body", chunks=[{"label": "opening", "text": "SECRET-PAYLOAD"}])],
+    )
+
+    _run(["import", str(directory), "--doc", DOC])
+
+    rows = host.runtime.backend.claim_query.find_claims(ClaimQueryFilter(pot_id="p"))
+    assert rows
+    assert "SECRET-PAYLOAD" not in json.dumps(
+        [
+            {
+                "fact": row.fact,
+                "description": row.description,
+                "properties": dict(row.properties or {}),
+            }
+            for row in rows
+        ]
+    )
+
+
+def test_reimport_retracts_a_section_that_disappeared(tmp_path):
+    host = _host()
+    first = _import_dir(
+        tmp_path / "v1",
+        [
+            _section("body", chunks=[{"label": "opening", "text": "alpha"}]),
+            _section("appendix", chunks=[{"label": "notes", "text": "beta"}]),
+        ],
+    )
+    _run(["import", str(first), "--doc", DOC])
+    second = _import_dir(
+        tmp_path / "v2",
+        [_section("body", chunks=[{"label": "opening", "text": "alpha"}])],
+    )
+
+    result = _run(["import", str(second), "--doc", DOC])
+
+    payload = json.loads(result.stdout)
+    assert payload["revision"] == 2
+    assert payload["sections_removed"] == ["appendix"]
+    assert payload["graph"]["written"] is True
+    live = host.runtime.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id="p", predicate_in=("SECTION_OF",))
+    )
+    # One live claim per section that stayed; the in-memory backend may list
+    # it once per evidence revision.
+    assert {row.subject_key for row in live} == {f"docsection:{DOC}:body"}
+
+
+def test_import_points_at_the_missing_scope_edge(tmp_path):
+    """Quality factor 4: a document with no DOCUMENTS edge is findable by
+    semantic luck alone, and import is the only step that knows it landed."""
+    _host()
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    action = json.loads(result.stdout)["recommended_next_action"]
+    assert "DOCUMENTS" in action and f"document:{DOC}" in action
+
+
+def _link(host, subject_key: str, *, object_key: str = "service:payments-api") -> None:
+    """Write the scope edge an agent would write, through the normal door."""
+    workbench = host.runtime.workbench
+    proposal = workbench.propose(
+        {
+            "operations": [
+                {
+                    "op": "assert_claim",
+                    "subgraph": "knowledge",
+                    "subject": {"key": subject_key},
+                    "predicate": "DOCUMENTS",
+                    "object": {"key": object_key, "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": format_resource_id(DOC, "body", 0)}],
+                    "description": f"{subject_key} covers {object_key}",
+                }
+            ]
+        },
+        pot_id="p",
+    )
+    assert proposal.ok is True, proposal.detail
+    assert workbench.commit(proposal.plan_id, pot_id="p", approved_by="test").ok
+
+
+def test_import_stops_nudging_once_the_document_is_linked(tmp_path):
+    """P1-4: the scope nudge has to be a check, not a constant.
+
+    It fired on every import regardless of how many ``DOCUMENTS`` claims the
+    document already had, which made it useless for the one thing
+    ``resources.md`` asks it for — telling a linked document from an unlinked
+    one.
+    """
+    host = _seed(tmp_path)
+    _link(host, f"document:{DOC}")
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    action = json.loads(result.stdout)["recommended_next_action"]
+    assert "DOCUMENTS" not in action
+    assert "--include docs" in action
+
+
+def test_import_counts_a_section_level_link_as_scope(tmp_path):
+    """The skills teach linking one section rather than the whole document, so
+    a section-only link is a linked document."""
+    host = _seed(tmp_path)
+    _link(host, f"docsection:{DOC}:body")
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    assert "DOCUMENTS" not in json.loads(result.stdout)["recommended_next_action"]
+
+
+def test_import_nudges_again_when_the_last_scope_edge_is_retracted(tmp_path):
+    """A re-import that drops the linked section takes the scope edge with it
+    (P0-2), which puts the document back in the state the nudge is for."""
+    host = _host()
+    kept = _section("kept", chunks=[{"label": "a", "text": "alpha"}])
+    dropped = _section("dropped", chunks=[{"label": "b", "text": "beta"}])
+    assert (
+        _run(
+            [
+                "import",
+                str(_import_dir(tmp_path / "in1", [kept, dropped])),
+                "--doc",
+                DOC,
+            ]
+        ).exit_code
+        == 0
+    )
+    _link(host, f"docsection:{DOC}:dropped")
+
+    result = _run(["import", str(_import_dir(tmp_path / "in2", [kept])), "--doc", DOC])
+
+    action = json.loads(result.stdout)["recommended_next_action"]
+    assert "DOCUMENTS" in action and f"document:{DOC}" in action
+
+
+def test_import_nudges_for_scope_when_no_claim_query_is_wired(tmp_path):
+    """Unknown is not 'linked': with nothing to count, the nudge is the honest
+    default — a document nothing can find is the costlier silence."""
+    host = _host()
+    host.resources.claims = None
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    assert "DOCUMENTS" in json.loads(result.stdout)["recommended_next_action"]
+
+
+def test_import_scope_nudge_points_at_the_commands_the_catalog_lists(tmp_path):
+    """It used to point at ``graph mutate``, which self-describes as a legacy
+    transition wrapper and is not in the catalog's command list."""
+    _host()
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
+
+    action = json.loads(result.stdout)["recommended_next_action"]
+    assert "graph propose" in action and "graph commit" in action
+    assert "graph mutate" not in action
+
+
+def test_import_flags_sections_that_still_need_a_summary(tmp_path):
+    _host()
+    directory = _import_dir(
+        tmp_path / "in",
+        [_section("body", chunks=[{"label": "opening", "text": "alpha"}], summary="")],
+    )
+
+    result = _run(["import", str(directory), "--doc", DOC])
+
+    payload = json.loads(result.stdout)
+    assert payload["summary_pending"] == ["body"]
+    assert "body" in payload["recommended_next_action"]
+
+
+def test_import_ships_the_directory_contents_not_a_path(tmp_path, monkeypatch):
+    host = _host()
+    _import_dir(tmp_path / "in")
+    monkeypatch.chdir(tmp_path)
+
+    result = _run(["import", "in", "--doc", DOC])
+
+    assert result.exit_code == 0, result.stdout
+    # The store may sit in a daemon with its own working directory: it never
+    # receives a path, only the files.
+    sent = host.store.import_kwargs[0]
+    assert sent.get("source_dir") is None
+    assert set(sent["files"]) == {
+        "meta.json",
+        "body/0000.txt",
+        "body/0001.txt",
+        "body/0002.txt",
+    }
+    assert sent["files"]["body/0000.txt"] == "alpha"
+
+
+def test_import_refuses_a_directory_it_cannot_read(tmp_path):
+    _host()
+
+    result = _run(["import", str(tmp_path / "nowhere"), "--doc", DOC])
+
+    assert result.exit_code == 1, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "resource_manifest_invalid"
+    assert "not found" in payload["message"]
+
+
+def test_import_request_carries_contents_and_an_absolute_read(tmp_path, monkeypatch):
+    """The CLI resolves the directory on its own side, then ships contents.
+
+    The typed request has no server-side path field at all, so no caller can
+    point the executing host at a directory of its choosing.
+    """
+    _host()
+    _import_dir(tmp_path / "in")
+    monkeypatch.chdir(tmp_path)
+    seen: list[ResourceImportRequest] = []
+    original = LocalEngineOperations.resource_import
+
+    async def spy(self, context, request):
+        seen.append(request)
+        return await original(self, context, request)
+
+    monkeypatch.setattr(LocalEngineOperations, "resource_import", spy)
+
+    result = _run(["import", "./in", "--doc", DOC])
+
+    assert result.exit_code == 0, result.stdout
+    assert not hasattr(seen[0], "source_dir")
+    assert seen[0].files["body/0001.txt"] == "beta"
+
+
+def test_reimport_separates_kept_changed_added_and_removed(tmp_path):
+    _host()
+    _run(["import", str(_import_dir(tmp_path / "v1")), "--doc", DOC])
+    second = _import_dir(
+        tmp_path / "v2",
+        [
+            _section("body", chunks=[{"label": "opening", "text": "alpha"}]),
+            _section(
+                "risks",
+                chunks=[{"label": "top risk", "text": "delta"}],
+                ordinal=1,
+            ),
+        ],
+    )
+    # 'body' keeps its content_hash from v1 but 'risks' is new.
+    result = _run(["import", str(second), "--doc", DOC])
+
+    payload = json.loads(result.stdout)
+    assert payload["revision"] == 2
+    assert payload["sections_kept"] == ["body"]
+    assert payload["sections_added"] == ["risks"]
+    assert payload["sections_changed"] == []
+    assert payload["sections_removed"] == []
+
+
+def test_reimport_reports_a_changed_section_as_changed(tmp_path):
+    _host()
+    _run(["import", str(_import_dir(tmp_path / "v1")), "--doc", DOC])
+    second = _import_dir(
+        tmp_path / "v2",
+        [
+            _section(
+                "body",
+                chunks=[{"label": "opening", "text": "rewritten"}],
+                content_hash="body-v2",
+            )
+        ],
+    )
+
+    payload = json.loads(_run(["import", str(second), "--doc", DOC]).stdout)
+
+    assert payload["sections_changed"] == ["body"]
+    assert payload["sections_kept"] == []
+
+
+def test_oversized_chunk_is_refused_with_the_stores_own_code(tmp_path):
+    _host()
+    _run(["import", str(_import_dir(tmp_path / "v1")), "--doc", DOC])
+    oversized = _import_dir(
+        tmp_path / "big",
+        [
+            _section(
+                "body",
+                chunks=[
+                    {"label": "huge", "text": "x" * (RESOURCE_CHUNK_MAX_CHARS + 1)}
+                ],
+            )
+        ],
+    )
+
+    result = _run(["import", str(oversized), "--doc", DOC])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "resource_chunk_too_large"
+    assert payload["recommended_next_action"]
+    # The prior revision is untouched.
+    listed = json.loads(_run(["list", "--doc", DOC]).stdout)
+    assert listed["chunk_count"] == 3
+
+
+def test_missing_import_directory_is_a_manifest_error(tmp_path):
+    _host()
+
+    result = _run(["import", str(tmp_path / "nope"), "--doc", DOC])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "resource_manifest_invalid"
+
+
+def test_invalid_document_slug_is_refused(tmp_path):
+    _host()
+
+    result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", "Q3 Review"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "resource_slug_invalid"
+
+
+# --- get --------------------------------------------------------------------
+
+
+def test_get_returns_the_documented_chunk_shape(tmp_path):
+    _seed(tmp_path)
+
+    result = _run(["get", format_resource_id(DOC, "body", 0)])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    chunk = payload["chunks"][0]
+    assert chunk == {
+        "resource_id": format_resource_id(DOC, "body", 0),
+        "doc": DOC,
+        "section": "body",
+        "seq": 0,
+        "text": "alpha",
+        "chars": 5,
+        "revision": 1,
+        "source_ref": "file:///q3.pdf",
+        "page": None,
+        "offset": None,
+        "requested": True,
+    }
+
+
+def test_get_answers_several_ids_in_one_round_trip(tmp_path):
+    host = _seed(tmp_path)
+    ids = [format_resource_id(DOC, "body", seq) for seq in (2, 0)]
+
+    payload = json.loads(_run(["get", *ids]).stdout)
+
+    assert [row["text"] for row in payload["chunks"]] == ["gamma", "alpha"]
+    assert host.store.calls == ["get_many"]
+
+
+def test_get_with_neighbors_stays_one_round_trip(tmp_path):
+    host = _seed(tmp_path)
+
+    payload = json.loads(
+        _run(["get", format_resource_id(DOC, "body", 1), "--with-neighbors"]).stdout
+    )
+
+    assert [row["seq"] for row in payload["chunks"]] == [0, 1, 2]
+    assert [row["requested"] for row in payload["chunks"]] == [False, True, False]
+    # One listing to learn the section's chunks, one batched read — never a
+    # read per chunk.
+    assert host.store.calls == ["list", "get_many"]
+
+
+def test_neighbor_expansion_has_a_byte_budget_and_exact_full_follow_up(tmp_path):
+    _seed(
+        tmp_path,
+        [
+            _section(
+                "body",
+                chunks=[
+                    {"label": f"part {index}", "text": str(index) * 7_600}
+                    for index in range(6)
+                ],
+            )
+        ],
+    )
+    ids = [format_resource_id(DOC, "body", index) for index in (1, 2, 3, 4)]
+
+    response = _run(["get", *ids, "--with-neighbors"])
+    payload = json.loads(response.stdout)
+
+    assert response.exit_code == 0
+    assert len(response.stdout.encode("utf-8")) <= 32_768
+    assert payload["total_chunk_count"] == 6
+    assert payload["omitted_chunk_count"] >= 1
+    assert all(chunk["requested"] for chunk in payload["chunks"])
+    assert "--full --pot p" in payload["recommended_next_action"]
+
+    complete = _run(["get", *ids, "--with-neighbors", "--full"])
+    assert complete.exit_code == 0
+    assert json.loads(complete.stdout)["count"] == 6
+
+
+def test_structured_credential_metadata_is_excluded_from_index_and_read(tmp_path):
+    host = _host()
+    indexed = []
+
+    class Index:
+        profile = "test"
+
+        def index_document(self, **kwargs):
+            indexed.extend(kwargs["chunks"])
+            return IndexReport(doc=DOC, profile="test")
+
+    host.resources.index = Index()
+    source = '{\n  "owner": "potpie-ai",\n  "temp_clone_token": "fixture-secret",\n  "password": "fixture-password",\n  "session_cookie": "fixture-cookie"\n}'
+    directory = _import_dir(
+        tmp_path / "metadata",
+        [
+            _section(
+                "repository-metadata", chunks=[{"label": "metadata", "text": source}]
+            ),
+        ],
+    )
+    imported = _run(["import", str(directory), "--doc", DOC])
+    assert imported.exit_code == 0, imported.stdout
+
+    chunk_id = format_resource_id(DOC, "repository-metadata", 0)
+    stored = host.store.inner.get(pot_id="p", resource_id=chunk_id)
+    assert "fixture-secret" in stored.text  # immutable source bytes remain stored
+    assert indexed and "fixture-secret" not in indexed[0].text
+    assert '"owner": "potpie-ai"' in indexed[0].text
+
+    result = _run(["get", chunk_id])
+    assert result.exit_code == 0, result.stdout
+    emitted = json.loads(result.stdout)["chunks"][0]["text"]
+    for secret in ("fixture-secret", "fixture-password", "fixture-cookie"):
+        assert secret not in emitted
+    assert '"owner": "potpie-ai"' in emitted
+    assert "[redacted]" in emitted
+
+    diagnostic = host.resources.status(pot_id="p")
+    assert "fixture-secret" not in str(diagnostic)
+    assert project_resource_text(
+        "A security guide explains password and cookie handling."
+    ) == ("A security guide explains password and cookie handling.")
+    compact = '{"owner":"potpie-ai","tempCloneToken":"fixture-secret","session_cookie":"fixture-cookie"}'
+    projected = project_resource_text(compact)
+    assert json.loads(projected) == {
+        "owner": "potpie-ai",
+        "tempCloneToken": "[redacted]",
+        "session_cookie": "[redacted]",
+    }
+    fragment = '"owner":"potpie-ai","temp_clone_token":"fixture-secret"'
+    assert "fixture-secret" not in project_resource_text(fragment)
+
+
+def test_get_with_neighbors_stops_at_the_section_boundary(tmp_path):
+    _seed(
+        tmp_path,
+        [
+            _section("body", chunks=[{"label": "only", "text": "alpha"}]),
+            _section(
+                "risks", chunks=[{"label": "top risk", "text": "delta"}], ordinal=1
+            ),
+        ],
+    )
+
+    payload = json.loads(
+        _run(["get", format_resource_id(DOC, "body", 0), "--with-neighbors"]).stdout
+    )
+
+    assert [row["resource_id"] for row in payload["chunks"]] == [
+        format_resource_id(DOC, "body", 0)
+    ]
+
+
+def test_get_deduplicates_overlapping_neighborhoods(tmp_path):
+    _seed(tmp_path)
+    ids = [format_resource_id(DOC, "body", seq) for seq in (0, 1)]
+
+    payload = json.loads(_run(["get", *ids, "--with-neighbors"]).stdout)
+
+    assert [row["seq"] for row in payload["chunks"]] == [0, 1, 2]
+
+
+def test_get_of_an_unknown_chunk_reports_not_found(tmp_path):
+    _seed(tmp_path)
+
+    result = _run(["get", format_resource_id(DOC, "body", 9)])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "resource_not_found"
+
+
+def test_get_with_neighbors_of_an_unknown_chunk_still_reports_not_found(tmp_path):
+    _seed(tmp_path)
+
+    result = _run(["get", format_resource_id(DOC, "body", 9), "--with-neighbors"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "resource_not_found"
+    # The miss is the store's, not a neighborhood invented from a listing.
+    assert format_resource_id(DOC, "body", 9) in payload["message"]
+
+
+def test_get_of_a_malformed_id_reports_the_id_error(tmp_path):
+    _seed(tmp_path)
+
+    result = _run(["get", "res/q3-review/body/0"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "resource_id_invalid"
+
+
+def test_human_get_prints_chunk_text_verbatim(tmp_path):
+    _seed(
+        tmp_path,
+        [
+            _section(
+                "body",
+                chunks=[{"label": "opening", "text": "first para\n\nsecond para"}],
+            )
+        ],
+    )
+    _common.set_json(False)
+
+    result = _run(["get", format_resource_id(DOC, "body", 0)], as_json=False)
+
+    assert result.exit_code == 0, result.stdout
+    # Blank lines and all: this command returns evidence, it does not format it.
+    assert "first para\n\nsecond para" in result.stdout
+
+
+# --- list -------------------------------------------------------------------
+
+
+def test_list_returns_chunk_ids_and_labels(tmp_path):
+    _seed(tmp_path)
+
+    payload = json.loads(_run(["list", "--doc", DOC]).stdout)
+
+    assert payload["section_count"] == 1
+    assert payload["chunk_count"] == 3
+    section = payload["sections"][0]
+    assert section["slug"] == "body"
+    assert [chunk["label"] for chunk in section["chunks"]] == [
+        "opening",
+        "middle",
+        "closing",
+    ]
+    assert section["chunks"][0]["resource_id"] == format_resource_id(
+        DOC, "body", 0, revision=1
+    )
+
+
+def test_list_limit_returns_one_bounded_section_and_exact_follow_up(tmp_path):
+    host = _seed(
+        tmp_path,
+        [
+            _section(f"part-{i}", chunks=[{"label": "text", "text": f"part {i}"}])
+            for i in range(3)
+        ],
+    )
+
+    payload = json.loads(_run(["list", "--doc", DOC, "--limit", "1"]).stdout)
+
+    assert host.store.calls == ["list"]
+    assert payload["section_count"] == 3
+    assert payload["returned_section_count"] == 1
+    assert payload["omitted_section_count"] == 2
+    assert [item["slug"] for item in payload["sections"]] == ["part-0"]
+    assert payload["recommended_next_action"] == (
+        f"potpie resource list --doc {DOC} --section part-1 --pot p"
+    )
+
+
+def test_list_byte_budget_handles_one_oversized_section() -> None:
+    payload = {
+        "doc": DOC,
+        "section_count": 1,
+        "chunk_count": 1,
+        "returned_section_count": 1,
+        "omitted_section_count": 0,
+        "revision": 1,
+        "sections": [
+            {
+                "slug": "metadata",
+                "title": "Metadata",
+                "summary": "x" * 100_000,
+                "summary_pending": False,
+                "chunks": [
+                    {
+                        "resource_id": format_resource_id(DOC, "metadata", 0),
+                        "label": "owner fields",
+                    }
+                ],
+            }
+        ],
+    }
+
+    bounded = resource._bound_resource_list_payload(payload, pot_id="p")
+
+    assert len(json.dumps(bounded, ensure_ascii=False).encode()) <= 32_768
+    assert bounded["omitted_field_count"] == 1
+    assert bounded["sections"][0]["chunks"][0]["resource_id"] == format_resource_id(
+        DOC, "metadata", 0
+    )
+    assert bounded["recommended_next_action"] == (
+        f"potpie resource list --doc {DOC} --section metadata --full --pot p"
+    )
+
+
+def test_list_can_narrow_to_one_section(tmp_path):
+    _seed(
+        tmp_path,
+        [
+            _section("body", chunks=[{"label": "opening", "text": "alpha"}]),
+            _section(
+                "risks", chunks=[{"label": "top risk", "text": "delta"}], ordinal=1
+            ),
+        ],
+    )
+
+    payload = json.loads(_run(["list", "--doc", DOC, "--section", "risks"]).stdout)
+
+    assert [row["slug"] for row in payload["sections"]] == ["risks"]
+
+
+def test_list_of_an_unknown_document_reports_not_found(tmp_path):
+    _seed(tmp_path)
+
+    result = _run(["list", "--doc", "absent"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["code"] == "resource_not_found"
+
+
+# --- rm ---------------------------------------------------------------------
+
+
+def test_rm_without_confirm_removes_nothing(tmp_path):
+    host = _seed(tmp_path)
+
+    result = _run(["rm", DOC])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "destructive_confirmation_required"
+    assert (
+        f"potpie resource rm {DOC} --pot p --confirm"
+        in (payload["recommended_next_action"])
+    )
+    assert "delete" not in host.store.calls
+
+
+def test_rm_with_confirm_removes_the_document(tmp_path):
+    _seed(tmp_path)
+
+    result = _run(["rm", DOC, "--confirm"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["removed"] is True
+    assert payload["graph_retracted"] is True
+    assert json.loads(_run(["list", "--doc", DOC]).stdout)["code"] == (
+        "resource_not_found"
+    )
+
+
+def test_rm_retracts_section_claims_in_the_graph(tmp_path):
+    """P5: ``rm`` must not leave SECTION_OF claims pointing at deleted chunks."""
+    host = _seed(tmp_path)
+    assert host.runtime.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id="p", predicate_in=("SECTION_OF",))
+    )
+
+    result = _run(["rm", DOC, "--confirm"])
+
+    assert result.exit_code == 0, result.stdout
+    live = host.runtime.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id="p", predicate_in=("SECTION_OF",))
+    )
+    assert live == []
+
+
+def test_rm_of_an_absent_document_is_a_no_op(tmp_path):
+    _seed(tmp_path)
+
+    payload = json.loads(_run(["rm", "absent", "--confirm"]).stdout)
+
+    assert payload["removed"] is False
+    assert payload["graph_retracted"] is False
+
+
+# --- dependent claims (P0-2) ------------------------------------------------
+
+
+def test_rm_retracts_agent_written_claims_about_the_sections(tmp_path):
+    """A deleted document must not keep answering through somebody else's claim.
+
+    ``rm`` retracts ``SECTION_OF``, which is the structure this store wrote. But
+    the skills tell agents to link individual sections to what they cover, and
+    those ``DOCUMENTS`` claims used to survive the delete — still ranking in
+    ``search --include docs``, still handing out chunk ids that now return
+    ``resource_not_found``.
+    """
+    host = _seed(tmp_path)
+    workbench = host.runtime.workbench
+    proposal = workbench.propose(
+        {
+            "operations": [
+                {
+                    "op": "assert_claim",
+                    "subgraph": "knowledge",
+                    "subject": {"key": f"docsection:{DOC}:body"},
+                    "predicate": "DOCUMENTS",
+                    "object": {"key": "service:payments-api", "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": format_resource_id(DOC, "body", 0)}],
+                    "description": "the body section covers the payments api",
+                }
+            ]
+        },
+        pot_id="p",
+    )
+    assert proposal.ok is True, proposal.detail
+    assert workbench.commit(proposal.plan_id, pot_id="p", approved_by="test").ok
+
+    def live_documents():
+        return host.runtime.backend.claim_query.find_claims(
+            ClaimQueryFilter(pot_id="p", predicate_in=("DOCUMENTS",))
+        )
+
+    assert len(live_documents()) == 1
+
+    assert _run(["rm", DOC, "--confirm"]).exit_code == 0
+
+    assert live_documents() == [], "a DOCUMENTS claim outlived the chunks it cites"
+
+
+def test_reimport_retracts_claims_about_a_section_it_drops(tmp_path):
+    """Same defect on the normal path: a re-import that drops one section.
+
+    This is how it is actually reached — nobody has to delete a document for a
+    section to disappear; re-importing a changed source is enough.
+    """
+    host = _host()
+    kept = _section("kept", chunks=[{"label": "a", "text": "alpha"}])
+    dropped = _section("dropped", chunks=[{"label": "b", "text": "beta"}])
+    first = _import_dir(tmp_path / "in1", [kept, dropped])
+    assert _run(["import", str(first), "--doc", DOC]).exit_code == 0
+
+    workbench = host.runtime.workbench
+    proposal = workbench.propose(
+        {
+            "operations": [
+                {
+                    "op": "assert_claim",
+                    "subgraph": "knowledge",
+                    "subject": {"key": f"docsection:{DOC}:dropped"},
+                    "predicate": "DOCUMENTS",
+                    "object": {"key": "service:payments-api", "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [{"source_ref": format_resource_id(DOC, "dropped", 0)}],
+                    "description": "the dropped section covers the payments api",
+                }
+            ]
+        },
+        pot_id="p",
+    )
+    assert proposal.ok is True, proposal.detail
+    assert workbench.commit(proposal.plan_id, pot_id="p", approved_by="test").ok
+
+    second = _import_dir(tmp_path / "in2", [kept])
+    assert _run(["import", str(second), "--doc", DOC]).exit_code == 0
+
+    live = host.runtime.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id="p", predicate_in=("DOCUMENTS",))
+    )
+    assert live == [], "a claim about a dropped section stayed live"
+
+
+def test_claims_about_sections_that_stay_are_left_alone(tmp_path):
+    """The cleanup must be surgical: only the departing section's claims go."""
+    host = _host()
+    kept = _section("kept", chunks=[{"label": "a", "text": "alpha"}])
+    dropped = _section("dropped", chunks=[{"label": "b", "text": "beta"}])
+    first = _import_dir(tmp_path / "in1", [kept, dropped])
+    assert _run(["import", str(first), "--doc", DOC]).exit_code == 0
+
+    workbench = host.runtime.workbench
+    for slug in ("kept", "dropped"):
+        proposal = workbench.propose(
+            {
+                "operations": [
+                    {
+                        "op": "assert_claim",
+                        "subgraph": "knowledge",
+                        "subject": {"key": f"docsection:{DOC}:{slug}"},
+                        "predicate": "DOCUMENTS",
+                        "object": {"key": "service:payments-api", "type": "Service"},
+                        "truth": "source_observation",
+                        "evidence": [{"source_ref": format_resource_id(DOC, slug, 0)}],
+                        "description": f"the {slug} section covers the payments api",
+                    }
+                ]
+            },
+            pot_id="p",
+        )
+        assert workbench.commit(proposal.plan_id, pot_id="p", approved_by="test").ok
+
+    second = _import_dir(tmp_path / "in2", [kept])
+    assert _run(["import", str(second), "--doc", DOC]).exit_code == 0
+
+    live = host.runtime.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id="p", predicate_in=("DOCUMENTS",))
+    )
+    assert [row.subject_key for row in live] == [f"docsection:{DOC}:kept"]
+
+
+def test_rm_binds_destructive_intent_to_the_exact_pot(tmp_path, monkeypatch):
+    """``rm`` is a destructive typed operation: the client must carry intent."""
+    _seed(tmp_path)
+    seen = []
+    original = _common.get_engine_client
+
+    def recording_client(explicit_pot=None, **kwargs):
+        client = original(explicit_pot, **kwargs)
+        dispatch = client._dispatch
+
+        async def spy(operation, request, confirmation=None):
+            seen.append((operation, explicit_pot, confirmation))
+            return await dispatch(operation, request, confirmation)
+
+        client._dispatch = spy
+        return client
+
+    monkeypatch.setattr(resource, "get_engine_client", recording_client)
+
+    assert _run(["rm", DOC, "--confirm"]).exit_code == 0
+    [(operation, pot, confirmation)] = seen
+    assert operation is EngineOperation.RESOURCE_RM
+    assert pot == "p"
+    assert confirmation is not None and confirmation.confirmed is True
+
+
+# --- the typed boundary -----------------------------------------------------
+
+
+def test_uncomposed_resource_store_is_not_implemented(tmp_path):
+    host = _host()
+    host.resources = None
+
+    result = _run(["list", "--doc", DOC])
+
+    assert result.exit_code == 2, result.stdout
+    assert json.loads(result.stdout)["code"] == "not_implemented"
+
+
+@pytest.mark.anyio
+async def test_store_error_keeps_its_code_through_the_local_operations():
+    host = _Host(_CountingStore())
+    operations = LocalEngineOperations(host)
+
+    outcome = await operations.resource_list(
+        ContextIdentity("p"), ResourceListRequest(doc="Not A Slug")
+    )
+
+    assert isinstance(outcome, Failure)
+    assert isinstance(outcome.error, DomainError)
+    assert outcome.error.code == "resource_slug_invalid"
+
+
+def _envelope(operation: EngineOperation, payload) -> EngineOperationRequest:
+    return EngineOperationRequest(
+        protocol_version=PROTOCOL_VERSION,
+        request_id=f"{operation.value}-1",
+        operation=operation,
+        selector=ContextSelector(kind="explicit", value="p"),
+        payload=payload,
+    )
+
+
+def _imported_result(tmp_path):
+    """A real import result: manifest, graph mutation and index report."""
+    host = _Host(_CountingStore())
+
+    class _Index:
+        profile = "test"
+
+        def index_document(self, **kwargs):
+            return IndexReport(doc=DOC, profile="test", chunks=3, windows=3)
+
+    host.resources.index = _Index()
+    files = {
+        path.relative_to(tmp_path / "in").as_posix(): path.read_text()
+        for path in _import_dir(tmp_path / "in").rglob("*")
+        if path.is_file()
+    }
+    return host.resources.import_dir(pot_id="p", slug=DOC, files=files)
+
+
+_MANIFEST_SECTION = SectionManifest(
+    slug="body",
+    title="Body",
+    summary="what it covers",
+    ordinal=0,
+    content_hash="body-v1",
+    chunks=(ChunkRef(seq=0, label="opening", page=1),),
+    revision=2,
+)
+_CHUNK = Chunk(
+    resource_id=format_resource_id(DOC, "body", 0),
+    doc=DOC,
+    section="body",
+    seq=0,
+    text="alpha",
+    chars=5,
+    revision=2,
+    source_ref="file:///q3.pdf",
+    page=1,
+)
+
+
+@pytest.mark.parametrize(
+    ("operation", "request_value", "result"),
+    [
+        (
+            EngineOperation.RESOURCE_GET,
+            ResourceGetRequest(resource_ids=(format_resource_id(DOC, "body", 0),)),
+            ResourceBatchResult(
+                chunks=(_CHUNK,),
+                outcomes=(
+                    ResourceReadOutcome(
+                        resource_id=format_resource_id(DOC, "body", 9),
+                        status="error",
+                        errors=(
+                            {
+                                "code": "resource_not_found",
+                                "message": "missing",
+                                "detail": {"candidates": []},
+                            },
+                        ),
+                    ),
+                ),
+                status="partial",
+            ),
+        ),
+        (
+            EngineOperation.RESOURCE_LIST,
+            ResourceListRequest(doc=DOC),
+            ResourceListResult(doc=DOC, sections=(_MANIFEST_SECTION,)),
+        ),
+        (
+            EngineOperation.RESOURCE_STATUS,
+            ResourceStatusRequest(),
+            ResourceStoreStatus(kind="local", ready=True, location="/x", documents=3),
+        ),
+        (
+            EngineOperation.RESOURCE_INDEX_STATUS,
+            ResourceIndexStatusRequest(),
+            ResourceIndexStatus(
+                profile="sqlite_fts", ready=True, capabilities=("lexical",), chunks=4
+            ),
+        ),
+        (
+            EngineOperation.RESOURCE_INDEX_BUILD,
+            ResourceIndexBuildRequest(wait=True),
+            DrainReport(profile="sqlite_hybrid", embedded=3, remaining=1, batches=1),
+        ),
+        (
+            EngineOperation.RESOURCE_INDEX_REBUILD,
+            ResourceIndexRebuildRequest(doc=DOC),
+            ResourceIndexRebuildResult(
+                reports=(IndexReport(doc=DOC, profile="sqlite_fts", chunks=2),)
+            ),
+        ),
+    ],
+    ids=lambda value: getattr(value, "value", None) or type(value).__name__,
+)
+def test_resource_results_survive_the_daemon_codec(operation, request_value, result):
+    request = _envelope(operation, request_value)
+    response = SuccessResponse(
+        protocol_version=PROTOCOL_VERSION,
+        request_id=request.request_id,
+        outcome=Success(result),
+    )
+
+    decoded = decode_response(encode_response(response), request=request)
+
+    assert isinstance(decoded, Success), decoded
+    assert decoded.value == response
+    assert type(decoded.value.outcome.value) is type(result)
+
+
+def test_import_and_rm_results_survive_the_daemon_codec(tmp_path):
+    imported = _imported_result(tmp_path)
+    request = _envelope(
+        EngineOperation.RESOURCE_IMPORT,
+        ResourceImportRequest(doc=DOC, files={"meta.json": "{}"}),
+    )
+    response = SuccessResponse(
+        protocol_version=PROTOCOL_VERSION,
+        request_id=request.request_id,
+        outcome=Success(imported),
+    )
+
+    decoded = decode_response(encode_response(response), request=request)
+
+    assert isinstance(decoded, Success), decoded
+    restored = decoded.value.outcome.value
+    assert restored == imported
+    # Derived properties are recomputed on the client, not shipped.
+    assert restored.graph_written is imported.graph_written is True
+
+
+def test_a_store_error_code_survives_the_daemon_codec():
+    request = _envelope(EngineOperation.RESOURCE_LIST, ResourceListRequest(doc=DOC))
+    response = FailureResponse(
+        protocol_version=PROTOCOL_VERSION,
+        request_id=request.request_id,
+        outcome=Failure(
+            DomainError(
+                code="resource_chunk_too_large",
+                message="chunk 0 is 9000 chars",
+                details={"detail": "body/0000.txt"},
+                recommended_next_action="Split the chunk on a paragraph boundary.",
+            )
+        ),
+    )
+
+    decoded = decode_response(encode_response(response), request=request)
+
+    assert isinstance(decoded, Success), decoded
+    error = decoded.value.outcome.error
+    assert error.code == "resource_chunk_too_large"
+    assert "paragraph boundary" in error.recommended_next_action
+
+
+def test_resource_requests_round_trip_without_a_server_path():
+    request = _envelope(
+        EngineOperation.RESOURCE_IMPORT,
+        ResourceImportRequest(
+            doc=DOC, files={"meta.json": "{}", "body/0000.txt": "alpha"}
+        ),
+    )
+
+    assert "source_dir" not in json.dumps(request.payload.to_payload())
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        EngineOperation.RESOURCE_RM,
+    ],
+)
+def test_only_rm_is_destructive_among_resource_operations(operation):
+    from potpie.runtime.operations import ENGINE_OPERATION_CATALOG
+
+    destructive = {
+        op
+        for op, spec in ENGINE_OPERATION_CATALOG.items()
+        if op.value.startswith("resource_") and spec.destructive
+    }
+    assert destructive == {operation}
+
+
+def test_project_resource_text_is_shared_by_index_and_read():
+    """Kept from the store contract: projection is a pure function."""
+    assert project_resource_text("plain prose") == "plain prose"

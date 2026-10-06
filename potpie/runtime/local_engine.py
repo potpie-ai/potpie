@@ -57,6 +57,11 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
+from potpie_context_engine.core.ports.resource_index import ResourceIndexError
+from potpie_context_engine.core.ports.resource_store import (
+    ResourceBatchResult,
+    ResourceStoreError,
+)
 from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 from potpie_context_engine.domain.nudge import GraphNudgeRequest
 from potpie_context_engine.domain.ingestion_event_models import (
@@ -89,13 +94,26 @@ from potpie_context_engine.requests import (
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    ResourceGetRequest,
+    ResourceImportRequest,
+    ResourceIndexBuildRequest,
+    ResourceIndexRebuildRequest,
+    ResourceIndexStatusRequest,
+    ResourceListRequest,
+    ResourceRmRequest,
+    ResourceStatusRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
     ProcessingStatusRequest,
 )
-from potpie_context_engine.results import DescribeResult, ResetContextResult
+from potpie_context_engine.results import (
+    DescribeResult,
+    ResetContextResult,
+    ResourceIndexRebuildResult,
+    ResourceListResult,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +128,8 @@ class LocalEngineServices:
     nudge: Any
     ingestion: Any | None = None
     ingestion_events: Any | None = None
+    resources: Any | None = None
+    """The ``ResourceFacade`` (document store + index), or ``None`` if absent."""
 
 
 class LocalContextSelectorResolver:
@@ -493,9 +513,19 @@ class LocalEngineOperations:
 
         def reset() -> ResetContextResult:
             result = self._services.backend.mutation.reset_pot(context.value)
+            reset_ok = bool(result.get("ok", True))
+            # Documents go only after the graph reset succeeded: a failed reset
+            # must not leave live claims citing chunk ids that no longer exist.
+            resources = self._resources_or_none()
+            purged = (
+                bool(resources.purge_pot(context.value))
+                if reset_ok and resources is not None
+                else None
+            )
             return ResetContextResult(
                 context_id=context.value,
-                reset=bool(result.get("ok", True)),
+                reset=reset_ok,
+                resources_purged=purged,
             )
 
         return await self._call(reset)
@@ -752,6 +782,109 @@ class LocalEngineOperations:
             )
         )
 
+    # --- document resources -------------------------------------------------
+
+    async def resource_import(
+        self, context: ContextIdentity, request: ResourceImportRequest
+    ) -> Outcome[object]:
+        # Contents only, never a path: see ``ResourceImportRequest``.
+        return await self._call(
+            lambda: self._resources().import_dir(
+                pot_id=context.value,
+                slug=_required_value(request.doc, "doc"),
+                files=dict(request.files),
+                source_ref=request.source_ref,
+                source_kind=request.source_kind,
+            )
+        )
+
+    async def resource_get(
+        self, context: ContextIdentity, request: ResourceGetRequest
+    ) -> Outcome[object]:
+        def get() -> ResourceBatchResult:
+            if not request.resource_ids:
+                raise ValueError("resource_ids is required")
+            result = self._resources().get(
+                pot_id=context.value,
+                resource_ids=tuple(request.resource_ids),
+                with_neighbors=request.with_neighbors,
+            )
+            if isinstance(result, ResourceBatchResult):
+                return result
+            # Every id resolved: the facade keeps its historical tuple shape,
+            # the typed boundary always answers one batch receipt.
+            return ResourceBatchResult(
+                chunks=tuple(result), outcomes=(), status="success"
+            )
+
+        return await self._call(get)
+
+    async def resource_list(
+        self, context: ContextIdentity, request: ResourceListRequest
+    ) -> Outcome[object]:
+        def list_sections() -> ResourceListResult:
+            doc = _required_value(request.doc, "doc")
+            return ResourceListResult(
+                doc=doc,
+                sections=tuple(
+                    self._resources().list(
+                        pot_id=context.value, slug=doc, section=request.section
+                    )
+                ),
+            )
+
+        return await self._call(list_sections)
+
+    async def resource_rm(
+        self, context: ContextIdentity, request: ResourceRmRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._resources().delete(
+                pot_id=context.value, slug=_required_value(request.doc, "doc")
+            )
+        )
+
+    async def resource_status(
+        self, context: ContextIdentity, request: ResourceStatusRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._call(lambda: self._resources().status(pot_id=context.value))
+
+    async def resource_index_status(
+        self, context: ContextIdentity, request: ResourceIndexStatusRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._call(
+            lambda: self._resources().index_status(pot_id=context.value)
+        )
+
+    async def resource_index_build(
+        self, context: ContextIdentity, request: ResourceIndexBuildRequest
+    ) -> Outcome[object]:
+        def build() -> object:
+            resources = self._resources()
+            # Pending work is per pot, so ``doc`` narrows by re-deriving that
+            # document's rows first; that is what makes it mean something on a
+            # document whose index rows are missing entirely.
+            if request.doc:
+                resources.index_rebuild(pot_id=context.value, doc=request.doc)
+            return resources.index_build(pot_id=context.value, wait=request.wait)
+
+        return await self._call(build)
+
+    async def resource_index_rebuild(
+        self, context: ContextIdentity, request: ResourceIndexRebuildRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: ResourceIndexRebuildResult(
+                reports=tuple(
+                    self._resources().index_rebuild(
+                        pot_id=context.value, doc=request.doc or None
+                    )
+                )
+            )
+        )
+
     async def invoke(
         self,
         operation: EngineOperation,
@@ -792,6 +925,14 @@ class LocalEngineOperations:
             EngineOperation.SUBMIT_ARTIFACT: self.submit_artifact,
             EngineOperation.PROCESSING_STATUS: self.processing_status,
             EngineOperation.NUDGE: self.nudge,
+            EngineOperation.RESOURCE_IMPORT: self.resource_import,
+            EngineOperation.RESOURCE_GET: self.resource_get,
+            EngineOperation.RESOURCE_LIST: self.resource_list,
+            EngineOperation.RESOURCE_RM: self.resource_rm,
+            EngineOperation.RESOURCE_STATUS: self.resource_status,
+            EngineOperation.RESOURCE_INDEX_STATUS: self.resource_index_status,
+            EngineOperation.RESOURCE_INDEX_BUILD: self.resource_index_build,
+            EngineOperation.RESOURCE_INDEX_REBUILD: self.resource_index_rebuild,
         }
         handler = handlers.get(operation)
         if handler is None:
@@ -857,6 +998,21 @@ class LocalEngineOperations:
             )
         return self._services.backend.snapshot
 
+    def _resources_or_none(self) -> Any | None:
+        return getattr(self._services, "resources", None)
+
+    def _resources(self) -> Any:
+        resources = self._resources_or_none()
+        if resources is None:
+            raise CapabilityNotImplemented(
+                "resources",
+                detail="this runtime does not compose a document resource store",
+                recommended_next_action=(
+                    "run against the local Potpie runtime, which composes one"
+                ),
+            )
+        return resources
+
     def _ingestion_submission(self) -> Any:
         service = self._services.ingestion
         if service is None:
@@ -895,6 +1051,17 @@ class LocalEngineOperations:
             )
         except PotNotFound as exc:
             return Failure(DomainError(code="pot_not_found", message=str(exc)))
+        except (ResourceStoreError, ResourceIndexError) as exc:
+            # The store's own stable code, not ``validation_error``: an agent
+            # retries a bad slug and an oversized chunk differently.
+            return Failure(
+                DomainError(
+                    code=exc.code,
+                    message=str(exc),
+                    details={"detail": exc.detail} if exc.detail is not None else {},
+                    recommended_next_action=exc.recommended_next_action,
+                )
+            )
         except ValueError as exc:
             return Failure(
                 DomainError(
@@ -977,6 +1144,7 @@ class LocalContextResourceComposer:
                     workbench=operations,
                     ingestion=operations,
                     nudge=operations,
+                    documents=operations,
                 ),
             )
         )

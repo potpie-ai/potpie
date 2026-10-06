@@ -197,3 +197,87 @@ def test_config_get_redacts_camelcase_api_key(
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["service.apiKey"] == "<redacted>"
+
+
+class _RecordingConfig(_FakeConfig):
+    def __init__(self) -> None:
+        super().__init__({})
+        self.writes: list[tuple[str, str]] = []
+
+    def set(self, key: str, value: str) -> None:
+        self.writes.append((key, value))
+        self._values[key] = value
+
+
+def test_config_set_refuses_a_key_nothing_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A typo used to persist and print ``set``; nothing would ever read it."""
+    config = _RecordingConfig()
+    _mock_config(config, monkeypatch)
+
+    result = runner.invoke(cli_main.app, ["--json", "config", "set", "emebdder", "x"])
+
+    assert result.exit_code == 1, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "validation_error"
+    assert "resource_index" in payload["detail"]["known_keys"]
+    assert config.writes == []
+
+
+@pytest.mark.parametrize("key", ["embedder", "embedding_provider", "resource_index"])
+def test_config_set_accepts_catalog_and_alias_keys(
+    key: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``resource_index`` is read from ``config.json``, so it must be settable;
+    the older embedder spellings are still read, so they stay writable."""
+    config = _RecordingConfig()
+    _mock_config(config, monkeypatch)
+    value = "sqlite_fts" if key == "resource_index" else "hashing"
+
+    result = runner.invoke(cli_main.app, ["--json", "config", "set", key, value])
+
+    assert result.exit_code == 0, result.stdout
+    assert config.writes == [(key, value)]
+
+
+def test_config_set_resource_index_normalizes_and_validates_the_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _RecordingConfig()
+    _mock_config(config, monkeypatch)
+
+    ok = runner.invoke(
+        cli_main.app, ["--json", "config", "set", "resource_index", "SQLite-FTS"]
+    )
+    off = runner.invoke(
+        cli_main.app, ["--json", "config", "set", "resource_index", "off"]
+    )
+    bad = runner.invoke(
+        cli_main.app, ["--json", "config", "set", "resource_index", "sqlite_vec"]
+    )
+
+    assert ok.exit_code == 0 and off.exit_code == 0
+    assert config.writes == [
+        ("resource_index", "sqlite_fts"),
+        ("resource_index", "none"),
+    ]
+    assert bad.exit_code == 1
+    assert json.loads(bad.stdout)["detail"]["profiles"] == [
+        "sqlite_hybrid",
+        "sqlite_fts",
+        "none",
+    ]
+
+
+def test_the_index_registry_reads_the_resource_index_key(tmp_path, monkeypatch) -> None:
+    """Writer and reader agree: what ``config set`` persists is what selects."""
+    from potpie_context_engine.adapters.outbound.resources.index import (
+        default_resource_index_profile,
+    )
+
+    monkeypatch.delenv("CONTEXT_ENGINE_RESOURCE_INDEX", raising=False)
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    LocalConfigService(home=tmp_path).set("resource_index", "sqlite_fts")
+
+    assert default_resource_index_profile() == "sqlite_fts"

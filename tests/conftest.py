@@ -133,6 +133,11 @@ def _reset_cli_state():
             runner.run(manager.shutdown())
         if runner is not None:
             runner.close()
+        # A real runtime owns the resource-index drain thread and its sqlite
+        # connection; leave neither behind for the next test.
+        close_runtime = getattr(_common._state.get("runtime"), "close", None)
+        if callable(close_runtime):
+            close_runtime()
         _common._state["store"] = None
         _common._state["runtime"] = None
         _common._state["json"] = False

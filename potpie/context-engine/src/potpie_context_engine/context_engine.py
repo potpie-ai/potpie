@@ -41,6 +41,14 @@ from potpie_context_engine.results import (
     RepairResult,
     ResetContextResult,
     ResolveResult,
+    ResourceGetResult,
+    ResourceImportResult,
+    ResourceIndexBuildResult,
+    ResourceIndexRebuildResult,
+    ResourceIndexStatusResult,
+    ResourceListResult,
+    ResourceRmResult,
+    ResourceStatusResult,
     SearchEntitiesResult,
     SearchResult,
     SubmitArtifactResult,
@@ -74,6 +82,14 @@ from potpie_context_engine.requests import (
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    ResourceGetRequest,
+    ResourceImportRequest,
+    ResourceIndexBuildRequest,
+    ResourceIndexRebuildRequest,
+    ResourceIndexStatusRequest,
+    ResourceListRequest,
+    ResourceRmRequest,
+    ResourceStatusRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
@@ -246,9 +262,51 @@ class NudgeOperations(Protocol):
     ) -> NudgeResult | Outcome[NudgeResult]: ...
 
 
+class ResourceOperations(Protocol):
+    """Document payloads (chunk text the graph points at) and their index."""
+
+    async def resource_import(
+        self, context: ContextIdentity, request: ResourceImportRequest
+    ) -> ResourceImportResult | Outcome[ResourceImportResult]: ...
+
+    async def resource_get(
+        self, context: ContextIdentity, request: ResourceGetRequest
+    ) -> ResourceGetResult | Outcome[ResourceGetResult]: ...
+
+    async def resource_list(
+        self, context: ContextIdentity, request: ResourceListRequest
+    ) -> ResourceListResult | Outcome[ResourceListResult]: ...
+
+    async def resource_rm(
+        self, context: ContextIdentity, request: ResourceRmRequest
+    ) -> ResourceRmResult | Outcome[ResourceRmResult]: ...
+
+    async def resource_status(
+        self, context: ContextIdentity, request: ResourceStatusRequest
+    ) -> ResourceStatusResult | Outcome[ResourceStatusResult]: ...
+
+    async def resource_index_status(
+        self, context: ContextIdentity, request: ResourceIndexStatusRequest
+    ) -> ResourceIndexStatusResult | Outcome[ResourceIndexStatusResult]: ...
+
+    async def resource_index_build(
+        self, context: ContextIdentity, request: ResourceIndexBuildRequest
+    ) -> ResourceIndexBuildResult | Outcome[ResourceIndexBuildResult]: ...
+
+    async def resource_index_rebuild(
+        self, context: ContextIdentity, request: ResourceIndexRebuildRequest
+    ) -> ResourceIndexRebuildResult | Outcome[ResourceIndexRebuildResult]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class EngineDependencies:
-    """Focused engine-owned operation groups and resource ownership metadata."""
+    """Focused engine-owned operation groups and resource ownership metadata.
+
+    ``documents`` is optional: an engine composed without a document resource
+    store answers every ``resource_*`` operation with a typed ``not_implemented``
+    dependency failure instead of failing construction. ``resources`` is the
+    lifecycle list of resource-bearing dependencies, unrelated to documents.
+    """
 
     context: ContextOperations
     graph: GraphOperations
@@ -256,6 +314,7 @@ class EngineDependencies:
     ingestion: IngestionOperations
     nudge: NudgeOperations
     resources: tuple[EngineResource, ...] = ()
+    documents: ResourceOperations | None = None
 
 
 RequestT = TypeVar("RequestT", bound=EngineRequest)
@@ -542,6 +601,68 @@ class ContextEngine:
     async def nudge(self, request: NudgeRequest) -> Outcome[NudgeResult]:
         return await self._invoke("nudge", self._dependencies.nudge.nudge, request)
 
+    async def resource_import(
+        self, request: ResourceImportRequest
+    ) -> Outcome[ResourceImportResult]:
+        return await self._invoke_documents("resource_import", request)
+
+    async def resource_get(
+        self, request: ResourceGetRequest
+    ) -> Outcome[ResourceGetResult]:
+        return await self._invoke_documents("resource_get", request)
+
+    async def resource_list(
+        self, request: ResourceListRequest
+    ) -> Outcome[ResourceListResult]:
+        return await self._invoke_documents("resource_list", request)
+
+    async def resource_rm(
+        self, request: ResourceRmRequest
+    ) -> Outcome[ResourceRmResult]:
+        return await self._invoke_documents("resource_rm", request)
+
+    async def resource_status(
+        self, request: ResourceStatusRequest
+    ) -> Outcome[ResourceStatusResult]:
+        return await self._invoke_documents("resource_status", request)
+
+    async def resource_index_status(
+        self, request: ResourceIndexStatusRequest
+    ) -> Outcome[ResourceIndexStatusResult]:
+        return await self._invoke_documents("resource_index_status", request)
+
+    async def resource_index_build(
+        self, request: ResourceIndexBuildRequest
+    ) -> Outcome[ResourceIndexBuildResult]:
+        return await self._invoke_documents("resource_index_build", request)
+
+    async def resource_index_rebuild(
+        self, request: ResourceIndexRebuildRequest
+    ) -> Outcome[ResourceIndexRebuildResult]:
+        return await self._invoke_documents("resource_index_rebuild", request)
+
+    async def _invoke_documents(self, operation: str, request: RequestT) -> Outcome:
+        documents = self._dependencies.documents
+
+        async def uncomposed(
+            context: ContextIdentity, request: RequestT
+        ) -> Outcome[object]:
+            del context, request
+            return Failure(
+                DependencyError(
+                    code="not_implemented",
+                    message="this engine was composed without a document resource store",
+                    details={"operation": operation},
+                    recommended_next_action=(
+                        "compose the engine with a ResourceOperations dependency"
+                    ),
+                    retry_posture="safe",
+                )
+            )
+
+        handler = getattr(documents, operation) if documents is not None else uncomposed
+        return await self._invoke(operation, handler, request)
+
 
 async def create_engine(
     *,
@@ -579,6 +700,7 @@ __all__ = [
     "GraphOperations",
     "IngestionOperations",
     "NudgeOperations",
+    "ResourceOperations",
     "ResourceOwnership",
     "WorkbenchOperations",
     "create_engine",

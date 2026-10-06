@@ -1,6 +1,6 @@
 ---
 name: potpie-infra-architecture
-version: "2"
+version: "3"
 description: "Use for project infra and architecture context: environments, adapters, runtime configuration, deployments, service dependencies, datastores, API contracts, ownership, incidents, and dependency blast radius."
 ---
 
@@ -56,8 +56,9 @@ potpie graph neighborhood --entity service:<service-name> --detail summary --lim
 ```
 
 Choose the neighborhood that answers the question; do not automatically run
-both. Stop expanding once the required evidence is covered. Pass
-`--pot <name-or-id>` once the pot is known.
+both. Fetch already-discovered document chunks with `potpie resource get`
+concurrently with neighborhood reads, and stop expanding once the required
+evidence is covered. Pass `--pot <name-or-id>` once the pot is known.
 
 ## Apply Results
 

@@ -93,8 +93,9 @@ class PotArchived(ContextEngineError):
 
     Distinct from :class:`PotNotFound` because the repair differs: an unknown
     ref is a typo, while this one resolved. The pot shows under
-    ``pot list --archived`` and archiving cleared its graph state, so selecting
-    it, writing to it, or routing a repo into it can only produce empty answers.
+    ``pot list --archived`` and archiving cleared its graph state and stored
+    documents, so selecting it, writing to it, or routing a repo into it can
+    only produce empty answers.
     """
 
     def __init__(self, message: str, *, recommended_next_action: str | None = None):

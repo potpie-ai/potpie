@@ -108,6 +108,35 @@ LEXICAL_RANK_DECAY = 10.0
 #: 0.25 of rank-and-coverage is what keeps ``ERR_QUOTA_EXCEEDED`` findable.
 SIMILARITY_BLEND = 0.75
 
+#: The embedding models every absolute similarity number in this package was
+#: measured with: :data:`SIMILARITY_BLEND` above and the confidence bands
+#: ``RELEVANCE_CONFIDENCE_HIGH``/``RELEVANCE_CONFIDENCE_MEDIUM`` in
+#: :mod:`potpie_context_engine.core.agent_envelope`. All of them come from one
+#: benchmark run with ``all-MiniLM-L6-v2``.
+#:
+#: Cosine scales differ between models (a well-formed query's best hit sat at
+#: 0.50-0.60 here; another encoder can put unrelated text above that), so an
+#: embedder may call itself ``calibrated`` only when its model is listed. Every
+#: other embedder takes the conservative branch: relevance is rank-and-coverage
+#: only, ``best_relevance`` is ``None`` so confidence comes from coverage, and an
+#: absolute ``--query-threshold`` on passages is refused rather than applied.
+#: Re-measure before adding a model; never add one by analogy.
+CALIBRATED_EMBEDDING_MODELS: frozenset[str] = frozenset({"all-minilm-l6-v2"})
+
+
+def embedding_model_is_calibrated(model_name: str | None) -> bool:
+    """Whether the thresholds here were measured on this embedding model.
+
+    Case-insensitive, and the ``sentence-transformers/`` hub prefix is ignored,
+    so ``all-MiniLM-L6-v2`` and ``sentence-transformers/all-MiniLM-L6-v2`` are
+    the same model. Anything else, including a fine-tune of a listed model, is
+    uncalibrated.
+    """
+    normalized = (model_name or "").strip().lower()
+    normalized = normalized.removeprefix("sentence-transformers/")
+    return normalized in CALIBRATED_EMBEDDING_MODELS
+
+
 # --- Error codes ------------------------------------------------------------
 # Stable strings the CLI maps to exit codes and ``--json`` error payloads.
 
@@ -421,6 +450,7 @@ class ResourceIndexPort(Protocol):
 
 
 __all__ = [
+    "CALIBRATED_EMBEDDING_MODELS",
     "DEFAULT_DRAIN_BUDGET",
     "EMBED_WINDOW_CHARS",
     "EMBED_WINDOW_OVERLAP_CHARS",
@@ -444,4 +474,5 @@ __all__ = [
     "ResourceIndexError",
     "ResourceIndexPort",
     "ResourceIndexStatus",
+    "embedding_model_is_calibrated",
 ]

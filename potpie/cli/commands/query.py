@@ -173,8 +173,13 @@ def _envelope_human(env) -> str:
         f"pot={env.pot_id} intent={env.intent} confidence={env.overall_confidence} items={len(env.items)}"
     ]
     for item in env.items[:10]:
-        fact = dict(item.payload).get("fact") or dict(item.payload).get("summary") or ""
-        lines.append(f"  • [{item.include}] {fact}")
+        payload = dict(item.payload)
+        # A resource hit carries passage text as a snippet, not a fact, and the
+        # one command that returns the whole chunk.
+        fact = payload.get("fact") or payload.get("summary") or payload.get("snippet")
+        lines.append(f"  • [{item.include}] {fact or ''}")
+        if payload.get("kind") == "resource_chunk" and payload.get("fetch"):
+            lines.append(f"    {payload['fetch']}")
     for unsup in env.unsupported_includes:
         lines.append(f"  ! {unsup.name}: {unsup.reason}")
     return "\n".join(lines)

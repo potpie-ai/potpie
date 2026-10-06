@@ -19,7 +19,8 @@ from typing import Any
 from potpie.pots.contracts import PotRepoSource
 
 #: The repair for every archived-pot refusal. The pot is listed only on
-#: request and its graph state is gone, so the way forward is a new pot.
+#: request and its graph state and documents are gone, so the way forward is a
+#: new pot.
 ARCHIVED_POT_NEXT_ACTION = (
     "see it with 'potpie pot list --archived', or start a new pot with "
     "'potpie pot create <name> --use'"
@@ -59,7 +60,7 @@ def archived_pot_message(pot: Any, *, verb: str = "be used as a target") -> str:
     name = getattr(pot, "name", None) or pot_id
     return (
         f"Pot '{name}' ({pot_id}) is archived, so it cannot {verb}. "
-        "Archiving cleared its graph state."
+        "Archiving cleared its graph state and stored documents."
     )
 
 

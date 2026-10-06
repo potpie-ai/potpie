@@ -1,7 +1,7 @@
 ---
 name: "potpie-graph"
-version: "6"
-description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions and responding to nudges."
+version: "7"
+description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions, fetching ingested document chunks with `potpie resource get`, and responding to nudges."
 ---
 
 # Potpie Graph Workbench
@@ -15,14 +15,15 @@ structured fields `record` cannot take, so it refuses them; write those with a
 plan (section 4).
 
 The graph is project memory: preferences, prior bugs and their fixes, infra
-topology, decisions, a timeline of changes, and document references. You are the
+topology, decisions, a timeline of changes, and ingested documents. You are the
 intelligence that reads it before acting and writes durable learnings after.
 Potpie validates, lowers, commits, audits, and ranks. It does **not** scan a
 repository or infer rich facts from prose for you.
 
-Text output for reads; `--json` for `propose`, `commit`, and anything you
-parse. `graph describe --examples` prints its examples only with `--json`, and
-they are read commands: the write payload shape is `graph mutation-template`.
+Text output for reads; `--json` for `propose`, `commit`, `resource import`,
+and anything you parse. `graph describe --examples` prints its examples only
+with `--json`, and they are read commands: the write payload shape is
+`graph mutation-template`.
 When a command's JSON is saved to a file, parse it with a JSON decoder (for
 example, `json.load`) and print only the fields needed for the task. Do not
 regex-match or reprint an entire minified JSON object to inspect one field.
@@ -71,12 +72,12 @@ lookups only as needed. Targeted local file discovery can run alongside them.
 Use concurrent calls for these short reads; reserve subagents for substantial,
 independent source investigations. Inspect every result, including failures.
 
-Then follow the evidence: use returned keys for a neighborhood or named view.
-Those follow-ups can run concurrently once their inputs are known. Use a
-symptom or timeline read when coverage is missing or the task requires a full
-ordered list. Stop expanding when the task's evidence and applicable
-constraints are covered. Keep an unknown key → neighborhood dependency
-sequential.
+Then follow the evidence: use returned keys for a neighborhood or named view,
+and batch returned chunk IDs into `resource get`. Those follow-ups can run
+concurrently once their inputs are known. Use a symptom or timeline read when
+coverage is missing or the task requires a full ordered list. Stop expanding
+when the task's evidence and applicable constraints are covered. Keep unknown
+key → neighborhood and document hit → chunk fetch dependencies sequential.
 
 Broad discovery and phrase follow-up examples:
 
@@ -93,16 +94,18 @@ default is `feature` (preferences, features, infra, decisions, owners, docs), so
 pass `--intent debugging` (prior bugs, infra, timeline) for a failure and
 `--intent operations` (infra, timeline, owners) for what changed or runs where.
 `--include` names families directly: `coding_preferences`, `decisions`,
-`docs`, `features`, `infra_topology`, `owners`, `prior_bugs`, `timeline`; an
-unknown name comes back as `unknown_include`. A text row prints the fact alone;
-`--json` carries each item's `subject_key`, `predicate` and `object_key`.
+`docs`, `features`, `infra_topology`, `owners`, `prior_bugs`, `resources`,
+`timeline`; an unknown name comes back as `unknown_include`. `docs` searches
+document section summaries and chunk text (the `resources` family is added for
+you); `resources` alone searches chunk text only. A text row prints the fact
+alone; `--json` carries each item's `subject_key`, `predicate` and `object_key`.
 `confidence` in the header is not a verdict: a small pot reads `low` with the
 right answer on top. Compare scores within a read, never across reads; a score
 is retrieval relevance, not answer probability. `search` takes the phrase as
-its positional argument — there is no `--query`. Bare, it reads only the
-`unknown` intent's families (infra, timeline, decisions), so add `--include
-<family>` for anything else; a document phrase needs `--include docs`. Two needs
-`resolve` does not serve:
+its positional argument — there is no `--query`. Bare, it reads the `unknown`
+intent's families (infra, timeline, decisions, docs, resources), so add
+`--include <family>` for anything else or to narrow it; `--include docs` keeps
+a document phrase to the documents. Two needs `resolve` does not serve:
 
 | Need | Read |
 |---|---|
@@ -131,7 +134,8 @@ topology — in one flat list; `--predicate USES` narrows it.
 | `features.feature_context` | `--repo current`, `--scope anchor_entity_key:…`, a service, or `--query`; refused with `missing_required_scope` without one | what a repo/service does (Feature nodes via `PROVIDES` / `IMPLEMENTED_IN`) |
 | `decisions.active_decisions` | `--scope service:…` — a decision anchors on what it was linked to, usually a service; use that scope, including a repo key | active decisions |
 | `code_topology.ownership_by_path` | `--scope` | who owns a scope |
-| `knowledge.document_context` | `--query` / `--scope` | which recorded documents and doc references cover it |
+| `knowledge.document_context` | `--query` / `--scope` | which ingested document sections and doc references cover it; hits carry chunk ids, and a section can repeat once per claim about it (same chunk id) |
+| `knowledge.document_passages` | `--query` | chunk-text matches with snippets and fetch commands; weak matches are filtered relative to the best hit |
 
 Scope keys: `repo`, `path`, `file_path`, `service`, `anchor_entity_key`,
 `language`, `framework`, `audience`. A repo key is `repo:<host>/<org>/<name>`
@@ -149,6 +153,34 @@ prints facts whole). Inspect `coverage` (per view, with its `candidate_pool`)
 and `quality` before relying on results; `--json --detail full --relations full
 --format raw` is for exact machine processing only.
 
+### Ingested documents: find, then fetch
+
+Ingested documents are `Document` / `DocumentSection` nodes whose section
+summaries are claims, so `resolve`, `search --include docs` and
+`document_context` land on them. A section hit carries its chunk ids
+(`potpie://res/<doc>/<section>/<seq>`, optionally pinned with `@rev<N>`); fetch
+text with one batched call (up to 128 ids):
+
+```bash
+potpie resource get potpie://res/<doc>/<section>/0000 potpie://res/<doc>/<section>/0001 --with-neighbors
+```
+
+`potpie resource list --doc <name>` lists a known document's sections with
+their chunk ids and labels in one call. `document_passages` matches the chunk
+text itself and returns chunk ids with snippets — for a phrase you know is in
+the document that no summary surfaced; it filters relative to the best hit, so
+fewer than `--limit` rows may return. Fetch the strongest supporting passages.
+`resource get` output is bounded, requested chunks before neighbors; `--full`
+lifts the budget. A batch where some ids fail keeps the successful `chunks`,
+reports per-id `outcomes` in request order, and exits nonzero: follow up the
+failed ids only. Candidate ids listed for a missing chunk are choices to
+inspect, never a replacement picked for you.
+
+`SECTION_OF` holds a document together; `DOCUMENTS` points a document (or one
+section) at what it covers — assert it when reference material lands. New
+documents go through the per-format `potpie-resource-*` skills and
+`potpie resource import`; payloads never enter the graph.
+
 ### Query expansion
 
 The local embedder is small; recall depends on the query. Expand the user's
@@ -162,7 +194,10 @@ the question was answered: judge each row by its score and text.
 contains every word of the query or its similarity clears `--query-threshold`
 (default 0.7), which a task sentence rarely does. Never pass `--query` to
 `preferences_for_scope`, and narrow a timeline by window and scope before
-adding a short, literal `--query`.
+adding a short, literal `--query`. `document_passages` keeps lexical matches
+and drops semantic-only ones below a floor set by the pool's best; an explicit
+`--query-threshold` there is refused unless the index reports calibrated
+similarity, and it can drop exact identifiers.
 
 ## 3. Resolve identity — `graph search-entities`
 
@@ -218,7 +253,7 @@ decision, and policy claims only when the source supports each one.
 | Explicit reusable guidance about future work | `Preference`/`Policy`, `POLICY_APPLIES_TO`; preserve the prescription and its source |
 | Failure, attempted remedy, observed outcome | `BugPattern`, `Fix`, verification `Activity`; distinguish `REPRODUCES`, `RESOLVED`, `ATTEMPTED_FIX_FAILED`, `VERIFIED` |
 | Something happened at a source time | Timeline `Activity`, actor/scope links and `Period` as supported; use an event template |
-| Source document or runbook | a `doc_reference` or `runbook_note` record pointing at the source; model facts stated inside it separately |
+| Source document or runbook | `Document`/`DocumentSection` via `potpie resource import` for the text, `SECTION_OF`/`DOCUMENTS` for structure and coverage; a `doc_reference` record when only a pointer is wanted; model facts stated inside it separately |
 
 For example, “the worker uses Redis” is a topology fact; “we chose Redis to
 reduce latency” is a decision; “all workers must use Redis” is a policy only

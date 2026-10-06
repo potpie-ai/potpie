@@ -48,6 +48,9 @@ from potpie_context_engine.domain.embedding_modes import (
     SEMANTIC_EMBEDDINGS_INSTALL_HINT,
     normalize_embedding_mode,
 )
+from potpie_context_engine.core.ports.resource_index import (
+    embedding_model_is_calibrated,
+)
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 
 _DEFAULT_DIMENSIONS = 256
@@ -110,8 +113,15 @@ class SentenceTransformerEmbedder:
 
     @property
     def calibrated(self) -> bool:
-        """A trained sentence encoder: its cosine is evidence, not just order."""
-        return True
+        """Whether the absolute thresholds were measured on *this* model.
+
+        A trained sentence encoder's cosine is evidence, but its scale is the
+        model's own: the blend and confidence bands were measured on
+        ``all-MiniLM-L6-v2`` and mean nothing on another encoder. So only a
+        model listed in ``CALIBRATED_EMBEDDING_MODELS`` claims calibration;
+        any other model ranks by its cosine and is judged on coverage.
+        """
+        return embedding_model_is_calibrated(self.model_name)
 
     @property
     def dimensions(self) -> int:

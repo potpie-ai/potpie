@@ -24,6 +24,20 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphEntitySearchResult,
     GraphReadResult,
 )
+from potpie_context_engine.core.ports.resource_index import (
+    DrainReport,
+    IndexReport,
+    ResourceIndexStatus,
+)
+from potpie_context_engine.core.ports.resource_store import (
+    ResourceBatchResult,
+    ResourceStoreStatus,
+    SectionManifest,
+)
+from potpie_context_engine.core.resource_to_semantic import ResourceDeleteResult
+from potpie_context_engine.core.resource_to_semantic import (
+    ResourceImportResult as CoreResourceImportResult,
+)
 from potpie_context_engine.core.semantic_mutations import SemanticMutationResult
 from potpie_context_engine.domain.ingestion_event_models import (
     EventReceipt,
@@ -63,10 +77,42 @@ ProcessingStatusResult: TypeAlias = IngestionEvent
 NudgeResult: TypeAlias = GraphNudgeResult
 
 
+ResourceImportResult: TypeAlias = CoreResourceImportResult
+ResourceGetResult: TypeAlias = ResourceBatchResult
+"""Every chunk that resolved plus one outcome per requested id.
+
+``status`` is ``"success"`` with empty ``outcomes`` when every id resolved;
+anything else names the ids that need follow-up."""
+ResourceRmResult: TypeAlias = ResourceDeleteResult
+ResourceStatusResult: TypeAlias = ResourceStoreStatus
+ResourceIndexStatusResult: TypeAlias = ResourceIndexStatus
+ResourceIndexBuildResult: TypeAlias = DrainReport
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceListResult:
+    """A document's sections, each with its chunk refs and stored revision."""
+
+    doc: str
+    sections: tuple[SectionManifest, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceIndexRebuildResult:
+    """One report per document the rebuild re-derived."""
+
+    reports: tuple[IndexReport, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class ResetContextResult:
     context_id: str
     reset: bool
+    resources_purged: bool | None = None
+    """The resource store's own answer, after the graph reset succeeded.
+
+    ``None`` means no resource store is composed, which is neither a purge nor
+    a failed one."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +170,14 @@ __all__ = [
     "RepairResult",
     "ResetContextResult",
     "ResolveResult",
+    "ResourceGetResult",
+    "ResourceImportResult",
+    "ResourceIndexBuildResult",
+    "ResourceIndexRebuildResult",
+    "ResourceIndexStatusResult",
+    "ResourceListResult",
+    "ResourceRmResult",
+    "ResourceStatusResult",
     "SearchEntitiesResult",
     "SearchResult",
     "SubmitArtifactResult",

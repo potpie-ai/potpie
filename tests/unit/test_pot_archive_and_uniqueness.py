@@ -66,7 +66,11 @@ class _ResetClient:
                     recommended_next_action="run 'potpie daemon restart'",
                 )
             )
-        return Success(ResetContextResult(context_id=self.context_id, reset=True))
+        return Success(
+            ResetContextResult(
+                context_id=self.context_id, reset=True, resources_purged=True
+            )
+        )
 
 
 class _Host:
@@ -284,6 +288,7 @@ def test_archive_resets_the_graph_before_retiring_the_pot(service, engine) -> No
         "archived": True,
         "already_archived": False,
         "graph_reset": True,
+        "resources_purged": True,
     }
     assert engine.calls == [(dead.pot_id, DestructiveConfirmation(confirmed=True))]
     archived = {p.pot_id: p.archived for p in service.list_pots()}
@@ -339,6 +344,7 @@ def test_archiving_an_archived_pot_clears_its_graph_state_again(
         "archived": True,
         "already_archived": True,
         "graph_reset": True,
+        "resources_purged": True,
     }
     assert engine.calls == [(dead.pot_id, DestructiveConfirmation(confirmed=True))]
     archived = {p.pot_id: p.archived for p in service.list_pots()}
