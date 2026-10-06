@@ -28,6 +28,11 @@ class SkillInfo:
     description: str = ""
     installed: bool = False
     installed_version: str | None = None
+    #: Installed, but its files no longer match what the bundle carries — a
+    #: hand-edit or a half-written install. Distinct from an outdated
+    #: ``installed_version``, which a version comparison can already see.
+    drifted: bool = False
+    disabled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +43,7 @@ class SkillStatus:
     installed: tuple[SkillInfo, ...] = ()
     missing: tuple[SkillInfo, ...] = ()
     outdated: tuple[SkillInfo, ...] = ()
+    disabled: tuple[SkillInfo, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,11 +72,66 @@ class AgentTargetPort(Protocol):
         """Installed skill id -> version for this harness."""
         ...
 
+    def available(self) -> frozenset[str]:
+        """Catalog ids this harness's bundle can actually install.
+
+        Optional, like ``matches_bundle``: a target that does not implement it
+        is taken to carry whatever the catalog lists. Implementing it is what
+        keeps "in the catalog" from being read as "installable here" for a
+        harness whose bundle carries fewer skills than the catalog; without it
+        the manager would report a skill it could never write as changed on
+        every run. The manager asks it *before* the catalog, so it answers only
+        about ids the catalog has; an unknown id is the catalog's refusal to
+        make, not this one's.
+        """
+        ...
+
+    def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
+        """Is the installed skill byte-identical to what ``install`` would write?
+
+        Optional: the manager treats a target that does not implement it as
+        "current", because reinstalling on every command is a worse default than
+        missing drift on a third-party target. Implementations should answer by
+        dry-running their own install rather than by comparing a recorded
+        version — a version integer cannot see a truncated or edited file.
+        """
+        ...
+
+    def locally_modified(self, *, skill_id: str) -> bool:
+        """Whether the installed file differs from the last content we wrote."""
+        ...
+
+    def disabled(self) -> frozenset[str]:
+        """Skill ids intentionally removed from bundle sweeps."""
+        ...
+
+    def set_disabled(self, *, skill_id: str, disabled: bool) -> None: ...
+
     def install(
         self, *, skill_id: str, version: str, path: str | None = None
     ) -> None: ...
 
     def remove(self, *, skill_id: str) -> None: ...
+
+    def install_support_files(self, *, path: str | None = None) -> Any:
+        """Write the harness's own files — instruction file, slash commands.
+
+        Optional, and separate from ``install`` because they belong to the
+        bundle rather than to any one skill id: only a sweep writes them, and
+        the result names them so a command cannot edit a user-authored
+        ``CLAUDE.md`` without saying so.
+        """
+        ...
+
+    def remove_support_files(self, *, path: str | None = None) -> Any:
+        """Take those same files back out; the mirror of the method above.
+
+        Also optional — but a target that implements one and not the other is
+        a target whose ``remove --all`` leaves the harness loading Potpie's
+        instruction file and slash commands after every skill they refer to is
+        gone.
+        """
+        ...
 
 
 class SkillManager(Protocol):

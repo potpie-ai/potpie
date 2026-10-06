@@ -12,7 +12,10 @@ from importlib import resources
 from pathlib import Path
 from typing import Iterable
 
-from potpie.skills.errors import InvalidSkillsInstallPathError
+from potpie.skills.errors import (
+    InvalidSkillsInstallPathError,
+    UnwritableSkillsTargetError,
+)
 
 _MANAGED_MARKER_RE = re.compile(
     r"<!-- (?:context-engine|potpie)-start -->.*?<!-- (?:context-engine|potpie)-end -->",
@@ -42,6 +45,66 @@ class InstallResult:
         return data
 
 
+@dataclass
+class UninstallResult:
+    """What a support-file sweep took back out — the mirror of ``InstallResult``.
+
+    Its own shape rather than a reused ``InstallResult``: "created/updated" have
+    no meaning for a removal, and a caller that reported one as the other would
+    tell the user a file was written when it was deleted.
+    """
+
+    root: str
+    removed: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        data = asdict(self)
+        data["ok"] = True
+        return data
+
+
+def _unwritable_target_error(
+    target: Path, exc: OSError, *, verb: str = "write"
+) -> UnwritableSkillsTargetError:
+    """The refusal owed to a caller whose install target cannot be written.
+
+    A read-only repository (or a ``--path`` under someone else's ownership)
+    surfaced as a bare ``PermissionError``, which the CLI reports as an
+    unexpected internal error. The actual repair is one ``chmod`` on a
+    directory that message never named, so the refusal names it.
+    """
+    blocked = _nearest_existing_dir(target)
+    return UnwritableSkillsTargetError(
+        f"Cannot {verb} {target}: {exc.strerror or exc}. "
+        f"The harness directory is not writable, so nothing was changed there.",
+        recommended_next_action=(
+            f"make '{blocked}' writable, or point somewhere else with '--path <dir>'"
+        ),
+    )
+
+
+def _nearest_existing_dir(target: Path) -> Path:
+    """The closest ancestor that actually exists — the one to fix permissions on.
+
+    Naming ``target.parent`` sent the operator to ``chmod`` a directory the
+    failed ``mkdir`` never created; the unwritable one is always further up.
+    """
+    for candidate in target.parents:
+        if candidate.is_dir():
+            return candidate
+    return target.parent
+
+
+def _write_installed_file(target: Path, content: str) -> None:
+    """Write one bundle file, translating an unwritable target into a refusal."""
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise _unwritable_target_error(target, exc) from exc
+
+
 def resolve_install_root(path: str | Path) -> Path:
     """Prefer the nearest git repo root; otherwise install into the given path."""
     target = Path(path).resolve()
@@ -55,8 +118,16 @@ def resolve_install_root(path: str | Path) -> Path:
     return target
 
 
-def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
-    """Return packaged template files from the named bundle as (repo-relative path, UTF-8 text)."""
+@lru_cache(maxsize=8)
+def _iter_bundle_files(bundle_name: str) -> tuple[tuple[Path, str], ...]:
+    """Return packaged template files from the named bundle as (repo-relative path, UTF-8 text).
+
+    Cached because it is now on a read path, not just a write one: every
+    content-drift check re-walks the bundle it is comparing against, and
+    ``skills status`` runs one per recommended skill. The bundle ships inside the
+    installed wheel and cannot change under a running process; tests that edit
+    templates in place call :func:`clear_bundle_file_cache`.
+    """
     root = resources.files("potpie.cli").joinpath("templates", bundle_name)
     out: list[tuple[Path, str]] = []
     stack = [(root, Path("."))]
@@ -74,10 +145,15 @@ def _iter_bundle_files(bundle_name: str) -> list[tuple[Path, str]]:
             if child.name.endswith((".pyc", ".pyo")):
                 continue
             out.append((child_rel, child.read_text(encoding="utf-8")))
-    return sorted(out, key=lambda item: item[0].as_posix())
+    return tuple(sorted(out, key=lambda item: item[0].as_posix()))
 
 
-def iter_template_files() -> list[tuple[Path, str]]:
+def clear_bundle_file_cache() -> None:
+    """Test helper: drop cached reads of the packaged template bundles."""
+    _iter_bundle_files.cache_clear()
+
+
+def iter_template_files() -> tuple[tuple[Path, str], ...]:
     """Return agent_bundle template files (default / codex path)."""
     return _iter_bundle_files("agent_bundle")
 
@@ -106,6 +182,20 @@ def _merge_managed_markdown(existing: str, section: str) -> tuple[str, str]:
     merged = existing.rstrip() + separator + normalized_section + "\n"
     action = "updated" if existing.strip() else "created"
     return merged, action
+
+
+def _strip_managed_section(existing: str) -> str:
+    """Return *existing* with Potpie's managed block taken back out.
+
+    The install side merges the block into a file the user also writes in, so
+    the removal side has to be just as careful: what comes out is the marked
+    section and nothing else. An empty string means the file held only Potpie's
+    block and the caller should delete it rather than leave a husk behind.
+    """
+    if not _MANAGED_MARKER_RE.search(existing):
+        return existing
+    remainder = _MANAGED_MARKER_RE.sub("", existing).strip()
+    return f"{remainder}\n" if remainder else ""
 
 
 def _strip_managed_markers(section: str) -> str:
@@ -332,6 +422,7 @@ def _install_file(
     result: InstallResult,
     *,
     force: bool,
+    dry_run: bool = False,
 ) -> None:
     target = install_root / rel_path
     if target.exists():
@@ -342,12 +433,12 @@ def _install_file(
         if not force:
             result.skipped.append(rel_path.as_posix())
             return
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        if not dry_run:
+            _write_installed_file(target, content)
         result.updated.append(rel_path.as_posix())
         return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    if not dry_run:
+        _write_installed_file(target, content)
     result.created.append(rel_path.as_posix())
 
 
@@ -360,6 +451,7 @@ def _install_bundle(
     include: Callable[[Path], bool] | None = None,
     remap: Callable[[Path], Path | None] | None = None,
     merge_files: frozenset[str] = _DEFAULT_MERGE_FILES,
+    dry_run: bool = False,
 ) -> None:
     for rel_path, content in _iter_bundle_files(bundle_name):
         if include is not None and not include(rel_path):
@@ -380,15 +472,114 @@ def _install_bundle(
             if action == "unchanged":
                 result.unchanged.append(out_path.as_posix())
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(merged, encoding="utf-8")
+            if not dry_run:
+                _write_installed_file(target, merged)
             if action == "created":
                 result.created.append(out_path.as_posix())
             else:
                 result.updated.append(out_path.as_posix())
             continue
 
-        _install_file(install_root, out_path, content, result, force=force)
+        _install_file(
+            install_root, out_path, content, result, force=force, dry_run=dry_run
+        )
+
+
+def _uninstall_bundle(
+    install_root: Path,
+    bundle_name: str,
+    result: UninstallResult,
+    *,
+    include: Callable[[Path], bool] | None = None,
+    remap: Callable[[Path], Path | None] | None = None,
+    merge_files: frozenset[str] = _DEFAULT_MERGE_FILES,
+    dry_run: bool = False,
+) -> None:
+    """Take back exactly the files :func:`_install_bundle` would have written.
+
+    Same bundle, same ``include``, same ``remap`` — because a removal built from
+    its own list of paths is a second opinion about what install owns, and the
+    two drift the moment a file is added to a bundle. That drift is the defect
+    itself: ``skills remove --all`` deleted every skill directory and left the
+    harness instruction file and the ``/potpie-*`` slash commands loaded.
+    """
+    for rel_path, _content in _iter_bundle_files(bundle_name):
+        if include is not None and not include(rel_path):
+            continue
+        out_path = rel_path if remap is None else remap(rel_path)
+        if out_path is None:
+            continue
+        _uninstall_file(
+            install_root,
+            out_path,
+            result,
+            merge=out_path.name in merge_files,
+            dry_run=dry_run,
+        )
+
+
+def _uninstall_file(
+    install_root: Path,
+    rel_path: Path,
+    result: UninstallResult,
+    *,
+    merge: bool,
+    dry_run: bool = False,
+) -> None:
+    target = install_root / rel_path
+    if not target.exists():
+        result.unchanged.append(rel_path.as_posix())
+        return
+    if merge:
+        # A file the user also writes in: strip Potpie's managed block and keep
+        # whatever else is there. Deleting a hand-written CLAUDE.md because
+        # Potpie once appended to it would be a far bigger removal than the one
+        # the caller asked for.
+        existing = target.read_text(encoding="utf-8")
+        remainder = _strip_managed_section(existing)
+        if remainder == existing:
+            result.unchanged.append(rel_path.as_posix())
+            return
+        if not dry_run:
+            if remainder:
+                _write_installed_file(target, remainder)
+            else:
+                _remove_installed_file(target)
+                prune_empty_dirs(target.parent, stop_at=install_root)
+        result.removed.append(rel_path.as_posix())
+        return
+    if not dry_run:
+        _remove_installed_file(target)
+        prune_empty_dirs(target.parent, stop_at=install_root)
+    result.removed.append(rel_path.as_posix())
+
+
+def _remove_installed_file(target: Path) -> None:
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise _unwritable_target_error(target, exc, verb="remove") from exc
+
+
+def prune_empty_dirs(directory: Path, *, stop_at: Path) -> None:
+    """Drop directories a removal just emptied, up to but excluding ``stop_at``.
+
+    Stops at the first non-empty parent, so a ``.claude/`` that still holds
+    skills — or anything the user put there — survives. Without it a full
+    uninstall left the shape of the install behind: an empty
+    ``.claude/potpie-plugin/skills/`` that reads, to anyone who opens the repo,
+    as a plugin that is still there.
+    """
+    root = stop_at.resolve()
+    current = directory.resolve()
+    while current != root and current.is_relative_to(root) and current.is_dir():
+        try:
+            if any(current.iterdir()):
+                return
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
 
 
 def _cursor_bundle_include(rel_path: Path) -> bool:
@@ -418,16 +609,28 @@ def _claude_plugin_remap(rel_path: Path) -> Path | None:
     return Path(_CLAUDE_PLUGIN_PREFIX) / rel_path
 
 
+def _claude_plugin_skill_remap(rel_path: Path) -> Path | None:
+    remapped = _remap_skills_path(rel_path, "skills")
+    return Path(_CLAUDE_PLUGIN_PREFIX) / remapped if remapped is not None else None
+
+
 def install_skill_bundle(
     skills_root: str | Path,
     *,
     skill_ids: Iterable[str] | None = None,
     force: bool = False,
+    dry_run: bool = False,
 ) -> InstallResult:
     """Install selected packaged skills directly into a skills root.
 
     ``skills_root`` is the directory that contains one subdirectory per skill,
     for example ``~/.cursor/skills`` or ``~/.agents/skills``.
+
+    ``dry_run`` classifies every file exactly as a real run would — created /
+    updated / unchanged / skipped — and writes nothing. That is what makes
+    content drift detectable: the comparison is the installer's own, so it
+    cannot drift from what install actually does the way a second, parallel
+    "is it current?" implementation would.
     """
     root = Path(skills_root).expanduser().resolve()
     result = InstallResult(root=str(root))
@@ -439,6 +642,7 @@ def install_skill_bundle(
         force=force,
         include=lambda rel: _include_selected_skills(rel, selected),
         remap=lambda rel: Path(rel.as_posix()[len(_SOURCE_SKILLS_PREFIX) :]),
+        dry_run=dry_run,
     )
     return result
 
@@ -448,6 +652,7 @@ def install_global_agent_instructions(
     *,
     agent: str = "default",
     force: bool = True,
+    dry_run: bool = False,
 ) -> InstallResult:
     """Install compact global instructions for harnesses with file-based rules.
 
@@ -456,23 +661,175 @@ def install_global_agent_instructions(
     """
     install_root = Path(root).expanduser().resolve()
     result = InstallResult(root=str(install_root))
-    normalized = agent.strip().lower() if agent else "default"
-    if normalized == "claude":
-        filename = "CLAUDE.md"
-    elif normalized in {"default", "codex"}:
-        filename = "AGENTS.md"
-    else:
+    filename = _global_instructions_filename(agent)
+    if filename is None:
         return result
 
     _install_bundle(
         install_root,
-        "global_agent_bundle",
+        "routing",
         result,
         force=force,
-        include=lambda rel: rel.as_posix() == filename,
+        include=lambda rel: rel.as_posix() == "POTPIE.md",
+        remap=lambda _rel: Path(filename),
         merge_files=frozenset({filename}),
+        dry_run=dry_run,
     )
     return result
+
+
+def uninstall_global_agent_instructions(
+    root: str | Path,
+    *,
+    agent: str = "default",
+    dry_run: bool = False,
+) -> UninstallResult:
+    """Strip the managed section from a harness's global instruction file."""
+    install_root = Path(root).expanduser().resolve()
+    result = UninstallResult(root=str(install_root))
+    filename = _global_instructions_filename(agent)
+    if filename is None:
+        return result
+
+    _uninstall_bundle(
+        install_root,
+        "routing",
+        result,
+        include=lambda rel: rel.as_posix() == "POTPIE.md",
+        remap=lambda _rel: Path(filename),
+        merge_files=frozenset({filename}),
+        dry_run=dry_run,
+    )
+    return result
+
+
+def _global_instructions_filename(agent: str) -> str | None:
+    """Which global instruction file a harness reads, or ``None`` if it has none."""
+    normalized = agent.strip().lower() if agent else "default"
+    if normalized == "claude":
+        return "CLAUDE.md"
+    if normalized in {"default", "codex"}:
+        return "AGENTS.md"
+    return None
+
+
+def _claude_bundle_include(
+    rel_path: Path, selected: frozenset[str] | None, *, support_files: bool
+) -> bool:
+    """Claude's project bundle carries support files only: the slash commands.
+
+    "Install the skill I named" and "install this harness's supporting files"
+    are two different requests. Skills come from the one canonical
+    ``agent_bundle`` (remapped below), so a skill directory here would be a
+    second copy that could drift; it is never installed.
+    """
+    del selected
+    if _skill_id_from_generic_skill_path(rel_path) is not None:
+        return False
+    return support_files
+
+
+def _claude_plugin_include(
+    rel_path: Path, selected: frozenset[str] | None, *, support_files: bool
+) -> bool:
+    """Same split for the plugin bundle.
+
+    Its skills are remapped from ``agent_bundle`` into ``skills/<id>/``.
+    Everything the bundle itself carries — ``.claude-plugin/``, ``commands/``,
+    ``hooks/``, the README — is what makes the directory a loadable plugin, so
+    it travels with any install that is allowed to write support files.
+    """
+    del selected
+    if _skill_id_from_generic_skill_path(rel_path) is not None:
+        return False
+    return support_files
+
+
+@dataclass(frozen=True)
+class _BundlePlan:
+    """One packaged bundle, which of its files apply, and where they land."""
+
+    bundle: str
+    include: Callable[[Path], bool]
+    remap: Callable[[Path], Path | None] | None = None
+
+
+def _routing_remap(filename: str) -> Callable[[Path], Path | None]:
+    return lambda rel: Path(filename) if rel.as_posix() == "POTPIE.md" else None
+
+
+def _agent_bundle_plans(
+    *, agent: str, selected: frozenset[str] | None, support_files: bool
+) -> tuple[_BundlePlan, ...]:
+    """The bundles a harness installs from — read by install *and* uninstall.
+
+    One table, because the removal side has to own exactly the set the install
+    side wrote. Spelled out twice they drift on the next bundle file added, and
+    what drifts away is always the same thing: a support file nothing removes.
+    """
+    normalized = agent.strip().lower() if agent else "default"
+    if normalized not in AGENT_TYPES:
+        raise ValueError(
+            f"Unknown agent type {agent!r}. Choose one of: {', '.join(AGENT_TYPES)}"
+        )
+    if normalized == "claude":
+        return (
+            _BundlePlan(
+                "routing", lambda _rel: support_files, _routing_remap("CLAUDE.md")
+            ),
+            _BundlePlan(
+                "claude_bundle",
+                lambda rel: _claude_bundle_include(
+                    rel, selected, support_files=support_files
+                ),
+            ),
+            _BundlePlan(
+                "agent_bundle",
+                lambda rel: _include_selected_skills(rel, selected),
+                _claude_skills_bundle_remap,
+            ),
+        )
+    if normalized == "claude-plugin":
+        return (
+            _BundlePlan(
+                "claude_plugin",
+                lambda rel: _claude_plugin_include(
+                    rel, selected, support_files=support_files
+                ),
+                _claude_plugin_remap,
+            ),
+            _BundlePlan(
+                "agent_bundle",
+                lambda rel: _include_selected_skills(rel, selected),
+                _claude_plugin_skill_remap,
+            ),
+        )
+    if normalized == "cursor":
+        return (
+            _BundlePlan(
+                "routing", lambda _rel: support_files, _routing_remap("AGENTS.md")
+            ),
+            _BundlePlan(
+                "agent_bundle",
+                lambda rel: _include_selected_skills(rel, selected),
+                _cursor_bundle_remap,
+            ),
+        )
+    if normalized == "opencode":
+        return (
+            _BundlePlan(
+                "agent_bundle",
+                lambda rel: _include_selected_skills(rel, selected),
+                _opencode_bundle_remap,
+            ),
+        )
+    return (
+        _BundlePlan("routing", lambda _rel: support_files, _routing_remap("AGENTS.md")),
+        _BundlePlan(
+            "agent_bundle",
+            lambda rel: _include_selected_skills(rel, selected),
+        ),
+    )
 
 
 def install_agent_bundle(
@@ -481,6 +838,8 @@ def install_agent_bundle(
     agent: str = "default",
     force: bool = False,
     skill_ids: Iterable[str] | None = None,
+    support_files: bool = True,
+    dry_run: bool = False,
 ) -> InstallResult:
     """Install agent bundle files into the nearest git repo root under *path*.
 
@@ -489,67 +848,81 @@ def install_agent_bundle(
     - ``claude-plugin``: the Claude Code plugin under ``.claude/potpie-plugin/``
     - ``cursor``: ``AGENTS.md`` + ``.cursor/skills/``
     - ``opencode``: ``.opencode/skills/``
+
+    ``support_files=False`` installs only the selected skills, leaving the
+    harness's instruction file and slash commands alone — what a caller naming
+    one skill id actually asked for.
     """
     root = resolve_install_root(path)
     result = InstallResult(root=str(root))
     selected = _normalize_skill_ids(skill_ids)
 
-    normalized = agent.strip().lower() if agent else "default"
-    if normalized not in AGENT_TYPES:
-        raise ValueError(
-            f"Unknown agent type {agent!r}. Choose one of: {', '.join(AGENT_TYPES)}"
-        )
-
-    if normalized == "claude":
-        _install_bundle(root, "claude_bundle", result, force=force)
+    for plan in _agent_bundle_plans(
+        agent=agent, selected=selected, support_files=support_files
+    ):
         _install_bundle(
             root,
-            "agent_bundle",
+            plan.bundle,
             result,
             force=force,
-            include=lambda rel: _include_selected_skills(rel, selected),
-            remap=_claude_skills_bundle_remap,
-        )
-    elif normalized == "claude-plugin":
-        _install_bundle(
-            root,
-            "claude_plugin",
-            result,
-            force=force,
-            remap=_claude_plugin_remap,
-        )
-    elif normalized == "cursor":
-        _install_bundle(
-            root,
-            "agent_bundle",
-            result,
-            force=force,
-            include=lambda rel: (
-                rel.as_posix() == "AGENTS.md" or _include_selected_skills(rel, selected)
-            ),
-            remap=_cursor_bundle_remap,
-        )
-    elif normalized == "opencode":
-        _install_bundle(
-            root,
-            "agent_bundle",
-            result,
-            force=force,
-            include=lambda rel: _include_selected_skills(rel, selected),
-            remap=_opencode_bundle_remap,
-        )
-    else:
-        _install_bundle(
-            root,
-            "agent_bundle",
-            result,
-            force=force,
-            include=lambda rel: (
-                rel.as_posix() == "AGENTS.md" or _include_selected_skills(rel, selected)
-            ),
+            include=plan.include,
+            remap=plan.remap,
+            dry_run=dry_run,
         )
 
     return result
+
+
+def uninstall_agent_bundle(
+    path: str | Path = ".",
+    *,
+    agent: str = "default",
+    dry_run: bool = False,
+) -> UninstallResult:
+    """Remove a harness's *support* files — the mirror of ``support_files=True``.
+
+    Skill directories are the target's own business (it removes them one id at a
+    time). What this owns is everything the install wrote that no ``changed``
+    entry ever named: the instruction file's managed section, the ``/potpie-*``
+    slash commands, and — for the Claude Code plugin — the manifest and hooks
+    that make the directory loadable. Leaving those behind is why a harness kept
+    advertising Potpie slash commands after ``skills remove --all`` had removed
+    every skill they refer to.
+    """
+    root = resolve_install_root(path)
+    result = UninstallResult(root=str(root))
+    for plan in _agent_bundle_plans(
+        agent=agent, selected=frozenset(), support_files=True
+    ):
+        _uninstall_bundle(
+            root,
+            plan.bundle,
+            result,
+            include=plan.include,
+            remap=plan.remap,
+            dry_run=dry_run,
+        )
+    return result
+
+
+def available_skill_ids(*, agent: str = "default") -> frozenset[str]:
+    """Skill ids the packaged bundle can actually install for this harness.
+
+    Every harness installs its skills from the one canonical ``agent_bundle``,
+    so today this is the same set for each of them. The manager still asks,
+    because "in the catalog" and "installable here" are different questions:
+    a harness that could not write an id would otherwise report it in
+    ``changed`` on every run, since ``installed()`` would never see the file.
+    """
+    del agent
+    ids: set[str] = set()
+    for rel_path, _ in _iter_bundle_files("agent_bundle"):
+        if rel_path.name != "SKILL.md":
+            continue
+        sid = _skill_id_for_path(rel_path)
+        if sid:
+            ids.add(sid)
+    return frozenset(ids)
 
 
 def project_skill_path(root: str | Path, *, agent: str, skill_id: str) -> Path:
@@ -560,6 +933,8 @@ def project_skill_path(root: str | Path, *, agent: str, skill_id: str) -> Path:
         return install_root / ".cursor" / "skills" / skill_id / "SKILL.md"
     if normalized == "claude":
         return install_root / ".claude" / "skills" / skill_id / "SKILL.md"
+    if normalized == "claude-plugin":
+        return install_root / _CLAUDE_PLUGIN_PREFIX / "skills" / skill_id / "SKILL.md"
     if normalized == "opencode":
         return install_root / ".opencode" / "skills" / skill_id / "SKILL.md"
     return install_root / ".agents" / "skills" / skill_id / "SKILL.md"

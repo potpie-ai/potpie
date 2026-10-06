@@ -29,9 +29,6 @@ AGENT_SKILL = (
     / "potpie-repo-baseline"
     / "SKILL.md"
 )
-PLUGIN_SKILL = (
-    TEMPLATES / "claude_plugin" / "skills" / "potpie-repo-baseline" / "SKILL.md"
-)
 
 
 def _frontmatter_and_body(path: Path) -> tuple[dict[str, str], str]:
@@ -47,12 +44,10 @@ def _frontmatter_and_body(path: Path) -> tuple[dict[str, str], str]:
     return fm, raw[end + 5 :]
 
 
-def test_skill_exists_in_agent_and_plugin_bundles() -> None:
+def test_skill_has_one_canonical_source() -> None:
+    """Every harness, the Claude Code plugin included, installs this one file."""
     assert AGENT_SKILL.is_file()
-    assert PLUGIN_SKILL.is_file()
-    assert AGENT_SKILL.read_text() == PLUGIN_SKILL.read_text(), (
-        "agent_bundle and claude_plugin copies of potpie-repo-baseline diverged"
-    )
+    assert list(TEMPLATES.rglob("potpie-repo-baseline/SKILL.md")) == [AGENT_SKILL]
 
 
 def test_frontmatter_is_named_and_deep_ingestion_focused() -> None:
@@ -80,10 +75,10 @@ def test_required_sections_present() -> None:
 def test_procedure_covers_plan_steps() -> None:
     _, body = _frontmatter_and_body(AGENT_SKILL)
     for marker in (
-        "pot info",
+        "potpie status",
         "source add repo",
+        "mutation-template",
         "graph catalog",
-        "graph describe",
         "graph search-entities",
         "graph propose",
         "plan_id",

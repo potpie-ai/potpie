@@ -34,10 +34,20 @@ injects nothing and exits cleanly, so a hook problem can never block your sessio
 
 ## Install
 
+Install the plugin into a repository with the Potpie CLI. It is project-scoped,
+because the directory has to keep `.claude-plugin/plugin.json` as its root:
+
+```
+potpie skills install --agent claude-plugin --scope project --path .
+```
+
+That writes this directory, with the packaged skills, to
+`.claude/potpie-plugin/` in the repository. Then load it in Claude Code:
+
 **Via marketplace (recommended):**
 
 ```
-/plugin marketplace add /path/to/this/plugin/dir
+/plugin marketplace add ./.claude/potpie-plugin
 /plugin install potpie@potpie
 ```
 
@@ -46,12 +56,16 @@ injects nothing and exits cleanly, so a hook problem can never block your sessio
 `hooks/potpie_nudge.py` and replacing `${CLAUDE_PLUGIN_ROOT}` with the directory
 path. See `hooks/hooks.json` for the exact event→command mapping.
 
-`potpie install --agent claude-plugin` drops this whole directory into your repo.
+`potpie skills remove --all --agent claude-plugin --scope project --path .`
+takes the whole directory back out, manifest and hooks included.
 
 ## Skills
 
-The plugin bundles the graph contract skill plus use-case workflow skills:
-preferences, infra architecture, change timeline, debug memory, and harness-led
+The skills under `skills/` are not authored for the plugin. Every harness
+installs them from one canonical bundle — the install above copies them into
+`.claude/potpie-plugin/skills/` — so the plugin carries the same skill text as
+every other harness: the graph contract, the CLI, project preferences, infra
+architecture, change timeline, debug memory, repo baseline, and harness-led
 source ingestion. Skills run in-session on your subscription.
 
 ## Other harnesses

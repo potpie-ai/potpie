@@ -1,5 +1,6 @@
 ---
 name: potpie-debug-memory
+version: "2"
 description: "Use while debugging or troubleshooting failures, flaky tests, incidents, production alerts, CI failures, local dev setup issues, repeated bugs, prior fixes, failed attempts, and verification history."
 ---
 
@@ -10,41 +11,47 @@ failed attempts can guide the investigation.
 
 ## Fast Path
 
-Search by symptom first, not just component name. Include exact error text,
-commands, failing tests, environment, service, dependency, and synonyms.
+Share one discovery pass across relevant skills; reuse current reads and hook
+context for the same task, pot, and scope instead of repeating resolve. Run
+resolve alongside scoped preferences for code work and an untyped
+`search-entities` lookup when the task names a service whose key is unknown.
+Use a known explicit pot selector; resolve ambiguous routing first and check
+returned pot IDs before combining results. Local file discovery can run alongside
+these reads. Use returned keys for later scoped reads rather than guessing.
+
+Search by symptom, not just component name: exact error text, failing test,
+command, environment, service, dependency, and synonyms. `resolve` does not
+infer the intent from the task text, so pass `--intent debugging`; it then
+reads prior bugs, infra and the timeline:
 
 ```bash
-potpie graph read \
-  --subgraph debugging \
-  --view prior_occurrences \
-  --query "<expanded symptom query>" \
-  --scope service:<service-name> \
-  --limit 12
+potpie resolve "<symptom in the user's words, plus the exact error text>" --intent debugging
 ```
 
-If no service is known, omit `--scope`. If the failure smells like a regression,
-correlate with the timeline:
+Runbooks and their recovery steps are recorded as documents and notes, which
+`prior_occurrences` never returns. Choose the includes for the initial resolve
+call rather than running both resolve examples. If it lacks document evidence,
+read the matching documents:
 
 ```bash
-potpie graph read \
-  --subgraph recent_changes \
-  --view timeline \
-  --format table \
-  --time-window 7d \
-  --query "<symptom feature dependency>" \
-  --limit 20
+potpie resolve "<symptom>" --include prior_bugs,docs,timeline
+potpie graph read --subgraph knowledge --view document_context --query "<symptom>" --limit 5
 ```
 
-If dependencies, adapters, environments, or deploys matter, read infra too:
+Go to the named view only when `resolve` is thin. Expand the query there with
+synonyms and the exact error text; the view ranks its pool and returns up to
+`--limit` rows however weak (`--query-threshold` does nothing here), so judge
+each row by its score and text — an exact hit can score as low as 0.55:
 
 ```bash
-potpie graph read \
-  --subgraph infra_topology \
-  --view service_neighborhood \
-  --scope service:<service-name> \
-  --depth 2 \
-  --direction both
+potpie graph read --subgraph debugging --view prior_occurrences --query "<expanded symptom query>" --scope service:<service-name> --limit 12
 ```
+
+If no service is known, omit `--scope`. Pass `--pot <name-or-id>` once a
+header has named the pot. Read infra (`service_neighborhood --depth 2
+--direction both`, no `--environment`) only if the cause is still open. Once
+keys are available, run needed focused reads concurrently. Stop expanding when
+evidence is sufficient for the investigation.
 
 ## Apply Results
 
@@ -52,21 +59,55 @@ Treat prior fixes as leads. Check whether the same symptom, environment,
 version, dependency, data shape, command, or test path matches this incident.
 Failed prior attempts are useful because they prevent repeated work.
 
+## Report Back
+
+Show the reads you ran and, above all, the query text you searched with. The
+wording is what decides whether a prior occurrence surfaces at all, so a reader
+who can see your phrasing can hand you the one that actually hits — and a search
+that returned nothing is a finding worth one line, not a step to omit.
+
+When prior attempts matter as much as the fix, draw the path through them:
+
+```mermaid
+flowchart TD
+  s["symptom: settlement timeouts (prod)"] --> a1["tried: larger pool — no effect"]
+  s --> a2["tried: retry budget — held"]
+  a2 --> f["fix: PR 418, verified"]
+```
+
+The dead ends are the reason to draw it; a picture of one occurrence and one fix
+is a sentence with boxes around it. Keep the verification status on the fix node
+so an unverified lead is never mistaken for a settled one.
+
 ## Record Debug Memory
 
 Record after the investigation when the learning is reusable: bug pattern, fix,
 verification, failed attempt, incident summary, runbook note, or setup gotcha.
 
-Use the workbench write flow:
+A fix is one call, and the bug pattern it resolves is minted with it. Incident
+summaries, investigations, diagnostic signals and runbook notes are one call
+too:
 
 ```bash
-potpie --json graph catalog --task "record bug fix"
-potpie graph search-entities "<service or symptom>" --limit 10
-potpie --json graph describe debugging --view prior_occurrences --examples
+potpie record --type fix --summary "<symptom → fix, in the words a searcher would type>" --scope service:<service-name>
+potpie record --type incident_summary --summary "<what happened, impact, and resolution>" --scope service:<service-name>
+```
+
+`record` takes `--type`, `--summary` and `--scope` only. The `fix` key is
+minted from the whole summary, so keep it short and lead with the distinctive
+symptom, and `--scope` should be a key a read already returned.
+
+A root cause with fix steps, a bug pattern on its own, a verification, or a fix
+plus the attempts that failed is a plan:
+
+```bash
+potpie graph mutation-template --kind bug-fix
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 ```
+
+Omit `graph_contract_version` from the payload; `commit --verify` prints the
+plan id, readback and quality status.
 
 Good debug memory includes the distinctive error text, repro signal, root cause
 or uncertainty, fix steps, verification status, scope, truth class, evidence, and

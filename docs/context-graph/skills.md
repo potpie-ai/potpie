@@ -46,8 +46,10 @@ of `SKILL.md` files under
 `catalog_by_id()` and `RECOMMENDED_SKILL_IDS` (every recommended bundled skill).
 Adding or editing a skill means editing the bundled markdown — nothing else.
 
-There are **8 skills in the agent bundle**; the Claude Code plugin ships **7** of
-them (everything except `potpie-cli`).
+There are **8 skills in the agent bundle**, and it is the only copy: every
+harness — the Claude Code plugin included — installs its skills from it,
+remapped to the harness's own layout. The compact instruction block merged into
+`AGENTS.md` / `CLAUDE.md` likewise has one source, `templates/routing/POTPIE.md`.
 
 ## 2. Installation, targets & drift (`DefaultSkillManager`)
 
@@ -67,6 +69,11 @@ and a `--scope project` install routes through `ProjectAgentTarget` instead:
 | `codex` | `CodexAgentTarget` | `~/.agents/skills` |
 | `cursor` | `CursorAgentTarget` | `~/.cursor/skills` |
 | `opencode` | `OpenCodeAgentTarget` | `~/.config/opencode/skills` |
+| `claude-plugin` | `ClaudePluginAgentTarget` | none — project scope only; global scope is refused with the `--scope project --path <repo>` repair |
+
+Global roots hang off `POTPIE_HARNESS_HOME` when it is set (the test suite pins
+it), otherwise the real home directory; `CONTEXT_ENGINE_HOME` deliberately does
+not move them.
 
 Install mechanics (`potpie/skills/installer.py`):
 
@@ -78,9 +85,21 @@ Install mechanics (`potpie/skills/installer.py`):
 - `AGENTS.md` / `CLAUDE.md` are **merged**, not overwritten — managed content
   lives between `<!-- potpie-start -->` / `<!-- potpie-end -->` markers
   (`_merge_managed_markdown`), preserving the user's own instructions.
-- **Drift tracking:** each target writes a JSON manifest (`skills_<agent>_<scope>.json`)
-  recording the installed version. `status()` partitions skills into
-  installed / missing / outdated; `nudge()` emits the single advisory command
+- **Support files belong to the sweep.** The instruction block and the
+  `/potpie-*` slash commands are written only by a bundle install or update (no
+  skill id) and named in the result's `metadata.support_files`; naming one skill
+  id installs that skill alone. `skills remove --all` takes the same files back
+  out — the managed section only, so a user's own `CLAUDE.md` text survives.
+- **Drift tracking:** each target writes a JSON manifest
+  (`skills_<agent>_<scope>.json`, plus a per-repository suffix at project scope)
+  recording the installed version, and a content hash. A skill whose files no
+  longer match the bundle is **drifted** — reported inside `outdated` and fixed
+  by the same reinstall — while a hand-edited one is left alone by a sweep
+  (`metadata.preserved_user_edits`). A skill removed by id is **disabled**:
+  bundle installs skip it until it is installed by id again. `status()`
+  partitions skills into installed / missing / outdated / disabled, and
+  `potpie --json skills status` also lists the `drifted` subset; `nudge()` emits
+  the single advisory command
   `potpie skills install --agent <agent>`. That advisory is the *only* skill
   signal agents ever see — it rides on `context_status` (see
   [querying.md](./querying.md)). Globally-installed skills can stale (an old
@@ -101,13 +120,16 @@ command or flag that does not exist — the install raises `ValueError` first.
 ```bash
 potpie skills list   [--agent claude|codex|cursor|opencode] [--scope global|project] [--path]
 potpie skills install [<id>] [--agent …] [--scope …] [--path]
-potpie skills update  [--all] [--agent …]
-potpie skills status  [--agent …]
+potpie skills update  [<id>|--all] [--agent …]
+potpie skills status  [--agent …]     # installed, missing, outdated, drifted, disabled
 potpie skills remove  [<id>|--all] [--agent …]
 potpie skills add     <source>        # TODO stub
 ```
 
-`--scope` flips to `project` automatically when `--path` is given with `global`.
+`--scope` flips to `project` automatically when `--path` is given with `global`;
+`--path` is resolved against the caller's working directory and must already
+exist. Skill commands are filesystem-only and never contact the daemon
+(`install` still accepts a hidden, no-op `--no-daemon` for older installers).
 `potpie setup --agent <harness>` installs the recommended bundle during first
 run. **There is no top-level `potpie install`** — skills install only via
 `potpie skills install` (and `setup`). Full flags live in
@@ -119,32 +141,35 @@ run. **There is no top-level `potpie install`** — skills install only via
 
 | Skill | Ver | Role |
 |---|---|---|
-| `potpie-cli` | v2 | The `potpie` command itself: pot-scope resolution order, harness-led boundaries. (Not shipped in the plugin.) |
-| **`potpie-graph`** | **v5** | **THE contract skill** — the read → resolve → propose/commit → inbox → quality loop, truth classes, retrieval-grade descriptions, and "Responding To Nudges". Teaches **propose/commit only** (never the legacy `graph mutate`). Bundle and plugin copies are byte-identical. |
-| `potpie-repo-baseline` | — | Deep repo-baseline mode: source priority, evidence matrix, canonical entity families with `PROVIDES` / `IMPLEMENTED_IN`. |
-| `potpie-source-ingestion` | — | Todo-driven, phased (0–8) ingestion of a repo/PR/ticket/doc; parallel read-only subagents; GitHub/Linear/Jira hydrated via the agent's **own** integration tools (explicitly *not* Potpie connector queueing) → evidence matrix → identity resolution → propose/commit `--verify` → quality gate. |
-| `potpie-project-preferences` | — | Use-case read+record skill (preferences). |
-| `potpie-infra-architecture` | — | Use-case read+record skill (infra/topology). |
-| `potpie-change-timeline` | — | Use-case read+record skill (recent changes). |
-| `potpie-debug-memory` | — | Use-case read+record skill (prior bugs/fixes). |
+| `potpie-cli` | v3 | The `potpie` command itself: pot-scope resolution order, harness-led boundaries. |
+| **`potpie-graph`** | **v6** | **THE contract skill** — one shared discovery pass, the read → resolve → record or propose/commit → inbox → quality loop, ontology selection, truth classes, retrieval-grade descriptions, reporting the commands behind an answer, and "Responding To Nudges". Teaches `potpie record` for one fix or note and **propose/commit** for everything else (never the legacy `graph mutate`). |
+| `potpie-repo-baseline` | v2 | Deep repo-baseline mode: source priority, evidence matrix, canonical entity families with `PROVIDES` / `IMPLEMENTED_IN`. |
+| `potpie-source-ingestion` | v2 | Todo-driven, phased (0–8) ingestion of a repo/PR/ticket/doc; parallel read-only subagents; GitHub/Linear/Jira hydrated via the agent's **own** integration tools (explicitly *not* Potpie connector queueing) → evidence matrix → identity resolution → propose/commit `--verify` → quality gate. |
+| `potpie-project-preferences` | v2 | Use-case read+record skill (preferences). |
+| `potpie-infra-architecture` | v2 | Use-case read+record skill (infra/topology). |
+| `potpie-change-timeline` | v2 | Use-case read+record skill (recent changes). |
+| `potpie-debug-memory` | v2 | Use-case read+record skill (prior bugs/fixes). |
 
 The four use-case skills share one shape: a **Fast Path** read, an **Apply
-Results** step, and a **Record** flow over the CLI.
+Results** step, a **Report Back** step (the exact commands behind the answer,
+and a diagram only when the answer is a shape), and a **Record** flow over the
+CLI.
 
 ---
 
-## 4. `potpie-graph` v5 — the taught read/write loop
+## 4. `potpie-graph` v6 — the taught read/write loop
 
 This is the contract skill: it points the agent at the *live* catalog rather than
 baking the ontology into prose. The discipline it teaches (full read mechanics in
 [querying.md](./querying.md), full write mechanics in [writing.md](./writing.md)):
 
-1. **Discover the live contract.** `graph status`, then
-   `graph catalog --task "<task>" --profile read`, then
-   `graph describe <subgraph> --view <view> --examples`. Governing rule:
-   *"Trust the catalog's current operation partition over any example in a skill
-   file."* The contract (versions, views, ops, truth classes, match_mode) is
-   derived from the ontology at runtime — no docs needed.
+1. **Discover once, in parallel.** One shared discovery pass across skills:
+   `potpie resolve` (with `--intent` — it is not inferred from the task text),
+   scope-only `preferences_for_scope --repo current` for code work, and an
+   untyped `graph search-entities` for a named entity with an unknown key.
+   Before ingestion, `graph catalog --profile full` supplies the live ontology
+   (entity types, identity policies, predicates, allowed endpoints) — derived
+   at runtime, so no docs are needed.
 2. **Read** over the fixed view table: `graph read --subgraph <s> --view <v>`.
    **Query expansion is the agent's job** — the bundled local embedder is small,
    so the agent broadens the user's words ("add retry to payments client" → also
@@ -154,8 +179,11 @@ baking the ontology into prose. The discipline it teaches (full read mechanics i
    --source-ref …`, then reuse the returned canonical `key`. Inventing a
    near-duplicate (`service:payments` vs `service:local:payments-api`) fragments
    the graph and breaks future reads.
-4. **Write through the canonical two-phase door.**
-   `graph propose --file mutation.json` → `graph commit <plan_id> --verify`.
+4. **Write through the canonical two-phase door.** One fix or free-form note
+   is one `potpie record` call (`--type`, `--summary`, `--scope`); everything
+   structured is `graph propose --file mutation.json` →
+   `graph commit <plan_id> --verify` (`--approved-by` for a `review_required`
+   plan).
    `graph mutation-template --kind <…>` gives a schema-only skeleton to fill from
    sources actually read. **Never hard-delete** — use validity / retraction /
    supersession / merge. Pick the truth class honestly (it feeds the ranker).
@@ -182,7 +210,9 @@ baking the ontology into prose. The discipline it teaches (full read mechanics i
 
 `potpie/cli/templates/claude_plugin/` is a self-contained Claude Code
 plugin: `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` declare
-it, and it carries its own copy of the 7 plugin skills under `skills/`.
+it. It carries no skill sources of its own: `potpie skills install --agent
+claude-plugin --scope project --path .` lays the directory under
+`.claude/potpie-plugin/` and copies the canonical skills into its `skills/`.
 
 ### Five model-free lifecycle hooks
 
@@ -222,15 +252,12 @@ result:
 | Command | Purpose |
 |---|---|
 | `/potpie-feature` | Load Potpie context **before** feature work (reads preferences, decisions, and the infra neighborhood). |
-| `/potpie-record` | Record durable learnings **after** useful work (resolve identity → propose/commit `--verify`). |
+| `/potpie-record` | Record durable learnings **after** useful work (`potpie record` for one fix or note; resolve identity → propose/commit `--verify` for the rest). |
 
-> **Roadmap (not yet wired):** the Claude Code plugin has no first-class CLI
-> install path. The bundle `claude-plugin` agent type exists
-> (`install_agent_bundle(agent="claude-plugin")` lays it under
-> `.claude/potpie-plugin/`), but no `potpie` command invokes it and the plugin's
-> own README still references a non-existent `potpie install`. Install today is
-> manual (`/plugin marketplace add`); folding it into the managed install/drift
-> path is pending.
+The plugin is installed and removed through the managed skills path
+(`potpie skills install|remove --agent claude-plugin --scope project --path .`),
+so its skills get the same drift tracking as every other harness; Claude Code
+then loads it with `/plugin marketplace add ./.claude/potpie-plugin`.
 
 ---
 
