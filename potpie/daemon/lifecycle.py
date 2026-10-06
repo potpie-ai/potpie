@@ -179,7 +179,14 @@ class Daemon:
             if isinstance(daemon_status, Success):
                 result["backend"] = daemon_status.value.backend_profile
                 result["url"] = daemon_status.value.ui_url
-                result.update(_served_build(daemon_status.value))
+                compatible = observer.catalog_compatible is not False
+                result["compatible"] = compatible
+                result.update(_served_build(daemon_status.value, compatible))
+                if not compatible:
+                    result["detail"] = (
+                        "detached daemon running a different Potpie version; "
+                        "it answers status and shutdown only"
+                    )
         finally:
             self._run(observer.close())
             if existing_controller is None:
@@ -582,16 +589,18 @@ class Daemon:
         )
 
 
-def _served_build(status: DaemonStatusResult) -> dict[str, Any]:
+def _served_build(status: DaemonStatusResult, compatible: bool) -> dict[str, Any]:
     """Which build is serving, and whether it is this process's.
 
     The daemon is detached and outlives the install that started it, so after
     an upgrade the CLI is new while the daemon still serves the old code.
-    ``stale`` is that comparison; a daemon from before build reporting yields
+    ``stale`` is that comparison. A daemon serving another operation catalog is
+    stale whatever its rev says (an editable checkout can change the catalog
+    without a commit); otherwise a daemon from before build reporting yields
     nothing to compare and so no keys.
     """
     if status.build is None:
-        return {}
+        return {} if compatible else {"stale": True}
     build = {
         "rev": status.build.rev,
         "dirty": status.build.dirty,
@@ -600,7 +609,7 @@ def _served_build(status: DaemonStatusResult) -> dict[str, Any]:
     return {
         "version": status.version,
         "build": build,
-        "stale": build_info.build_is_stale(build),
+        "stale": True if not compatible else build_info.build_is_stale(build),
     }
 
 

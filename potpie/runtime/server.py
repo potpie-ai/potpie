@@ -11,7 +11,7 @@ import signal
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol, cast
 from uuid import uuid4
 
 from aiohttp import web
@@ -68,6 +68,10 @@ class EngineOperationHandler(Protocol):
 ShutdownResources = Callable[[], Awaitable[object]]
 AfterOwnershipAcquired = Callable[[RuntimeOwnershipLock], None]
 BeforeOwnershipRelease = Callable[[RuntimeOwnershipLock], None]
+
+
+_TicketScope = Literal["full", "control"]
+_TICKET_SCOPES: frozenset[str] = frozenset({"full", "control"})
 
 
 def generate_bearer_token() -> str:
@@ -315,7 +319,8 @@ class CanonicalDaemonRuntime:
     async def _execute(self, request: ProtocolRequest) -> tuple[ProtocolResponse, int]:
         if isinstance(request, HandshakeRequest):
             return self._handshake(request)
-        if not self._valid_compatibility_ticket(request.compatibility_ticket):
+        scope = self._compatibility_ticket_scope(request.compatibility_ticket)
+        if scope is None:
             return (
                 _failure_response(
                     request,
@@ -362,6 +367,27 @@ class CanonicalDaemonRuntime:
                     ),
                     200,
                 )
+        if scope != "full":
+            # A control-scoped ticket comes from a handshake whose operation
+            # catalog differs from this daemon's; only status and shutdown
+            # share wire semantics across that difference.
+            return (
+                _failure_response(
+                    request,
+                    ProtocolError(
+                        code="operation_catalog_mismatch",
+                        message=(
+                            "this daemon serves a different operation catalog; "
+                            "its ticket allows only daemon status and shutdown"
+                        ),
+                        details={"operation": request.operation.value},
+                        recommended_next_action=(
+                            "restart the daemon with 'potpie daemon restart'"
+                        ),
+                    ),
+                ),
+                409,
+            )
         async with self._state_condition:
             if not self._accepting_operations:
                 return (
@@ -429,20 +455,14 @@ class CanonicalDaemonRuntime:
                 409,
             )
         catalog_fingerprint = operation_catalog_fingerprint()
-        if payload.client_operation_catalog_fingerprint != catalog_fingerprint:
-            return (
-                _failure_response(
-                    request,
-                    ProtocolError(
-                        code="operation_catalog_mismatch",
-                        message="client and daemon operation catalogs do not match",
-                        recommended_next_action=(
-                            "restart with a compatible Potpie version"
-                        ),
-                    ),
-                ),
-                409,
-            )
+        # A client from another build still gets an answer, so it can see and
+        # stop this daemon: its ticket is scoped to daemon control, and the
+        # differing fingerprint in the result tells it so.
+        scope: _TicketScope = (
+            "full"
+            if payload.client_operation_catalog_fingerprint == catalog_fingerprint
+            else "control"
+        )
         return (
             SuccessResponse(
                 protocol_version=request.protocol_version,
@@ -455,40 +475,47 @@ class CanonicalDaemonRuntime:
                         lifecycle_state=self._state,  # type: ignore[arg-type]
                         capabilities=operation_capabilities(),
                         operation_catalog_fingerprint=catalog_fingerprint,
-                        compatibility_ticket=self._issue_compatibility_ticket(),
+                        compatibility_ticket=self._issue_compatibility_ticket(scope),
                     )
                 ),
             ),
             200,
         )
 
-    def _issue_compatibility_ticket(self) -> str:
+    def _issue_compatibility_ticket(self, scope: _TicketScope) -> str:
         nonce = secrets.token_urlsafe(24)
         signature = hmac.new(
             self._compatibility_secret,
-            self._compatibility_ticket_message(nonce),
+            self._compatibility_ticket_message(scope, nonce),
             "sha256",
         ).hexdigest()
-        return f"{nonce}.{signature}"
+        return f"{scope}.{nonce}.{signature}"
 
-    def _valid_compatibility_ticket(self, ticket: str | None) -> bool:
+    def _compatibility_ticket_scope(self, ticket: str | None) -> _TicketScope | None:
+        """The scope a ticket this boot issued grants, or ``None`` if invalid."""
+
         if not ticket:
-            return False
+            return None
         try:
-            nonce, supplied_signature = ticket.rsplit(".", 1)
+            claimed_scope, nonce, supplied_signature = ticket.split(".", 2)
         except ValueError:
-            return False
+            return None
+        if claimed_scope not in _TICKET_SCOPES:
+            return None
+        scope = cast(_TicketScope, claimed_scope)
         expected_signature = hmac.new(
             self._compatibility_secret,
-            self._compatibility_ticket_message(nonce),
+            self._compatibility_ticket_message(scope, nonce),
             "sha256",
         ).hexdigest()
-        return hmac.compare_digest(supplied_signature, expected_signature)
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            return None
+        return scope
 
-    def _compatibility_ticket_message(self, nonce: str) -> bytes:
+    def _compatibility_ticket_message(self, scope: _TicketScope, nonce: str) -> bytes:
         return (
             f"{self.instance_id}:{PROTOCOL_VERSION}:"
-            f"{operation_catalog_fingerprint()}:{nonce}"
+            f"{operation_catalog_fingerprint()}:{scope}:{nonce}"
         ).encode()
 
     def _authenticated(self, headers: Mapping[str, str]) -> bool:
