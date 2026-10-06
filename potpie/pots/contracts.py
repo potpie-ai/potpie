@@ -24,8 +24,16 @@ class PotInfo:
     pot_id: str
     name: str
     active: bool = False
+    #: Terminal lifecycle state, enforced rather than decorative: an archived
+    #: pot cannot be selected, renamed, written to, or routed to, and archiving
+    #: cleared its graph state.
     archived: bool = False
     created_at: datetime | None = None
+    #: Only meaningful on a ``create_pot`` answer. ``create`` reuses a live pot
+    #: of the same name (so ``setup`` can re-run), and ``False`` says that is
+    #: what happened. ``None`` means the service did not say, which is a
+    #: different claim from ``False``.
+    created: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +49,21 @@ class SourceInfo:
     last_sync_at: datetime | None = None
     sync_mode: str | None = None
     status: str = "unknown"  # ok | stale | error | unknown
+
+
+@dataclass(frozen=True, slots=True)
+class PotRepoSource:
+    """A repo source joined to the pot that owns it: one row of the repo→pot index.
+
+    Resolving "which pot owns this working tree" needs the registered refs of
+    every live pot together with the pot's identity. Asking pot by pot costs one
+    ``list_sources`` call per pot; the index answers it in one.
+    """
+
+    pot_id: str
+    pot_name: str
+    name: str
+    location: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,12 +99,18 @@ class PotManagementService(Protocol):
     ) -> PotInfo: ...
 
     def use_pot(self, *, ref: str) -> PotInfo:
-        """Set the active pot by id-or-name."""
+        """Set the active pot by id-or-name. Refuses an archived pot."""
         ...
 
-    def rename_pot(self, *, ref: str, new_name: str) -> PotInfo: ...
+    def rename_pot(self, *, ref: str, new_name: str) -> PotInfo:
+        """Rename a live pot. Refuses a name another live pot uses or one that
+        equals any pot's id."""
+        ...
 
-    def archive_pot(self, *, ref: str) -> PotInfo: ...
+    def archive_pot(self, *, ref: str) -> PotInfo:
+        """Retire a live pot. Archived pots drop out of ref resolution and the
+        repo→pot index; callers clear the pot's graph state first."""
+        ...
 
     # --- sources ------------------------------------------------------------
     def add_source(
@@ -89,6 +118,16 @@ class PotManagementService(Protocol):
     ) -> SourceInfo: ...
 
     def list_sources(self, *, pot_id: str) -> list[SourceInfo]: ...
+
+    def list_repo_sources(self) -> list[PotRepoSource]:
+        """Every live pot's repo sources, joined to their pot, in one call.
+
+        This is the repo→pot index. Matching a working tree against it stays
+        with the caller: whether a registered parent directory contains the
+        current directory, or which git remote the tree has, is a client-side
+        fact.
+        """
+        ...
 
     def source_status(self, *, pot_id: str, source_id: str) -> SourceInfo: ...
 
@@ -122,5 +161,6 @@ __all__ = [
     "PotAggregateStatus",
     "PotInfo",
     "PotManagementService",
+    "PotRepoSource",
     "SourceInfo",
 ]

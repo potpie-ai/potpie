@@ -41,6 +41,33 @@ class PotNotFound(ContextEngineError):
     """Host could not resolve pot_id."""
 
 
+class PotArchived(ContextEngineError):
+    """The ref names a pot, but that pot is archived.
+
+    Distinct from :class:`PotNotFound` because the repair differs: an unknown
+    ref is a typo, while this one resolved. The pot shows under
+    ``pot list --archived`` and archiving cleared its graph state, so selecting
+    it, writing to it, or routing a repo into it can only produce empty answers.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
+class PotNameConflict(ContextEngineError):
+    """A pot name is already taken by another live pot, or shadows a pot id.
+
+    Refs resolve against ids and names, so two pots sharing a name make every
+    bare ref (including ``pot reset <name>``) pick an arbitrary one, and a name
+    equal to another pot's id makes that pot unreachable by name.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
 class MutationBatchValidationError(ContextEngineError):
     """A :class:`~potpie_context_engine.core.reconciliation.MutationBatch` failed structural validation.
 
