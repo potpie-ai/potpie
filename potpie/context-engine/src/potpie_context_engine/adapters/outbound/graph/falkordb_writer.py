@@ -81,13 +81,13 @@ _AOF_POLL_S = 0.05
 # that died without saving — see ``_died_without_saving``.
 _SETTINGS_SUFFIX = ".settings"
 
-# Embedded servers this process started, by db path. Kept because ``redislite``
-# will not reliably stop them for us: its atexit hook shuts the server down only
-# when it sees at most one connection, and any process that has issued
-# concurrent queries — every daemon — has a larger pool by then and leaks the
-# server instead. Owning the shutdown is the only way to make ``daemon stop``
-# actually stop it.
-_OWNED_SERVERS: dict[str, Any] = {}
+# Clients this process holds on embedded servers, by db path, whether it spawned
+# the server or attached to one another process started. Kept because
+# ``redislite`` will not reliably stop the server for us: its atexit hook shuts
+# it down only when it sees at most one connection, and any process that has
+# issued concurrent queries — every daemon — has a larger pool by then and
+# leaks the server instead. See ``shutdown_embedded_servers`` for who stops it.
+_OPEN_SERVERS: dict[str, list[Any]] = {}
 
 _T = TypeVar("_T")
 
@@ -237,7 +237,7 @@ def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
     _refuse_untrustworthy_state(path)
     db = LiteFalkorDB(path, serverconfig=_lite_server_config(path))
     _ensure_lite_durability(db, path)
-    _remember_owned_server(db, path)
+    _remember_open_server(db, path)
     return db.select_graph(name)
 
 
@@ -312,48 +312,69 @@ def _refuse_untrustworthy_state(path: str) -> None:
     )
 
 
-def _remember_owned_server(db: Any, path: str) -> None:
-    """Record a server *this* process started, so it can be stopped later.
+def _remember_open_server(db: Any, path: str) -> None:
+    """Record a client this process holds on an embedded server.
 
-    Only servers we started: ``redislite`` sets ``cleanupregistry`` on the
-    client that spawned the server, and a process that merely attached to a
-    running one must never shut it down out from under its owner.
+    Spawned and attached servers alike. The process that spawned a server is
+    not necessarily its last user: ``potpie setup`` provisions the graph,
+    starting the server, and exits while the daemon it launched is attached to
+    it. That daemon then has to be the one that stops it when it shuts down.
 
     The atexit hook covers every process, not just the daemon. Any process that
     runs two queries concurrently — the writer dispatches through
     ``asyncio.to_thread`` — ends up with a multi-connection pool, which is the
-    exact condition under which ``redislite`` declines to stop the server it
-    started. Without this, a CLI run against a scratch home leaves a server
-    behind as reliably as the daemon does.
+    exact condition under which ``redislite`` declines to stop the server.
+    Without this, a CLI run against a scratch home leaves a server behind as
+    reliably as the daemon does.
     """
     conn = getattr(db, "connection", None)
-    if conn is None or not getattr(conn, "cleanupregistry", False):
+    if conn is None:
         return
-    if not _OWNED_SERVERS:
+    if not _OPEN_SERVERS:
         atexit.register(shutdown_embedded_servers)
-    _OWNED_SERVERS[path] = conn
+    _OPEN_SERVERS.setdefault(path, []).append(conn)
 
 
 def shutdown_embedded_servers() -> int:
-    """Stop every embedded server this process started. Returns how many.
+    """Let go of this process's embedded servers; stop the ones nobody else uses.
 
-    Called on daemon shutdown. Without it, ``potpie daemon stop`` leaves a
-    ``redis-server`` reparented to init, holding the db file and its memory,
-    for as long as the machine is up — ``redislite``'s own atexit hook declines
-    to stop a server with more than one connection open, which is every daemon.
+    Called on daemon shutdown and at exit. A server is stopped only when no
+    other process is connected to it. Stopping it while another process is
+    attached, such as the daemon ``potpie setup`` just launched, leaves that
+    process answering every request with a connection error until it restarts.
+    The last process to let go stops it, so ``potpie daemon stop`` does not
+    leave a ``redis-server`` holding the db file until the machine reboots.
 
-    Best-effort and idempotent: a server that is already gone is a success.
+    Returns how many servers were stopped. Best-effort and idempotent: a server
+    that is already gone is not an error.
     """
     stopped = 0
-    for path, conn in list(_OWNED_SERVERS.items()):
-        _OWNED_SERVERS.pop(path, None)
+    for path, clients in list(_OPEN_SERVERS.items()):
+        _OPEN_SERVERS.pop(path, None)
         try:
-            _without_retries(conn)
-            conn.shutdown(save=True, now=True, force=True)
-            stopped += 1
+            if _stop_if_unused(clients):
+                stopped += 1
         except Exception as exc:  # noqa: BLE001 - shutdown must not raise
             logger.debug("falkordb_lite: server at %s did not stop (%s)", path, exc)
     return stopped
+
+
+def _stop_if_unused(clients: list[Any]) -> bool:
+    """Close this process's connections, then stop the server if none remain.
+
+    ``CLIENT LIST`` cannot tell processes apart, so this process's own pools
+    are closed first; after that, any client besides the one asking belongs to
+    someone else.
+    """
+    for conn in clients:
+        _without_retries(conn)
+        conn.connection_pool.disconnect()
+    probe = clients[-1]
+    if len(probe.client_list()) > 1:
+        probe.connection_pool.disconnect()
+        return False
+    probe.shutdown(save=True, now=True, force=True)
+    return True
 
 
 def _without_retries(conn: Any) -> None:
@@ -391,9 +412,9 @@ def embedded_server_report(path: str) -> dict[str, Any]:
 
     This *reports*; it does not kill. A server on another db path may belong to
     a different Potpie home, another checkout, or another user, and there is no
-    way from here to tell a leak from somebody's live daemon. Reaping the ones
-    it started is :func:`shutdown_embedded_servers`' job, at a point where
-    ownership is known.
+    way from here to tell a leak from somebody's live daemon. Stopping the ones
+    this process uses is :func:`shutdown_embedded_servers`' job, when it lets
+    go of them and can see who else is connected.
     """
     report: dict[str, Any] = {"running": 0, "for_this_graph": 0, "unattributed": []}
     try:
