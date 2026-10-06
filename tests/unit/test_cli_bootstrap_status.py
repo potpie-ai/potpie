@@ -28,6 +28,10 @@ from potpie_context_engine.core.lifecycle import (
     SetupReport,
     StepResult,
 )
+from potpie_context_engine.core.graph_quality import (
+    GraphQualityFinding,
+    GraphQualityResult,
+)
 from potpie_context_engine.core.ports.agent_context import StatusReport
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
@@ -144,6 +148,95 @@ def _configure_status_host(mock_host: MagicMock, report: StatusReport) -> None:
         counts=counts,
     )
     mock_host.skills.nudge.return_value = report.skills
+    mock_host.graph_workbench.quality.return_value = _quality_summary()
+
+
+def _quality_summary(*findings: GraphQualityFinding) -> GraphQualityResult:
+    return GraphQualityResult(
+        ok=True,
+        pot_id="foo-pot",
+        report="summary",
+        status="watch" if findings else "ok",
+        findings=findings,
+        metrics={
+            "total_findings": len(findings),
+            "quality_counts": {"conflicting_claims": len(findings)},
+        },
+    )
+
+
+def test_status_reports_open_quality_findings_and_names_them_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The backend's quality projection only counts claims; status asks the
+    same summary ``graph quality`` answers, so open findings are visible and
+    the next action names them."""
+    report = StatusReport(
+        pot_id="foo-pot",
+        profile="local",
+        daemon_up=True,
+        active_pot="foo-pot",
+        backend_ready=True,
+        data_plane={"counts": {"claims": 3}},
+    )
+    mock_host = MagicMock()
+    _configure_status_host(mock_host, report)
+    mock_host.graph_workbench.quality.return_value = _quality_summary(
+        GraphQualityFinding(
+            finding_id="quality:conflicting-claims:owners",
+            kind="conflicting-claims",
+            severity="warning",
+            summary="payments-api has two owners",
+        )
+    )
+    _common.set_runtime(mock_host)
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+    )
+
+    human = runner.invoke(cli_main.app, ["status"])
+    machine = runner.invoke(cli_main.app, ["--json", "status"])
+
+    assert human.exit_code == 0, human.stdout
+    text = " ".join(human.stdout.split())
+    assert "quality: watch (1 open findings)" in text
+    assert "potpie graph quality summary --json" in text
+    assert machine.exit_code == 0, machine.stdout
+    payload = json.loads(machine.stdout)
+    block = payload["data_plane"]["quality"]
+    assert block["source"] == "quality_summary"
+    assert block["open_findings"] == 1
+    assert block["quality_counts"] == {"conflicting_claims": 1}
+    assert "1 open graph quality finding(s)" in payload["recommended_next_action"]
+    request = mock_host.graph_workbench.quality.call_args.kwargs
+    assert request["report"] == "summary"
+
+
+def test_status_survives_an_unavailable_quality_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = StatusReport(
+        pot_id="foo-pot",
+        profile="local",
+        daemon_up=True,
+        active_pot="foo-pot",
+        backend_ready=True,
+        data_plane={"counts": {"claims": 3}},
+    )
+    mock_host = MagicMock()
+    _configure_status_host(mock_host, report)
+    mock_host.graph_workbench.quality.side_effect = RuntimeError("store offline")
+    _common.set_runtime(mock_host)
+    monkeypatch.setattr(
+        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+    )
+
+    result = runner.invoke(cli_main.app, ["--json", "status"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["data_plane"]["quality"]["findings_status"] == "unavailable"
+    assert 'potpie resolve "<task>"' in payload["recommended_next_action"]
 
 
 def test_root_version_option_exits_with_cli_and_python_details() -> None:

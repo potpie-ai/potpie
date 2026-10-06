@@ -245,6 +245,7 @@ def build_local_runtime(
             pots=pots,
             skills=skills,
             profile=profile,
+            workbench=graph_workbench,
         )
         nudge = NudgeService(graph=graph, ledger=LocalInjectionLedger())
 
