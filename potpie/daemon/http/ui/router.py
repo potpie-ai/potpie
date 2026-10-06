@@ -22,8 +22,13 @@ from potpie.daemon.http.ui.auth import (
     require_ui_credential,
     ui_auth,
 )
+from potpie.pots.resolution import archived_pot_message, is_archived, match_pot_ref
 
-from potpie_context_engine.core.errors import CapabilityNotImplemented, PotNotFound
+from potpie_context_engine.core.errors import (
+    CapabilityNotImplemented,
+    PotArchived,
+    PotNotFound,
+)
 from potpie_context_engine.core.graph_entity_summary import (
     normalize_entity_properties,
 )
@@ -65,9 +70,11 @@ _PREFIX_LABEL = {
 def _resolve_pot(pots: Any, pot: str | None) -> str:
     """Explicit ``pot`` ref → id, else the active pot. 400 if neither resolves."""
     if pot:
-        for p in pots.list_pots():
-            if pot in (p.pot_id, p.name):
-                return p.pot_id
+        live, archived = match_pot_ref(pots.list_pots(), pot)
+        if live is not None:
+            return live.pot_id
+        if archived is not None:
+            raise HTTPException(status_code=409, detail=archived_pot_message(archived))
         raise HTTPException(status_code=404, detail=f"no pot matching {pot!r}")
     active = pots.active_pot()
     if active is None:
@@ -172,6 +179,8 @@ def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
             raise
         except CapabilityNotImplemented as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
+        except PotArchived as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PotNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -180,7 +189,8 @@ def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
     @router.get("/api/pots")
     def list_pots() -> dict[str, Any]:
         def go():
-            pot_records = pots.list_pots()
+            # Archived pots cannot be selected, so the picker does not offer them.
+            pot_records = [p for p in pots.list_pots() if not is_archived(p)]
             active = pots.active_pot()
             return {
                 "pots": [

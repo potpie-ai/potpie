@@ -8,10 +8,18 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from potpie.cli.repo_location import repo_identity_key
+from potpie.pots.resolution import (
+    ARCHIVED_POT_NEXT_ACTION,
+    archived_pot_message,
+    is_archived,
+    match_pot_ref,
+    repo_source_index,
+)
 from potpie.runtime.clients import ClientOutcome
 from potpie.runtime.operations import EngineOperation
 from potpie.runtime.resource_manager import (
     AuthenticatedActor,
+    AuthorizationError,
     AuthorizationScope,
     CompositionFingerprint,
     ContextResourceManager,
@@ -132,9 +140,24 @@ class LocalContextSelectorResolver:
             )
 
         if selector.kind == "explicit":
-            for pot in pots:
-                if selector.value in {pot.pot_id, pot.name}:
-                    return Success(ContextIdentity(pot.pot_id))
+            live, archived = match_pot_ref(pots, selector.value or "")
+            if live is not None:
+                return Success(ContextIdentity(live.pot_id))
+            # An exact id always names its pot, archived or not: ids are never
+            # reused, and clearing a retired pot's graph state needs to reach it.
+            # What may run against it is decided by ``LocalCliAuthorizer``. A
+            # name never resolves to an archived pot, because a live pot may
+            # reuse that name.
+            if archived is not None and archived.pot_id == selector.value:
+                return Success(ContextIdentity(archived.pot_id))
+            if archived is not None:
+                return Failure(
+                    SelectionError(
+                        code="pot_archived",
+                        message=archived_pot_message(archived),
+                        recommended_next_action=ARCHIVED_POT_NEXT_ACTION,
+                    )
+                )
             return Failure(
                 SelectionError(
                     code="pot_not_found",
@@ -153,35 +176,33 @@ class LocalContextSelectorResolver:
             default_pot_id = self._services.pots.repo_default(repo=repo)
         except Exception:
             default_pot_id = None
-        known_ids = {pot.pot_id for pot in pots}
-        if default_pot_id and default_pot_id in known_ids:
+        live_ids = {pot.pot_id for pot in pots if not is_archived(pot)}
+        if default_pot_id and default_pot_id in live_ids:
             return Success(ContextIdentity(str(default_pot_id)))
 
-        matches = []
-        for pot in pots:
-            try:
-                sources = self._services.pots.list_sources(pot_id=pot.pot_id)
-            except Exception:  # noqa: S112 - one unreadable pot must not mask others.
+        # One repo→pot index read, not one ``list_sources`` call per pot.
+        # Matching stays here; one entry per pot, in pot order.
+        try:
+            index = repo_source_index(self._services.pots)
+        except Exception:
+            index = []
+        matches: dict[str, str] = {}
+        for row in index:
+            if row.pot_id in matches:
                 continue
             if any(
-                source.kind == "repo"
-                and any(
-                    repo_identity_key(ref) == repo
-                    for ref in (source.name, source.location)
-                    if ref
-                )
-                for source in sources
+                repo_identity_key(ref) == repo
+                for ref in (row.name, row.location)
+                if ref
             ):
-                matches.append(pot)
+                matches[row.pot_id] = row.pot_name
 
         if len(matches) == 1:
-            return Success(ContextIdentity(matches[0].pot_id))
+            return Success(ContextIdentity(next(iter(matches))))
         if len(matches) > 1:
-            if active is not None and any(
-                active.pot_id == pot.pot_id for pot in matches
-            ):
+            if active is not None and active.pot_id in matches:
                 return Success(ContextIdentity(active.pot_id))
-            names = ", ".join(f"{pot.name} ({pot.pot_id})" for pot in matches)
+            names = ", ".join(f"{name} ({pot_id})" for pot_id, name in matches.items())
             return Failure(
                 SelectionError(
                     code="ambiguous_pot",
@@ -204,12 +225,33 @@ class LocalCliAuthenticator:
 
 
 class LocalCliAuthorizer:
+    """Authorize local operations; an archived pot admits only ``reset_context``.
+
+    Selection resolves an archived pot by its exact id so its graph state can
+    still be cleared (``pot archive`` on an already-archived pot). Every other
+    operation against it is refused here, so nothing reads from or writes into
+    a retired pot through the typed boundary.
+    """
+
+    def __init__(self, services: Any | None = None) -> None:
+        self._services = services
+
     async def authorize(
         self,
         actor: AuthenticatedActor,
         operation: str,
         context: ContextIdentity,
     ):
+        if operation != EngineOperation.RESET_CONTEXT:
+            archived = await asyncio.to_thread(self._archived_pot, context.value)
+            if archived is not None:
+                return Failure(
+                    AuthorizationError(
+                        code="pot_archived",
+                        message=archived_pot_message(archived),
+                        recommended_next_action=ARCHIVED_POT_NEXT_ACTION,
+                    )
+                )
         return Success(
             AuthorizationScope(
                 actor_id=actor.actor_id,
@@ -217,6 +259,19 @@ class LocalCliAuthorizer:
                 context=context,
                 attributes={"trust_boundary": "local_user"},
             )
+        )
+
+    def _archived_pot(self, pot_id: str) -> Any | None:
+        pots = getattr(self._services, "pots", None)
+        if pots is None:
+            return None
+        try:
+            rows = pots.list_pots()
+        except Exception:  # noqa: BLE001 - selection just read the same catalog.
+            return None
+        return next(
+            (pot for pot in rows if pot.pot_id == pot_id and is_archived(pot)),
+            None,
         )
 
 
@@ -931,7 +986,7 @@ def build_local_resource_manager(services: Any) -> ContextResourceManager:
     return ContextResourceManager(
         resolver=LocalContextSelectorResolver(services),
         authenticator=LocalCliAuthenticator(),
-        authorizer=LocalCliAuthorizer(),
+        authorizer=LocalCliAuthorizer(services),
         composer=LocalContextResourceComposer(services),
     )
 
