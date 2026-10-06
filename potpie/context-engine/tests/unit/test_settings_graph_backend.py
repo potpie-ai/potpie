@@ -6,6 +6,7 @@ Covers default (neo4j), backend selection, and the
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -91,3 +92,16 @@ def test_lite_path_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None
     )
     monkeypatch.setenv("FALKORDB_LITE_PATH", "/tmp/cg.db")
     assert EnvContextEngineSettings().falkordb_lite_path() == "/tmp/cg.db"
+
+
+def test_suite_never_resolves_the_developers_real_home() -> None:
+    """The conftest pin is load-bearing, so assert it rather than trust it.
+
+    Any test that builds a backend without naming a path inherits
+    ``CONTEXT_ENGINE_HOME``; unset, that is the developer's live ``~/.potpie``,
+    and the backend will spawn a server against the real graph and mutate it.
+    This failing is the signal that the autouse fixture was removed or shadowed.
+    """
+    home = os.environ.get("CONTEXT_ENGINE_HOME")
+    assert home, "the autouse _isolated_home fixture must pin CONTEXT_ENGINE_HOME"
+    assert Path(home).resolve() != (Path.home() / ".potpie").resolve()

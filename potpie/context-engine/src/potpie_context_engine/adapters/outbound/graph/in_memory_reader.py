@@ -69,6 +69,14 @@ class InMemoryClaimQueryStore:
         bucket = self.entity_property_index.setdefault((pot_id, entity_key), {})
         bucket.update({k: v for k, v in properties.items()})
 
+    def entity_properties_many(
+        self, *, pot_id: str, entity_keys: Iterable[str]
+    ) -> dict[str, dict[str, Any]]:
+        return {
+            key: self.entity_properties(pot_id=pot_id, entity_key=key)
+            for key in entity_keys
+        }
+
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
         return dict(self.entity_property_index.get((pot_id, entity_key), {}))
 
