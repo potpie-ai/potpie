@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, fields
 from typing import Any, cast
 
 from potpie.cli.repo_location import repo_identity_key
@@ -64,6 +64,7 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
+from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.ports.resource_index import ResourceIndexError
 from potpie_context_engine.core.ports.resource_store import (
     ResourceBatchResult,
@@ -127,6 +128,7 @@ from potpie_context_engine.requests import (
 )
 from potpie_context_engine.results import (
     DescribeResult,
+    ExportSnapshotResult,
     GraphJournalResult,
     ResetContextResult,
     ResourceIndexRebuildResult,
@@ -499,20 +501,14 @@ class LocalEngineOperations:
         self, context: ContextIdentity, request: ExportSnapshotRequest
     ) -> Outcome[object]:
         return await self._call(
-            lambda: self._snapshot_port("export").export(
-                pot_id=context.value,
-                destination=_required_value(request.destination, "destination"),
-            )
+            lambda: self._export_snapshot(pot_id=context.value, request=request)
         )
 
     async def import_snapshot(
         self, context: ContextIdentity, request: ImportSnapshotRequest
     ) -> Outcome[object]:
         return await self._call(
-            lambda: self._snapshot_port("import_").import_(
-                pot_id=context.value,
-                source=_required_value(request.source, "source"),
-            )
+            lambda: self._import_snapshot(pot_id=context.value, request=request)
         )
 
     async def repair(
@@ -1191,6 +1187,95 @@ class LocalEngineOperations:
             )
         return self._services.backend.snapshot
 
+    def _export_snapshot(
+        self, *, pot_id: str, request: ExportSnapshotRequest
+    ) -> ExportSnapshotResult:
+        version = _snapshot_request_version(request.version)
+        if version == 1:
+            manifest = self._snapshot_port("export").export(
+                pot_id=pot_id,
+                destination=_required_value(request.destination, "destination"),
+            )
+            return ExportSnapshotResult(
+                **{
+                    item.name: getattr(manifest, item.name)
+                    for item in fields(SnapshotManifest)
+                }
+            )
+        if request.destination:
+            raise ValueError(
+                "a version 2 snapshot export takes no destination: the snapshot "
+                "is returned as data and the caller writes the files"
+            )
+        snapshot = self._snapshot_port("export_data")
+        if request.include_resources:
+            payload = dict(
+                self._snapshot_resources("export_snapshot").export_snapshot(
+                    pot_id=pot_id
+                )
+            )
+        else:
+            payload = dict(snapshot.export_data(pot_id=pot_id))
+        metadata: dict[str, Any] = {}
+        resources = payload.get("resources")
+        if isinstance(resources, Mapping):
+            metadata["documents"] = _snapshot_document_count(resources)
+        return ExportSnapshotResult(
+            pot_id=pot_id,
+            location="",
+            format_version=str(payload.get("format_version") or "2"),
+            entity_count=len(payload.get("entities") or ()),
+            claim_count=len(payload.get("claims") or ()),
+            metadata=metadata,
+            payload=payload,
+        )
+
+    def _import_snapshot(
+        self, *, pot_id: str, request: ImportSnapshotRequest
+    ) -> object:
+        version = _snapshot_request_version(request.version)
+        if version == 1:
+            if request.payload:
+                raise ValueError(
+                    "a version 1 snapshot import reads 'source'; send the "
+                    "snapshot as 'payload' with version 2"
+                )
+            return self._snapshot_port("import_").import_(
+                pot_id=pot_id,
+                source=_required_value(request.source, "source"),
+            )
+        if request.source:
+            raise ValueError(
+                "a version 2 snapshot import takes no source path: send the "
+                "snapshot itself as 'payload'"
+            )
+        if not request.payload:
+            raise ValueError("payload is required for a version 2 snapshot import")
+        snapshot = self._snapshot_port("import_data")
+        payload = dict(request.payload)
+        if "resources" in payload:
+            # Graph and document text restore together: resource bytes are
+            # staged and rolled back if the graph import fails.
+            return self._snapshot_resources("import_snapshot").import_snapshot(
+                pot_id=pot_id, payload=payload
+            )
+        return snapshot.import_data(pot_id=pot_id, payload=payload)
+
+    def _snapshot_resources(self, method: str) -> Any:
+        resources = self._resources_or_none()
+        if resources is None:
+            raise CapabilityNotImplemented(
+                f"resources.{method}",
+                detail=(
+                    "this runtime does not compose a document resource store, so "
+                    "a snapshot cannot carry document text"
+                ),
+                recommended_next_action=(
+                    "retry with --graph-only to move only graph entities and claims"
+                ),
+            )
+        return resources
+
     def _resources_or_none(self) -> Any | None:
         return getattr(self._services, "resources", None)
 
@@ -1376,6 +1461,23 @@ def _required_value(value: str | None, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} is required")
     return value
+
+
+def _snapshot_request_version(version: object) -> int:
+    if isinstance(version, bool) or version not in (1, 2):
+        raise ValueError(
+            f"unsupported snapshot request version {version!r}; expected 1 or 2"
+        )
+    return cast(int, version)
+
+
+def _snapshot_document_count(resources: Mapping[str, Any]) -> int:
+    """How many documents a snapshot's resource files belong to."""
+
+    files = resources.get("files")
+    if not isinstance(files, Mapping):
+        return 0
+    return len({str(name).split("/", 1)[0] for name in files})
 
 
 def _no_active_pot_error() -> SelectionError:

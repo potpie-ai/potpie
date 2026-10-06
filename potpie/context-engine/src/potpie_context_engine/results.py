@@ -60,7 +60,6 @@ SearchEntitiesResult: TypeAlias = GraphEntitySearchResult
 MutateResult: TypeAlias = SemanticMutationResult
 NeighborhoodResult: TypeAlias = GraphSlice
 InspectResult: TypeAlias = GraphSlice
-ExportSnapshotResult: TypeAlias = SnapshotManifest
 ImportSnapshotResult: TypeAlias = SnapshotManifest
 RepairResult: TypeAlias = RepairReport
 ProposeResult: TypeAlias = GraphMutationProposal
@@ -182,6 +181,18 @@ RollbackPreviewResult: TypeAlias = GraphJournalResult
 ApplyPreviewResult: TypeAlias = GraphJournalResult
 DisableRollbackResult: TypeAlias = GraphJournalResult
 RebuildCommitsResult: TypeAlias = GraphJournalResult
+
+
+@dataclass(frozen=True, slots=True)
+class ExportSnapshotResult(SnapshotManifest):
+    """The manifest of an export; ``payload`` is the snapshot for a version-2 request.
+
+    A version-1 export writes its file on the executing host and leaves
+    ``payload`` empty, so a caller reading only the manifest fields is
+    unaffected by the request version.
+    """
+
+    payload: Mapping[str, Any] | None = None
 
 
 def _plain(value: Any) -> Any:

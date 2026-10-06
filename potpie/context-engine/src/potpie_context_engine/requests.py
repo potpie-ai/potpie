@@ -143,12 +143,34 @@ class InspectRequest(NeighborhoodRequest):
 
 @dataclass(frozen=True, slots=True)
 class ExportSnapshotRequest(EngineRequest):
+    """Export one pot's graph (``version`` 1) or portable snapshot (``version`` 2).
+
+    Version 1, the default, writes the graph to ``destination`` on the
+    executing host's filesystem. Version 2 takes no ``destination``: the
+    result's ``payload`` carries the snapshot itself, with the pot's document
+    resources unless ``include_resources`` is false, and the caller writes the
+    files. Version 2 means the same in-process, behind the loopback daemon and
+    behind any future remote transport, because the executing host never opens
+    a caller's path.
+    """
+
     destination: str = ""
+    version: int = 1
+    include_resources: bool = True
 
 
 @dataclass(frozen=True, slots=True)
 class ImportSnapshotRequest(EngineRequest):
+    """Merge a snapshot into one pot.
+
+    Version 1, the default, reads the file at ``source`` on the executing host.
+    Version 2 takes no ``source``: ``payload`` is the snapshot itself, and its
+    ``resources`` part, when present, restores document text with the graph.
+    """
+
     source: str = ""
+    version: int = 1
+    payload: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

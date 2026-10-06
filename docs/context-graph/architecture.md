@@ -241,7 +241,8 @@ and raises `CapabilityNotImplemented`.
   Neo4j and FalkorDB; it raises `CapabilityNotImplemented` only for an injected
   legacy writer that has no atomic mutation surface.
 - `snapshot` (export/import) is implemented on `in_memory`, `embedded`,
-  `falkordb_lite`, `falkordb`, and `neo4j`.
+  `falkordb_lite`, `falkordb`, and `neo4j`; FalkorDB and Neo4j apply an import
+  atomically against the pot's revision (see [snapshots.md](./snapshots.md)).
 - `inspection` is real on `in_memory`/`embedded`/`falkordb` but **not** Neo4j.
 - Net effect: **FalkorDB is more complete than Neo4j** (6 vs 5 ports), and the
   OSS default `falkordb_lite` is a first-class backend, not a stub.

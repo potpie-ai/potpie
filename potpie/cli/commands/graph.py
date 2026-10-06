@@ -16,7 +16,6 @@ from contextlib import contextmanager
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 import typer
@@ -53,6 +52,7 @@ from potpie.cli.commands._common import (
     set_json,
 )
 from potpie.cli.catalog_presenter import render_catalog
+from potpie.cli.snapshot_io import local_path, read_snapshot, write_snapshot
 from potpie.cli.read_presenter import (
     build_presentation_context,
     prepare_items,
@@ -2436,22 +2436,70 @@ def graph_inspect(
 
 @graph_app.command("export")
 def graph_export(
-    file: str = typer.Argument(...), pot: str = typer.Option(None, "--pot")
+    file: str = typer.Argument(...),
+    pot: str = typer.Option(None, "--pot"),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Replace an existing export file or folder atomically.",
+    ),
+    graph_only: bool = typer.Option(
+        False,
+        "--graph-only",
+        "--no-resources",
+        help="Export graph entities and claims without document resource text.",
+    ),
 ) -> None:
+    """Write a pot's portable snapshot (folder, or one file ending in .json)."""
     with _graph_command("graph.export") as ctx:
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        destination = _absolute_snapshot_path(file)
-        manifest = run_engine_operation(
+        # The snapshot comes back as data and this process writes it, so an
+        # existing destination is refused before the engine reads anything.
+        path = local_path(file)
+        if path.exists() and not overwrite:
+            raise ValueError(
+                f"export destination already exists: {path}; pass --overwrite to "
+                "replace it"
+            )
+        exported = run_engine_operation(
             get_engine_client(pot_id).export_snapshot(
-                EngineExportSnapshotRequest(destination=destination)
+                EngineExportSnapshotRequest(version=2, include_resources=not graph_only)
             )
         )
+        payload = getattr(exported, "payload", None)
+        if not isinstance(payload, Mapping):
+            raise CapabilityNotImplemented(
+                "graph.snapshot.export_data",
+                detail="the engine returned no portable snapshot payload",
+                recommended_next_action=(
+                    "restart the daemon so it runs this Potpie version, then retry"
+                ),
+            )
+        payload = _plain_snapshot_payload(payload)
+        path = write_snapshot(file, payload, overwrite=overwrite)
+        entities = len(payload.get("entities") or ())
+        claims = len(payload.get("claims") or ())
+        result: dict[str, Any] = {
+            "path": str(path),
+            # Kept from the version-1 output, which named only the location.
+            "location": str(path),
+            "format_version": str(payload.get("format_version") or "2"),
+            "entities": entities,
+            "claims": claims,
+        }
+        documents = _snapshot_documents(payload)
+        if documents is not None:
+            result["documents"] = documents
+        document_human = f", {documents} documents" if documents is not None else ""
         _emit_graph_result(
             ctx,
-            {"location": manifest.location, "claims": manifest.claim_count},
-            human=f"exported {manifest.claim_count} claims → {manifest.location}",
+            result,
+            human=(
+                f"exported {entities} entities and {claims} claims"
+                f"{document_human} → {path}"
+            ),
         )
 
 
@@ -2459,6 +2507,12 @@ def graph_export(
 def graph_import(
     file: str = typer.Argument(...),
     pot: str = typer.Option(None, "--pot"),
+    graph_only: bool = typer.Option(
+        False,
+        "--graph-only",
+        "--no-resources",
+        help="Import only graph entities and claims, ignoring bundled resources.",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -2466,31 +2520,95 @@ def graph_import(
         help="Confirm the destructive snapshot import.",
     ),
 ) -> None:
+    """Merge a snapshot folder or JSON file into a pot."""
     with _graph_command("graph.import") as ctx:
+        # Read and validate the whole snapshot before resolving the pot or
+        # asking for confirmation: a missing claims file must never become a
+        # partial import.
+        payload, path = read_snapshot(file)
+        if graph_only:
+            payload = {
+                key: value for key, value in payload.items() if key != "resources"
+            }
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        source = _absolute_snapshot_path(file)
-        rerun = f"potpie graph import {shlex.quote(source)} --pot {shlex.quote(pot_id)}"
+        rerun_parts = [
+            "potpie",
+            "graph",
+            "import",
+            shlex.quote(str(path)),
+            "--pot",
+            shlex.quote(pot_id),
+        ]
+        if graph_only:
+            rerun_parts.append("--graph-only")
+        rerun_parts.append("--yes")
+        documents_clause = " and document text" if "resources" in payload else ""
         confirmation = confirm_destructive_operation(
             confirmed_by_flag=yes,
             prompt=(
-                f"Import snapshot '{source}' into context '{pot_id}'? "
-                "This can replace graph data."
+                f"Import snapshot '{path}' into context '{pot_id}'? This merges "
+                f"its graph data{documents_clause} into the pot."
             ),
-            rerun_command=f"{rerun} --yes",
+            rerun_command=" ".join(rerun_parts),
         )
         manifest = run_engine_operation(
             get_engine_client(pot_id).import_snapshot(
-                EngineImportSnapshotRequest(source=source),
+                EngineImportSnapshotRequest(version=2, payload=payload),
                 confirmation=confirmation,
             )
         )
+        entities = int(
+            getattr(manifest, "entity_count", len(payload.get("entities") or ()))
+        )
+        claims = int(getattr(manifest, "claim_count", len(payload.get("claims") or ())))
+        metadata = getattr(manifest, "metadata", None)
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        manifest_warnings = tuple(
+            str(item) for item in metadata.get("warnings") or () if str(item).strip()
+        )
+        result: dict[str, Any] = {
+            "path": str(path),
+            # Kept from the version-1 output, which named only the location.
+            "location": str(path),
+            "format_version": str(payload.get("format_version") or "1"),
+            "entities": entities,
+            "claims": claims,
+        }
+        documents = metadata.get("documents")
+        if documents is not None:
+            result["documents"] = int(documents)
+        document_human = f", {documents} documents" if documents is not None else ""
         _emit_graph_result(
             ctx,
-            {"location": manifest.location, "claims": manifest.claim_count},
-            human=f"imported {manifest.claim_count} claims from {manifest.location}",
+            result,
+            human=(
+                f"imported {entities} entities and {claims} claims"
+                f"{document_human} from {path}"
+            ),
+            warnings=manifest_warnings,
         )
+
+
+def _plain_snapshot_payload(value: Any) -> Any:
+    """A JSON-plain copy of a snapshot payload, whichever client returned it."""
+
+    if isinstance(value, Mapping):
+        return {str(key): _plain_snapshot_payload(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_snapshot_payload(item) for item in value]
+    return value
+
+
+def _snapshot_documents(payload: Mapping[str, Any]) -> int | None:
+    resources = payload.get("resources")
+    if not isinstance(resources, Mapping):
+        return None
+    files = resources.get("files")
+    if not isinstance(files, Mapping):
+        return 0
+    return len({str(name).split("/", 1)[0] for name in files})
 
 
 @graph_app.command("repair")
@@ -2550,12 +2668,6 @@ def graph_repair(
             {"targets": list(report.targets), "repaired": dict(report.repaired)},
             human=report.detail or f"repaired {dict(report.repaired)}",
         )
-
-
-def _absolute_snapshot_path(file: str) -> str:
-    """Resolve one CLI snapshot path before it crosses into the daemon."""
-
-    return str(Path(file).expanduser().resolve(strict=False))
 
 
 @backend_app.command("list")

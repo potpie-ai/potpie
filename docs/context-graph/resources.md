@@ -237,9 +237,9 @@ relevance, and an explicit passage `--query-threshold` is refused with
 ## Non-goals
 
 No bundled PDF or spreadsheet parsers and no Potpie-run summarizer; no binary,
-image, or audio payloads; no cross-pot sharing or deduplication. Graph snapshot
-export and import carry graph state only, so documents are re-imported from their
-chunk directories.
+image, or audio payloads; no cross-pot sharing or deduplication. A graph
+snapshot carries document text with the graph by default (`--graph-only` leaves
+it out; see [snapshots.md](./snapshots.md)).
 
 ## Verification
 
