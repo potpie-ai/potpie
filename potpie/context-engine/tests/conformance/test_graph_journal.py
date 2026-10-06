@@ -1037,3 +1037,59 @@ def test_protocol_restore_checks_run_only_with_the_protocol_extension(monkeypatc
             protocols_enabled=True,
         )
     assert calls == ["Protocol"]
+
+
+def test_restore_through_the_runtime_verifies_document_references(backend, tmp_path):
+    """A runtime composed with a resource store checks every restored citation
+    of a stored chunk; once the bytes are gone the restore is refused."""
+    from potpie_context_engine.core.runtime import build_graph_runtime
+
+    from potpie_context_engine.adapters.outbound.resources.local_resource_store import (
+        LocalResourceStore,
+    )
+    from potpie_context_engine.application.services.resource_facade import (
+        ResourceFacade,
+    )
+    from potpie_context_engine.testing import InMemoryGraphPlanStore
+
+    store = LocalResourceStore(home=tmp_path / "resources")
+    runtime = build_graph_runtime(
+        backend=backend, plan_store=InMemoryGraphPlanStore(), resource_store=store
+    )
+    facade = ResourceFacade.from_runtime(runtime, store=store)
+    assert facade.journal is not None
+    imported = facade.import_dir(
+        pot_id="p",
+        slug="test",
+        files={
+            "meta.json": json.dumps(
+                {
+                    "source_ref": "synthetic:test",
+                    "sections": [
+                        {
+                            "slug": "body",
+                            "title": "Body",
+                            "summary": "Source text",
+                            "ordinal": 0,
+                            "chunks": [{"seq": 0, "label": "Body"}],
+                        }
+                    ],
+                }
+            ),
+            "body/0000.txt": "Evidence",
+        },
+    )
+    assert imported.graph.ok, imported.graph
+    journal = runtime.backend.journal
+    write(backend, "after-import", summary="graph only")
+
+    plan = journal.plan_restore(
+        pot_id="p", target_commit_id="after-import", expected_head="after-import"
+    )
+    assert plan.target_commit_ids == ("after-import",)
+
+    store.delete(pot_id="p", slug="test")
+    with pytest.raises(JournalError, match="resource reference cannot be verified"):
+        journal.plan_restore(
+            pot_id="p", target_commit_id="after-import", expected_head="after-import"
+        )
