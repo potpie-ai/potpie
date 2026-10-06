@@ -13,15 +13,15 @@ adapters (no fakes).
 from __future__ import annotations
 
 import asyncio
-import shutil
-import tempfile
 
 import pytest
 
 pytestmark = pytest.mark.integration
 
 # Import name is ``redislite`` (distribution: falkordblite); skip if absent.
-falkordb_client = pytest.importorskip("redislite.falkordb_client")
+pytest.importorskip("redislite.falkordb_client")
+
+from tests.embedded_falkordb import embedded_falkordb  # noqa: E402
 
 from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend import (  # noqa: E402
     FalkorDBGraphBackend,
@@ -78,14 +78,11 @@ class _UnusedPlanStore:
 
 
 @pytest.fixture()
-def shared_graph():
-    tmp = tempfile.mkdtemp(prefix="falkordblite_test_")
-    db = falkordb_client.FalkorDB(f"{tmp}/context_graph.db")
-    try:
+def shared_graph(tmp_path):
+    # The async writer queries from worker threads, so the pool ends up with
+    # several connections and redislite's own close() would leave the server up.
+    with embedded_falkordb(tmp_path / "context_graph.db") as db:
         yield db.select_graph("context_graph")
-    finally:
-        db.close()  # stop the embedded redis-server
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_write_read_reset_roundtrip(shared_graph) -> None:
