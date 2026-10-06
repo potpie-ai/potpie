@@ -49,7 +49,7 @@ flowchart TB
 | Layer | Path | Responsibility |
 |---|---|---|
 | **domain/** | `domain/` | Pure model and contracts: the three ontology catalogs, contract constants, ports (Protocols), DTOs, ranking, coherence invariants, identity. No I/O. Import-time coherence guards fail startup fast if vocabularies drift. |
-| **application/** | `application/` | Services and use cases that orchestrate domain over ports: `services/` (graph_service, graph_workbench, agent_context, read_orchestrator, envelope_builder, nudge_service, skill_manager, semantic_mutation_validator/lowering, reconciliation_validation, ingestion_submission_service), `readers/` (the 9 readers), `use_cases/` (the ingestion pipeline). |
+| **application/** | `application/` | Services and use cases that orchestrate domain over ports: `services/` (graph_service, graph_workbench, agent_context, read_orchestrator, envelope_builder, nudge_service, skill_manager, semantic_mutation_validator/lowering, reconciliation_validation, ingestion_submission_service), `readers/` (the 10 readers), `use_cases/` (the ingestion pipeline). |
 | **adapters/** | `adapters/inbound`, `adapters/outbound` | Concrete I/O. Inbound: HTTP ingestion server and webhooks. Outbound: graph backends + the shared engine room, connectors, ledger clients, the Postgres event store, `intelligence/local_embedder`, the session injection ledger. Root CLI, daemon, and capability adapters live under `potpie/`. |
 | **bootstrap/** | `bootstrap/` | Context Engine standalone HTTP composition. The local product composition lives under `potpie/runtime/`. |
 | **runtime + daemon** | `potpie/runtime/`; `potpie/daemon/` | Context-bound clients, authorization/resource management, typed daemon protocol, and root capability lifecycle. |
@@ -146,7 +146,10 @@ index is not yet ready; the two are reported separately. `potpie doctor`
 composes `backend.capabilities()` + `backend.mutation.readiness()` +
 `daemon.status()` + `ledger.status()` so a half-ready system is debuggable.
 `potpie ui` (the read-only graph explorer) is served by this daemon — it ensures
-the daemon, discovers `base_url`, and opens `<base>/ui`.
+the daemon, discovers `base_url`, and opens `<base>/ui?[pot=<id>&]k=<code>`.
+`/ui/api` takes the daemon's bearer token or a session cookie; `k` is a
+single-use code the CLI mints with that token, which the page trades for an
+HttpOnly session cookie, so the token itself never reaches the browser.
 
 ## CLI surfaces onto one data plane
 
@@ -190,7 +193,7 @@ flowchart TB
   cg_be --> cg_insp
   cg_be --> cg_an
   cg_be --> cg_snap
-  cg_be -. "profile · capabilities() · provision(plan)" .-> cg_meta["bundle members"]
+  cg_be -. "profile · capabilities() · provision()" .-> cg_meta["bundle members"]
 ```
 
 - **Canonical:** `mutation` (`apply`/`apply_async`, `invalidate`, `reset_pot`,
@@ -203,9 +206,9 @@ flowchart TB
   (`counts`/`freshness`/`quality`/`repair`), `snapshot` (`export`/`import_`).
 - **Bundle members:** `profile` (string), `capabilities() -> BackendCapabilities`
   (a frozen dataclass declaring which of the six are *really* implemented vs
-  fail-closed — read by `backend status`/`doctor`), and `provision(plan:
-  SetupPlan) -> StepResult` (the setup seam where a backend stands up its own
-  store idempotently).
+  fail-closed — read by `backend status`/`doctor`), and `provision() ->
+  BackendProvisionResult` (`domain/ports/provisioning.py`; the setup seam where a
+  backend stands up its own store idempotently).
 
 Two workbench stores also live under `domain/ports/graph/` but are **not** part
 of the six-cap bundle: `inbox_store.py` and `plan_store.py`.
@@ -227,23 +230,24 @@ and raises `CapabilityNotImplemented`.
 |---|---|---:|---|
 | `in_memory` | `InMemoryGraphBackend` | **6/6** | Conformance/reference; genuinely real (validates, MERGEs by identity, bitemporal invalidation, embeds on write); `dump_store`/`load_store`. |
 | `embedded` | `EmbeddedGraphBackend` | **6/6** (delegated) | OSS JSON-persisted fallback wrapping `in_memory`; persists to `<home>/graph.json` after each mutation (atomic tmp-replace). |
-| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **5/6** (no snapshot) | **The OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
-| `falkordb` | `FalkorDBGraphBackend` | **5/6** (no snapshot) | Full FalkorDB server over a redis URL; needs the optional `falkordb` client. |
-| `neo4j` | `Neo4jGraphBackend` | **4/6** (no inspection, no snapshot) | "Shape-first production target"; native relationship vector index. |
+| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **6/6** | **The OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
+| `falkordb` | `FalkorDBGraphBackend` | **6/6** | Full FalkorDB server over a redis URL; needs the optional `falkordb` client. |
+| `neo4j` | `Neo4jGraphBackend` | **5/6** (no inspection) | "Shape-first production target"; native relationship vector index. |
 | `postgres` / `chroma` / `hosted` | `StubGraphBackend` | **0/6** | Fail-closed seam: every port and `provision` raise `CapabilityNotImplemented("graph.<profile>.<cap>.<method>")`. Documented but unbuilt; `backend list` still shows them. |
 
 **Cross-profile gaps to internalize:**
 
-- Claim-key `mutation.invalidate` raises on **both** Neo4j and FalkorDB (that
-  invalidation path is unbuilt there).
-- `snapshot` (export/import) is real only on `in_memory`/`embedded`.
+- Claim-key `mutation.invalidate` runs through the native atomic writer on
+  Neo4j and FalkorDB; it raises `CapabilityNotImplemented` only for an injected
+  legacy writer that has no atomic mutation surface.
+- `snapshot` (export/import) is implemented on `in_memory`, `embedded`,
+  `falkordb_lite`, `falkordb`, and `neo4j`.
 - `inspection` is real on `in_memory`/`embedded`/`falkordb` but **not** Neo4j.
-- Net effect: **FalkorDB is more complete than Neo4j** (5 vs 4 ports), and the
+- Net effect: **FalkorDB is more complete than Neo4j** (6 vs 5 ports), and the
   OSS default `falkordb_lite` is a first-class backend, not a stub.
 
-> **Roadmap (not yet wired):** `snapshot` on falkordb/neo4j; `inspection` on
-> neo4j; the `postgres`/`chroma`/`hosted` backends (all `StubGraphBackend`);
-> claim-key `mutation.invalidate` on neo4j/falkordb.
+> **Roadmap (not yet wired):** `inspection` on neo4j; the
+> `postgres`/`chroma`/`hosted` backends (all `StubGraphBackend`).
 
 ## The shared engine room
 
@@ -337,8 +341,9 @@ There is **no `NotImplementedError` gate** on FalkorDB anywhere — the old
 `potpie setup` is the idempotent first-run flow. The CLI builds a `SetupPlan`
 (config, storage, daemon, default `default` pot, source registration, skills),
 ensures the daemon first when in daemon mode (`host.daemon.ensure()`), and each
-backend self-provisions its store through `provision(plan: SetupPlan) ->
-StepResult`. Re-running is safe; each step is `ensure`-shaped and reports `done |
+backend self-provisions its store through `provision() ->
+BackendProvisionResult`, which `potpie/setup/orchestrator.py` wraps into the
+`backend.provision` `StepResult`. Re-running is safe; each step is `ensure`-shaped and reports `done |
 skipped | not_implemented | failed`.
 
 Two corrections worth stating here:
@@ -347,8 +352,9 @@ Two corrections worth stating here:
   `redislite` file), not `embedded` or `neo4j`. `postgres`/`chroma`/`hosted`
   cannot be provisioned — `StubGraphBackend.provision()` raises (the prior
   "postgres creates the DB, enables pgvector, runs DDL" claim was aspirational).
-- `--scan` is **opt-in** (default off): `setup` registers the repo as a source
-  but does not scan or ingest the working tree.
+- There is no working-tree scan. `setup` registers the repo as a source and
+  stops there; the graph is filled by harness-led ingestion. `--scan` is still
+  accepted, but no setup step reads it.
 
 The full `setup` flag set and the canonical local journey live in
 [cli-flow.md](./cli-flow.md).
@@ -472,7 +478,7 @@ Graph Service owns graph operations, and `GraphBackend` owns physical storage.
 | Graph backend | `domain/ports/graph/` + a backend adapter | Implement the canonical ports, preserve `group_id` pot isolation, pass conformance; declare real caps in `capabilities()`. |
 | Skill | `potpie/skills/` catalog + `AgentTargetPort` adapter | Keep skill content harness-neutral; it is not graph data. See [skills.md](./skills.md). |
 | Pot behavior | `potpie/pots/` | Preserve the first-setup active `default` pot. |
-| Setup / lifecycle step | the component's `provision`/bespoke method + `potpie/setup/orchestrator.py` sequence | Return a `StepResult`; raise `CapabilityNotImplemented` until built. |
+| Setup / lifecycle step | the component's `provision`/bespoke method + `potpie/setup/orchestrator.py` sequence | Return a `StepResult` (graph backends return `BackendProvisionResult`, which the orchestrator wraps); raise `CapabilityNotImplemented` until built. |
 
 Do not bypass the read trunk, query physical stores from CLI/readers, make a
 projection a second source of truth, put service logic in the daemon shell, or

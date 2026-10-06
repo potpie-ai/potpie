@@ -5,8 +5,6 @@ description: "Semantic mutations, propose and commit, inbox, and quality checks.
 
 ## Overview
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
-
 How facts get *into* the graph. Reads are covered in [querying.md](./querying.md); the
 static contract (entities, predicates, truth classes, ops) lives in [ontology.md](./ontology.md);
 the full command/flag surface is in [cli-flow.md](./cli-flow.md). This doc owns the **write
@@ -99,8 +97,10 @@ fictional (it survives only as a stale comment in `domain/reconciliation.py`).
 > are **both empty tuples**. Review/blocking is decided **at runtime** by `MutationRisk`
 > (low/medium/high) — see §3 — not by which op you used. Old docs that called `supersede_claim`
 > or `merge_duplicate_entities` "usually review-required" are wrong: they auto-apply when
-> `--allow-review-required` and `--approved-by` are supplied, otherwise they return
-> `review_required` because of their runtime risk.
+> `graph propose --approved-by <user-ref>` pre-approves the plan (the legacy `graph mutate`
+> spells it `--allow-review-required --approved-by`), otherwise they return `review_required`
+> because of their runtime risk and `graph commit <plan_id> --approved-by <user-ref> --verify`
+> applies them.
 
 ### 2.2 Op fields are FLAT
 
@@ -363,7 +363,8 @@ shape are detailed in [architecture.md](./architecture.md).
 - optional canonical-label enrichment; backfill required properties.
 
 With `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL=1` (and not strict) it **downgrades instead of failing**:
-drops unknown labels, falls ADR → Document/Observation, coerces invalid lifecycle to `unknown`,
+drops unknown labels, maps an extractor `ADR` label onto the public `Document` entity and
+falls back to `Observation` otherwise, coerces invalid lifecycle to `unknown`,
 backfills missing edge temporal anchors with `now()`, rewrites unknown edge types → `RELATED_TO`
 (confidence 0.3), and drops endpoint-mismatched edges. Each downgrade is recorded and may attach a
 `QualityIssue` node. A final `validate_structural_mutations` + invalidation check raises
@@ -418,12 +419,13 @@ items. Two layers:
    auto-supersede and conflict findings).
 2. **Workbench read-only** `GraphWorkbenchService.quality(report=…)` scans `ClaimRow`s via
    `backend.claim_query` to emit `GraphQualityFinding`s for `summary | duplicate-candidates |
-   stale-facts | conflicting-claims | orphan-entities | low-confidence | projection-drift`
+   stale-facts | conflicting-claims | orphan-entities | low-confidence | projection-drift |
+   entity-label-drift`
    (status ok/watch/degraded). The same summary snapshot powers `commit --verify` regression
    detection (§5).
 
 CLI: `graph quality <summary|duplicate-candidates|stale-facts|conflicting-claims|orphan-entities|
-low-confidence|projection-drift> [--threshold 0.5] [--subgraph] [--limit]`.
+low-confidence|projection-drift|entity-label-drift> [--threshold 0.5] [--subgraph] [--limit]`.
 
 ---
 
