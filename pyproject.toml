@@ -75,6 +75,10 @@ exclude = [
 "potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
 "potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json"
 "potpie/cli/templates/claude_plugin/hooks/hooks.json" = "potpie/cli/templates/claude_plugin/hooks/hooks.json"
+# `.claude/` is gitignored (local Claude Code state), which would drop the
+# packaged slash commands from the wheel.
+"potpie/cli/templates/claude_bundle/.claude/commands/potpie-feature.md" = "potpie/cli/templates/claude_bundle/.claude/commands/potpie-feature.md"
+"potpie/cli/templates/claude_bundle/.claude/commands/potpie-record.md" = "potpie/cli/templates/claude_bundle/.claude/commands/potpie-record.md"
 
 [tool.hatch.build.targets.sdist]
 include = [

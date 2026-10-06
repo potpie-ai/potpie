@@ -1,4 +1,4 @@
-"""Installed agent templates/skills match the Graph V2 responsibility split.
+"""Installed agent templates/skills match the graph workbench responsibility split.
 
 These pin the *content* contract of the shipped templates so a future edit cannot
 reintroduce a stale include name, drop the graph surface, or forget the
@@ -10,11 +10,13 @@ instructions that humans and agents actually read.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
 import pytest
 
 import potpie.cli as _clipkg
+from potpie.skills.installer import _validate_potpie_command_tokens
 from potpie_context_engine.core.agent_context_port import CONTEXT_RECORD_TYPES
 
 pytestmark = pytest.mark.unit
@@ -22,7 +24,7 @@ pytestmark = pytest.mark.unit
 TEMPLATES = Path(_clipkg.__file__).resolve().parent / "templates"
 MD_FILES = sorted(TEMPLATES.rglob("*.md"))
 
-# Stale include names from the pre-V1.5 templates. Underscored → unambiguous, so a
+# Stale include names from earlier templates. Underscored → unambiguous, so a
 # bare-substring scan over the markdown has no false positives in prose.
 STALE_INCLUDE_TOKENS = (
     "feature_map",
@@ -52,7 +54,7 @@ _RECORD_ENUM_RE = re.compile(r"^[a-z_]+(?:\|[a-z_]+){3,}$", re.MULTILINE)
 
 def test_templates_exist() -> None:
     names = {p.name for p in MD_FILES}
-    assert {"AGENTS.md", "CLAUDE.md"} <= names
+    assert "POTPIE.md" in names
     assert any("potpie-graph" in p.as_posix() for p in MD_FILES)
     agent_skill_ids = {
         p.parent.name
@@ -100,10 +102,10 @@ def _read(name_fragment: str) -> str:
 
 
 def test_agents_md_advertises_graph_surface() -> None:
-    text = _read("agent_bundle/AGENTS.md")
+    text = _read("potpie-graph/SKILL.md")
     for verb in (
         "graph status",
-        "graph catalog --task",
+        "graph catalog",
         "graph describe",
         "graph read --subgraph",
         "graph search-entities",
@@ -207,7 +209,7 @@ def test_recommended_skills_teach_v2_workflow() -> None:
     text = _read("potpie-graph/SKILL.md")
     for token in (
         "graph status",
-        "graph catalog --task",
+        "graph catalog",
         "--profile read",
         "graph describe",
         "graph search-entities",
@@ -225,8 +227,9 @@ def test_graph_skill_present_in_each_harness_bundle() -> None:
     graph_skills = [
         p for p in MD_FILES if p.name == "SKILL.md" and "potpie-graph" in p.as_posix()
     ]
-    bundles = {p.relative_to(TEMPLATES).parts[0] for p in graph_skills}
-    assert {"agent_bundle", "claude_bundle", "claude_plugin"} <= bundles
+    assert graph_skills == [
+        TEMPLATES / "agent_bundle/.agents/skills/potpie-graph/SKILL.md"
+    ]
 
 
 def test_templates_require_retrieval_grade_descriptions() -> None:
@@ -246,23 +249,149 @@ def test_templates_document_nudge_handling() -> None:
 
 
 def test_agent_instructions_use_the_cli_graph_surface() -> None:
-    assert "potpie graph read" in _read("agent_bundle/AGENTS.md")
-    assert "potpie graph read" in _read("claude_bundle/CLAUDE.md")
+    assert "potpie graph read" in _read("routing/POTPIE.md")
     plugin_instructions = (
         "claude_plugin/commands/potpie-feature.md",
-        "claude_plugin/skills/potpie-change-timeline/SKILL.md",
-        "claude_plugin/skills/potpie-debug-memory/SKILL.md",
-        "claude_plugin/skills/potpie-graph/SKILL.md",
-        "claude_plugin/skills/potpie-infra-architecture/SKILL.md",
-        "claude_plugin/skills/potpie-project-preferences/SKILL.md",
-        "claude_plugin/skills/potpie-repo-baseline/SKILL.md",
-        "claude_plugin/skills/potpie-source-ingestion/SKILL.md",
+        "potpie-change-timeline/SKILL.md",
+        "potpie-debug-memory/SKILL.md",
+        "potpie-graph/SKILL.md",
+        "potpie-infra-architecture/SKILL.md",
+        "potpie-project-preferences/SKILL.md",
+        "potpie-repo-baseline/SKILL.md",
+        "potpie-source-ingestion/SKILL.md",
     )
     for path in plugin_instructions:
         assert "potpie graph read" in _read(path), path
 
 
-# The Stage 6 core skills: every one must carry the harness-led boundary in
+# The skills do not prescribe contract discovery before reads and writes,
+# teach the one-call verbs, and state the read shapes this CLI actually has.
+_USE_CASE_SKILLS = (
+    "potpie-project-preferences",
+    "potpie-infra-architecture",
+    "potpie-change-timeline",
+    "potpie-debug-memory",
+)
+
+
+def _bash_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for block in _BASH_BLOCK_RE.findall(text):
+        lines.extend(
+            line.strip()
+            for line in block.splitlines()
+            if line.strip().startswith("potpie")
+        )
+    return lines
+
+
+def test_templates_do_not_prescribe_contract_discovery_before_work() -> None:
+    """`describe --examples` has no mutation example and `catalog --task` is a
+    no-op; neither belongs in a prescribed command block. The health quintet
+    (`pot info`, `source list`, `graph status`) is one `potpie status`."""
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        assert "graph catalog --task" not in text, (
+            f"{rel} still passes the ignored --task"
+        )
+        # potpie-cli is the command reference: it lists `pot info` and
+        # `source list` as commands, not as a health check to run first.
+        reference_skill = rel.parent.name == "potpie-cli"
+        for line in _bash_lines(text):
+            assert "--examples" not in line, (
+                f"{rel} prescribes describe --examples: {line}"
+            )
+            if reference_skill:
+                continue
+            assert "pot info" not in line, f"{rel} prescribes pot info: {line}"
+            assert "potpie --json source list" not in line, (
+                f"{rel} prescribes source list as a health check: {line}"
+            )
+
+
+def test_use_case_skills_teach_resolve_first_and_record_for_one_learning() -> None:
+    for skill_id in _USE_CASE_SKILLS:
+        text = _read(f"{skill_id}/SKILL.md")
+        assert "potpie resolve" in text, f"{skill_id} never mentions potpie resolve"
+        assert "mutation-template" in text, (
+            f"{skill_id} never names the payload template"
+        )
+    for fragment in (
+        "potpie-project-preferences/SKILL.md",
+        "potpie-debug-memory/SKILL.md",
+        "potpie-graph/SKILL.md",
+        "commands/potpie-record.md",
+        "potpie-cli/SKILL.md",
+    ):
+        assert "potpie record" in _read(fragment), (
+            f"{fragment} never mentions potpie record"
+        )
+    assert "potpie resolve" in _read("commands/potpie-feature.md")
+    # resolve does not infer its intent, so the skills pass it for failures.
+    assert "--intent debugging" in _read("potpie-graph/SKILL.md")
+    assert "--intent debugging" in _read("potpie-debug-memory/SKILL.md")
+
+
+def test_record_is_taught_only_for_the_types_it_accepts() -> None:
+    """``potpie record`` takes ``--type``/``--summary``/``--scope`` only.
+
+    A structured type (decision, preference, bug pattern, verification) needs
+    fields the command cannot carry and is refused, so the skills route those
+    through ``graph mutation-template`` and a plan instead.
+    """
+    structured = {"decision", "preference", "policy", "bug_pattern", "verification"}
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        for line in _bash_lines(path.read_text(encoding="utf-8")):
+            if not line.startswith("potpie record"):
+                continue
+            tokens = shlex.split(line)
+            record_type = tokens[tokens.index("--type") + 1]
+            assert record_type not in structured, (
+                f"{rel} teaches a one-call record for a structured type: {line}"
+            )
+            assert "--detail" not in tokens, f"{rel} passes --detail to record: {line}"
+
+
+def test_templates_state_the_measured_read_shapes() -> None:
+    """Preferences are read by scope (a task-shaped --query drops them);
+    a neighborhood --environment filter must keep the unqualified edges;
+    decisions anchor on services; the repo key has one spelling."""
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        for line in _bash_lines(text):
+            if "preferences_for_scope" in line:
+                assert "--query" not in line, (
+                    f"{rel} passes --query to preferences: {line}"
+                )
+            if "service_neighborhood" in line and "--environment" in line:
+                assert "include_unqualified_environment:true" in line, (
+                    f"{rel} filters by environment without keeping unqualified edges: {line}"
+                )
+            if "active_decisions" in line and "--scope" in line:
+                assert "--scope service:" in line, (
+                    f"{rel} scopes decisions by repo: {line}"
+                )
+        for stale in ("repo:<owner-repo>", "repo:<owner/repo>", "repo:acme/x"):
+            assert stale not in text, f"{rel} spells the repo key as {stale}"
+
+
+def test_templates_do_not_carry_known_wrong_lines() -> None:
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES)
+        text = path.read_text(encoding="utf-8")
+        assert "potpie login <api-key>" not in text, f"{rel}: login takes --api-key"
+        assert "sections_created" not in text, (
+            f"{rel}: the import report key is sections_added"
+        )
+        assert '"graph_contract_version"' not in text, (
+            f"{rel}: payload examples must omit graph_contract_version"
+        )
+
+
+# The core skills: every one must carry the harness-led boundary in
 # its body — the harness reads/decides/writes, Potpie validates/stores, no
 # scanner mutates the graph.
 _CORE_SKILLS = (
@@ -404,8 +533,6 @@ def test_hosted_integration_ingestion_is_agent_led() -> None:
         "potpie-source-ingestion/SKILL.md",
         "potpie-change-timeline/SKILL.md",
         "potpie-graph/SKILL.md",
-        "AGENTS.md",
-        "CLAUDE.md",
     ):
         text = " ".join(_read(fragment).lower().split())
         assert "agent's integration tools/connectors" in text, (
@@ -433,3 +560,78 @@ def test_removed_connector_queue_commands_are_not_advertised() -> None:
             assert token not in lowered, (
                 f"{rel} still advertises removed connector queue command `{token}`"
             )
+
+
+def test_every_skill_has_one_canonical_source() -> None:
+    """Every harness installs skills from ``agent_bundle``; nothing else copies one."""
+    skill_files = sorted(TEMPLATES.rglob("SKILL.md"))
+    assert skill_files
+    for path in skill_files:
+        assert "agent_bundle/.agents/skills" in path.as_posix(), path
+
+
+def test_inline_potpie_commands_exist_on_this_cli() -> None:
+    """Prose cites commands too, and an agent runs what the prose names.
+
+    The installer validates commands inside ``bash`` fences; this applies the
+    same check to every inline `` `potpie …` `` span, so a skill cannot teach a
+    command group or flag this CLI does not have.
+    """
+    span = re.compile(r"`(potpie [^`]+)`")
+    errors: list[str] = []
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES).as_posix()
+        flat = " ".join(path.read_text(encoding="utf-8").split())
+        for command in span.findall(flat):
+            error = _validate_potpie_command_tokens(shlex.split(command))
+            if error:
+                errors.append(f"{rel}: {error}")
+    assert errors == []
+
+
+def test_templates_do_not_prescribe_a_threshold_the_views_ignore() -> None:
+    """``--query-threshold`` is a floor only ``preferences_for_scope`` and the
+    timeline apply; ``prior_occurrences`` and ``document_context`` rank their
+    pool and ignore it. A skill that passes the flag on those views teaches a
+    no-op, and the agent then trusts a full list as evidence.
+    """
+    for path in MD_FILES:
+        rel = path.relative_to(TEMPLATES).as_posix()
+        text = path.read_text(encoding="utf-8")
+        for line in _bash_lines(text):
+            if "--query-threshold" in line:
+                assert "preferences_for_scope" in line or "--view timeline" in line, (
+                    f"{rel} passes --query-threshold to a view that ignores it: {line}"
+                )
+    graph = _read("potpie-graph/SKILL.md")
+    assert "--direction out|in|both" in graph
+    assert "graph neighborhood --entity" in graph
+    flat_debug = " ".join(_read("potpie-debug-memory/SKILL.md").split())
+    assert "`--query-threshold` does nothing here" in flat_debug
+    # A timeline --query filters on this CLI, so the skill must say so rather
+    # than promise a re-rank that never empties the window.
+    flat_timeline = " ".join(_read("potpie-change-timeline/SKILL.md").split())
+    assert "A `--query` filters the window" in flat_timeline
+    assert "never empties" not in flat_timeline
+
+
+def test_templates_state_pot_resolution_and_score_semantics() -> None:
+    """A no-``--pot`` command resolves the pot from the repo registration, and
+    the ``*`` in ``pot list`` loses to it; the resolve header's ``confidence``
+    is not a verdict. Both were misread in testing — an agent
+    in an unregistered checkout saw ``items=0`` on the wrong pot and every
+    correct answer on a small pot arrived under ``confidence=low``.
+    """
+    graph = " ".join(_read("potpie-graph/SKILL.md").split())
+    assert "resolves the pot from the repo you are in" in graph
+    assert "not a verdict" in graph
+    cli = (TEMPLATES / "agent_bundle/.agents/skills/potpie-cli/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "not a verdict" in cli
+    assert "--include docs" in cli
+    # Timeline reads keep the fact whole: compact rows cut it at ~120 chars.
+    timeline = _read("potpie-change-timeline/SKILL.md")
+    for line in _bash_lines(timeline):
+        if "--view timeline" in line:
+            assert "--detail full" in line, line

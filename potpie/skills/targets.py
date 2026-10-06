@@ -2,22 +2,80 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 from potpie.config.local_paths import default_home
 from potpie.skills.catalog import (
     RECOMMENDED_SKILL_IDS,
 )
+from potpie.skills.harness_home import harness_home
 from potpie.skills.installer import (
+    InstallResult,
+    UninstallResult,
+    available_skill_ids,
     install_agent_bundle,
     install_global_agent_instructions,
     install_skill_bundle,
     project_skill_path,
+    prune_empty_dirs,
+    resolve_install_root,
+    uninstall_agent_bundle,
+    uninstall_global_agent_instructions,
 )
+
+_SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+
+
+def _read_version_manifest(path: Path) -> dict[str, str]:
+    """The recorded ``skill id -> version`` map, or an empty one it can repair.
+
+    The manifest is a *cache* of what install last wrote; the files on disk are
+    the truth about what is installed. So an unreadable one is answered with
+    "no recorded versions", which surfaces as ``installed_version="unknown"``,
+    lands every present skill in ``skills status --outdated``, and is repaired
+    by the reinstall that report already tells the user to run.
+
+    Catching only ``JSONDecodeError`` is not enough: a manifest holding valid
+    JSON of the wrong *shape* — a list, a string, anything a stray write leaves
+    behind — would raise ``AttributeError`` out of ``skills list`` and be
+    reported as an internal error, for a cache file the next install rewrites.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, Mapping):
+        return {}
+    return {str(k): str(v) for k, v in data.items()}
+
+
+def _file_digest(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _project_manifest_slug(root: Path) -> str:
+    """A per-project manifest suffix: a readable name plus a collision-proof digest.
+
+    The version manifest used to be keyed by agent and scope alone, so every
+    repository on the machine shared one record of "which skills are installed
+    at project scope". Installing in one project reported the others up to date;
+    ``skills remove --all`` in one marked every other project on the machine
+    fully outdated. The digest is what actually separates them — the name is
+    there so a human can tell which file belongs to which checkout.
+    """
+    digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
+    name = _SLUG_RE.sub("-", root.name).strip("-") or "project"
+    return f"{name}_{digest}"
 
 
 @dataclass(slots=True)
@@ -32,16 +90,25 @@ class FileBackedAgentTarget:
     scope: str = "global"
 
     @property
+    def target_root(self) -> Path:
+        return self.skills_root.expanduser()
+
+    @property
     def _path(self) -> Path:
         return self.home / f"skills_{self.agent}_{self.scope}.json"
 
     def _load(self) -> dict[str, str]:
-        try:
-            with open(self._path, encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-        return {str(k): str(v) for k, v in data.items()}
+        return _read_version_manifest(self._path)
+
+    @property
+    def _hash_path(self) -> Path:
+        name = self._path.name.replace("skills_", "skill_hashes_", 1)
+        return self._path.with_name(name)
+
+    @property
+    def _disabled_path(self) -> Path:
+        name = self._path.name.replace("skills_", "skill_disabled_", 1)
+        return self._path.with_name(name)
 
     def _save(self, data: Mapping[str, str]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
@@ -59,22 +126,78 @@ class FileBackedAgentTarget:
                 installed[sid] = manifest.get(sid, "unknown")
         return installed
 
+    def available(self) -> frozenset[str]:
+        return available_skill_ids(agent=self.agent)
+
+    def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
+        """Is what is on disk byte-identical to what :meth:`install` would write?
+
+        A version integer cannot answer this. A ``SKILL.md`` truncated by a
+        failed write, or hand-edited, kept its recorded version, so ``install``
+        and ``update --all`` both exited 0 with ``changed: []`` and the harness
+        went on loading a broken skill with no way to repair it short of
+        deleting the directory by hand.
+        """
+        root = Path(path).expanduser() if path else self.skills_root
+        result = install_skill_bundle(
+            root, skill_ids=(skill_id,), force=True, dry_run=True
+        )
+        return not (result.created or result.updated)
+
+    def locally_modified(self, *, skill_id: str) -> bool:
+        expected = _read_version_manifest(self._hash_path).get(skill_id)
+        current = _file_digest(self._skill_file(skill_id))
+        return expected is not None and current is not None and current != expected
+
+    def disabled(self) -> frozenset[str]:
+        return frozenset(_read_version_manifest(self._disabled_path))
+
+    def set_disabled(self, *, skill_id: str, disabled: bool) -> None:
+        state = _read_version_manifest(self._disabled_path)
+        if disabled:
+            state[skill_id] = "disabled"
+        else:
+            state.pop(skill_id, None)
+        self._save_to(self._disabled_path, state)
+
+    def _save_to(self, path: Path, data: Mapping[str, str]) -> None:
+        self.home.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(dict(data), fh, indent=2)
+
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path).expanduser() if path else self.skills_root
         install_skill_bundle(root, skill_ids=(skill_id,), force=True)
         data = self._load()
-        if (root / skill_id / "SKILL.md").exists():
+        if (root.expanduser() / skill_id / "SKILL.md").exists():
             data[skill_id] = version
         self._save(data)
+        hashes = _read_version_manifest(self._hash_path)
+        digest = _file_digest(root.expanduser() / skill_id / "SKILL.md")
+        if digest:
+            hashes[skill_id] = digest
+            self._save_to(self._hash_path, hashes)
 
-    def install_support_files(self, *, path: str | None = None) -> None:
+    def install_support_files(self, *, path: str | None = None) -> InstallResult | None:
         del path
         if self.instructions_root is None:
-            return
-        install_global_agent_instructions(
+            return None
+        return install_global_agent_instructions(
             self.instructions_root,
             agent=self.instructions_agent or self.agent,
             force=True,
+        )
+
+    def remove_support_files(
+        self, *, path: str | None = None
+    ) -> UninstallResult | None:
+        """The mirror of :meth:`install_support_files`; see it for what these are."""
+        del path
+        if self.instructions_root is None:
+            return None
+        return uninstall_global_agent_instructions(
+            self.instructions_root,
+            agent=self.instructions_agent or self.agent,
         )
 
     def remove(self, *, skill_id: str) -> None:
@@ -94,19 +217,43 @@ class ProjectAgentTarget:
     scope: str = "project"
 
     @property
+    def target_root(self) -> Path:
+        """Where files actually land — the repo root, not the path passed in.
+
+        ``install`` has always resolved to the nearest git root, so reporting
+        the raw ``--path`` as ``metadata.target_root`` named a directory nothing
+        was written to whenever the caller pointed at a subdirectory.
+        """
+        return resolve_install_root(self.path)
+
+    @property
     def _path(self) -> Path:
-        return self.home / f"skills_{self.agent}_{self.scope}.json"
+        return (
+            self.home
+            / f"skills_{self.agent}_{self.scope}_{_project_manifest_slug(self.target_root)}.json"
+        )
 
     def _load(self) -> dict[str, str]:
-        try:
-            with open(self._path, encoding="utf-8") as fh:
-                return json.load(fh)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
+        return _read_version_manifest(self._path)
+
+    @property
+    def _hash_path(self) -> Path:
+        name = self._path.name.replace("skills_", "skill_hashes_", 1)
+        return self._path.with_name(name)
+
+    @property
+    def _disabled_path(self) -> Path:
+        name = self._path.name.replace("skills_", "skill_disabled_", 1)
+        return self._path.with_name(name)
 
     def _save(self, data: Mapping[str, str]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
         with open(self._path, "w", encoding="utf-8") as fh:
+            json.dump(dict(data), fh, indent=2)
+
+    def _save_to(self, path: Path, data: Mapping[str, str]) -> None:
+        self.home.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(dict(data), fh, indent=2)
 
     def installed(self) -> Mapping[str, str]:
@@ -117,45 +264,153 @@ class ProjectAgentTarget:
                 installed[sid] = manifest.get(sid, "unknown")
         return installed
 
+    def available(self) -> frozenset[str]:
+        return available_skill_ids(agent=self.agent)
+
+    def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
+        """See :meth:`FileBackedAgentTarget.matches_bundle`."""
+        root = Path(path) if path else self.path
+        result = install_agent_bundle(
+            root,
+            agent=self.agent,
+            skill_ids=(skill_id,),
+            force=True,
+            support_files=False,
+            dry_run=True,
+        )
+        return not (result.created or result.updated)
+
+    def locally_modified(self, *, skill_id: str) -> bool:
+        expected = _read_version_manifest(self._hash_path).get(skill_id)
+        current = _file_digest(
+            project_skill_path(self.path, agent=self.agent, skill_id=skill_id)
+        )
+        return expected is not None and current is not None and current != expected
+
+    def disabled(self) -> frozenset[str]:
+        return frozenset(_read_version_manifest(self._disabled_path))
+
+    def set_disabled(self, *, skill_id: str, disabled: bool) -> None:
+        state = _read_version_manifest(self._disabled_path)
+        if disabled:
+            state[skill_id] = "disabled"
+        else:
+            state.pop(skill_id, None)
+        self._save_to(self._disabled_path, state)
+
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         root = Path(path) if path else self.path
-        install_agent_bundle(root, agent=self.agent, skill_ids=(skill_id,), force=True)
+        # Support files are the caller's *other* request; see
+        # ``install_support_files``. Bundling them in here is what made
+        # ``skills install potpie-cli`` also write CLAUDE.md, two slash commands
+        # and a second skill, none of them named in ``changed``.
+        install_agent_bundle(
+            root,
+            agent=self.agent,
+            skill_ids=(skill_id,),
+            force=True,
+            support_files=False,
+        )
         data = self._load()
         if project_skill_path(root, agent=self.agent, skill_id=skill_id).exists():
             data[skill_id] = version
         self._save(data)
+        hashes = _read_version_manifest(self._hash_path)
+        digest = _file_digest(
+            project_skill_path(root, agent=self.agent, skill_id=skill_id)
+        )
+        if digest:
+            hashes[skill_id] = digest
+            self._save_to(self._hash_path, hashes)
 
-    def install_support_files(self, *, path: str | None = None) -> None:
+    def install_support_files(self, *, path: str | None = None) -> InstallResult:
         root = Path(path) if path else self.path
-        install_agent_bundle(root, agent=self.agent, skill_ids=(), force=True)
+        return install_agent_bundle(
+            root, agent=self.agent, skill_ids=(), force=True, support_files=True
+        )
+
+    def remove_support_files(self, *, path: str | None = None) -> UninstallResult:
+        """The mirror of :meth:`install_support_files`; see it for what these are."""
+        root = Path(path) if path else self.path
+        return uninstall_agent_bundle(root, agent=self.agent)
 
     def remove(self, *, skill_id: str) -> None:
-        shutil.rmtree(
-            project_skill_path(self.path, agent=self.agent, skill_id=skill_id).parent,
-            ignore_errors=True,
-        )
+        skill_dir = project_skill_path(
+            self.path, agent=self.agent, skill_id=skill_id
+        ).parent
+        shutil.rmtree(skill_dir, ignore_errors=True)
+        # The harness's skills directory is Potpie's own; once the last skill
+        # leaves it, an empty `.claude/potpie-plugin/skills/` still reads as an
+        # install to anyone opening the repo.
+        prune_empty_dirs(skill_dir.parent, stop_at=self.target_root)
         data = self._load()
         data.pop(skill_id, None)
         self._save(data)
 
 
+@dataclass(slots=True)
+class ProjectOnlyAgentTarget:
+    """A harness that only has a project-scope install, refusing global scope.
+
+    Registered so the agent is *known* rather than merely absent. Left out of
+    the registry, ``--agent claude-plugin`` answered every subcommand with "no
+    install target registered … Known: claude, codex, cursor, opencode" — a
+    listing that implies the harness is unsupported, while its bundle ships in
+    the wheel and installs fine one flag away.
+    """
+
+    agent: str
+    reason: str
+    scope: str = "global"
+
+    def _refuse(self) -> None:
+        raise ValueError(self.reason)
+
+    def installed(self) -> Mapping[str, str]:
+        self._refuse()
+        return {}  # pragma: no cover - _refuse always raises
+
+    def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
+        del skill_id, path
+        self._refuse()
+        return False  # pragma: no cover - _refuse always raises
+
+    def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
+        del skill_id, version, path
+        self._refuse()
+
+    def install_support_files(self, *, path: str | None = None) -> InstallResult:
+        del path
+        self._refuse()
+        raise AssertionError  # pragma: no cover - _refuse always raises
+
+    def remove_support_files(self, *, path: str | None = None) -> UninstallResult:
+        del path
+        self._refuse()
+        raise AssertionError  # pragma: no cover - _refuse always raises
+
+    def remove(self, *, skill_id: str) -> None:
+        del skill_id
+        self._refuse()
+
+
 class CursorAgentTarget(FileBackedAgentTarget):
     def __init__(self, *, home: Path | None = None) -> None:
-        kwargs = {"home": home} if home is not None else {}
+        kwargs: dict[str, Any] = {"home": home} if home is not None else {}
         super().__init__(
             agent="cursor",
-            skills_root=Path.home() / ".cursor" / "skills",
+            skills_root=harness_home() / ".cursor" / "skills",
             **kwargs,
         )
 
 
 class ClaudeAgentTarget(FileBackedAgentTarget):
     def __init__(self, *, home: Path | None = None) -> None:
-        kwargs = {"home": home} if home is not None else {}
+        kwargs: dict[str, Any] = {"home": home} if home is not None else {}
         super().__init__(
             agent="claude",
-            skills_root=Path.home() / ".claude" / "skills",
-            instructions_root=Path.home() / ".claude",
+            skills_root=harness_home() / ".claude" / "skills",
+            instructions_root=harness_home() / ".claude",
             instructions_agent="claude",
             **kwargs,
         )
@@ -163,31 +418,45 @@ class ClaudeAgentTarget(FileBackedAgentTarget):
 
 class OpenCodeAgentTarget(FileBackedAgentTarget):
     def __init__(self, *, home: Path | None = None) -> None:
-        kwargs = {"home": home} if home is not None else {}
+        kwargs: dict[str, Any] = {"home": home} if home is not None else {}
         super().__init__(
             agent="opencode",
-            skills_root=Path.home() / ".config" / "opencode" / "skills",
+            skills_root=harness_home() / ".config" / "opencode" / "skills",
             **kwargs,
         )
 
 
 class CodexAgentTarget(FileBackedAgentTarget):
     def __init__(self, *, home: Path | None = None) -> None:
-        kwargs = {"home": home} if home is not None else {}
+        kwargs: dict[str, Any] = {"home": home} if home is not None else {}
         super().__init__(
             agent="codex",
-            skills_root=Path.home() / ".agents" / "skills",
-            instructions_root=Path.home() / ".codex",
+            skills_root=harness_home() / ".agents" / "skills",
+            instructions_root=harness_home() / ".codex",
             instructions_agent="codex",
             **kwargs,
         )
 
 
+class ClaudePluginAgentTarget(ProjectOnlyAgentTarget):
+    def __init__(self) -> None:
+        super().__init__(
+            agent="claude-plugin",
+            reason=(
+                "The Claude Code plugin installs into a project, not a home "
+                "directory: it has to keep its '.claude-plugin/plugin.json' as "
+                "the plugin root. Re-run with '--scope project --path <repo>'."
+            ),
+        )
+
+
 __all__ = [
     "ClaudeAgentTarget",
+    "ClaudePluginAgentTarget",
     "CodexAgentTarget",
     "CursorAgentTarget",
     "FileBackedAgentTarget",
     "OpenCodeAgentTarget",
     "ProjectAgentTarget",
+    "ProjectOnlyAgentTarget",
 ]

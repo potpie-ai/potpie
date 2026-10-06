@@ -52,7 +52,7 @@ def test_install_agent_bundle_creates_expected_files(tmp_path: Path) -> None:
 
     result = install_agent_bundle(repo)
 
-    expected = {rel.as_posix() for rel, _ in iter_template_files()}
+    expected = {rel.as_posix() for rel, _ in iter_template_files()} | {"AGENTS.md"}
     created = set(result.created)
     assert created == expected
     assert not result.updated
@@ -130,12 +130,26 @@ def test_install_global_agent_instructions_merges_compact_agents_md(
     assert result.updated == ["AGENTS.md"]
     assert "# Personal defaults" in text
     assert "Potpie is durable project memory" in text
-    assert "potpie --json source list" in text
-    assert len([line for line in managed.splitlines() if line.strip()]) <= 6
+    # The health check the block prescribes is the one-call `potpie status`.
+    assert "potpie status" in text
+    # A budget, not a line count. This block is prepended to the global
+    # instructions of every agent on the machine, so what it costs is context
+    # every single turn pays for -- and the person paying it never chose it.
+    # Measured in characters because line count is a wrapping artifact: reflowing
+    # the same prose to a wider column would have "fixed" the old `<= 6` bound
+    # without removing a word, and adding a paragraph the block genuinely wanted
+    # broke it. Raise this deliberately, having decided the words earn their keep
+    # in a file the reader did not write.
+    assert len(managed.strip()) <= 950
 
     rerun = install_global_agent_instructions(root, agent="codex")
 
     assert rerun.unchanged == ["AGENTS.md"]
+
+
+def test_global_instructions_have_one_canonical_source() -> None:
+    bundle = dict(agent_installer._iter_bundle_files("routing"))
+    assert set(path.as_posix() for path in bundle) == {"POTPIE.md"}
 
 
 def test_install_global_agent_instructions_updates_managed_claude_section(
@@ -177,7 +191,7 @@ def test_skill_manager_repairs_support_files_when_skill_is_current(
     tmp_path: Path,
 ) -> None:
     catalog = catalog_by_id()
-    version = catalog["potpie-cli"].version
+    current = {sid: info.version for sid, info in catalog.items()}
     calls: list[str | None] = []
 
     class _Target:
@@ -185,7 +199,7 @@ def test_skill_manager_repairs_support_files_when_skill_is_current(
         skills_root = tmp_path / ".agents" / "skills"
 
         def installed(self) -> dict[str, str]:
-            return {"potpie-cli": version}
+            return dict(current)
 
         def install(
             self, *, skill_id: str, version: str, path: str | None = None
@@ -200,7 +214,10 @@ def test_skill_manager_repairs_support_files_when_skill_is_current(
 
     manager = DefaultSkillManager(targets={"codex": _Target()})
 
-    result = manager.install(agent="codex", skill_id="potpie-cli")
+    # The sweep still repairs them — that is the command that owns the harness's
+    # own files. Naming one skill no longer does; see
+    # ``test_installing_one_named_skill_does_not_touch_the_instruction_file``.
+    result = manager.install(agent="codex")
 
     assert result.changed == ()
     assert calls == [None]
@@ -221,7 +238,7 @@ def test_install_agent_bundle_merges_existing_agents_md_without_force(
     assert "AGENTS.md" in result.updated
     assert "local edits" in text
     assert "<!-- potpie-start -->" in text
-    assert "# Context Engine" in text
+    assert "Potpie is durable project memory" in text
 
 
 def test_install_agent_bundle_does_not_overwrite_agents_md_with_force(
@@ -239,7 +256,7 @@ def test_install_agent_bundle_does_not_overwrite_agents_md_with_force(
     assert "AGENTS.md" in result.updated
     assert "local edits" in text
     assert "<!-- potpie-start -->" in text
-    assert "# Context Engine" in text
+    assert "Potpie is durable project memory" in text
 
 
 def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> None:
@@ -249,8 +266,8 @@ def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> No
     target = repo / "AGENTS.md"
     marked_template = next(
         content
-        for rel, content in iter_template_files()
-        if rel.as_posix() == "AGENTS.md"
+        for rel, content in agent_installer._iter_bundle_files("routing")
+        if rel.as_posix() == "POTPIE.md"
     )
     old_unmarked = (
         marked_template.split("\n", 1)[1].rsplit("\n<!-- potpie-end -->", 1)[0].strip()
@@ -262,7 +279,7 @@ def test_install_agent_bundle_wraps_old_unmarked_agents_md(tmp_path: Path) -> No
 
     text = target.read_text(encoding="utf-8")
     assert "AGENTS.md" in result.updated
-    assert text.count("# Context Engine") == 1
+    assert text.count("Potpie is durable project memory") == 1
     assert "<!-- potpie-start -->" in text
 
 
@@ -275,8 +292,8 @@ def test_install_agent_bundle_replaces_embedded_unmarked_agents_md(
     target = repo / "AGENTS.md"
     marked_template = next(
         content
-        for rel, content in iter_template_files()
-        if rel.as_posix() == "AGENTS.md"
+        for rel, content in agent_installer._iter_bundle_files("routing")
+        if rel.as_posix() == "POTPIE.md"
     )
     old_unmarked = (
         marked_template.split("\n", 1)[1].rsplit("\n<!-- potpie-end -->", 1)[0].strip()
@@ -296,7 +313,7 @@ def test_install_agent_bundle_replaces_embedded_unmarked_agents_md(
     assert "Some custom project instructions." in text
     assert "## Team notes" in text
     assert "Keep these too." in text
-    assert text.count("# Context Engine") == 1
+    assert text.count("Potpie is durable project memory") == 1
     assert text.count("<!-- potpie-start -->") == 1
     assert text.count("<!-- potpie-end -->") == 1
 
@@ -320,7 +337,7 @@ def test_install_agent_bundle_updates_marked_agents_md_without_force(
     assert "# Local Setup" in text
     assert "Keep me." in text
     assert "stale" not in text
-    assert "# Context Engine" in text
+    assert "Potpie is durable project memory" in text
     assert text.count("<!-- potpie-start -->") == 1
 
 

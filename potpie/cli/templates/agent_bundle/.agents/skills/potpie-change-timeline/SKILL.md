@@ -1,5 +1,6 @@
 ---
 name: potpie-change-timeline
+version: "2"
 description: "Use when an agent needs recent or historical change context: what changed recently, regressions, merged PRs, tickets, docs, incidents, deployments, releases, and source-history ingestion."
 ---
 
@@ -11,42 +12,55 @@ deployment records.
 
 ## Fast Path
 
-Read the project timeline first. A pot is the project boundary and can contain
-multiple repos, so do not narrow to the current repo unless the user asks.
+Share one discovery pass with other skills; reuse current reads and hook context
+for the same task, pot, and scope instead of repeating resolve. For an
+ordered-history question the timeline read below is the answer, so run it
+directly; `resolve` can run concurrently when the task also needs broader
+context. An untyped `search-entities` lookup for a named entity with an unknown
+key can run alongside; only an entity-scoped timeline must wait for that key.
+For code changes, scoped preferences are independent too. Use a known explicit
+pot selector; resolve ambiguous routing first and check returned pot IDs before
+combining results. Stop when the requested history and supporting evidence are
+covered.
+
+A pot is the project boundary and can contain multiple repos, so do not narrow
+to the current repo unless the user asks. Take the window from the question and
+read once; do not start at seven days and widen.
+
+For the context around a change — the services involved, who owns them — pass
+the operations intent, since `resolve` does not infer it:
 
 ```bash
-potpie graph read \
-  --subgraph recent_changes \
-  --view timeline \
-  --format table \
-  --time-window 7d \
-  --limit 20
+potpie resolve "<the question, e.g. what changed in checkout in the last month>" --intent operations
+```
+
+Its timeline family keeps only events that closely match the task sentence, so
+it is not the ordered list. For that, one bounded read with the window the
+question implies — no hint means 30 days. `--detail full` keeps each fact
+whole; compact rows cut it at about 120 characters, where the root cause
+usually sits:
+
+```bash
+potpie graph read --subgraph recent_changes --view timeline --format table --detail full --time-window 30d --limit 50
 ```
 
 Use the user's exact dates when provided:
 
 ```bash
-potpie graph read \
-  --subgraph recent_changes \
-  --view timeline \
-  --format table \
-  --since 2026-06-01 \
-  --until 2026-06-15 \
-  --limit 50
+potpie graph read --subgraph recent_changes --view timeline --format table --detail full --since 2026-06-01 --until 2026-06-15 --limit 50
 ```
 
-Only narrow when the user gives a service, environment, or topic:
+Only narrow when the user gives a service, environment, or topic, and narrow by
+`--scope` first. A `--query` filters the window: an event stays only when it
+contains every word of the query or its similarity clears `--query-threshold`
+(default 0.7), so keep it short and literal, and drop it if the window comes
+back empty:
 
 ```bash
-potpie graph read \
-  --subgraph recent_changes \
-  --view timeline \
-  --format table \
-  --scope service:<service-name> \
-  --query "<symptom feature deployment>" \
-  --time-window 14d \
-  --limit 20
+potpie graph read --subgraph recent_changes --view timeline --format table --detail full --scope service:<service-name> --query "<deploy or ticket term>" --time-window 30d --limit 50
 ```
+
+Pass `--pot <name-or-id>` once the first read has named the pot.
 
 ## Apply Results
 
@@ -54,21 +68,47 @@ Timeline context is correlation, not proof. Use it to choose files, PRs, tickets
 or deploys to inspect, then verify the source ref before blaming a change.
 Timeline reads do not include uncommitted local work unless it was recorded.
 
+## Report Back
+
+Show the `graph read` you ran with its window and `--limit`. A timeline is only
+as complete as its bounds, and "nothing changed since March" reads very
+differently once the reader can see you asked for fifty rows in a 30-day window.
+
+When the answer is a sequence — a regression window, a release train, an
+incident and the deploys around it — draw it:
+
+```mermaid
+timeline
+  title payments-api, 2026-03
+  2026-03-04 : PR 412 merged — retry budget lowered
+  2026-03-06 : INC-77 — settlement timeouts in prod
+  2026-03-07 : PR 418 — reverted 412
+```
+
+Use the recorded `occurred_at` dates, not your reading order, and keep the source
+ref in the label so each row stays checkable. Two events in a row do not need a
+picture. Correlation stays correlation on a diagram: adjacency is not causation,
+so do not draw an arrow from a deploy to an incident you have not verified.
+
 ## Record History
 
 For GitHub, Linear, Jira, docs, and similar sources, hydrate records with the
 agent's integration tools/connectors first. Do not use Potpie CLI queue
 ingestion as the source-history path.
 
-Use the workbench write flow after reading the source:
+Timeline events are not a `potpie record` type; write them as a plan after
+reading the source:
 
 ```bash
-potpie --json graph catalog --task "record timeline change"
-potpie --json graph describe recent_changes --view timeline --examples
+potpie graph mutation-template --kind timeline-change
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 ```
+
+The template carries the operation shape and required properties; `propose`
+validates and names any rejected op by index. Omit `graph_contract_version`
+from the payload. `commit --verify` prints the plan id, readback and quality
+status, so `graph history --plan <plan_id>` is only for later inspection.
 
 Use the source event time for `occurred_at`, not ingestion time. Add fixes,
 decisions, bug patterns, or infra links only when the source explicitly supports
