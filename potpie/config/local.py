@@ -30,6 +30,22 @@ KNOWN_CONFIG_KEYS: tuple[str, ...] = (
     "ledger.binding",
     "ledger.org",
     "ledger.url",
+    # Retrieval index over stored document chunks; read by
+    # ``default_resource_index_profile`` after ``CONTEXT_ENGINE_RESOURCE_INDEX``.
+    "resource_index",
+)
+
+# Keys the runtime still honours but never advertises. ``configured_embedder_choice``
+# / ``configured_embedding_model`` (the engine's local embedder) fall back to these
+# older spellings after the catalog names, so a writer that only accepted
+# ``KNOWN_CONFIG_KEYS`` would refuse a key the reader demonstrably obeys. They stay
+# out of the advertised catalog because ``config list``'s ``known_keys`` and the
+# sub-app help are how a user learns the *current* names; drop an entry here only
+# once nothing reads it.
+_ACCEPTED_ALIAS_KEYS: tuple[str, ...] = (
+    "embedding_provider",
+    "embedding_backend",
+    "sentence_transformer_model",
 )
 
 _SECRET_KEY_MARKERS: tuple[str, ...] = (
@@ -85,6 +101,16 @@ def is_secret_config_key(key: str) -> bool:
         return True
     joined = "".join(words)
     return any(compound in joined for compound in _COMPOUND_SECRET_MARKERS)
+
+
+def is_known_config_key(key: str) -> bool:
+    """Is this a key some part of the system actually reads?
+
+    ``config set`` gates on this, so a typo (``emebdder``) is refused instead of
+    persisted as a setting nothing will ever look at, and ``config.json`` is not
+    pressed into service as an arbitrary secret store.
+    """
+    return key in KNOWN_CONFIG_KEYS or key in _ACCEPTED_ALIAS_KEYS
 
 
 def public_config_value(key: str, value: Any) -> str | None:
@@ -154,6 +180,7 @@ class LocalConfigService:
 __all__ = [
     "KNOWN_CONFIG_KEYS",
     "LocalConfigService",
+    "is_known_config_key",
     "is_secret_config_key",
     "public_config_value",
 ]

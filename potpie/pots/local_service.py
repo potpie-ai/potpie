@@ -5,8 +5,8 @@ readiness from the wired ``GraphBackend``. The real control plane is the local
 state DB; this proves the service boundary and the CLI wiring.
 
 ``archived`` is a terminal lifecycle state, not a display hint. The CLI clears a
-pot's graph state before archiving it, so the flag is enforced wherever a pot
-can be chosen: :meth:`LocalPotManagementService._require_live` guards
+pot's graph state and stored documents (one typed reset) before archiving it,
+so the flag is enforced wherever a pot can be chosen: :meth:`LocalPotManagementService._require_live` guards
 selection, rename, re-archive, source registration and repo-default binding,
 and the store's ref resolution and repo→pot index leave archived pots out.
 

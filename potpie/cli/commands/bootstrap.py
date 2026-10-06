@@ -60,6 +60,7 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
 )
 from potpie.config.local import (
     KNOWN_CONFIG_KEYS,
+    is_known_config_key,
     public_config_value,
 )
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
@@ -446,8 +447,11 @@ def register(root: typer.Typer) -> None:
 
             cli_install = collect_cli_install_status()
             embedded_servers = _embedded_graph_servers(host.backend.profile)
+            resources, resource_index = _resource_doctor_blocks(pot_id)
             emit(
                 {
+                    "resources": resources,
+                    "resource_index": resource_index,
                     "daemon": daemon_status,
                     "embedded_graph_servers": embedded_servers,
                     "cli_install": cli_install,
@@ -493,6 +497,8 @@ def register(root: typer.Typer) -> None:
                         if embedded_servers and embedded_servers.get("detail")
                         else ""
                     )
+                    + "\n"
+                    + _resource_doctor_human(resources, resource_index)
                 ),
             )
 
@@ -586,14 +592,136 @@ def register(root: typer.Typer) -> None:
 
     @config_app.command("set")
     def config_set(key: str, value: str) -> None:
+        """Persist one known config key; the echo redacts what get/list redact."""
         with contract():
+            if not is_known_config_key(key):
+                fail(
+                    code="validation_error",
+                    message=f"unknown config key {key!r}",
+                    detail={"key": key, "known_keys": list(KNOWN_CONFIG_KEYS)},
+                    next_action=f"use one of: {', '.join(KNOWN_CONFIG_KEYS)}",
+                    exit_code=EXIT_VALIDATION,
+                )
+            if key == "resource_index":
+                value = _require_resource_index_profile(value)
             get_config_service().set(key, value)
+            shown = public_config_value(key, value)
             emit(
-                {"key": key, "value": value, "persisted": True},
-                human=f"set {key}={value}",
+                {"key": key, "value": shown, "persisted": True},
+                human=f"set {key}={shown}",
             )
 
     root.add_typer(config_app, name="config")
+
+
+def _resource_doctor_blocks(pot_id: str) -> tuple[dict, dict]:
+    """The document store and its index, as ``doctor`` rows that never raise.
+
+    Beside each other, not merged: the bytes can be healthy while the index
+    that makes them findable is off, stale, or mid-drain, and that gap is
+    invisible until a search quietly returns less than it should. Both go
+    through the typed engine boundary, so a daemon that is down or refuses the
+    handshake becomes ``available: false`` with the reason instead of taking
+    the rest of the report with it.
+    """
+    from potpie_context_engine.requests import (
+        ResourceIndexStatusRequest,
+        ResourceStatusRequest,
+    )
+
+    if not pot_id:
+        gap = {"available": False, "detail": "no active pot; resources are per-pot"}
+        return dict(gap), dict(gap)
+
+    def probe(call, render) -> dict:
+        try:
+            return {"available": True, **render(run_engine_operation(call()))}
+        except typer.Exit:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a diagnostic row must not crash doctor
+            return {"available": False, "detail": str(exc) or type(exc).__name__}
+
+    client = None
+
+    def engine():
+        nonlocal client
+        if client is None:
+            client = get_engine_client(pot_id)
+        return client
+
+    resources = probe(
+        lambda: engine().resource_status(ResourceStatusRequest()),
+        lambda status: {
+            "kind": status.kind,
+            "ready": status.ready,
+            "location": status.location,
+            "documents": status.documents,
+            "detail": status.detail,
+        },
+    )
+    index = probe(
+        lambda: engine().resource_index_status(ResourceIndexStatusRequest()),
+        lambda status: {
+            "profile": status.profile,
+            "ready": status.ready,
+            "capabilities": list(status.capabilities),
+            "match_mode": status.match_mode,
+            "documents": status.documents,
+            "chunks": status.chunks,
+            "pending_embeddings": status.pending_embeddings,
+            "embedder": status.embedder,
+            "detail": status.detail,
+        },
+    )
+    return resources, index
+
+
+def _resource_doctor_human(resources: dict, index: dict) -> str:
+    if resources.get("available"):
+        line = f"resources: {resources['kind']} ready={resources['ready']}"
+        if resources.get("documents") is not None:
+            line += f" documents={resources['documents']}"
+        if resources.get("location"):
+            line += f" ({resources['location']})"
+    else:
+        line = f"resources: unavailable — {resources.get('detail')}"
+    if index.get("available"):
+        index_line = (
+            f"resource index: {index['profile']} ready={index['ready']} "
+            f"mode={index['match_mode']} chunks={index['chunks']}"
+        )
+        if index.get("pending_embeddings"):
+            index_line += f" pending={index['pending_embeddings']}"
+        if index.get("detail"):
+            index_line += f"\n  ! {index['detail']}"
+    else:
+        index_line = f"resource index: unavailable — {index.get('detail')}"
+    return f"{line}\n{index_line}"
+
+
+def _require_resource_index_profile(value: str) -> str:
+    """A ``resource_index`` value the index registry will accept, normalized.
+
+    Checked here rather than at the next command: an unknown profile only
+    surfaces later as an index that reports ``ready=False``, which is a long
+    way from the typo that caused it.
+    """
+    from potpie_context_engine.adapters.outbound.resources.index import (
+        KNOWN_PROFILES,
+    )
+
+    normalized = value.strip().lower().replace("-", "_")
+    if normalized in {"off", "disabled"}:
+        normalized = "none"
+    if normalized not in KNOWN_PROFILES:
+        fail(
+            code="validation_error",
+            message=f"unknown resource index profile {value!r}",
+            detail={"key": "resource_index", "profiles": list(KNOWN_PROFILES)},
+            next_action=f"use one of: {', '.join(KNOWN_PROFILES)}",
+            exit_code=EXIT_VALIDATION,
+        )
+    return normalized
 
 
 def _build_context_status_report(

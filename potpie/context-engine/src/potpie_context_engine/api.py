@@ -6,6 +6,7 @@ from potpie_context_engine.core.api import *  # noqa: F403
 from potpie_context_engine.core.api import __all__ as _CORE_API
 from potpie_context_engine.application.readers._common import ReadResponse
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_engine.application.services.resource_facade import ResourceFacade
 from potpie_context_engine.composition import build_graph_service
 from potpie_context_engine.context_engine import (
     ContextEngine,
@@ -17,6 +18,7 @@ from potpie_context_engine.context_engine import (
     GraphOperations,
     IngestionOperations,
     NudgeOperations,
+    ResourceOperations,
     ResourceOwnership,
     WorkbenchOperations,
     create_engine,
@@ -51,6 +53,8 @@ __all__ = [
     "GraphOperations",
     "IngestionOperations",
     "NudgeOperations",
+    "ResourceFacade",
+    "ResourceOperations",
     "ResourceOwnership",
     "WorkbenchOperations",
     "create_engine",

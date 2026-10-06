@@ -76,6 +76,14 @@ from potpie_context_engine.requests import (
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    ResourceGetRequest,
+    ResourceImportRequest,
+    ResourceIndexBuildRequest,
+    ResourceIndexRebuildRequest,
+    ResourceIndexStatusRequest,
+    ResourceListRequest,
+    ResourceRmRequest,
+    ResourceStatusRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
@@ -232,6 +240,41 @@ class EngineClient(ABC):
     async def nudge(self, request: NudgeRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.NUDGE, request)
 
+    async def resource_import(self, request: ResourceImportRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_IMPORT, request)
+
+    async def resource_get(self, request: ResourceGetRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_GET, request)
+
+    async def resource_list(self, request: ResourceListRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_LIST, request)
+
+    async def resource_rm(
+        self,
+        request: ResourceRmRequest,
+        *,
+        confirmation: DestructiveConfirmation | None = None,
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_RM, request, confirmation)
+
+    async def resource_status(self, request: ResourceStatusRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_STATUS, request)
+
+    async def resource_index_status(
+        self, request: ResourceIndexStatusRequest
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_INDEX_STATUS, request)
+
+    async def resource_index_build(
+        self, request: ResourceIndexBuildRequest
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_INDEX_BUILD, request)
+
+    async def resource_index_rebuild(
+        self, request: ResourceIndexRebuildRequest
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_INDEX_REBUILD, request)
+
 
 EngineHandler: TypeAlias = Callable[
     [ContextEngine, EngineRequest], Awaitable[Outcome[object]]
@@ -384,6 +427,56 @@ async def _nudge(engine: ContextEngine, request: EngineRequest) -> Outcome[objec
     return await engine.nudge(cast(NudgeRequest, request))
 
 
+async def _resource_import(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_import(cast(ResourceImportRequest, request))
+
+
+async def _resource_get(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_get(cast(ResourceGetRequest, request))
+
+
+async def _resource_list(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_list(cast(ResourceListRequest, request))
+
+
+async def _resource_rm(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_rm(cast(ResourceRmRequest, request))
+
+
+async def _resource_status(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_status(cast(ResourceStatusRequest, request))
+
+
+async def _resource_index_status(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_index_status(cast(ResourceIndexStatusRequest, request))
+
+
+async def _resource_index_build(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_index_build(cast(ResourceIndexBuildRequest, request))
+
+
+async def _resource_index_rebuild(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_index_rebuild(
+        cast(ResourceIndexRebuildRequest, request)
+    )
+
+
 _ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
     EngineOperation.RESOLVE: _resolve,
     EngineOperation.SEARCH: _search,
@@ -415,6 +508,14 @@ _ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
     EngineOperation.SUBMIT_ARTIFACT: _submit_artifact,
     EngineOperation.PROCESSING_STATUS: _processing_status,
     EngineOperation.NUDGE: _nudge,
+    EngineOperation.RESOURCE_IMPORT: _resource_import,
+    EngineOperation.RESOURCE_GET: _resource_get,
+    EngineOperation.RESOURCE_LIST: _resource_list,
+    EngineOperation.RESOURCE_RM: _resource_rm,
+    EngineOperation.RESOURCE_STATUS: _resource_status,
+    EngineOperation.RESOURCE_INDEX_STATUS: _resource_index_status,
+    EngineOperation.RESOURCE_INDEX_BUILD: _resource_index_build,
+    EngineOperation.RESOURCE_INDEX_REBUILD: _resource_index_rebuild,
 }
 
 if set(_ENGINE_HANDLERS) != set(ENGINE_OPERATION_CATALOG):
