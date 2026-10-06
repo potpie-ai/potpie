@@ -10,6 +10,7 @@ import uuid
 from dataclasses import replace
 
 import pytest
+from potpie_context_engine.core.agent_envelope import DEFAULT_OUTPUT_BUDGET_BYTES
 from potpie_context_engine.core.runtime import build_graph_runtime
 from potpie_context_engine.core.graph_views import UnknownGraphViewError
 from potpie_context_engine.core.ports.graph_service import (
@@ -240,7 +241,7 @@ def test_large_layout_is_bounded_and_compact_pointer_expands(backend_factory, tm
     )
     assert len(item["fields"]) <= 128
     assert [f["ordinal"] for f in item["fields"]] == list(range(len(item["fields"])))
-    assert len(json.dumps(result.to_dict()).encode()) < 196608
+    assert len(json.dumps(result.to_dict()).encode()) <= DEFAULT_OUTPUT_BUDGET_BYTES
     compact = replace(result, detail="compact").to_dict()["items"][0]
     assert "fields" not in compact
     refined = read(

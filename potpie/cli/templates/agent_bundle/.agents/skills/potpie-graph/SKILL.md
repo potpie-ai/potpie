@@ -1,6 +1,6 @@
 ---
 name: "potpie-graph"
-version: "8"
+version: "9"
 description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions, fetching ingested document chunks with `potpie resource get`, and responding to nudges."
 ---
 
@@ -23,6 +23,25 @@ with `--json`, and they are read commands: the write payload shape is
 When a command's JSON is saved to a file, parse it with a JSON decoder (for
 example, `json.load`) and print only the fields needed for the task. Do not
 regex-match or reprint an entire minified JSON object to inspect one field.
+
+## Protocol contracts and decoder questions
+
+Protocol memory is an opt-in extension, off unless the user turned it on with
+`potpie config set graph.protocols on` (and restarted a running daemon). For
+telegrams, message layouts, protocol revisions, field values or decoder changes,
+check that the catalog advertises `protocols.message_context`; when it does, load
+[the shared protocol reference](references/protocols.md). Discovery is
+`potpie --json resolve '<question>' --include protocols --pot <pot>`, followed by
+the returned message reads. This replaces the default broad resolve in section 2
+for these questions: ordinary includes omit protocols. When the catalog does not
+advertise the view, the extension is off; say so rather than guessing a layout.
+
+Apply this route when a generic status/value question turns out to concern a
+protocol in a fetched source, too. A document hit alone does not select a message.
+Before assigning an unscoped value meaning, show the matching message/revision
+alternatives and distinguish integer from string values. Reuse a scope already
+selected in the conversation, stating it in the answer. The reference covers
+sourced ingestion, compact follow-ups, corrections and coverage.
 
 ## 1. Select scope without delaying discovery
 
