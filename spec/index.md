@@ -26,6 +26,8 @@ Daemon revision 1 remain historically addressable at
 `047cbe067c9c726e7e14f066675453372d8a8406`.
 SPEC-CHANGE-0013 proposes Context Engine revision 2, a supported graph-runtime
 builder for embedding hosts; revision 1 stays binding until it is accepted.
+SPEC-CHANGE-0014 proposes revision 3 on top of it, an opt-in protocol
+definition factory for that builder.
 Existing architecture documents and code remain implementation snapshots and
 can disagree with the target while migration is incomplete.
 
@@ -159,6 +161,7 @@ active behavior depends on a deferred question.
 | [SPEC-CHANGE-0011](changes/SPEC-CHANGE-0011-stabilize-conformance-record-paths.md) | SPEC-PROCESS | 1 → 2 | accepted |
 | [SPEC-CHANGE-0012](changes/SPEC-CHANGE-0012-restrict-daemon-signal-fallback.md) | SPEC-DAEMON | 1 → 2 | accepted |
 | [SPEC-CHANGE-0013](changes/SPEC-CHANGE-0013-embedding-host-graph-runtime-builder.md) | SPEC-CONTEXT-ENGINE | 1 → 2 | proposed |
+| [SPEC-CHANGE-0014](changes/SPEC-CHANGE-0014-opt-in-protocol-definition-factory.md) | SPEC-CONTEXT-ENGINE | 2 → 3 | proposed |
 
 ## Conformance Summary
 

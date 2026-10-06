@@ -85,6 +85,11 @@ from potpie_context_engine.bootstrap.logging_setup import configure_logging
 from potpie_context_engine.bootstrap.observability_context import correlation_scope
 from potpie_context_engine.bootstrap.observability_runtime import set_observability
 from potpie_context_engine.bootstrap.observability_wiring import default_observability
+from potpie_context_engine.api import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+    protocols_definition,
+)
 from potpie_context_engine.core.runtime import build_graph_runtime
 from potpie_context_engine.core.coherence import assert_runtime_coherence
 from potpie_context_engine.core.ports.resource_index import ResourceIndexError
@@ -167,6 +172,17 @@ def _resource_index() -> Any:
         return NullResourceIndex(detail=f"{exc}.{repair}")
 
 
+def _configured_definition(config: LocalConfigService) -> GraphDefinition:
+    """The graph contract the local config asks for: protocols are opt-in.
+
+    Read once per composition, so a daemon serves the setting it started with
+    until it restarts.
+    """
+    if config.graph_protocols_enabled():
+        return protocols_definition()
+    return DEFAULT_GRAPH_DEFINITION
+
+
 def build_local_runtime(
     *,
     backend: ProvisionableGraphBackend | None = None,
@@ -175,8 +191,14 @@ def build_local_runtime(
     observability: ObservabilityPort | None = None,
     reconciliation_config: ReconciliationConfig | None = None,
     settings: Any = None,
+    definition: GraphDefinition | None = None,
 ) -> LocalRuntimeComposition:
-    """Compose root product services and context services without a host façade."""
+    """Compose root product services and context services without a host façade.
+
+    ``definition`` is the graph contract the runtime serves. Left unset, it is
+    the default definition, extended with the protocol ontology only when the
+    ``graph.protocols`` config key is on; an explicit value always wins.
+    """
 
     configure_logging()
     set_observability(observability or default_observability())
@@ -199,10 +221,14 @@ def build_local_runtime(
         resource_index = _resource_index()
         resource_drain = ResourceIndexDrain(index=resource_index)
         home = default_home()
+        config = LocalConfigService()
+        if definition is None:
+            definition = _configured_definition(config)
         graph_runtime = build_graph_runtime(
             selected_backend,
             LocalJsonGraphPlanStore(),
             LocalJsonGraphInboxStore(),
+            definition,
             reconciliation_config=reconciliation,
             resource_index=resource_index,
             resource_store=resource_store,
@@ -217,7 +243,9 @@ def build_local_runtime(
         )
         graph = graph_runtime.graph
         graph_workbench = graph_runtime.workbench
-        assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
+        assert_runtime_coherence(
+            reader_backed_includes=graph.backed_includes, definition=definition
+        )
         # An import writes both halves -- bytes here, structure through the
         # graph's write door -- and reads claims back to see what landed.
         resources = ResourceFacade.from_runtime(
@@ -250,7 +278,6 @@ def build_local_runtime(
         nudge = NudgeService(graph=graph, ledger=LocalInjectionLedger())
 
         daemon = Daemon(in_process=(default_host_mode() != "daemon"))
-        config = LocalConfigService()
         installer = LocalInstaller()
         auth = LocalAuthService()
         setup = DefaultSetupOrchestrator(

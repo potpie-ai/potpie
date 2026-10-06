@@ -179,3 +179,51 @@ def test_text_modes_render_details_and_omitted_item_guidance() -> None:
         assert '"succeeded": false' in output
         assert "omitted_items=1" in output
         assert "larger --limit" in output
+
+
+def test_protocol_human_output_preserves_layout_values_and_coverage() -> None:
+    from potpie.cli.read_presenter import build_presentation_context
+
+    result = GraphReadResult(
+        view="protocols.message_context",
+        subgraph="protocols",
+        detail="full",
+        items=(
+            {
+                "kind": "protocol_message",
+                "entity_key": "protocol_message:example",
+                "entity_type": "ProtocolMessage",
+                "summary": "Synthetic request",
+                "coverage": {"status": "partial", "truncated": True},
+                "fields": [
+                    {
+                        "path": "header.Status",
+                        "ordinal": 0,
+                        "byte_offset": 0,
+                        "allowed_values": [
+                            {"raw_value": 2, "symbol": "BUSY"},
+                            {"raw_value": "2", "symbol": "TEXT"},
+                        ],
+                    },
+                    {"path": "payload.status", "ordinal": 1},
+                ],
+                "retrieval": {
+                    "subgraph": "protocols",
+                    "view": "message_context",
+                    "scope": {"anchor_entity_key": "protocol_message:example"},
+                },
+            },
+        ),
+    )
+    ctx = build_presentation_context(
+        result, format_="bullets", sort="score", dedupe="none", event_limit=None
+    )
+    items = prepare_items(result)
+    for text in (
+        render_items_bullets(result, items, ctx),
+        render_items_table(items, ctx, result=result),
+    ):
+        assert text.index("header.Status") < text.index("payload.status")
+        assert '"raw_value": 2' in text and '"raw_value": "2"' in text
+        assert '"truncated": true' in text
+        assert "read details:" in text

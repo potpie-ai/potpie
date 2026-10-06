@@ -1,6 +1,6 @@
 ---
 name: potpie-infra-architecture
-version: "4"
+version: "5"
 description: "Use for project infra and architecture context: environments, adapters, runtime configuration, deployments, service dependencies, datastores, API contracts, ownership, incidents, and dependency blast radius."
 ---
 
@@ -124,3 +124,14 @@ environment, evidence when available, and a retrieval-grade description.
 Architecture capture is harness-led: inspect authoritative sources and write
 semantic facts. Do not use scanner-driven graph updates or infer topology from
 directory names, imports, or package files alone.
+
+## Protocol definitions and codecs
+
+When the source or question concerns telegrams, message layouts, field/value
+meanings, revisions or decoder changes, check the catalog for
+`protocols.message_context` and, when it is advertised, follow
+[the shared protocol reference](../potpie-graph/references/protocols.md). The
+extension is opt-in (`potpie config set graph.protocols on`), so a catalog
+without it means protocol memory is off. Use explicit protocol reads alongside
+existing Service/CodeAsset context. Preserve immutable source evidence and
+partial coverage; capabilities do not establish traffic.
