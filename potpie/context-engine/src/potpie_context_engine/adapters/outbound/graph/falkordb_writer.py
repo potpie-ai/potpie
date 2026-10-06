@@ -348,11 +348,28 @@ def shutdown_embedded_servers() -> int:
     for path, conn in list(_OWNED_SERVERS.items()):
         _OWNED_SERVERS.pop(path, None)
         try:
+            _without_retries(conn)
             conn.shutdown(save=True, now=True, force=True)
             stopped += 1
         except Exception as exc:  # noqa: BLE001 - shutdown must not raise
             logger.debug("falkordb_lite: server at %s did not stop (%s)", path, exc)
     return stopped
+
+
+def _without_retries(conn: Any) -> None:
+    """Make a client fail at once on a connection error instead of backing off.
+
+    redis-py retries a connection error three times with exponential backoff,
+    seconds apart. The server answers ``SHUTDOWN`` by closing the connection,
+    the expected outcome, and redis-py accepts it only after those retries, so a
+    plain ``shutdown()`` takes up to about ten seconds: long enough for
+    ``potpie daemon stop`` to give up on the daemon. On a local socket a retry
+    cannot help, so the shutdown path turns them off.
+    """
+    from redis.backoff import NoBackoff
+    from redis.retry import Retry
+
+    conn.set_retry(Retry(NoBackoff(), 0))
 
 
 def _active_socket(path: str) -> str | None:
