@@ -155,6 +155,11 @@ methods `commit_status`, `verify_commit`, `journal_status`, `commits`,
 `disable_rollback`, and `rebuild_commits`. ADR-0008 requires a later public-API
 decision before any of them joins the catalog. That decision is recorded as
 `OQ-CE-API-002` and is left to its own decision record.
+The catalog snapshot DTOs also gained fields: `ExportSnapshotRequest` takes
+`version` and `include_resources`, `ImportSnapshotRequest` takes `version` and
+`payload` (version 1, the server-path contract, stays the default), and
+`ExportSnapshotResult` is now a `SnapshotManifest` subclass with an optional
+`payload`; that change awaits the same public-API decision.
 
 ## Authority And Sources
 
