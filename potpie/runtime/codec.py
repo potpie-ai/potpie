@@ -16,6 +16,7 @@ from potpie.runtime.operations import (
     EngineOperation,
 )
 from potpie.runtime.protocol import (
+    DaemonBuild,
     DaemonInternalError,
     DaemonStatusPayload,
     DaemonStatusRequest,
@@ -61,6 +62,11 @@ DecodeResponseOutcome: TypeAlias = Success[ProtocolResponse] | Failure[ProtocolE
 
 _RETRY_POSTURES = frozenset({"safe", "unsafe", "unknown", "not_applicable"})
 _LIFECYCLE_STATES = frozenset({"starting", "ready", "draining", "failed", "stopped"})
+_DAEMON_STATUS_FIELDS = frozenset(
+    {"instance_id", "pid", "lifecycle_state", "backend_profile", "ui_url"}
+)
+_DAEMON_STATUS_BUILD_FIELDS = frozenset({"version", "build"})
+_DAEMON_BUILD_FIELDS = frozenset({"rev", "dirty", "built_at"})
 
 
 def encode_request(request: ProtocolRequest) -> dict[str, object]:
@@ -369,13 +375,10 @@ def _decode_result(
             )
         return Success(ShutdownResult(accepted=value["accepted"]))
     if isinstance(request, DaemonStatusRequest):
-        if not isinstance(value, Mapping) or set(value) != {
-            "instance_id",
-            "pid",
-            "lifecycle_state",
-            "backend_profile",
-            "ui_url",
-        }:
+        if not isinstance(value, Mapping) or set(value) not in (
+            _DAEMON_STATUS_FIELDS,
+            _DAEMON_STATUS_FIELDS | _DAEMON_STATUS_BUILD_FIELDS,
+        ):
             return _protocol_failure(
                 "response_result_malformed", "daemon status result is invalid"
             )
@@ -390,6 +393,12 @@ def _decode_result(
                     lifecycle_state=cast(LifecycleState, lifecycle_state),
                     backend_profile=_required_string(value, "backend_profile"),
                     ui_url=_required_string(value, "ui_url"),
+                    version=(
+                        _optional_string(value, "version")
+                        if "version" in value
+                        else None
+                    ),
+                    build=_decode_daemon_build(value.get("build")),
                 )
             )
         except (TypeError, ValueError):
@@ -407,6 +416,21 @@ def _decode_result(
                 details={"operation": request.operation.value},
             )
     return Success(_from_wire(value))
+
+
+def _decode_daemon_build(value: object) -> DaemonBuild | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or set(value) != _DAEMON_BUILD_FIELDS:
+        raise ValueError("daemon build fields are invalid")
+    dirty = value["dirty"]
+    if dirty is not None and not isinstance(dirty, bool):
+        raise TypeError("dirty must be a boolean or null")
+    return DaemonBuild(
+        rev=_optional_string(value, "rev"),
+        dirty=dirty,
+        built_at=_optional_string(value, "built_at"),
+    )
 
 
 def _decode_error(

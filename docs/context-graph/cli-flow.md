@@ -44,7 +44,7 @@ flowchart LR
 |---|---|
 | `--json` | machine-readable output for scripts/agents (stable, additive fields) |
 | `--verbose` / `-v` | verbose diagnostics |
-| `--version` | print version and exit |
+| `--version` | print `potpie <version> (<short rev>[, dirty])`, the engine version and the interpreter, then exit; with `--json`: `{name, version, build: {rev, dirty, built_at}, engine: {name, version}, python, executable}` |
 
 ## Shared plumbing (`commands/_common.py`)
 
@@ -227,6 +227,11 @@ potpie daemon start | status | logs [--follow] | restart | stop
 
 - **`daemon`** (`commands/daemon.py` → `host.daemon`) — local recovery tooling, not
   onboarding steps. `DaemonStartError` → exit 2.
+- **`daemon status`** names the build the running daemon serves (`version`,
+  `build: {rev, dirty, built_at}`) and sets `stale` when that rev differs from this
+  CLI's (`null` when either side has no rev). A daemon outlives the install that
+  started it, so after an upgrade `stale: true` means `potpie daemon restart`.
+  A daemon from before build reporting has neither key.
 - Supporting-service admin CLI (`potpie service …`) is not part of the OSS surface;
   the detached daemon does not expose a compatible `/admin/services` discovery
   contract for those commands.
