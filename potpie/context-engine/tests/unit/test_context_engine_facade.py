@@ -319,6 +319,16 @@ def test_public_facade_has_the_accepted_flat_method_catalog() -> None:
         "submit_artifact",
         "processing_status",
         "nudge",
+        "commit_status",
+        "verify_commit",
+        "journal_status",
+        "commits",
+        "commit_show",
+        "revert_preview",
+        "rollback_preview",
+        "apply_preview",
+        "disable_rollback",
+        "rebuild_commits",
     }
 
     assert expected <= set(ContextEngine.__dict__)

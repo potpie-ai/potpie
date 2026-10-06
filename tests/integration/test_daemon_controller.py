@@ -52,8 +52,9 @@ asyncio.run(run_foreground(runtime))
 
 
 class _FallbackObserver:
-    def __init__(self, *, ready: bool) -> None:
+    def __init__(self, *, ready: bool, stop_refusal: str = "unresponsive") -> None:
         self._ready = ready
+        self._stop_refusal = stop_refusal
         self.closed = 0
 
     @property
@@ -75,8 +76,8 @@ class _FallbackObserver:
     async def request_stop(self):
         return Failure(
             ProtocolTransportError(
-                code="unresponsive",
-                message="unresponsive",
+                code=self._stop_refusal,
+                message=self._stop_refusal,
                 retry_posture="unknown",
             )
         )
@@ -255,6 +256,30 @@ async def test_attached_controller_refuses_signal_fallback(ready: bool) -> None:
     assert process.kill_calls == 0
     assert process.wait_calls == 0
     assert observer.closed == 1
+
+
+@pytest.mark.anyio
+async def test_a_daemon_from_another_version_is_named_with_its_repair() -> None:
+    """After an upgrade the old daemon refuses the new client's handshake, so
+    authenticated shutdown cannot reach it; the refusal says what to do."""
+    process = _AttachedProcess()
+    observer = _FallbackObserver(ready=True, stop_refusal="operation_catalog_mismatch")
+    controller = DaemonController(
+        boot_factory=lambda: pytest.fail("attached stop must not compose a boot"),
+        readiness_timeout_s=1,
+        stop_timeout_s=0.1,
+    )
+
+    await controller.attach(process=process, observer=observer)
+    stopped = await controller.stop()
+
+    assert isinstance(stopped, Failure)
+    assert stopped.error.code == "daemon_attached_shutdown_unavailable"
+    assert stopped.error.details["cause_code"] == "operation_catalog_mismatch"
+    next_action = stopped.error.recommended_next_action
+    assert f"pid {process.pid}" in next_action
+    assert "potpie daemon start" in next_action
+    assert process.terminate_calls == 0 and process.kill_calls == 0
 
 
 @pytest.mark.anyio

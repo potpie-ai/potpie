@@ -74,9 +74,10 @@ runtime = build_graph_runtime(
   both; the runtime bridges them.
 - Supplied dependencies are borrowed. The runtime never closes them.
 - `commit_authorize` is an asynchronous `(context, access)` callback that
-  raises to deny; `commit_actor` returns the acting principal. When either is
-  omitted, the runtime uses a single-user local policy, so a multi-tenant host
-  supplies both.
+  raises to deny; `commit_actor` returns the acting principal. Both belong to
+  the host. Without `commit_authorize` the runtime refuses commit history and
+  rollback; without `commit_actor` it records an anonymous `unnamed` actor,
+  never the account that owns the process.
 - Invalid composition raises `RuntimeCompositionError` during construction.
 
 `GraphRuntime` is not bound to a context. Every operation that addresses
@@ -150,8 +151,8 @@ façade and the ADR-0008 catalog are unchanged.
   makes such hosts depend on root `potpie`; Context Engine itself still does
   not. Moving these values into Context Engine is not proposed and is revisited
   only if a host must not depend on root `potpie`.
-- Open: whether the builder should refuse to default `commit_actor` and
-  `commit_authorize` rather than fall back to the single-user local policy.
+- Omitting the commit callbacks does not grant a default policy: commit
+  history and rollback are refused until the host supplies its own.
 
 ## Alternatives Considered
 

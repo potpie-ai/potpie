@@ -12,6 +12,7 @@ import { api } from "./api";
 import { session } from "./session";
 import GraphView from "./GraphView";
 import Timeline from "./Timeline";
+import CommitView from "./CommitView";
 import {
   CATEGORY_ORDER,
   KIND_ORDER,
@@ -48,7 +49,7 @@ function endId(v: string | GraphNode): string {
 }
 
 function edgeId(e: GraphEdge): string {
-  return `${endId(e.source)}|${e.predicate}|${endId(e.target)}`;
+  return e.id;
 }
 
 function mergeGraph(a: GraphData, b: GraphData): GraphData {
@@ -84,10 +85,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
 
-  const [view, setViewState] = useState<"graph" | "timeline">(
-    typeof location !== "undefined" && location.hash === "#timeline"
-      ? "timeline"
-      : "graph",
+  const [view, setViewState] = useState<"graph" | "timeline" | "commits">(
+    typeof location !== "undefined" && location.hash === "#commits"
+      ? "commits"
+      : typeof location !== "undefined" && location.hash === "#timeline"
+        ? "timeline"
+        : "graph",
   );
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [showHint, setShowHint] = useState(true);
@@ -102,9 +105,9 @@ export default function App() {
       return changed ? next : prev;
     });
 
-  const setView = (v: "graph" | "timeline") => {
+  const setView = (v: "graph" | "timeline" | "commits") => {
     setViewState(v);
-    if (typeof location !== "undefined") location.hash = v === "timeline" ? "timeline" : "";
+    if (typeof location !== "undefined") location.hash = v === "graph" ? "" : v;
     if (v === "timeline") revealTimelineTypes();
   };
 
@@ -369,6 +372,12 @@ export default function App() {
           >
             Timeline
           </button>
+          <button
+            className={view === "commits" ? "on" : ""}
+            onClick={() => setView("commits")}
+          >
+            Commits
+          </button>
         </div>
 
         <div className="pot-select">
@@ -389,7 +398,7 @@ export default function App() {
       </header>
 
       <div className="body">
-        <aside className="sidebar" style={{ width: sidebarW }}>
+        {view !== "commits" && <><aside className="sidebar" style={{ width: sidebarW }}>
           {selected ? (
             <NodePanel node={selected} />
           ) : (
@@ -492,12 +501,12 @@ export default function App() {
           title="Drag to resize · double-click to reset"
           onPointerDown={startSidebarResize}
           onDoubleClick={resetSidebarW}
-        />
+        /></>}
 
         <main className="main">
           {error && <div className="error">{error}</div>}
 
-          <div className="canvas-stats">
+          {view !== "commits" && <><div className="canvas-stats">
             <div className="stat-pill">
               <span className="stat-seg">
                 <b>{counts.entities ?? 0}</b> entities
@@ -543,7 +552,21 @@ export default function App() {
             )}
           </div>
 
-          {view === "graph" ? (
+          </>}
+
+          {view === "commits" ? (
+            activeId ? (
+              <CommitView
+                key={activeId}
+                pot={activeId}
+                onApplied={() => {
+                  void loadPot(activeId);
+                }}
+              />
+            ) : (
+              <div className="empty">Select a pot to view commit history.</div>
+            )
+          ) : view === "graph" ? (
             <GraphView
               data={visible}
               selectedId={selected?.id || null}

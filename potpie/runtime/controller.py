@@ -471,6 +471,7 @@ class DaemonController:
         cause: RuntimeBoundaryError | None = None,
     ) -> Failure[ResourceLifecycleError]:
         details: dict[str, object] = {"pid": process.pid}
+        next_action = "inspect daemon status and runtime records before manual recovery"
         if cause is not None:
             details.update(
                 {
@@ -478,14 +479,20 @@ class DaemonController:
                     "cause_code": cause.code,
                 }
             )
+            if cause.code == "operation_catalog_mismatch":
+                # A daemon from another Potpie version refuses this client's
+                # handshake, so authenticated shutdown cannot reach it either.
+                next_action = (
+                    f"the daemon (pid {process.pid}) was started by a different "
+                    "Potpie version and refuses this one's shutdown; end that "
+                    "process yourself, then run 'potpie daemon start'"
+                )
         return Failure(
             ResourceLifecycleError(
                 code=code,
                 message=message,
                 details=details,
-                recommended_next_action=(
-                    "inspect daemon status and runtime records before manual recovery"
-                ),
+                recommended_next_action=next_action,
                 retry_posture="safe",
             )
         )

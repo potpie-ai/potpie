@@ -123,13 +123,13 @@ The export is additive. In the builder, every argument after `definition`
 becomes keyword-only; existing callers already pass those arguments by
 keyword. The package root keeps exporting only the `ContextEngine` surface.
 
-Commit-history authorization defaults to a single-user local policy, and the
-default actor is derived from the local user. Once the builder is public, an
-embedding host that omits `commit_authorize` serves commit history and
-rollback previews without its own policy. ADR-0013 requires a multi-tenant
-host to pass both callbacks and leaves open whether the builder should refuse
-to default them. The builder now rejects a non-callable actor or authorization
-callback during construction.
+Commit-history authorization fails closed. An embedding host that omits
+`commit_authorize` gets a runtime that refuses commit history, rollback
+previews and their application; one that omits `commit_actor` records an
+anonymous `unnamed` actor rather than the account that owns the process.
+ADR-0013 requires a host that serves commit history to pass both callbacks.
+The builder rejects a non-callable actor or authorization callback during
+construction.
 
 Embedding hosts import the pot and auth values `PotInfo`, `SourceInfo`, and
 `PotAggregateStatus` from `potpie/pots/contracts.py` and `AuthIdentity` from

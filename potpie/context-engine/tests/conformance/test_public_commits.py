@@ -173,3 +173,35 @@ async def test_concurrent_apply_has_one_native_commit(tmp_path):
     assert all(r["ok"] for r in results), results
     assert len({r["commit"]["commit_id"] for r in results}) == 1
     assert backend.journal.journal_state("p").sequence == 3
+
+
+def test_a_runtime_without_host_commit_wiring_refuses_history_and_rollback(tmp_path):
+    import getpass
+
+    from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+        LocalJsonGraphPlanStore,
+    )
+    from potpie_context_engine.core.commit_service import CommitAccessDenied
+    from potpie_context_engine.core.runtime import build_graph_runtime
+
+    runtime = build_graph_runtime(
+        EmbeddedGraphBackend(home=tmp_path),
+        LocalJsonGraphPlanStore(home=tmp_path),
+        commit_mirror=LocalCommitMirror(tmp_path / "index.sqlite"),
+        preview_store=LocalRollbackPreviews(tmp_path / "previews.sqlite"),
+    )
+    runtime.backend.journal.activate(pot_id="p", rollback_enabled=True)
+
+    for call in (
+        lambda: runtime.workbench.journal_status_async(pot_id="p"),
+        lambda: runtime.workbench.commits_async(pot_id="p"),
+        lambda: runtime.workbench.revert_preview_async(
+            "c1", pot_id="p", expected_head="c1"
+        ),
+        lambda: runtime.workbench.apply_preview_async("preview", pot_id="p"),
+    ):
+        with pytest.raises(CommitAccessDenied):
+            asyncio.run(call())
+    # An unnamed actor is recorded as such, never as the process owner.
+    assert runtime.commit_service.actor() == "unnamed"
+    assert getpass.getuser() not in runtime.commit_service.actor()

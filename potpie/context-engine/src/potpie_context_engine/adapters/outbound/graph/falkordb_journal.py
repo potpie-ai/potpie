@@ -26,7 +26,11 @@ from potpie_context_engine.core.graph_journal import (
     journal_json,
 )
 from potpie_context_engine.core.journal_context import current_journal_context
-from potpie_context_engine.core.journal_inverse import plan_inverse, validate_state
+from potpie_context_engine.core.journal_inverse import (
+    plan_inverse,
+    protocols_enabled_for,
+    validate_state,
+)
 from potpie_context_engine.core.reconciliation import MutationResult, MutationSummary
 from redis.exceptions import ResponseError, WatchError
 
@@ -743,6 +747,7 @@ class FalkorJournal:
                 body,
                 pot_id=state.pot_id,
                 definition=self.definition,
+                protocols_enabled=protocols_enabled_for(self.definition),
                 resource_exists=(lambda ref: self.resource_exists(state.pot_id, ref))
                 if self.resource_exists
                 else None,
