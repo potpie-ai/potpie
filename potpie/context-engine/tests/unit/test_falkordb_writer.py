@@ -76,6 +76,10 @@ class _FakeGraph:
             return _FakeResult(header=[[1, "cnt"]], result_set=[[val]])
         return _FakeResult()
 
+    def ro_query(self, cypher: str, params=None):
+        # Journal-state probes: this fake pot never has journal capture on.
+        return _FakeResult()
+
 
 class _FakeSettings:
     def __init__(
@@ -165,16 +169,30 @@ async def test_reset_pot_rejects_invalid_pot_id() -> None:
     assert out["error"].startswith("invalid_pot_id")
 
 
-async def test_reset_pot_success_shape() -> None:
+async def test_reset_pot_delegates_to_the_atomic_reset(monkeypatch) -> None:
+    # The reset runs as one watched graph transaction (falkordb_atomic); the
+    # embedded round-trip integration test exercises it against a real graph.
+    from potpie_context_engine.adapters.outbound.graph import falkordb_atomic
+
     graph = _FakeGraph(count=3)
+    calls: list[tuple[object, str]] = []
+
+    def fake_reset(g, pot_id):
+        calls.append((g, pot_id))
+        return {
+            "ok": True,
+            "group_id_nodes_before": 3,
+            "group_id_nodes_remaining": 0,
+            "version": 1,
+        }
+
+    monkeypatch.setattr(falkordb_atomic, "reset_pot", fake_reset)
     w = FalkorDBGraphWriter(_FakeSettings(), graph=graph)
     out = await w.reset_pot("pot-1")
-    assert out == {
-        "ok": True,
-        "group_id_nodes_before": 3,
-        "group_id_nodes_remaining": 0,
-    }
-    assert any("DETACH DELETE" in q for q, _ in graph.queries)
+    assert out["ok"] is True
+    assert out["group_id_nodes_before"] == 3
+    assert out["group_id_nodes_remaining"] == 0
+    assert calls == [(graph, "pot-1")]
 
 
 async def test_ensure_indexes_best_effort_swallows_errors() -> None:

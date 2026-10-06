@@ -18,7 +18,7 @@ class SnapshotManifest:
 
     pot_id: str
     location: str  # file path or URI the snapshot was written to / read from
-    format_version: str = "1"
+    format_version: str = "2"
     entity_count: int = 0
     claim_count: int = 0
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -31,9 +31,19 @@ class GraphSnapshotPort(Protocol):
         """Write a portable snapshot of the pot's graph to ``destination``."""
         ...
 
+    def export_data(self, *, pot_id: str) -> dict[str, Any]:
+        """Return the portable, JSON-safe snapshot payload in memory."""
+        ...
+
     def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
         """Load a snapshot from ``source`` into ``pot_id``, rebuilding
         projections for this backend profile."""
+        ...
+
+    def import_data(
+        self, *, pot_id: str, payload: Mapping[str, Any]
+    ) -> SnapshotManifest:
+        """Validate and merge an in-memory portable snapshot payload."""
         ...
 
 

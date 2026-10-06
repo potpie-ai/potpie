@@ -6,6 +6,7 @@ graph surface.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -62,6 +63,24 @@ def test_catalog_truth_classes(service) -> None:
     assert "authoritative_fact" in cat["truth_classes"]
     assert "agent_claim" in cat["truth_classes"]
     assert "preference" in cat["truth_classes"]
+
+
+def test_catalog_exposes_modeling_guidance_from_the_public_ontology(service) -> None:
+    from potpie_context_engine.core.ontology import EDGE_TYPES, ENTITY_TYPES
+
+    cat = service.catalog(GraphCatalogRequest(pot_id="p")).to_dict()
+    entities = {entity["label"]: entity for entity in cat["entity_types"]}
+    predicates = {predicate["name"]: predicate for predicate in cat["predicates"]}
+    assert set(entities) == {name for name, spec in ENTITY_TYPES.items() if spec.public}
+    assert set(predicates) == {name for name, spec in EDGE_TYPES.items() if spec.public}
+    for name, entity in entities.items():
+        assert entity["description"] == ENTITY_TYPES[name].description
+        assert entity["identity_policy"] == ENTITY_TYPES[name].identity_policy
+    for name, predicate in predicates.items():
+        spec = EDGE_TYPES[name]
+        assert predicate["description"] == spec.description
+        assert predicate["allowed_pairs"] == [list(pair) for pair in spec.allowed_pairs]
+        assert predicate["required_properties"] == sorted(spec.required_properties)
 
 
 def test_catalog_op_partitions_are_honest(service) -> None:
@@ -685,17 +704,97 @@ def test_read_returns_unsupported_for_filters_outside_view_contract(service) -> 
         )
     )
 
+    # A filter the view cannot apply is a refused read, not an empty one. It
+    # used to come back ``ok=True`` with zero items, which the CLI rendered as
+    # ``(no rows)`` under a zero exit code: a caller could not tell "nothing
+    # matched" from "your filter was never applied".
+    body = env.to_dict()
+    assert body["ok"] is False
+    assert body["status"] == "unsupported_filter"
+    assert "does not support filter language" in body["message"]
+    assert "supported filters: " in body["message"]
+    assert "service" in body["message"]
     assert env.items == ()
     assert env.unsupported[0]["name"] == "language"
+    assert env.unsupported[0]["reason"] == "unsupported_filter"
+    assert "service" in env.unsupported[0]["detail"]["supported_filters"]
     assert env.coverage[0]["status"] == "unsupported"
+    assert env.quality["reason"] == "unsupported_filter"
+
+
+def test_read_rejects_query_on_a_view_that_cannot_filter_by_query(service) -> None:
+    # The generic ``graph read`` CLI exposes ``--query``, so
+    # ``admin.inspection_slice --query QMX`` looked valid and answered
+    # ``(no rows)`` with exit 0.
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="admin",
+            view="inspection_slice",
+            query="QMX",
+            limit=20,
+            detail="full",
+        )
+    )
+
+    body = env.to_dict()
+    assert body["ok"] is False
+    assert body["status"] == "unsupported_filter"
+    assert body["message"] == (
+        "graph read view 'admin.inspection_slice' does not support filter "
+        "query; supported filters: source_ref"
+    )
+    assert [item["name"] for item in env.unsupported] == ["query"]
+    assert env.unsupported[0]["detail"]["supported_filters"] == ["source_ref"]
+
+
+def test_read_missing_scope_and_unsupported_filter_report_both(service) -> None:
+    # A non-browseable view still reports missing scope and unsupported filters together.
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="infra_topology",
+            view="service_neighborhood",
+            since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    body = env.to_dict()
+    assert body["ok"] is False
+    assert body["status"] == "missing_required_scope"
+    assert "requires one of" in body["message"]
+    assert "does not support filter since" in body["message"]
+    assert {item["reason"] for item in env.unsupported} == {
+        "unsupported_filter",
+        "missing_required_scope",
+    }
+
+
+def test_read_with_supported_filters_and_no_matches_is_still_ok(service) -> None:
+    # The refusal must not swallow the ordinary empty answer.
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="debugging",
+            view="prior_occurrences",
+            query="timeout",
+            scope={"service": "api"},
+        )
+    )
+
+    body = env.to_dict()
+    assert body["ok"] is True
+    assert "status" not in body
+    assert env.items == ()
+    assert env.unsupported == ()
 
 
 def test_read_missing_required_scope_is_validation_failure(service) -> None:
     env = service.read(
         GraphReadRequest(
             pot_id="p",
-            subgraph="features",
-            view="feature_context",
+            subgraph="infra_topology",
+            view="service_neighborhood",
             limit=5,
         )
     )
@@ -949,6 +1048,124 @@ def test_search_entities_can_include_bounded_supporting_claims(service) -> None:
     assert len(by_key["feature:payments"]["supporting_claims"]) == 1
 
 
+def _hub_topology_request(*, count: int = 4) -> SemanticMutationRequest:
+    """One hub service depending on ``count`` others — a star neighbourhood."""
+    return SemanticMutationRequest.parse(
+        {
+            "pot_id": "p",
+            "operations": [
+                {
+                    "op": "link_entities",
+                    "subgraph": "infra_topology",
+                    "subject": {"key": "service:payments-api", "type": "Service"},
+                    "predicate": "DEPENDS_ON",
+                    "object": {"key": f"service:dep-{index}", "type": "Service"},
+                    "truth": "source_observation",
+                    "evidence": [
+                        {
+                            "source_ref": f"repo:manifest#{index}",
+                            "authority": "repository_metadata",
+                        }
+                    ],
+                    "description": f"payments depends on dep {index}",
+                }
+                for index in range(count)
+            ],
+        }
+    )
+
+
+def test_read_limit_bounds_items_after_relation_assembly(service) -> None:
+    # The entity projection fans each claim out to both endpoints, so a star
+    # neighbourhood answered --limit N with N+1 rows: the budget was spent on
+    # claims, never on what the caller actually receives.
+    service.mutate(_hub_topology_request(count=4))
+
+    for limit in (1, 2, 3):
+        env = service.read(
+            GraphReadRequest(
+                pot_id="p",
+                subgraph="infra_topology",
+                view="service_neighborhood",
+                scope={"service": "payments-api"},
+                limit=limit,
+            )
+        )
+        assert len(env.items) == limit, f"--limit {limit} returned {len(env.items)}"
+
+
+def test_admin_inspection_slice_returns_distinct_nodes_with_relations(service) -> None:
+    # The operator/raw view declares no inline relations, so every claim came
+    # back as its own item: the hub was repeated once per edge and no row
+    # carried its relations at all.
+    service.mutate(_hub_topology_request(count=3))
+
+    env = service.read(
+        GraphReadRequest(
+            pot_id="p", subgraph="admin", view="inspection_slice", limit=10
+        )
+    )
+
+    keys = [item["entity_key"] for item in env.items]
+    assert len(keys) == len(set(keys))
+    assert set(keys) == {
+        "service:payments-api",
+        "service:dep-0",
+        "service:dep-1",
+        "service:dep-2",
+    }
+    by_key = {item["entity_key"]: item for item in env.items}
+    assert len(by_key["service:payments-api"]["relations"]) == 3
+    assert all(len(by_key[f"service:dep-{i}"]["relations"]) == 1 for i in range(3))
+
+
+def test_search_entities_ranks_an_exact_entity_key_first(service) -> None:
+    service.mutate(_hub_topology_request(count=4))
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(pot_id="p", query="service:dep-3", limit=5)
+    ).to_dict()
+
+    # Identity resolution, not text retrieval: the hub's claims mention every
+    # dependency, so without an exact-key rule the hub outranked the entity the
+    # caller spelled out.
+    assert result["entities"][0]["key"] == "service:dep-3"
+
+
+def test_search_entities_finds_an_entity_with_no_claims(service) -> None:
+    service.mutate(
+        SemanticMutationRequest.parse(
+            {
+                "pot_id": "p",
+                "operations": [
+                    {
+                        "op": "upsert_entity",
+                        "subject": {
+                            "key": "feature:lonely-widget",
+                            "type": "Feature",
+                            "name": "Lonely widget",
+                            "summary": "written without any claim",
+                            "description": "retrieval card for the lonely widget",
+                        },
+                    }
+                ],
+            }
+        )
+    )
+
+    result = service.search_entities(
+        GraphEntitySearchRequest(pot_id="p", query="feature:lonely-widget", limit=5)
+    ).to_dict()
+
+    # Candidates are aggregated from claim rows, so an entity written by
+    # upsert_entity alone used to be unreachable — you could not resolve its
+    # identity before writing the claim that would have made it findable.
+    by_key = {entity["key"]: entity for entity in result["entities"]}
+    assert "feature:lonely-widget" in by_key
+    assert by_key["feature:lonely-widget"]["name"] == "Lonely widget"
+    assert result["entities"][0]["key"] == "feature:lonely-widget"
+
+
 def test_read_projects_canonical_labels_from_key_prefix(service) -> None:
     store = service.backend.claim_query
     store.add(
@@ -1145,3 +1362,103 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
     assert provenance.actor_client_name == "codex"
     assert passed_config is None
     assert active_config is reconciliation_config
+
+
+# --- RPC parity with the CLI's canonicalization (AX17/AX18/AX19) -------------
+
+
+def _seed_repository_claim(service) -> None:
+    store = service.backend.claim_query
+    store.add(
+        ClaimRow(
+            pot_id="p",
+            predicate="POLICY_APPLIES_TO",
+            subject_key="preference:jittered-backoff",
+            object_key="repo:github.com/potpie-ai/potpie",
+            fact="jittered backoff applies to the potpie repo",
+            properties={"semantic_similarity": 0.9},
+        )
+    )
+    store.set_entity_label(
+        pot_id="p",
+        entity_key="repo:github.com/potpie-ai/potpie",
+        labels=("Entity", "Repository"),
+    )
+
+
+def test_search_entities_canonicalizes_type_and_predicate_spelling(service) -> None:
+    _seed_repository_claim(service)
+
+    canonical = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p",
+            query="backoff",
+            type="Repository",
+            predicate="POLICY_APPLIES_TO",
+        )
+    ).to_dict()
+    variant = service.search_entities(
+        GraphEntitySearchRequest(
+            pot_id="p",
+            query="backoff",
+            type="repository",
+            predicate="policy applies to",
+        )
+    ).to_dict()
+
+    assert [e["key"] for e in canonical["entities"]] == [
+        "repo:github.com/potpie-ai/potpie"
+    ]
+    assert variant["entities"] == canonical["entities"]
+
+
+def test_search_entities_leaves_unknown_labels_literal(service) -> None:
+    # A stored custom label is still a legitimate backend filter; refusing
+    # unknown vocabulary with candidates is the CLI's job.
+    _seed_repository_claim(service)
+    result = service.search_entities(
+        GraphEntitySearchRequest(pot_id="p", query="backoff", type="Repositry")
+    ).to_dict()
+    assert result["entities"] == []
+
+
+def test_read_canonicalizes_case_and_qualified_views(service) -> None:
+    canonical = service.read(
+        GraphReadRequest(
+            pot_id="p", subgraph="debugging", view="prior_occurrences", query="timeout"
+        )
+    ).to_dict()
+    for subgraph, view in (
+        ("Debugging", "Prior_Occurrences"),
+        ("debugging", "debugging.prior_occurrences"),
+    ):
+        variant = service.read(
+            GraphReadRequest(pot_id="p", subgraph=subgraph, view=view, query="timeout")
+        ).to_dict()
+        assert variant["view"] == canonical["view"] == "debugging.prior_occurrences"
+        assert variant["ok"] is True
+
+
+def test_read_refuses_a_qualified_view_that_disagrees_with_its_subgraph(
+    service,
+) -> None:
+    with pytest.raises(UnknownGraphViewError) as excinfo:
+        service.read(
+            GraphReadRequest(
+                pot_id="p",
+                subgraph="decisions",
+                view="debugging.prior_occurrences",
+                query="timeout",
+            )
+        )
+    assert "'decisions'" in str(excinfo.value)
+    assert "'debugging'" in str(excinfo.value)
+
+
+def test_read_still_refuses_a_near_miss_view_with_guidance(service) -> None:
+    with pytest.raises(UnknownGraphViewError):
+        service.read(
+            GraphReadRequest(
+                pot_id="p", subgraph="decisions", view="preferences_for_scop"
+            )
+        )

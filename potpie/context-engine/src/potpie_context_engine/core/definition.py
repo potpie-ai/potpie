@@ -208,6 +208,7 @@ class GraphDefinition:
     record_types: Mapping[str, RecordTypeSpec]
     readers: Mapping[str, GraphReaderSpec] = field(default_factory=dict)
     extensions: Mapping[str, str] = field(default_factory=dict)
+    predicate_subgraphs: Mapping[str, str] = field(default_factory=dict)
 
     identity_by_label: Mapping[str, Any] = field(init=False, repr=False)
     entity_by_key_prefix: Mapping[str, str] = field(init=False, repr=False)
@@ -226,12 +227,14 @@ class GraphDefinition:
         records = MappingProxyType(dict(self.record_types))
         readers = _reader_specs(self.readers)
         extensions = MappingProxyType(dict(self.extensions))
+        predicate_subgraphs = MappingProxyType(dict(self.predicate_subgraphs))
         object.__setattr__(self, "entity_types", entities)
         object.__setattr__(self, "edge_types", edges)
         object.__setattr__(self, "views", views)
         object.__setattr__(self, "record_types", records)
         object.__setattr__(self, "readers", readers)
         object.__setattr__(self, "extensions", extensions)
+        object.__setattr__(self, "predicate_subgraphs", predicate_subgraphs)
 
         errors = _coherence_errors(
             entities=entities,
@@ -304,6 +307,7 @@ class GraphDefinition:
         records = dict(self.record_types)
         readers = dict(self.readers)
         versions = dict(self.extensions)
+        predicate_subgraphs = dict(self.predicate_subgraphs)
         reader_names = {reader.name for reader in readers.values()}
 
         for extension in flattened:
@@ -322,6 +326,9 @@ class GraphDefinition:
                 reader_names.add(reader.name)
             entities.update(extension.entity_types)
             edges.update(extension.edge_types)
+            predicate_subgraphs.update(
+                {predicate: extension.name for predicate in extension.edge_types}
+            )
             views.update(extension.views)
             records.update(extension.record_types)
             readers.update(extension.readers)
@@ -335,6 +342,7 @@ class GraphDefinition:
             record_types=records,
             readers=readers,
             extensions=versions,
+            predicate_subgraphs=predicate_subgraphs,
         )
 
     @property
