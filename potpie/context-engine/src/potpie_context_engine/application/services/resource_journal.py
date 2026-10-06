@@ -5,7 +5,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any, TypeVar, cast
 
-from potpie_context_engine.core.graph_journal import JournalError
+from potpie_context_engine.core.graph_journal import JournalError, JournalState
 from potpie_context_engine.core.journal_context import (
     JournalWriteContext,
     current_journal_context,
@@ -65,11 +65,35 @@ def journal_resource_workflow(method: Workflow) -> Workflow:
     return cast(Workflow, guarded)
 
 
-def reject_journal_admin(self, pot_id: str, operation: str) -> None:
-    if self.journal is not None and self.journal.journal_state(pot_id) is not None:
+JOURNAL_CAPTURE_ACTIVE = "journal_capture_active"
+
+
+def journal_capture_active(journal: Any, pot_id: str) -> bool:
+    """Whether ``journal`` is capturing commits for ``pot_id``."""
+    if journal is None:
+        return False
+    return isinstance(journal.journal_state(pot_id), JournalState)
+
+
+def refuse_while_journaling(journal: Any, pot_id: str, operation: str) -> None:
+    """Refuse a whole-pot teardown before any part of it runs.
+
+    A pot reset, archive or purge would discard the pot's journal coverage
+    mid-generation, and no operation retires a journal generation yet. The
+    graph reset and the document purge both refuse on their own; checking
+    once, first, is what keeps a teardown from stopping half-way (graph
+    cleared, documents kept, or ledgers cleared and graph kept).
+    """
+    if journal_capture_active(journal, pot_id):
         raise JournalError(
-            f"{operation} is unsupported while journal capture is active"
+            f"{operation} is refused while graph journal capture is active "
+            "for this pot; it would discard the pot's commit history",
+            code=JOURNAL_CAPTURE_ACTIVE,
         )
+
+
+def reject_journal_admin(self, pot_id: str, operation: str) -> None:
+    refuse_while_journaling(self.journal, pot_id, operation)
 
 
 def reconcile_resource_operation(
