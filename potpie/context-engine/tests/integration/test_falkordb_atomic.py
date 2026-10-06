@@ -18,7 +18,9 @@ from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend imp
     FalkorDBGraphBackend,
 )
 
-client = pytest.importorskip("redislite.falkordb_client")
+from tests.embedded_falkordb import embedded_falkordb
+
+pytest.importorskip("redislite.falkordb_client")
 pytestmark = pytest.mark.integration
 
 
@@ -32,11 +34,10 @@ class Settings:
 
 @pytest.fixture()
 def graph(tmp_path: Path):
-    db = client.FalkorDB(str(tmp_path / "atomic.db"))
-    try:
+    # Parallel applies leave a multi-connection pool, which redislite's own
+    # close() would leave running.
+    with embedded_falkordb(tmp_path / "atomic.db") as db:
         yield db.select_graph("atomic")
-    finally:
-        db.close()
 
 
 def _plan(value: str) -> MutationBatch:

@@ -13,6 +13,8 @@ from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import
     LocalJsonGraphPlanStore,
 )
 
+from tests.embedded_falkordb import stop_embedded_falkordb
+
 pytestmark = pytest.mark.integration
 client = pytest.importorskip("redislite.falkordb_client")
 
@@ -84,4 +86,4 @@ def test_correction_changes_only_previewed_production_claim(tmp_path: Path, oper
         assert after[prod.claim_key].invalid_at is not None
         assert after[staging.claim_key] == staging
     finally:
-        db.close()
+        stop_embedded_falkordb(db)
