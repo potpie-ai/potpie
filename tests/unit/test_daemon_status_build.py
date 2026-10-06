@@ -46,8 +46,11 @@ def _status_result(build: DaemonBuild | None) -> DaemonStatusResult:
 
 
 class _Observer:
-    def __init__(self, result: DaemonStatusResult) -> None:
+    def __init__(
+        self, result: DaemonStatusResult, *, catalog_compatible: bool = True
+    ) -> None:
         self._result = result
+        self.catalog_compatible = catalog_compatible
 
     async def status(self) -> Success[DaemonStatusResult]:
         return Success(self._result)
@@ -62,7 +65,11 @@ class _Controller:
 
 
 def _attached_daemon(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, served: DaemonStatusResult
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    served: DaemonStatusResult,
+    *,
+    catalog_compatible: bool = True,
 ) -> Daemon:
     """A detached daemon whose live status answer is ``served``.
 
@@ -73,8 +80,9 @@ def _attached_daemon(
         endpoint=SimpleNamespace(kind="uds", display=str(tmp_path / "runtime.sock"))
     )
     monkeypatch.setattr(daemon, "_recorded_pid", os.getpid)
+    observer = _Observer(served, catalog_compatible=catalog_compatible)
     monkeypatch.setattr(
-        daemon, "_connection_for_pid", lambda _pid: (discovery, _Observer(served))
+        daemon, "_connection_for_pid", lambda _pid: (discovery, observer)
     )
     monkeypatch.setattr(
         daemon, "_controller_for_existing", lambda _pid, *, observer: _Controller()
@@ -135,6 +143,38 @@ def test_a_daemon_that_does_not_report_its_build_has_no_build_keys(
     assert "version" not in status
     assert "build" not in status
     assert "stale" not in status
+
+
+def test_a_daemon_serving_another_catalog_is_stale_whatever_its_rev(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An editable checkout can change the catalog without a new commit."""
+    monkeypatch.setattr(build_info, "build_stamp", lambda: {"rev": FIXTURE_REV})
+    served = DaemonBuild(rev=FIXTURE_REV, dirty=True, built_at=None)
+    daemon = _attached_daemon(
+        monkeypatch, tmp_path, _status_result(served), catalog_compatible=False
+    )
+
+    status = daemon.status()
+
+    assert status["compatible"] is False
+    assert status["build"]["rev"] == FIXTURE_REV
+    assert status["stale"] is True
+    assert "different Potpie version" in status["detail"]
+
+
+def test_a_daemon_serving_another_catalog_without_a_build_is_still_stale(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    daemon = _attached_daemon(
+        monkeypatch, tmp_path, _status_result(None), catalog_compatible=False
+    )
+
+    status = daemon.status()
+
+    assert status["compatible"] is False
+    assert status["stale"] is True
+    assert "build" not in status
 
 
 def test_in_process_status_is_untouched(tmp_path: Path) -> None:
@@ -204,6 +244,29 @@ def test_human_daemon_status_names_the_build_and_the_way_out_when_stale(
     assert "potpie daemon restart" in stale.stdout
     assert current.exit_code == 0, current.stdout
     assert "bbbbbbbbbb (current)" in current.stdout
+
+
+def test_daemon_status_names_a_daemon_from_another_version_and_its_repair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    incompatible = {
+        **_STALE_STATUS,
+        "ready": False,
+        "compatible": False,
+        "detail": "detached daemon running a different Potpie version",
+    }
+    monkeypatch.setattr(
+        daemon_commands, "Daemon", lambda **_kwargs: _FakeDaemon(incompatible)
+    )
+
+    result = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
+
+    assert result.exit_code == 2, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "daemon_incompatible"
+    assert payload["stale"] is True
+    assert payload["build"]["rev"] == OTHER_REV
+    assert "potpie daemon restart" in payload["recommended_next_action"]
 
 
 # --- the wire ------------------------------------------------------------------
