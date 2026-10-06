@@ -103,6 +103,8 @@ include = [
     "src/potpie_context_engine/benchmarks/fixtures/raw_events/**/*.json",
     "src/potpie_context_engine/benchmarks/_legacy/data/**/*.json",
 ]
+# Test suites and their fixtures never ship, wherever they end up nested.
+exclude = ["**/tests/**"]
 
 [tool.hatch.build.targets.sdist]
 include = [

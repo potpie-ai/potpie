@@ -68,6 +68,7 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_reader import (
 from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     FalkorDBGraphProvider,
     FalkorDBGraphWriter,
+    _local_extra_next_action,
     _records_from_result,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
@@ -96,11 +97,12 @@ def _missing_driver_module(settings: Any) -> str | None:
 
     Readiness used to be answered from what was *wired* — ``writer.enabled`` is
     set during construction and stays true whether or not a handle can ever be
-    opened. On a base ``potpie`` install, where the graph-native driver ships in
-    the ``[local]`` extra, that produced the worst available ordering of two
-    facts: ``potpie backend doctor`` said ``ready: true`` with every capability
-    ``true``, and the very next read crashed. The diagnostic an operator runs
-    first has to be the one that is right.
+    opened. Where the driver is absent (an engine install without the
+    ``local`` extra, or Windows, where FalkorDBLite publishes no build), that
+    produced the worst available ordering of two facts: ``potpie backend
+    doctor`` said ``ready: true`` with every capability ``true``, and the very
+    next read crashed. The diagnostic an operator runs first has to be the one
+    that is right.
 
     A spec probe rather than an open: importability is exactly the question
     ("was the extra installed?"), and it costs nothing and starts no server.
@@ -323,10 +325,14 @@ class _FalkorDBMutation:
         driver = _missing_driver_module(self.settings)
         ready = bool(getattr(self.writer, "enabled", False)) and driver is None
         if driver is not None:
+            remedy = (
+                _local_extra_next_action()
+                if driver == "redislite"
+                else "install it with `pip install 'potpie-context-engine[local]'`"
+            )
             detail = (
                 f"{self.profile} is selected but its driver ({driver!r}) is not "
-                "installed — install it with `pip install 'potpie[local]'`, or "
-                "use a managed host"
+                f"installed — {remedy}"
             )
         elif ready:
             detail = (
