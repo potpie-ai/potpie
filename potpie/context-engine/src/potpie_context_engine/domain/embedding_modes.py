@@ -50,6 +50,14 @@ EMBEDDING_MODEL_PREP_SKIPPED_ALIASES = DISABLED_EMBEDDER_ALIASES | frozenset(
     }
 )
 
+#: The repair when a semantic mode is selected but sentence-transformers is not
+#: installed. The `potpie` base install leaves it out (it pulls in torch), so
+#: this is the expected state of a bare install, not a fault.
+SEMANTIC_EMBEDDINGS_INSTALL_HINT = (
+    "install the embeddings extra for semantic search: "
+    "`potpie[embeddings]` (or `potpie-context-engine[embeddings]`)"
+)
+
 
 def normalize_embedding_mode(value: str | None) -> str:
     return (value or "").strip().lower().replace("_", "-")
@@ -62,5 +70,6 @@ __all__ = [
     "EXPLICIT_SENTENCE_TRANSFORMER_ALIASES",
     "HASHING_EMBEDDER_ALIASES",
     "SEMANTIC_EMBEDDER_ALIASES",
+    "SEMANTIC_EMBEDDINGS_INSTALL_HINT",
     "normalize_embedding_mode",
 ]
