@@ -352,14 +352,14 @@ def shutdown_embedded_servers() -> int:
     for path, clients in list(_OPEN_SERVERS.items()):
         _OPEN_SERVERS.pop(path, None)
         try:
-            if _stop_if_unused(clients):
+            if _stop_if_unused(path, clients):
                 stopped += 1
         except Exception as exc:  # noqa: BLE001 - shutdown must not raise
             logger.debug("falkordb_lite: server at %s did not stop (%s)", path, exc)
     return stopped
 
 
-def _stop_if_unused(clients: list[Any]) -> bool:
+def _stop_if_unused(path: str, clients: list[Any]) -> bool:
     """Close this process's connections, then stop the server if none remain.
 
     ``CLIENT LIST`` cannot tell processes apart, so this process's own pools
@@ -374,7 +374,25 @@ def _stop_if_unused(clients: list[Any]) -> bool:
         probe.connection_pool.disconnect()
         return False
     probe.shutdown(save=True, now=True, force=True)
+    _forget_stopped_server(path, getattr(probe, "socket_file", None))
     return True
+
+
+def _forget_stopped_server(path: str, socket: str | None) -> None:
+    """Remove the handshake file of a server this process stopped cleanly.
+
+    ``redislite`` removes it only when its own exit hook does the stopping, and
+    only in the process that started the server. Left behind, it reads as a
+    server that died without saving (see ``_died_without_saving``), so a db
+    whose AOF is not complete yet would be refused after a clean stop. Only
+    removed while it still names the server just stopped, so a server another
+    process has started since keeps its record.
+    """
+    if socket and _active_socket(path) == socket:
+        try:
+            os.remove(_settings_file(path))
+        except OSError:
+            pass
 
 
 def _without_retries(conn: Any) -> None:
