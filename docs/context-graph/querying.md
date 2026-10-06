@@ -296,6 +296,27 @@ There are **8 subgraphs** (`debugging`, `recent_changes`, `infra_topology`, `dec
 > at the canonical `debugging.prior_occurrences`), and the only features view is
 > **`features.feature_context`** (there is no `features.implementation_map`).
 
+When the optional protocol ontology is on (`graph.protocols`, off by default;
+see [ontology.md](./ontology.md)), an eleventh view, `protocols.message_context`,
+is backed by the `protocols` reader family:
+
+- It needs `anchor_entity_key` (a `Service`, `Protocol`, `ProtocolMessage` or
+  `ProtocolField` key) and accepts only exact `revision`, `profile` and
+  `field_path` filters plus `--query`, which narrows message discovery. Any
+  other filter (`--environment`, `--repo`, `--depth`, a time window, a
+  threshold) is refused.
+- Default resolve recipes, chat hints and nudges never include it. Ask for it
+  with `potpie resolve "<question>" --include protocols`, then read each
+  returned message by its anchor with `--detail full`.
+- Its responses stay inside the shared 32 KiB agent output budget, less a
+  6 KiB reserve for the result around the items, and one message takes at most
+  half of the budget. The reader drops whole trailing fields and marks the
+  message `partial` and `truncated`, rather than letting the generic bound clip
+  typed values. A discovery read that anchors on a `Service` or `Protocol` and
+  selects several messages therefore returns full layouts for the first ones
+  and compact pointers for the rest. Read each message by its own anchor, and
+  narrow a large layout with `field_path`.
+
 `graph read` resolves the named view, validates `required_any_scope` + `supported_filters`
 against the view's `ViewContract` (returning `missing_required_scope`/`unsupported_filter`
 **instead of** running a malformed read), then routes `spec.v1_include` through the same

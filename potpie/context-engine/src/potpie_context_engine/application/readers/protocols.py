@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from potpie_context_engine.core.agent_envelope import DEFAULT_OUTPUT_BUDGET_BYTES
 from potpie_context_engine.core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
@@ -36,7 +37,16 @@ MAX_MESSAGES = 12
 MAX_CANDIDATES = 2048
 MAX_FIELDS = 128  # shared across all selected messages in one response
 MAX_CLAIMS = 2048
-MAX_RESPONSE_BYTES = 196608
+# The shared agent output budget, not a protocol-specific one. The graph
+# service bounds every read result to it (and the CLI to it less its envelope
+# reserve) by clipping lists and strings, which would cut typed allowed values
+# and leave this reader's coverage counts wrong. Staying inside it here means
+# the reader drops whole fields instead, and its coverage says so.
+MAX_RESPONSE_BYTES = DEFAULT_OUTPUT_BUDGET_BYTES
+# Kept free for what surrounds the items: family coverage, warnings and the
+# result fields (about 2.5 KiB), plus the 2 KiB the CLI reserves for its own
+# envelope.
+RESPONSE_RESERVE_BYTES = 6 * 1024
 
 
 def _size(value: Any) -> int:
@@ -247,9 +257,7 @@ class ProtocolsReader:
         top = candidates[:limit]
         truncated = walk.truncated or len(candidates) > limit
         items = []
-        remaining_bytes = (
-            MAX_RESPONSE_BYTES - 16384
-        )  # envelope, coverage and DTO overhead
+        remaining_bytes = MAX_RESPONSE_BYTES - RESPONSE_RESERVE_BYTES
         remaining_fields = MAX_FIELDS
         for score, key, protocol, message, path in top:
             payload, used_fields = self._message(
@@ -262,6 +270,8 @@ class ProtocolsReader:
                 and payload["fields"]
             ):
                 payload["fields"].pop()
+                # Refs only the dropped field cited would keep the cost up.
+                payload["source_refs"] = _retained_source_refs(payload)
                 payload["coverage"]["truncated"] = True
                 payload["coverage"]["status"] = "partial"
                 payload["coverage"]["returned_fields"] = len(payload["fields"])
@@ -540,6 +550,34 @@ class ProtocolsReader:
                 "pot_id": walk.request.pot_id,
             },
         }, len(fields)
+
+
+def _retained_source_refs(payload: dict[str, Any]) -> list[str]:
+    """Source refs cited by the claims and properties the payload still carries."""
+    refs: set[str] = set()
+
+    def add_claims(claims: Any) -> None:
+        for claim in claims or ():
+            refs.update(ref for ref in claim.get("source_refs", ()) if ref)
+            refs.update(
+                ev["source_ref"]
+                for ev in claim.get("evidence", ())
+                if isinstance(ev.get("source_ref"), str)
+            )
+
+    def add_properties(properties: dict[str, Any]) -> None:
+        refs.update(
+            ev["source_ref"]
+            for ev in property_evidence(properties)
+            if isinstance(ev.get("source_ref"), str)
+        )
+
+    add_claims(payload.get("claims"))
+    add_properties(payload.get("message", {}))
+    for item in payload.get("fields", ()):
+        add_claims(item.get("claims"))
+        add_properties(item)
+    return sorted(refs)
 
 
 def _same_value(left: Any, right: Any) -> bool:

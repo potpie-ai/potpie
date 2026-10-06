@@ -1,6 +1,6 @@
 ---
 name: potpie-cli
-version: "5"
+version: "6"
 description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, resolve/search/record, graph workbench reads/writes, resource (document payload) commands, and pot scope behavior."
 ---
 
@@ -178,6 +178,11 @@ id, readback and quality status, so `graph history --plan <plan_id>` is for
 later inspection.
 
 Use `potpie-graph` for advanced graph workbench details.
+
+Protocol memory (message layouts, field values, decoder contracts) is an opt-in
+graph extension and is off by default: `potpie config set graph.protocols on`
+turns it on when the runtime next starts (`potpie daemon restart` for a running
+daemon), and `potpie-graph` covers its reads and writes.
 
 ## Report Back
 

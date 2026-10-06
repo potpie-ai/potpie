@@ -703,3 +703,42 @@ def test_templates_state_pot_resolution_and_score_semantics() -> None:
     for line in _bash_lines(timeline):
         if "--view timeline" in line:
             assert "--detail full" in line, line
+
+
+def test_protocol_guidance_matches_the_opt_in_default(tmp_path) -> None:
+    """The skill and the code agree: protocols are off until the config key is on.
+
+    The guidance names the real key and no environment switch, and the key it
+    names is one ``config set`` accepts and the runtime reads as off by default.
+    """
+    from potpie.config.local import (
+        GRAPH_PROTOCOLS_KEY,
+        KNOWN_CONFIG_KEYS,
+        LocalConfigService,
+    )
+
+    reference = TEMPLATES / (
+        "agent_bundle/.agents/skills/potpie-graph/references/protocols.md"
+    )
+    flat = " ".join(reference.read_text(encoding="utf-8").split())
+    assert GRAPH_PROTOCOLS_KEY in KNOWN_CONFIG_KEYS
+    assert f"potpie config set {GRAPH_PROTOCOLS_KEY} on" in flat
+    assert "off by default" in flat
+    assert "potpie daemon restart" in flat
+    assert LocalConfigService(home=tmp_path).graph_protocols_enabled() is False
+    for path in MD_FILES:
+        text = path.read_text(encoding="utf-8")
+        assert "PROTOCOLS_ENABLED" not in text, path
+        assert not re.search(r"(?<![A-Z])PIE_", text), path
+    for skill in (
+        "potpie-graph",
+        "potpie-debug-memory",
+        "potpie-infra-architecture",
+        "potpie-repo-baseline",
+        "potpie-source-ingestion",
+    ):
+        text = _read(f"{skill}/SKILL.md")
+        assert "references/protocols.md" in text, skill
+        assert f"potpie config set {GRAPH_PROTOCOLS_KEY} on" in " ".join(
+            text.split()
+        ), skill

@@ -43,7 +43,37 @@ KNOWN_CONFIG_KEYS: tuple[str, ...] = (
     # Retrieval index over stored document chunks; read by
     # ``default_resource_index_profile`` after ``CONTEXT_ENGINE_RESOURCE_INDEX``.
     "resource_index",
+    # Opt-in protocol ontology (``on``/``off``, default off); read once when the
+    # local runtime is composed, see ``LocalConfigService.graph_protocols_enabled``.
+    "graph.protocols",
 )
+
+#: The config key that switches on the protocol ontology extension.
+GRAPH_PROTOCOLS_KEY = "graph.protocols"
+
+_SWITCH_ON: frozenset[str] = frozenset({"on", "true", "yes", "1"})
+_SWITCH_OFF: frozenset[str] = frozenset({"off", "false", "no", "0"})
+SWITCH_VALUES: tuple[str, ...] = ("on", "off")
+
+
+def normalize_switch(value: object) -> str | None:
+    """``"on"`` or ``"off"`` for a recognised on/off spelling, else ``None``.
+
+    ``config set`` stores the canonical spelling; a hand-edited ``true``/``1``
+    still reads as on, and anything unrecognised is reported as ``None`` so the
+    caller decides (the reader treats it as off).
+    """
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if not isinstance(value, str):
+        return None
+    token = value.strip().lower()
+    if token in _SWITCH_ON:
+        return "on"
+    if token in _SWITCH_OFF:
+        return "off"
+    return None
+
 
 # Keys the runtime still honours but never advertises. ``configured_embedder_choice``
 # / ``configured_embedding_model`` (the engine's local embedder) fall back to these
@@ -182,6 +212,15 @@ class LocalConfigService:
         value = self._load().get(key)
         return None if value is None else str(value)
 
+    def graph_protocols_enabled(self) -> bool:
+        """Is the protocol ontology switched on? Off unless ``graph.protocols`` is on.
+
+        Absent, blank and unrecognised values all read as off, so a typo never
+        widens the graph contract. The local runtime reads this once at
+        composition: a running daemon keeps the value it started with.
+        """
+        return normalize_switch(self._load().get(GRAPH_PROTOCOLS_KEY)) == "on"
+
     def list_public(self) -> dict[str, str | None]:
         """Return all config entries with secret-like keys redacted."""
         return {
@@ -254,9 +293,12 @@ def _embedding_cache_location(plan: SetupPlan, *, home: Path) -> str | None:
 
 
 __all__ = [
+    "GRAPH_PROTOCOLS_KEY",
     "KNOWN_CONFIG_KEYS",
     "LocalConfigService",
+    "SWITCH_VALUES",
     "is_known_config_key",
     "is_secret_config_key",
+    "normalize_switch",
     "public_config_value",
 ]

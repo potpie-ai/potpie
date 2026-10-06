@@ -145,6 +145,11 @@ their claims describe reference material; chunk text lives in the resource
 store ([resources.md](./resources.md)). The `docs` view retrieves graph context,
 while `resources` searches passages through the resource index.
 
+An optional ninth subgraph, `protocols`, adds versioned protocol, message and
+field definitions and the `protocols.message_context` view. It is off by
+default and appears only after `potpie config set graph.protocols on` and a
+runtime restart ([ontology.md](./ontology.md), *Optional protocol extension*).
+
 ## Contracts and verification
 
 The data-plane contract is `v1.5`, the workbench envelope is `v2`, and the

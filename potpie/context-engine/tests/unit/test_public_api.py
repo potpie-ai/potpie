@@ -113,6 +113,29 @@ def test_api_exports_the_embedding_host_runtime_builder() -> None:
     } <= set(api.__all__)
 
 
+def test_api_exports_the_opt_in_protocols_definition_and_identity_helpers() -> None:
+    from potpie_context_engine import api
+    from potpie_context_engine.core.protocols import (
+        protocol_entity,
+        protocol_entity_key,
+    )
+
+    assert {
+        "protocols_definition",
+        "protocol_entity",
+        "protocol_entity_key",
+    } <= set(api.__all__)
+    assert api.protocol_entity is protocol_entity
+    assert api.protocol_entity_key is protocol_entity_key
+    definition = api.protocols_definition()
+    assert isinstance(definition, api.GraphDefinition)
+    assert definition.extensions == {"protocols": "1"}
+    assert "protocols" in definition.readers
+    # The factory returns a new value; the default definition stays base-only.
+    assert api.DEFAULT_GRAPH_DEFINITION.extensions == {}
+    assert "protocols" not in api.DEFAULT_GRAPH_DEFINITION.readers
+
+
 def test_api_does_not_publish_graph_extension_registration() -> None:
     from potpie_context_engine import api
 

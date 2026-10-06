@@ -27,6 +27,11 @@ from potpie_context_engine.context_engine import (
     WorkbenchOperations,
     create_engine,
 )
+
+# Opt-in protocol ontology: a definition factory to pass to the builder, plus
+# the identity helpers writers use to mint its entity keys. Not an extension
+# registration hook; ``GraphExtension`` stays internal.
+from potpie_context_engine.core.protocols import protocol_entity, protocol_entity_key
 from potpie_context_engine.protocols import protocols_definition
 from potpie_context_engine.domain.ranking import (
     Candidate,
@@ -71,5 +76,7 @@ __all__ = [
     "TaskContext",
     "build_graph_runtime",
     "build_graph_service",
+    "protocol_entity",
+    "protocol_entity_key",
     "protocols_definition",
 ]

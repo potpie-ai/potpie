@@ -181,6 +181,18 @@ potpie ui      [--open/--no-open] [--pot <ref>]
   resource store and retrieval index status (`resources`, `resource_index`); also
   reports `effective_current_repo_pot` and `repo_default_pot` (the repo→pot
   routing resolution for the current directory).
+- **`config get|set|unset`** — reads and writes `<home>/config.json`. `set`
+  accepts only the known keys (`config --help` and `config list` name them) and
+  checks the value of a key that takes a closed set: `resource_index` takes an
+  index profile, `graph.protocols` takes `on` or `off`. `unset` accepts any key,
+  so a value stored before the catalog was enforced can still be removed.
+  `graph.protocols` switches on the optional protocol ontology
+  ([ontology.md](./ontology.md), *Optional protocol extension*). It is **off
+  by default**: an absent, blank or unrecognised value reads as off. The local
+  runtime reads it once, when it composes, so `config set`/`unset` of that key
+  reports `restart_required: true` and a running daemon keeps its old setting
+  until `potpie daemon restart`. Turning it off hides the protocol types and view
+  and keeps the data. There is no environment switch for it.
 - **`whoami`** — local OSS reports a `none` identity.
 - **`use <ref>`** — alias for `pot use`. `--managed` raises `CapabilityNotImplemented`
   (see Roadmap below).
@@ -776,6 +788,9 @@ through services and capability ports.
 | `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | batch chunk size (default 20) |
 | `CONTEXT_ENGINE_RECONCILIATION_ENABLED` / `_INFER_LABELS` / `_CONFLICT_DETECT` / `_AUTO_SUPERSEDE` | reconciliation feature flags |
 | `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS`, `GITHUB_WEBHOOK_SECRET`, `CONTEXT_ENGINE_INGEST_422` | webhook/ingest controls |
+
+The protocol ontology has no environment switch; it is the `graph.protocols`
+config key (see `config` under *Top-level commands*).
 
 Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >
 `falkordb_lite`. There is **no `NotImplementedError` gate** on falkordb anywhere.

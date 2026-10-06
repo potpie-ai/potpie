@@ -1,6 +1,6 @@
 ---
 name: potpie-repo-baseline
-version: "2"
+version: "3"
 description: "Use when establishing, refreshing, or deeply understanding a repository's baseline memory in Potpie: purpose, application type, features, services/modules, environments, deploy shape, dependencies, API contracts, datastores, integrations, ownership, and explicit preferences. The harness reads authored and code-adjacent sources, then writes graph workbench mutations."
 ---
 
@@ -191,3 +191,14 @@ Do not infer baseline architecture from PR titles or issue status; change
 history and change-history facts belong in `potpie-change-timeline`.
 Local file inspection is allowed and expected, but the harness must read,
 interpret, and cite the evidence before writing semantic facts.
+
+## Protocol definitions and codecs
+
+When the source or question concerns telegrams, message layouts, field/value
+meanings, revisions or decoder changes, check the catalog for
+`protocols.message_context` and, when it is advertised, follow
+[the shared protocol reference](../potpie-graph/references/protocols.md). The
+extension is opt-in (`potpie config set graph.protocols on`), so a catalog
+without it means protocol memory is off. Use explicit protocol reads alongside
+existing Service/CodeAsset context. Preserve immutable source evidence and
+partial coverage; capabilities do not establish traffic.
