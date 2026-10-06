@@ -41,6 +41,8 @@ class _FakeDaemon:
         self.calls.append("status")
         status: dict[str, bool | str | int] = {
             "up": True,
+            # A process that answers its handshake: only that exits 0.
+            "ready": True,
             "mode": "detached",
             "home": str(self.home),
             "pid": 123,
@@ -56,9 +58,12 @@ class _FakeDaemon:
         self.calls.append("stop")
         return {"detail": "daemon stopped"}
 
-    def logs(self, *, follow: bool = False) -> list[str]:
-        self.calls.append(f"logs:{follow}")
+    def logs(self, *, tail: int | None = 200, since: object = None) -> list[str]:
+        self.calls.append(f"logs:{tail}")
         return ["line one"]
+
+    def log_path(self) -> Path:
+        return self.home / "logs" / "potpied.log"
 
 
 @dataclass
