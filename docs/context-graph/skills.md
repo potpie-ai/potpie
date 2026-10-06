@@ -46,10 +46,11 @@ of `SKILL.md` files under
 `catalog_by_id()` and `RECOMMENDED_SKILL_IDS` (every recommended bundled skill).
 Adding or editing a skill means editing the bundled markdown — nothing else.
 
-There are **8 skills in the agent bundle**, and it is the only copy: every
-harness installs its skills from it, remapped to the harness's own layout. The
-compact instruction block merged into `AGENTS.md` / `CLAUDE.md` likewise has one
-source, `templates/routing/POTPIE.md`.
+There are **11 skills in the agent bundle** (the 8 core skills in §3 plus three
+per-format resource skills), and it is the only copy: every harness installs its
+skills from it, remapped to the harness's own layout. The compact instruction
+block merged into `AGENTS.md` / `CLAUDE.md` likewise has one source,
+`templates/routing/POTPIE.md`.
 
 ## 2. Installation, targets & drift (`DefaultSkillManager`)
 
@@ -136,11 +137,11 @@ depend on the user's repo.)
 ### CLI surface
 
 ```bash
-potpie skills list   [--agent claude|codex|cursor|opencode] [--scope global|project] [--path]
+potpie skills list   [--agent claude|claude-plugin|codex|cursor|opencode] [--scope global|project] [--path]
 potpie skills install [<id>] [--agent …] [--scope …] [--path]
-potpie skills update  [<id>|--all] [--agent …]
-potpie skills status  [--agent …]     # installed, missing, outdated, drifted, disabled
-potpie skills remove  [<id>|--all] [--agent …]
+potpie skills update  [<id>|--all] [--agent …] [--scope …] [--path]
+potpie skills status  [--agent …] [--scope …] [--path]     # installed, missing, outdated, drifted, disabled
+potpie skills remove  [<id>|--all] [--agent …] [--scope …] [--path]
 potpie skills add     <source>        # TODO stub
 ```
 

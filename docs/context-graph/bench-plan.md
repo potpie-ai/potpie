@@ -5,8 +5,6 @@ description: How graph quality is validated across GraphBackend implementations.
 
 ## Overview
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
-
 > **Planning / reference artifact.** This is the design intent for the benchmark,
 > not a per-run log. The harness itself lives in code at
 > `potpie/context-engine/benchmarks/` (`cli.py`/`__main__.py` entrypoint,
