@@ -1,6 +1,6 @@
 ---
 name: potpie-source-ingestion
-version: "3"
+version: "4"
 description: "Use when the user explicitly asks to ingest, refresh, or deeply understand a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness performs todo-driven discovery, uses local/GitHub/integration tools and read-only subagents when available, builds evidence-backed semantic mutations, and writes through graph propose/verified commit. Document payloads (PDF, spreadsheet, markdown/HTML) route through the per-format potpie-resource-* skills and `potpie resource import`."
 ---
 
@@ -213,9 +213,11 @@ review flags:
 
 - `invalid` or rejected operations: fix the mutation or skip the weak fact.
 - `conflict` or duplicate risk: resolve identity or use inbox.
-- `review_required`: ask for approval, then commit with
+- `review_required`: ask for approval, then re-run
+  `potpie --json graph propose --file mutation.json --approved-by <user-ref>`
+  and commit with `--verify`, or commit the plan you have with
   `potpie --json graph commit <plan_id> --approved-by <user-ref> --verify`;
-  `commit` without `--approved-by` answers `review_required` again.
+  `commit` without an approval answers `review_required` again.
 - `validated` / low-risk: commit with `--verify`.
 
 ```bash

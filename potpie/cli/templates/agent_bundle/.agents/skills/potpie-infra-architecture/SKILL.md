@@ -1,6 +1,6 @@
 ---
 name: potpie-infra-architecture
-version: "3"
+version: "4"
 description: "Use for project infra and architecture context: environments, adapters, runtime configuration, deployments, service dependencies, datastores, API contracts, ownership, incidents, and dependency blast radius."
 ---
 
@@ -47,7 +47,8 @@ potpie graph read --subgraph infra_topology --view service_neighborhood --scope 
 
 An empty neighborhood can mean missing relations, not a wrong key. Start with
 `--depth 2 --direction both`; `--direction` accepts `out`, `in` or `both`, and
-any other spelling returns no rows rather than an error. Alternatively, for
+any other spelling is refused. A `--depth` past the view's maximum runs at the
+maximum and says so. Alternatively, for
 everything the graph holds about one service — decisions, preferences, timeline
 and features beside the topology — use one flat list:
 
@@ -98,21 +99,24 @@ Record only source-backed topology or carefully labeled agent inferences. Use
 deployment config, service manifest, infra doc, ADR, or user statement. Use
 `agent_claim` for lower-authority interpretation.
 
-Topology edges and decisions about the architecture are not one-call `potpie
-record` types; write them as a plan:
+Topology edges are not a `potpie record` type; write them as a plan:
 
 ```bash
 potpie graph mutation-template --kind infra-snapshot
-potpie graph mutation-template --kind decision
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
 ```
 
 Reuse the keys your reads returned. Omit `graph_contract_version` from the
-payload. If `propose` answers `review_required`, ask the user and commit with
-`--approved-by <user-ref>` as well as `--verify`; `commit --verify` prints the
-plan id, readback and quality status. A free-form `service_note` is the one
-architecture note `potpie record` takes in one call.
+payload. If `propose` answers `review_required`, ask the user, then re-run it
+with `--approved-by <user-ref>` and commit as above (or pass `--approved-by` to
+the commit); `commit --verify` prints the plan id, readback and quality status.
+
+A decision *about* the architecture is one call:
+
+```bash
+potpie record --type decision --summary "<the decision>" --detail rationale="<why>" --scope service:<service-name>
+```
 
 Every durable infra fact needs an environment when the fact differs by
 environment, evidence when available, and a retrieval-grade description.

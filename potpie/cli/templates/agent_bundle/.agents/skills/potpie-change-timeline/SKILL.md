@@ -1,6 +1,6 @@
 ---
 name: potpie-change-timeline
-version: "2"
+version: "3"
 description: "Use when an agent needs recent or historical change context: what changed recently, regressions, merged PRs, tickets, docs, incidents, deployments, releases, and source-history ingestion."
 ---
 
@@ -27,18 +27,17 @@ A pot is the project boundary and can contain multiple repos, so do not narrow
 to the current repo unless the user asks. Take the window from the question and
 read once; do not start at seven days and widen.
 
-For the context around a change — the services involved, who owns them — pass
-the operations intent, since `resolve` does not infer it:
+For the context around a change — the services involved, who owns them —
+`resolve` infers the `operations` intent from words like *changed / recent /
+since / when* and returns timeline rows as `activity TOUCHED service · fact`:
 
 ```bash
-potpie resolve "<the question, e.g. what changed in checkout in the last month>" --intent operations
+potpie resolve "<the question, e.g. what changed in checkout in the last month>"
 ```
 
-Its timeline family keeps only events that closely match the task sentence, so
-it is not the ordered list. For that, one bounded read with the window the
-question implies — no hint means 30 days. `--detail full` keeps each fact
-whole; compact rows cut it at about 120 characters, where the root cause
-usually sits:
+For the full ordered list, one bounded read with the window the question
+implies — no hint means 30 days. `--detail full` keeps each fact whole; compact
+rows cut it at about 120 characters, where the root cause usually sits:
 
 ```bash
 potpie graph read --subgraph recent_changes --view timeline --format table --detail full --time-window 30d --limit 50
@@ -51,13 +50,12 @@ potpie graph read --subgraph recent_changes --view timeline --format table --det
 ```
 
 Only narrow when the user gives a service, environment, or topic, and narrow by
-`--scope` first. A `--query` filters the window: an event stays only when it
-contains every word of the query or its similarity clears `--query-threshold`
-(default 0.7), so keep it short and literal, and drop it if the window comes
-back empty:
+`--scope` first. A `--query` keeps the events close to the best match inside
+the window, relative to that match rather than an absolute floor
+(`--query-threshold` does nothing here), so read the scores:
 
 ```bash
-potpie graph read --subgraph recent_changes --view timeline --format table --detail full --scope service:<service-name> --query "<deploy or ticket term>" --time-window 30d --limit 50
+potpie graph read --subgraph recent_changes --view timeline --format table --detail full --scope service:<service-name> --query "<symptom feature deployment>" --time-window 30d --limit 50
 ```
 
 Pass `--pot <name-or-id>` once the first read has named the pot.

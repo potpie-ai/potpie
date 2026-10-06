@@ -24,6 +24,7 @@ import json
 from typing import Any, Mapping, Protocol
 
 from potpie_context_engine.core.agent_envelope import (
+    DEFAULT_OUTPUT_BUDGET_BYTES,
     AgentEnvelope,
     _bound_evidence_payload,
 )
@@ -227,7 +228,10 @@ class GraphReadResult:
 
 
 def bound_graph_read_result(
-    result: GraphReadResult, *, pot_id: str, max_bytes: int = 32_768
+    result: GraphReadResult,
+    *,
+    pot_id: str,
+    max_bytes: int = DEFAULT_OUTPUT_BUDGET_BYTES,
 ) -> GraphReadResult:
     """Keep answer-bearing fix rows while bounding a named read's JSON body."""
 

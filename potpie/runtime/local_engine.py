@@ -357,6 +357,7 @@ class LocalEngineOperations:
                     mode=request.mode,
                     source_policy=request.source_policy,
                     max_items=request.max_items,
+                    intent=request.intent,
                     metadata=request.metadata,
                 )
             )
@@ -565,6 +566,7 @@ class LocalEngineOperations:
                 request.mutation,
                 pot_id=context.value,
                 ttl_seconds=request.ttl_seconds,
+                approved_by=request.approved_by,
             )
         )
 

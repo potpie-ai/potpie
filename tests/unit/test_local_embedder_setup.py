@@ -187,7 +187,10 @@ def test_quiet_transformer_progress_suppresses_loader_noise(
     assert list(recwarn) == []
 
 
-def test_setup_config_persists_embedding_defaults(tmp_path) -> None:
+def test_setup_config_persists_embedding_defaults(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_embedding_env(monkeypatch)
     service = LocalConfigService(home=tmp_path)
 
     service.write_defaults(
@@ -201,6 +204,37 @@ def test_setup_config_persists_embedding_defaults(tmp_path) -> None:
     assert data["embedder"] == "sentence-transformers"
     assert data["embedding_model"] == "all-MiniLM-L6-v2"
     assert data["embedding_cache"] == str(tmp_path / "models" / "sentence-transformers")
+
+
+@pytest.mark.parametrize("mode", ["none", "off", "local", "hashing", "default"])
+def test_a_mode_that_caches_nothing_records_no_cache_location(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, mode
+) -> None:
+    """A path nothing will ever write to is a guess, not a location: the
+    hashing embedder and ``--embeddings none`` hold no model weights."""
+    _clear_embedding_env(monkeypatch)
+    service = LocalConfigService(home=tmp_path)
+
+    service.write_defaults(SetupPlan(embeddings=mode))
+
+    data = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert "embedding_cache" not in data
+
+
+def test_the_recorded_cache_is_the_one_the_runtime_resolves(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The environment override wins at runtime, so it is what config records."""
+    _clear_embedding_env(monkeypatch)
+    override = tmp_path / "shared-weights"
+    monkeypatch.setenv(local_embedder.EMBEDDING_CACHE_ENV, str(override))
+    service = LocalConfigService(home=tmp_path)
+
+    service.write_defaults(SetupPlan(embeddings="sentence-transformers"))
+
+    data = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert data["embedding_cache"] == str(override)
+    assert local_embedder.default_sentence_transformer_cache() == str(override)
 
 
 def test_setup_reports_semantic_alias_hashing_fallback() -> None:

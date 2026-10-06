@@ -920,6 +920,60 @@ def resolve_pot_id(
     return pot_id
 
 
+def parse_scope_pairs(scope: str | None) -> dict[str, str]:
+    """``key:value[,key:value]`` → dict, refusing anything that is not that.
+
+    One parser for every ``--scope`` flag. A lenient copy on the write path
+    dropped a malformed pair and wrote an unscoped claim at exit 0, so the
+    caller's narrowing silently became no narrowing at all. A scope the CLI
+    cannot read is a refusal, never a smaller filter.
+
+    Raised as ``ValueError`` so the shared ``contract()`` renders it as
+    ``validation_error`` in whichever output mode the caller asked for.
+    """
+    if not scope:
+        return {}
+    out: dict[str, str] = {}
+    for pair in scope.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if ":" not in pair:
+            raise ValueError(
+                f"invalid --scope entry {pair!r}; expected key:value pairs"
+            )
+        key, value = pair.split(":", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(
+                f"invalid --scope entry {pair!r}; scope keys must not be empty"
+            )
+        value = value.strip()
+        if not value:
+            raise ValueError(
+                f"invalid --scope entry {pair!r}; scope values must not be empty"
+            )
+        out[key] = value
+    return out
+
+
+def require_text(value: str | None, *, argument: str, example: str) -> str:
+    """The trimmed ``value``, refusing one that says nothing.
+
+    An empty or whitespace-only argument is an absent request, not a narrower
+    one: ``potpie search ''`` used to answer with a ranked envelope and a
+    confidence score for a query nobody made.
+    """
+    cleaned = (value or "").strip()
+    if cleaned:
+        return cleaned
+    fail(
+        code="validation_error",
+        message=f"{argument} cannot be empty.",
+        next_action=f"pass a value, e.g. {example}",
+    )
+
+
 def current_repo_identity_for_cli() -> str | None:
     return _current_repo_identity()
 
@@ -1441,6 +1495,7 @@ __all__ = [
     "enrich_with_pot_guidance",
     "is_json",
     "is_verbose",
+    "parse_scope_pairs",
     "pot_graph_counts",
     "pot_scope_human",
     "pot_scope_info",
@@ -1452,6 +1507,7 @@ __all__ = [
     "repo_effective_pot_human",
     "repo_effective_pot_info",
     "repo_pot_candidates",
+    "require_text",
     "resolve_pot_id",
     "resolve_pot_scope",
     "set_runtime",

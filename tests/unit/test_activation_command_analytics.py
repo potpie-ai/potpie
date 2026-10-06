@@ -11,6 +11,8 @@ import potpie.cli.telemetry.product_analytics as product_analytics
 from potpie.cli.commands import _common, query
 from potpie.cli.telemetry.context import TelemetryContext
 from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
+from potpie_context_engine.core.agent_envelope import AgentEnvelope, EvidenceItem
+from potpie_context_engine.core.ports.agent_context import RecordReceipt
 from potpie_context_engine.outcomes import DomainError
 
 runner = CliRunner()
@@ -54,20 +56,25 @@ def _query_app() -> typer.Typer:
     return app
 
 
-def _envelope(*, item_count: int, confidence: str):
+def _envelope(*, item_count: int, confidence: str) -> AgentEnvelope:
     private_payload = {
         "fact": "private returned context from /Users/example/private-repo"
     }
-    return SimpleNamespace(
+    return AgentEnvelope(
         pot_id="private-pot-name",
         intent="feature",
         overall_confidence=confidence,
-        items=[
-            SimpleNamespace(include="architecture", score=0.9, payload=private_payload)
-            for _ in range(item_count)
-        ],
-        coverage=[],
-        unsupported_includes=[],
+        items=tuple(
+            EvidenceItem(
+                include="architecture",
+                candidate_key=f"claim:{index}",
+                score=0.9,
+                payload=private_payload,
+                coverage_status="complete",
+            )
+            for index in range(item_count)
+        ),
+        coverage=(),
     )
 
 
@@ -125,7 +132,10 @@ def test_non_activation_command_emits_no_activation_events(
     fake_sink: _FakeSink,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    receipt = SimpleNamespace(
+    receipt = RecordReceipt(
+        pot_id="private-pot-name",
+        record_type="fix",
+        accepted=True,
         status="recorded",
         record_id="private-record-id",
         mutations_applied=1,
