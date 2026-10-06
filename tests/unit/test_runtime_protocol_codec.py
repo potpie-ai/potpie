@@ -34,6 +34,8 @@ from potpie.runtime import (
     operation_catalog_fingerprint,
 )
 from potpie.runtime.operations import _type_schema
+from potpie_context_engine.core.graph_restore import RestorePlan
+from potpie_context_engine.requests import EngineRequest
 from potpie_context_engine import DomainError, Failure, Success
 from potpie_context_engine.core.agent_envelope import (
     AgentEnvelope,
@@ -299,3 +301,64 @@ def test_wire_schema_descriptor_changes_for_field_and_type_drift() -> None:
 
     assert _type_schema(FieldAdded) != original
     assert _type_schema(TypeChanged) != original
+
+
+def test_no_operation_request_can_carry_a_server_only_restore_type() -> None:
+    """Restore plans, records and previews are rebuilt and checked server-side.
+
+    A request type that could hold one would let a caller choose what a
+    rollback writes, so none may reference them, however deeply.
+    """
+    from potpie.runtime.operations import _server_only_types, request_wire_types
+
+    server_only = _server_only_types()
+    for operation, spec in ENGINE_OPERATION_CATALOG.items():
+        assert not request_wire_types(spec.request_type) & server_only, operation
+
+
+@dataclass(frozen=True, slots=True)
+class _SmugglingRequest(EngineRequest):
+    plans: tuple[RestorePlan, ...] = ()
+
+
+def test_the_wire_type_walk_sees_a_nested_restore_plan() -> None:
+    from potpie.runtime.operations import _server_only_types, request_wire_types
+
+    found = request_wire_types(_SmugglingRequest) & _server_only_types()
+
+    assert RestorePlan in found
+    assert {kind.__name__ for kind in found} >= {"RestoreRecord", "JournalRecord"}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"preview_id": "rollback-preview:1", "plan": {"records": []}},
+        {"preview_id": {"type": "RestorePlan", "value": {}}},
+        {
+            "preview_id": {
+                "__type__": "dataclass",
+                "class": "potpie_context_engine.core.graph_restore:RestorePlan",
+                "value": {},
+            }
+        },
+    ],
+)
+def test_restore_payloads_are_refused_by_the_typed_codec(payload) -> None:
+    from potpie_context_engine.requests import ApplyPreviewRequest
+
+    document = encode_request(
+        EngineOperationRequest(
+            protocol_version=PROTOCOL_VERSION,
+            request_id="apply-1",
+            operation=EngineOperation.APPLY_PREVIEW,
+            selector=ContextSelector(kind="explicit", value="context-a"),
+            payload=ApplyPreviewRequest(preview_id="rollback-preview:1"),
+        )
+    )
+    document["payload"] = payload
+
+    decoded = decode_request(document)
+
+    assert isinstance(decoded, Failure)
+    assert decoded.error.code == "operation_payload_malformed"

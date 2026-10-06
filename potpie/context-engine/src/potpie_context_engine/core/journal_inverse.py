@@ -32,14 +32,25 @@ from potpie_context_engine.core.journal_fields import (
 from potpie_context_engine.core.ontology import SYSTEM_EDGE_TYPES
 
 
+def protocols_enabled_for(definition: GraphDefinition) -> bool:
+    """Whether ``definition`` carries the opt-in protocol ontology extension."""
+
+    return "protocols" in definition.extensions
+
+
 def validate_state(
     records: Mapping[str, JournalRecord],
     *,
     pot_id: str,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
     resource_exists: Callable[[str], bool] | None = None,
+    protocols_enabled: bool = False,
 ) -> None:
-    """Validate exact restored state without ordinary upsert normalization."""
+    """Validate exact restored state without ordinary upsert normalization.
+
+    The protocol identity, scope and evidence checks belong to the opt-in
+    protocol extension and run only when ``protocols_enabled`` says it is on.
+    """
     entities, claims = {}, []
     for record_id, record in records.items():
         if record_id != record.record_id or record.pot_id != pot_id:
@@ -50,6 +61,8 @@ def validate_state(
             if record.logical_key in entities:
                 raise JournalError("ambiguous active entity incarnation")
             entities[record.logical_key] = record
+            if not protocols_enabled:
+                continue
             from potpie_context_engine.core.protocols import (
                 PREFIXES,
                 normalize_properties,
@@ -145,13 +158,7 @@ def validate_state(
                     predicate, source.logical_key, target.logical_key, properties
                 )
             )
-        from potpie_context_engine.core.protocols import PREFIXES
-
-        protocol_edge = any(
-            label in PREFIXES
-            for endpoint in (source, target)
-            for label in endpoint.fields.get("labels", ())
-        )
+        protocol_edge = protocols_enabled and _touches_protocol(source, target)
         if protocol_edge and not system_edge:
             if (
                 predicate not in {"DOCUMENTS", "AFFECTS"}
@@ -215,6 +222,16 @@ def validate_state(
         raise JournalError(
             "restored state violates current definition: " + "; ".join(errors[:8])
         )
+
+
+def _touches_protocol(*endpoints: JournalRecord) -> bool:
+    from potpie_context_engine.core.protocols import PREFIXES
+
+    return any(
+        label in PREFIXES
+        for endpoint in endpoints
+        for label in endpoint.fields.get("labels", ())
+    )
 
 
 def plan_inverse(

@@ -720,3 +720,27 @@ body {
   border-radius: 4px;
   padding: 0.05em 0.35em;
 }
+
+/* Keep navigation and the pot picker reachable in the narrow app panel. */
+@media (max-width: 1200px) {
+  .topbar { gap: 10px; }
+  .brand .title { font-size: 15px; }
+  .topbar-search { width: 160px; min-width: 100px; flex: 1; }
+  .topbar-spacer { display: none; }
+  .pot-select { max-width: 300px; min-width: 0; }
+  .pot-select select { min-width: 0; width: 100%; }
+}
+@media (max-width: 960px) {
+  .brand .title { display: none; }
+}
+@media (max-width: 760px) {
+  .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; height: auto; padding: 10px 12px; }
+  .brand { grid-column: 1; grid-row: 1; }
+  .viewtoggle { grid-column: 2; grid-row: 1; }
+  .viewtoggle button { padding: 0 10px; }
+  .topbar-search { grid-column: 1; grid-row: 2; width: 100%; }
+  .pot-select { grid-column: 2; grid-row: 2; max-width: 230px; }
+  .pot-select label { padding: 0 8px; font-size: 12px; }
+  .pot-select select { padding-left: 8px; font-size: 11px; }
+  .search-results { width: min(360px, calc(100vw - 24px)); }
+}
