@@ -123,7 +123,7 @@ def test_in_process_cli_invocations_share_install_and_daemon_session_ids(
     assert not (tmp_path / "context-home" / "telemetry" / "identity.json").exists()
 
 
-def test_cli_root_configures_sentry_errors_and_metrics_with_one_settings_load(
+def test_cli_root_configures_sentry_with_one_settings_load_and_no_eager_init(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
@@ -137,7 +137,7 @@ def test_cli_root_configures_sentry_errors_and_metrics_with_one_settings_load(
     )
     loaded: list[None] = []
     error_settings: list[SentrySettings] = []
-    metric_settings: list[SentrySettings] = []
+    metric_settings: list[tuple[SentrySettings, bool]] = []
     monkeypatch.setattr(
         "potpie.cli.telemetry.settings.load_sentry_settings",
         lambda: loaded.append(None) or settings,
@@ -148,7 +148,9 @@ def test_cli_root_configures_sentry_errors_and_metrics_with_one_settings_load(
     )
     monkeypatch.setattr(
         "potpie_context_engine.bootstrap.sentry_metrics_runtime.configure_metrics",
-        metric_settings.append,
+        lambda settings_arg, *, short_lived_process=False: metric_settings.append(
+            (settings_arg, short_lived_process)
+        ),
     )
     runner = CliRunner()
 
@@ -157,7 +159,9 @@ def test_cli_root_configures_sentry_errors_and_metrics_with_one_settings_load(
     assert result.exit_code == 0, result.output
     assert loaded == [None]
     assert error_settings == [settings]
-    assert metric_settings == [settings]
+    # The SDK is not initialised on the way in: metrics go to the telemetry
+    # spool, and only an unexpected error initialises it, lazily.
+    assert metric_settings == []
 
 
 def test_expected_contract_error_does_not_capture_sentry(
@@ -315,5 +319,7 @@ def _assert_metric_outcome(
     assert duration.value >= 0
     assert duration.unit == "millisecond"
     assert duration.attributes == count_call.attributes
-    assert fake_metrics.flush_calls == [2.0]
+    # Nothing flushes inside the command: the metrics are spooled and a
+    # detached flusher ships them after the command has answered.
+    assert fake_metrics.flush_calls == []
     assert set(duration.attributes).issubset(_SAFE_CLI_ATTRS)
