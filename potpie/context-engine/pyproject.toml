@@ -50,7 +50,7 @@ benchmarks = [
     "openai>=1.50.0",
 ]
 embeddings = [
-    "sentence-transformers>=5.1.2",
+    "sentence-transformers>=5.6.0",
 ]
 github = [
     "pygithub>=2.8.0",
@@ -135,13 +135,13 @@ constraint-dependencies = [
     "cryptography>=50.0.0",
     "gitpython>=3.1.58",
     "idna>=3.15",
-    "pyjwt>=2.13.0",
+    "pyjwt>=2.15.0",
     "pydantic-ai-slim>=1.106.0",
     "pydantic-settings>=2.14.2",
     "python-multipart>=0.0.28",
     "starlette>=1.3.1",
     "torch>=2.13.0",
-    "urllib3>=2.7.0",
+    "urllib3>=2.8.0",
     "httpx2>=2.12.0",
     "httpcore2>=2.10.0",
     "anyio>=4.14.2",
