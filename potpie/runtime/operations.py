@@ -37,6 +37,14 @@ from potpie_context_engine.requests import (
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    ResourceGetRequest,
+    ResourceImportRequest,
+    ResourceIndexBuildRequest,
+    ResourceIndexRebuildRequest,
+    ResourceIndexStatusRequest,
+    ResourceListRequest,
+    ResourceRmRequest,
+    ResourceStatusRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
@@ -69,6 +77,14 @@ from potpie_context_engine.results import (
     RepairResult,
     ResetContextResult,
     ResolveResult,
+    ResourceGetResult,
+    ResourceImportResult,
+    ResourceIndexBuildResult,
+    ResourceIndexRebuildResult,
+    ResourceIndexStatusResult,
+    ResourceListResult,
+    ResourceRmResult,
+    ResourceStatusResult,
     SearchEntitiesResult,
     SearchResult,
     SubmitArtifactResult,
@@ -107,6 +123,15 @@ class EngineOperation(StrEnum):
     SUBMIT_ARTIFACT = "submit_artifact"
     PROCESSING_STATUS = "processing_status"
     NUDGE = "nudge"
+    # Document resources: payload store + retrieval index.
+    RESOURCE_IMPORT = "resource_import"
+    RESOURCE_GET = "resource_get"
+    RESOURCE_LIST = "resource_list"
+    RESOURCE_RM = "resource_rm"
+    RESOURCE_STATUS = "resource_status"
+    RESOURCE_INDEX_STATUS = "resource_index_status"
+    RESOURCE_INDEX_BUILD = "resource_index_build"
+    RESOURCE_INDEX_REBUILD = "resource_index_rebuild"
 
 
 class DaemonControlOperation(StrEnum):
@@ -260,6 +285,58 @@ _SPECS = (
         _READ,
     ),
     OperationSpec(EngineOperation.NUDGE, NudgeRequest, NudgeResult, _WRITE),
+    # --- document resources ----------------------------------------------
+    # The store is pot-scoped and an import or removal also writes the graph
+    # (structure claims, retractions), so both are context mutations. Index
+    # build/rebuild touch only derived rows: they read the context (and so
+    # wait out an import) while holding the index rows they rewrite.
+    OperationSpec(
+        EngineOperation.RESOURCE_IMPORT,
+        ResourceImportRequest,
+        ResourceImportResult,
+        _WRITE,
+    ),
+    OperationSpec(
+        EngineOperation.RESOURCE_GET, ResourceGetRequest, ResourceGetResult, _READ
+    ),
+    OperationSpec(
+        EngineOperation.RESOURCE_LIST, ResourceListRequest, ResourceListResult, _READ
+    ),
+    OperationSpec(
+        EngineOperation.RESOURCE_RM,
+        ResourceRmRequest,
+        ResourceRmResult,
+        _WRITE,
+        destructive=True,
+    ),
+    OperationSpec(
+        EngineOperation.RESOURCE_STATUS,
+        ResourceStatusRequest,
+        ResourceStatusResult,
+        _READ,
+    ),
+    OperationSpec(
+        EngineOperation.RESOURCE_INDEX_STATUS,
+        ResourceIndexStatusRequest,
+        ResourceIndexStatusResult,
+        _READ,
+    ),
+    OperationSpec(
+        EngineOperation.RESOURCE_INDEX_BUILD,
+        ResourceIndexBuildRequest,
+        ResourceIndexBuildResult,
+        SafetyClass.SHARED_CONTEXT_READ_EXCLUSIVE_RESOURCE_WRITE,
+        resource_type="resource_index",
+        resource_identity_fields=("doc",),
+    ),
+    OperationSpec(
+        EngineOperation.RESOURCE_INDEX_REBUILD,
+        ResourceIndexRebuildRequest,
+        ResourceIndexRebuildResult,
+        SafetyClass.SHARED_CONTEXT_READ_EXCLUSIVE_RESOURCE_WRITE,
+        resource_type="resource_index",
+        resource_identity_fields=("doc",),
+    ),
 )
 
 if len({spec.operation for spec in _SPECS}) != len(_SPECS):

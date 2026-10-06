@@ -11,6 +11,6 @@ when health needs checking.
 
 Use `potpie-graph` for detailed read, write, identity, evidence, and reporting
 guidance. Use the task-specific skills for debugging, architecture, timelines,
-repository baselines, and source ingestion. Record only durable learnings, and
-show the exact Potpie commands behind an answer.
+repository baselines, source ingestion, and document formats. Record only
+durable learnings, and show the exact Potpie commands behind an answer.
 <!-- potpie-end -->

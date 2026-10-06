@@ -11,9 +11,14 @@ composition or define new agent tools through it.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
+from typing import TypeVar
 
-from potpie_context_engine.core.agent_context_port import normalize_context_intent
+from potpie_context_engine.core.agent_context_port import (
+    normalize_context_intent,
+    normalize_context_values,
+)
 from potpie_context_engine.core.agent_envelope import AgentEnvelope
 from potpie_context_engine.core.ports.agent_context import (
     RecordReceipt,
@@ -29,6 +34,8 @@ from potpie.pots.contracts import (
 )
 from potpie.skills.contracts import SkillManager
 
+_RequestT = TypeVar("_RequestT", ResolveRequest, SearchRequest)
+
 
 @dataclass(slots=True)
 class AgentContextService:
@@ -40,10 +47,10 @@ class AgentContextService:
     profile: str = "local"
 
     def resolve(self, request: ResolveRequest) -> AgentEnvelope:
-        return self.graph.resolve(request)
+        return self.graph.resolve(_with_document_includes(request))
 
     def search(self, request: SearchRequest) -> AgentEnvelope:
-        return self.graph.search(request)
+        return self.graph.search(_with_document_includes(request))
 
     def record(self, request: RecordRequest) -> RecordReceipt:
         return self.graph.record(request)
@@ -70,6 +77,28 @@ class AgentContextService:
             recommended_next_action=_next_action(active is not None, backend_ready),
             metadata={"intent": normalize_context_intent(request.intent)},
         )
+
+
+def _with_document_includes(request: _RequestT) -> _RequestT:
+    include = _document_includes(request.include)
+    if include == tuple(request.include):
+        return request
+    return dataclasses.replace(request, include=include)
+
+
+def _document_includes(include: tuple[str, ...]) -> tuple[str, ...]:
+    """The agent-facing ``docs`` filter searches section summaries *and* text.
+
+    ``docs`` alone answers from agent-written section summaries, so a phrase
+    that appears in a document but in no summary was unreachable through it.
+    Adding ``resources`` reaches the chunk text itself. Named graph views keep
+    their precise summary/passage split, and an explicit ``resources``-only
+    request stays text-only.
+    """
+    normalized = tuple(normalize_context_values(include))
+    if "docs" in normalized and "resources" not in normalized:
+        return (*normalized, "resources")
+    return tuple(include)
 
 
 def _data_plane_dict(dp) -> dict:

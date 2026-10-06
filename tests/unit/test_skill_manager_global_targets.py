@@ -21,13 +21,16 @@ from potpie.skills.catalog import RECOMMENDED_SKILL_IDS
 
 EXPECTED_CATALOG = {
     "potpie-change-timeline": "2",
-    "potpie-cli": "3",
-    "potpie-debug-memory": "2",
-    "potpie-graph": "6",
-    "potpie-infra-architecture": "2",
+    "potpie-cli": "4",
+    "potpie-debug-memory": "3",
+    "potpie-graph": "7",
+    "potpie-infra-architecture": "3",
     "potpie-project-preferences": "2",
     "potpie-repo-baseline": "2",
-    "potpie-source-ingestion": "2",
+    "potpie-resource-markdown": "1",
+    "potpie-resource-pdf": "1",
+    "potpie-resource-spreadsheet": "1",
+    "potpie-source-ingestion": "3",
 }
 
 

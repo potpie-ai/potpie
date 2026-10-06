@@ -99,6 +99,37 @@ class ResourceFacade:
     snapshot: GraphSnapshotPort | None = None
     journal: Any = None
 
+    @classmethod
+    def from_runtime(
+        cls,
+        runtime: Any,
+        *,
+        store: ResourceStorePort,
+        index: ResourceIndexPort | None = None,
+        drain: Any = None,
+    ) -> ResourceFacade:
+        """Compose the facade over an already-built ``GraphRuntime``.
+
+        The graph service, claim query, snapshot port and journal all come from
+        the runtime, so an embedding host never patches them onto the facade
+        afterwards. ``store`` and ``index`` must be the instances given to
+        ``build_graph_runtime(resource_store=..., resource_index=...)``: the
+        read trunk answers the ``resources`` family from that index, and one
+        instance is what makes an import visible to the very next search.
+        ``drain`` is the host's ``ResourceIndexDrain`` (or ``None``), which the
+        facade only signals; starting and stopping it stays with the host.
+        """
+        backend = runtime.backend
+        return cls(
+            store=store,
+            graph=runtime.graph,
+            claims=backend.claim_query,
+            index=index,
+            drain=drain,
+            snapshot=backend.snapshot,
+            journal=getattr(backend, "journal", None),
+        )
+
     def export_snapshot(self, *, pot_id: str) -> dict[str, Any]:
         """Export graph and document revisions as one portable bundle."""
         from .snapshot_archive import export_archive
@@ -130,9 +161,9 @@ class ResourceFacade:
         Bytes first, deliberately: there is no transaction across the stores,
         and a failed graph write leaves orphan files the next import
         overwrites, whereas the reverse order would leave live claims citing
-        chunks that do not exist. The index comes last for the same reason one
-        step further — it is the only one of the three that can be recomputed
-        from the others.
+        chunks that do not exist. The index is written right after the bytes,
+        before the graph: it is the only one of the three that can be
+        recomputed from the others, so a failure there never fails the import.
         """
         from .protocol_resources import protect_protocol_source
 
