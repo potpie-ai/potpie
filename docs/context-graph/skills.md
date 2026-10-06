@@ -141,14 +141,20 @@ run. **There is no top-level `potpie install`** — skills install only via
 
 | Skill | Ver | Role |
 |---|---|---|
-| `potpie-cli` | v3 | The `potpie` command itself: pot-scope resolution order, harness-led boundaries. |
-| **`potpie-graph`** | **v6** | **THE contract skill** — one shared discovery pass, the read → resolve → record or propose/commit → inbox → quality loop, ontology selection, truth classes, retrieval-grade descriptions, reporting the commands behind an answer, and "Responding To Nudges". Teaches `potpie record` for one fix or note and **propose/commit** for everything else (never the legacy `graph mutate`). |
+| `potpie-cli` | v4 | The `potpie` command itself: pot-scope resolution order, harness-led boundaries. |
+| **`potpie-graph`** | **v7** | **THE contract skill** — one shared discovery pass, the read → resolve → record or propose/commit → inbox → quality loop, ontology selection, truth classes, retrieval-grade descriptions, reporting the commands behind an answer, and "Responding To Nudges". Teaches `potpie record` for one fix or note and **propose/commit** for everything else (never the legacy `graph mutate`). |
 | `potpie-repo-baseline` | v2 | Deep repo-baseline mode: source priority, evidence matrix, canonical entity families with `PROVIDES` / `IMPLEMENTED_IN`. |
-| `potpie-source-ingestion` | v2 | Todo-driven, phased (0–8) ingestion of a repo/PR/ticket/doc; parallel read-only subagents; GitHub/Linear/Jira hydrated via the agent's **own** integration tools (explicitly *not* Potpie connector queueing) → evidence matrix → identity resolution → propose/commit `--verify` → quality gate. |
+| `potpie-source-ingestion` | v3 | Todo-driven, phased (0–8) ingestion of a repo/PR/ticket/doc; parallel read-only subagents; GitHub/Linear/Jira hydrated via the agent's **own** integration tools (explicitly *not* Potpie connector queueing) → evidence matrix → identity resolution → propose/commit `--verify` → quality gate. |
 | `potpie-project-preferences` | v2 | Use-case read+record skill (preferences). |
-| `potpie-infra-architecture` | v2 | Use-case read+record skill (infra/topology). |
+| `potpie-infra-architecture` | v3 | Use-case read+record skill (infra/topology). |
 | `potpie-change-timeline` | v2 | Use-case read+record skill (recent changes). |
-| `potpie-debug-memory` | v2 | Use-case read+record skill (prior bugs/fixes). |
+| `potpie-debug-memory` | v3 | Use-case read+record skill (prior bugs/fixes). |
+
+Three per-format skills handle document payloads: `potpie-resource-pdf`,
+`potpie-resource-spreadsheet` and `potpie-resource-markdown` (v1 each). Each
+teaches the agent to write an extraction script that emits a chunk directory,
+import it with `potpie resource import`, summarize its sections, and link the
+document to what it covers; see [`resources.md`](./resources.md).
 
 The four use-case skills share one shape: a **Fast Path** read, an **Apply
 Results** step, a **Report Back** step (the exact commands behind the answer,
@@ -157,7 +163,7 @@ CLI.
 
 ---
 
-## 4. `potpie-graph` v6 — the taught read/write loop
+## 4. `potpie-graph` v7 — the taught read/write loop
 
 This is the contract skill: it points the agent at the *live* catalog rather than
 baking the ontology into prose. The discipline it teaches (full read mechanics in

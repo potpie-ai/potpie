@@ -236,12 +236,19 @@ def row_in_anchor_set(row: ClaimRow, anchor_keys: Iterable[str]) -> bool:
 
 
 _PATH_SCOPE_KEYS = ("file_path", "path")
+# The graph-read default for an explicit ``--query`` when the caller names no
+# threshold. It is a filter knob, not a calibrated relevance: claim similarity
+# comes from the backend's embedder, whose scale is that model's own, so a
+# caller who knows their embedder passes ``--query-threshold``. Calibrated
+# relevance (bands, blending) is gated on
+# ``core.ports.resource_index.CALIBRATED_EMBEDDING_MODELS`` instead.
 QUERY_SIMILARITY_THRESHOLD = 0.70
 
 # Keep a row only while it scores at least this fraction of the pool's best
 # match. 0.5 was chosen against the measured corpus: it keeps every hit an
 # adversarial verifier judged correct, and drops the flat tail that made a
-# 12-hit result set span 0.02 of final score.
+# 12-hit result set span 0.02 of final score. Being relative to the pool's own
+# best, it holds whatever scale the embedder produces.
 RELEVANCE_FLOOR_FRACTION = 0.5
 # Absolute floor for a pool where nothing matched at all.
 RELEVANCE_FLOOR_MINIMUM = 0.05

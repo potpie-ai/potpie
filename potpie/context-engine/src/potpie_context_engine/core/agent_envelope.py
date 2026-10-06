@@ -311,6 +311,12 @@ def _bound_evidence_payload(
 #: Measured on the 202-question retrieval benchmark (190 answerable + 12
 #: labelled unanswerable, MiniLM-L6 over a 316-chunk corpus): 50.0% of
 #: answerable queries clear this, against 1 of 12 unanswerable.
+#:
+#: Applies only to a family that reports ``best_relevance``, which a resource
+#: index does only when its embedder's model is in
+#: ``core.ports.resource_index.CALIBRATED_EMBEDDING_MODELS`` (the model these
+#: bands were measured on). Every other embedder reports ``None`` and the
+#: envelope's confidence falls back to coverage alone.
 RELEVANCE_CONFIDENCE_HIGH = 0.50
 
 #: Below this the evidence is called ``low``. Same measurement: it captures

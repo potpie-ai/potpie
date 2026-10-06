@@ -26,7 +26,7 @@ class PotInfo:
     active: bool = False
     #: Terminal lifecycle state, enforced rather than decorative: an archived
     #: pot cannot be selected, renamed, written to, or routed to, and archiving
-    #: cleared its graph state.
+    #: cleared its graph state and stored documents.
     archived: bool = False
     created_at: datetime | None = None
     #: Only meaningful on a ``create_pot`` answer. ``create`` reuses a live pot
@@ -109,7 +109,8 @@ class PotManagementService(Protocol):
 
     def archive_pot(self, *, ref: str) -> PotInfo:
         """Retire a live pot. Archived pots drop out of ref resolution and the
-        repo→pot index; callers clear the pot's graph state first."""
+        repo→pot index; callers clear the pot's graph state and stored
+        documents first."""
         ...
 
     # --- sources ------------------------------------------------------------

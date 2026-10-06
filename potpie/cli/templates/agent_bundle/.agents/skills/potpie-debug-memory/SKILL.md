@@ -1,6 +1,6 @@
 ---
 name: potpie-debug-memory
-version: "2"
+version: "3"
 description: "Use while debugging or troubleshooting failures, flaky tests, incidents, production alerts, CI failures, local dev setup issues, repeated bugs, prior fixes, failed attempts, and verification history."
 ---
 
@@ -28,14 +28,15 @@ reads prior bugs, infra and the timeline:
 potpie resolve "<symptom in the user's words, plus the exact error text>" --intent debugging
 ```
 
-Runbooks and their recovery steps are recorded as documents and notes, which
+Runbooks and their recovery steps live in ingested documents and notes, which
 `prior_occurrences` never returns. Choose the includes for the initial resolve
 call rather than running both resolve examples. If it lacks document evidence,
-read the matching documents:
+read a matching section, then fetch returned chunk IDs in one batched call:
 
 ```bash
 potpie resolve "<symptom>" --include prior_bugs,docs,timeline
 potpie graph read --subgraph knowledge --view document_context --query "<symptom>" --limit 5
+potpie resource get potpie://res/<doc>/<section>/0000 --with-neighbors
 ```
 
 Go to the named view only when `resolve` is thin. Expand the query there with
@@ -50,8 +51,8 @@ potpie graph read --subgraph debugging --view prior_occurrences --query "<expand
 If no service is known, omit `--scope`. Pass `--pot <name-or-id>` once a
 header has named the pot. Read infra (`service_neighborhood --depth 2
 --direction both`, no `--environment`) only if the cause is still open. Once
-keys are available, run needed focused reads concurrently. Stop expanding when
-evidence is sufficient for the investigation.
+keys and chunk IDs are available, run needed focused reads and resource fetches
+concurrently. Stop expanding when evidence is sufficient for the investigation.
 
 ## Apply Results
 

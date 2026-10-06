@@ -315,6 +315,7 @@ def test_root_and_engine_service_groups_remain_separated() -> None:
         "ingestion_events",
         "nudge",
         "pots",
+        "resources",
     }
     assert root_fields.isdisjoint(
         {"agent_context", "graph", "graph_workbench", "nudge"}

@@ -322,6 +322,10 @@ def get_engine_client(explicit_pot: str | None = None, *, runtime: Any | None = 
     runtime = runtime if runtime is not None else get_runtime()
     from potpie.runtime.composition import LocalRuntimeComposition
 
+    if isinstance(runtime, LocalRuntimeComposition):
+        # This process now serves engine operations itself, so it also drains
+        # pending resource embeddings while it lives (idempotent).
+        runtime.start_background_work()
     engine_services = (
         runtime.engine if isinstance(runtime, LocalRuntimeComposition) else runtime
     )
