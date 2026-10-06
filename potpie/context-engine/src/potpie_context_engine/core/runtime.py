@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
 import importlib
 import inspect
 import logging
+import threading
+from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
+from potpie_context_engine.core.commit_service import (
+    GraphCommitService,
+    GraphCommitSurface,
+)
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
@@ -86,7 +92,31 @@ class _MutationPortBridge:
     """Protocol-visible facade for a sync or async mutation port."""
 
     def __init__(self, target: Any) -> None:
+        self._target = target
         self._bridge = _SyncAsyncBridge(target)
+
+    @property
+    def atomic_mutations_supported(self) -> bool:
+        value = getattr(self._target, "atomic_mutations_supported", None)
+        if callable(value):
+            value = value()
+        if value is not None:
+            return bool(value)
+        return callable(getattr(self._target, "current_version", None)) and callable(
+            getattr(self._target, "compare_and_apply", None)
+        )
+
+    def current_version(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("current_version", *args, **kwargs)
+
+    async def current_version_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("current_version", *args, **kwargs)
+
+    def compare_and_apply(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("compare_and_apply", *args, **kwargs)
+
+    async def compare_and_apply_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("compare_and_apply", *args, **kwargs)
 
     def apply(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("apply", *args, **kwargs)
@@ -141,6 +171,18 @@ class _ClaimQueryPortBridge:
 
     async def entity_labels_async(self, *args: Any, **kwargs: Any) -> Any:
         return await self._bridge.call_async("entity_labels", *args, **kwargs)
+
+    def entity_properties_many(self, *, pot_id, entity_keys):
+        if callable(getattr(self._target, "entity_properties_many", None)) or callable(
+            getattr(self._target, "entity_properties_many_async", None)
+        ):
+            return self._bridge.call(
+                "entity_properties_many", pot_id=pot_id, entity_keys=entity_keys
+            )
+        return {
+            key: self.entity_properties(pot_id=pot_id, entity_key=key)
+            for key in entity_keys
+        }
 
     def entity_properties(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("entity_properties", *args, **kwargs)
@@ -222,6 +264,18 @@ class _SnapshotPortBridge:
     def __init__(self, target: Any) -> None:
         self._bridge = _SyncAsyncBridge(target)
 
+    def export_data(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("export_data", *args, **kwargs)
+
+    async def export_data_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("export_data", *args, **kwargs)
+
+    def import_data(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("import_data", *args, **kwargs)
+
+    async def import_data_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("import_data", *args, **kwargs)
+
     def export(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("export", *args, **kwargs)
 
@@ -264,6 +318,55 @@ class _StoreBridge:
 
 class _PlanStoreBridge(_StoreBridge):
     """Plan-store facade including the atomic commit-state transition."""
+
+    def __init__(self, target: Any) -> None:
+        super().__init__(target)
+        self._reservation_lock = threading.RLock()
+
+    def reserve_idempotency(self, *args: Any, **kwargs: Any) -> Any:
+        if callable(getattr(self._bridge._target, "reserve_idempotency", None)):
+            return self._bridge.call("reserve_idempotency", *args, **kwargs)
+        record = kwargs["record"]
+        idempotency_key = kwargs["idempotency_key"]
+        request_fingerprint = kwargs["request_fingerprint"]
+        with self._reservation_lock:
+            for existing in self.list(pot_id=record.pot_id):
+                key = str(
+                    existing.original_payload.get("idempotency_key") or ""
+                ).strip()
+                if key != idempotency_key or not existing.reserves_idempotency:
+                    continue
+                from potpie_context_engine.core.workbench_service import (
+                    _request_fingerprint,
+                )
+
+                if (
+                    _request_fingerprint(existing.original_payload)
+                    != request_fingerprint
+                ):
+                    raise ValueError(
+                        f"idempotency_key {idempotency_key!r} is already bound to "
+                        f"plan {existing.plan_id!r} with different content"
+                    )
+                if existing.status not in {"conflict", "error", "expired"}:
+                    return existing, False
+            self.save(record)
+            return record, True
+
+    async def reserve_idempotency_async(self, *args: Any, **kwargs: Any) -> Any:
+        # Use the same compatibility reservation when the store predates this
+        # capability; directly forwarding would bypass the fallback above.
+        return await asyncio.to_thread(self.reserve_idempotency, *args, **kwargs)
+
+    def compare_and_set(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("compare_and_set", *args, **kwargs)
+
+    async def compare_and_set_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("compare_and_set", *args, **kwargs)
+
+
+class _InboxStoreBridge(_StoreBridge):
+    """Inbox-store facade including the atomic claim transition."""
 
     def compare_and_set(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("compare_and_set", *args, **kwargs)
@@ -317,10 +420,14 @@ class _BackendBridge:
     def snapshot(self) -> _SnapshotPortBridge:
         return self._snapshot
 
+    @property
+    def journal(self):
+        return getattr(self._backend, "journal", None)
+
     def capabilities(self) -> Any:
         return self._backend.capabilities()
 
-    def bind_definition(self, definition: GraphDefinition) -> "_BackendBridge":
+    def bind_definition(self, definition: GraphDefinition) -> _BackendBridge:
         return _BackendBridge(self._backend.bind_definition(definition))
 
 
@@ -336,7 +443,7 @@ class NoOpGraphObserver:
 
 
 @dataclass(frozen=True, slots=True)
-class GraphRuntime:
+class GraphRuntime(GraphCommitSurface):
     """One fully wired graph runtime sharing one definition and policy."""
 
     backend: GraphBackend
@@ -348,6 +455,8 @@ class GraphRuntime:
     observability: GraphObserver
     graph: Any
     workbench: GraphWorkbenchService
+    commit_mirror: Any = None
+    commit_service: Any = None
 
     def _notify(self, event: str, fields: Mapping[str, Any]) -> None:
         try:
@@ -415,8 +524,20 @@ class GraphRuntime:
         )
         return result
 
-    def propose(self, payload, *, pot_id: str, ttl_seconds: int | None = None):
-        result = self.workbench.propose(payload, pot_id=pot_id, ttl_seconds=ttl_seconds)
+    def propose(
+        self,
+        payload,
+        *,
+        pot_id: str,
+        ttl_seconds: int | None = None,
+        approved_by: str | None = None,
+    ):
+        result = self.workbench.propose(
+            payload,
+            pot_id=pot_id,
+            ttl_seconds=ttl_seconds,
+            approved_by=approved_by,
+        )
         self._notify(
             "graph.propose",
             {
@@ -436,6 +557,7 @@ class GraphRuntime:
         approved_by: str | None = None,
         verify: bool = False,
         recover_stale: bool = False,
+        defer_verification: bool = False,
     ):
         result = self.workbench.commit(
             plan_id,
@@ -443,6 +565,7 @@ class GraphRuntime:
             approved_by=approved_by,
             verify=verify,
             recover_stale=recover_stale,
+            defer_verification=defer_verification,
         )
         self._notify(
             "graph.commit",
@@ -455,6 +578,12 @@ class GraphRuntime:
             },
         )
         return result
+
+    def commit_status(self, plan_id: str, *, pot_id: str):
+        return self.workbench.commit_status(plan_id, pot_id=pot_id)
+
+    def verify_commit(self, plan_id: str, *, pot_id: str):
+        return self.workbench.verify_commit(plan_id, pot_id=pot_id)
 
     def history(self, **kwargs):
         return self.workbench.history(**kwargs)
@@ -530,7 +659,12 @@ class GraphRuntime:
         return result
 
     async def propose_async(
-        self, payload, *, pot_id: str, ttl_seconds: int | None = None
+        self,
+        payload,
+        *,
+        pot_id: str,
+        ttl_seconds: int | None = None,
+        approved_by: str | None = None,
     ):
         result = await _async_call(
             self.workbench,
@@ -538,6 +672,7 @@ class GraphRuntime:
             payload,
             pot_id=pot_id,
             ttl_seconds=ttl_seconds,
+            approved_by=approved_by,
         )
         self._notify(
             "graph.propose",
@@ -558,6 +693,7 @@ class GraphRuntime:
         approved_by: str | None = None,
         verify: bool = False,
         recover_stale: bool = False,
+        defer_verification: bool = False,
     ):
         result = await _async_call(
             self.workbench,
@@ -567,6 +703,7 @@ class GraphRuntime:
             approved_by=approved_by,
             verify=verify,
             recover_stale=recover_stale,
+            defer_verification=defer_verification,
         )
         self._notify(
             "graph.commit",
@@ -579,6 +716,16 @@ class GraphRuntime:
             },
         )
         return result
+
+    async def commit_status_async(self, plan_id: str, *, pot_id: str):
+        return await _async_call(
+            self.workbench, "commit_status", plan_id, pot_id=pot_id
+        )
+
+    async def verify_commit_async(self, plan_id: str, *, pot_id: str):
+        return await _async_call(
+            self.workbench, "verify_commit", plan_id, pot_id=pot_id
+        )
 
     async def history_async(self, **kwargs):
         return await _async_call(self.workbench, "history", **kwargs)
@@ -636,8 +783,23 @@ def build_graph_runtime(
     policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY,
     observability: GraphObserver | None = None,
     reconciliation_config: ReconciliationConfig | None = None,
+    resource_index: Any = None,
+    resource_store: Any = None,
+    commit_mirror: Any = None,
+    preview_store: Any = None,
+    commit_host: str = "local",
+    commit_actor: Any = None,
+    commit_authorize: Any = None,
 ) -> GraphRuntime:
-    """Validate composition and return the single supported graph runtime."""
+    """Validate composition and return the single supported graph runtime.
+
+    ``resource_index`` is a ``ResourceIndexPort`` backing the ``resources``
+    include family. It is optional and unvalidated on purpose: a runtime
+    composed without a document store (an ingestion pipeline, a test) is a
+    legitimate deployment, and the read trunk substitutes a fail-closed profile
+    that answers ``match_mode="disabled"`` rather than dropping the family from
+    the advertised contract.
+    """
 
     if not isinstance(definition, GraphDefinition):
         raise RuntimeCompositionError("definition must be a GraphDefinition")
@@ -692,7 +854,12 @@ def build_graph_runtime(
     )
     if inbox_store is not None:
         _require_sync_or_async_methods(
-            inbox_store, "inbox_store", ("save", "get", "list")
+            inbox_store,
+            "inbox_store",
+            # ``compare_and_set`` backs the claim lease: without it two workers
+            # can hold the same inbox item, so a store that cannot swap
+            # atomically is rejected at build rather than at claim time.
+            ("save", "get", "compare_and_set", "list"),
         )
     observer = observability or NoOpGraphObserver()
     _require_methods(observer, "observability", ("observe",))
@@ -704,14 +871,26 @@ def build_graph_runtime(
             "potpie-context-engine is required to build the default graph "
             "implementation"
         ) from exc
+    if resource_store is not None and hasattr(backend, "resource_exists"):
+        from potpie_context_engine.core.ports.resource_store import ResourceStoreError
+
+        def resource_exists(pot_id: str, ref: str) -> bool:
+            try:
+                return (
+                    len(resource_store.get_many(pot_id=pot_id, resource_ids=(ref,)))
+                    == 1
+                )
+            except ResourceStoreError:
+                return False
+
+        backend.resource_exists = resource_exists
+        # The reference mutation adapter holds its own injected callback.
+        if hasattr(backend.mutation, "resource_exists"):
+            backend.mutation.resource_exists = resource_exists
     runtime_backend = _BackendBridge(backend)
     runtime_plan_store = _PlanStoreBridge(plan_store)
-    runtime_inbox_store = _StoreBridge(inbox_store) if inbox_store is not None else None
-    graph = composition.build_graph_service(
-        backend=runtime_backend,
-        definition=definition,
-        policy=policy,
-        reconciliation_config=reconciliation,
+    runtime_inbox_store = (
+        _InboxStoreBridge(inbox_store) if inbox_store is not None else None
     )
     workbench = GraphWorkbenchService(
         backend=runtime_backend,
@@ -721,6 +900,30 @@ def build_graph_runtime(
         policy=policy,
         reconciliation_config=reconciliation,
     )
+    graph = composition.build_graph_service(
+        backend=runtime_backend,
+        record_workbench=workbench,
+        definition=definition,
+        policy=policy,
+        reconciliation_config=reconciliation,
+        resource_index=resource_index,
+        **({"resource_store": resource_store} if resource_store is not None else {}),
+    )
+    import getpass
+
+    async def local_authorize(pot_id, access):
+        if access not in {"read", "write", "admin"}:
+            raise ValueError("unknown commit access")
+
+    commits = GraphCommitService(
+        journal=runtime_backend.journal,
+        mirror=commit_mirror,
+        previews=preview_store,
+        host=commit_host,
+        actor=commit_actor or (lambda: "local:" + getpass.getuser()),
+        authorize=commit_authorize or local_authorize,
+    )
+    workbench.commit_service = commits
     return GraphRuntime(
         backend=runtime_backend,
         plan_store=runtime_plan_store,
@@ -731,6 +934,8 @@ def build_graph_runtime(
         observability=observer,
         graph=graph,
         workbench=workbench,
+        commit_mirror=commit_mirror,
+        commit_service=commits,
     )
 
 

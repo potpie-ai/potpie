@@ -13,7 +13,8 @@ Two directions (see the plan's event→nudge map):
   ranked, deduped context (the agent gets context whether or not it asked).
 - **instruction**: inject a short "consider recording X" directive on a strong
   signal (a red→green test, end of task); the in-session agent decides truth
-  class, resolves identity, and calls ``graph mutate`` — never an auto-write.
+  class, resolves identity, and writes through ``graph propose`` +
+  ``graph commit --verify`` — never an auto-write.
 
 This module owns only declarative policy + DTOs (no IO, no model). The
 :class:`~potpie_context_engine.application.services.nudge_service.NudgeService` executes it.
@@ -146,21 +147,24 @@ NUDGE_POLICIES: dict[str, NudgePolicy] = {
         direction=NudgeDirection.instruction,
         instruction=(
             "You just turned a failing test green. If the bug + fix is non-obvious, "
-            "capture it so a future searcher recalls it: call `potpie graph mutate` "
-            "with an assert_claim REPRODUCES (the bug pattern) and a RESOLVED (the "
-            "fix), each with a retrieval-grade description — symptoms, synonyms, and "
-            "scope a future query would use, not display text."
+            "capture it so a future searcher recalls it: write a mutation with an "
+            "assert_claim REPRODUCES (the bug pattern) and a RESOLVED (the fix), each "
+            "with a retrieval-grade description — symptoms, synonyms, and scope a "
+            "future query would use, not display text — then `potpie graph propose "
+            "--file <mutation.json> --json` and `potpie graph commit <plan_id> "
+            "--verify --json`."
         ),
     ),
     NudgeEvent.stop.value: NudgePolicy(
         event=NudgeEvent.stop.value,
         direction=NudgeDirection.instruction,
         instruction=(
-            "End of task. Capture durable learnings as graph claims via "
-            "`potpie graph mutate`: new preferences (POLICY_APPLIES_TO), decisions "
-            "(DECIDED), and fixes (RESOLVED). Decide the truth class, resolve entity "
-            "identity with `graph search-entities` first, and write descriptions for "
-            "retrieval, not display."
+            "End of task. Capture durable learnings as graph claims: new preferences "
+            "(POLICY_APPLIES_TO), decisions (DECIDED), and fixes (RESOLVED). Decide "
+            "the truth class, resolve entity identity with `graph search-entities` "
+            "first, write descriptions for retrieval rather than display, then "
+            "`potpie graph propose --file <mutation.json> --json` and "
+            "`potpie graph commit <plan_id> --verify --json`."
         ),
     ),
 }

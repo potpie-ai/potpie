@@ -20,6 +20,20 @@ class GraphInboxStorePort(Protocol):
         """Return one inbox item for a pot, if present."""
         ...
 
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool:
+        """Replace ``expected`` with ``replacement`` only if it is unchanged.
+
+        This is what makes a claim a claim: two workers reading the same
+        pending item both write, and without an atomic swap both believe they
+        own it. Returns ``False`` when the stored item has moved on.
+        """
+        ...
+
     def list(
         self,
         *,
@@ -43,6 +57,13 @@ class AsyncGraphInboxStorePort(Protocol):
     async def get_async(
         self, *, pot_id: str, item_id: str
     ) -> GraphInboxItem | None: ...
+
+    async def compare_and_set_async(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool: ...
 
     async def list_async(
         self,

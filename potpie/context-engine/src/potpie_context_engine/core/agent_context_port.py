@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
+from potpie_context_engine.core.definition_query import definition_subject
 from potpie_context_engine.core.ontology import (
     PUBLIC_RECORD_TYPES,
     advertised_include_families,
@@ -26,6 +28,7 @@ from potpie_context_engine.core.ontology import (
 
 CONTEXT_INTENTS: frozenset[str] = frozenset(
     {
+        "definition",
         "feature",
         "debugging",
         "review",
@@ -60,6 +63,13 @@ READER_BACKED_INCLUDES: frozenset[str] = frozenset(
         "decisions",
         "owners",
         "docs",
+        # Document payloads, served by ResourcesReader over the resource index
+        # rather than by the claim store. Always registered, even where no
+        # index is configured: the ``none`` profile answers zero hits with
+        # ``match_mode="disabled"``, which is a *labeled* degradation, whereas
+        # moving the key in and out of this set with the deployment would make
+        # the family look unimplemented and trip the coherence check.
+        "resources",
         # Visualization read: the full canonical subgraph (all RELATES_TO,
         # incl. generic RELATED_TO). Backed by RawGraphReader; used by the
         # graph explorer, not an agent use-case family.
@@ -78,6 +88,7 @@ PLANNED_INCLUDES: frozenset[str] = CONTEXT_INCLUDE_VALUES - READER_BACKED_INCLUD
 FALLBACK_ONLY_INCLUDES: frozenset[str] = PLANNED_INCLUDES
 
 DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
+    "definition": ("docs", "resources", "features", "infra_topology"),
     "feature": (
         "coding_preferences",
         "features",
@@ -90,15 +101,33 @@ DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
     "review": ("coding_preferences", "decisions", "timeline", "owners"),
     "operations": ("infra_topology", "timeline", "owners"),
     "planning": ("infra_topology", "decisions", "timeline", "docs"),
-    "docs": ("docs", "decisions"),
+    # Both halves of a document: ``docs`` says which one covers the topic and
+    # what we wrote about it, ``resources`` returns the passage that says it.
+    "docs": ("docs", "resources", "decisions"),
     "onboarding": ("infra_topology", "coding_preferences", "docs", "owners"),
     "refactor": ("infra_topology", "coding_preferences", "timeline"),
     "test": ("coding_preferences", "timeline"),
     "security": ("infra_topology", "prior_bugs", "decisions"),
-    "unknown": ("infra_topology", "timeline", "decisions"),
+    # ``unknown`` is what bare ``potpie search`` resolves to, so it is the one
+    # intent that must not be narrow: an agent searching a phrase it read in a
+    # document gets nothing back if ``docs`` is absent, with no hint that an
+    # include would have found it. ``resources`` is here for the sharper form
+    # of the same problem — a phrase that appears in the document but in no
+    # section summary is unreachable through ``docs`` at any depth, so a bare
+    # search would report "not found" about text the pot demonstrably holds.
+    # Cross-include demotion in the envelope builder is what keeps a document
+    # corpus from crowding out project memory here.
+    "unknown": ("infra_topology", "timeline", "decisions", "docs", "resources"),
 }
 
 CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {
+    "definition": {
+        "intent": "definition",
+        "include": list(DEFAULT_INTENT_INCLUDES["definition"]),
+        "mode": "fast",
+        "source_policy": "references_only",
+        "when": "When looking up an acronym expansion and its supporting documentation.",
+    },
     "feature": {
         "intent": "feature",
         "include": list(DEFAULT_INTENT_INCLUDES["feature"]),
@@ -182,6 +211,121 @@ CONTEXT_RESOLVE_RECIPES: dict[str, dict[str, Any]] = {
 def normalize_context_intent(intent: str | None) -> str:
     value = (intent or "unknown").strip().lower()
     return value if value in CONTEXT_INTENTS else "unknown"
+
+
+# Task-text signals that pick an intent when the caller did not name one.
+# Ordered by precedence: the first family with a hit wins, so a task that
+# says "why did checkout break after the deploy changed" is ``debugging``,
+# not ``operations`` — the symptom words are the stronger evidence of what
+# the agent is about to do. Every signal is matched as a whole word (or a
+# whole phrase), case-insensitively, so "error" does not fire on "terror"
+# and "when" does not fire on "whenever". Both inflections that matter are
+# listed rather than stemmed, which keeps the table readable as a contract.
+INTENT_SIGNALS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "debugging",
+        (
+            "why",
+            "broken",
+            "broke",
+            "breaks",
+            "stale",
+            "failing",
+            "fails",
+            "failed",
+            "failure",
+            "error",
+            "errors",
+            "exception",
+            "500",
+            "regress",
+            "regressed",
+            "regression",
+            "incident",
+            "outage",
+            "crash",
+            "crashes",
+            "crashed",
+            "bug",
+            "flaky",
+            "timeout",
+            "timeouts",
+            "not working",
+            "doesn't work",
+            "does not work",
+        ),
+    ),
+    (
+        "operations",
+        (
+            "when",
+            "changed",
+            "recent",
+            "recently",
+            "since",
+            "history",
+            "who changed",
+            "what changed",
+            "last week",
+            "yesterday",
+        ),
+    ),
+    (
+        "docs",
+        (
+            "how do i",
+            "how do we",
+            "how to",
+            "where is",
+            "documented",
+            "documentation",
+            "docs",
+            "runbook",
+            "guide",
+            "spec",
+        ),
+    ),
+)
+
+_INTENT_SIGNAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (
+        intent,
+        re.compile(
+            r"(?<![a-z0-9])(?:"
+            + "|".join(re.escape(signal) for signal in signals)
+            + r")(?![a-z0-9])"
+        ),
+    )
+    for intent, signals in INTENT_SIGNALS
+)
+
+
+def infer_context_intent(task: str | None) -> str:
+    """The intent a task string implies, when the caller did not name one.
+
+    ``resolve`` used to default to ``feature``, whose families
+    (``coding_preferences``, ``features``, ``infra_topology``, ``decisions``,
+    ``owners``, ``docs``) contain neither ``prior_bugs`` nor ``timeline`` — so
+    "why is stock stale" came back with nothing about the incident that
+    answered it, and the agent paid for a second call with ``--intent
+    debugging`` to learn what the first call could have said. The task text
+    was the tell all along.
+
+    Returns ``unknown`` — the broadest family set — for an empty task, since
+    there is nothing to infer from and narrowing on no evidence would be
+    worse than the old default. A task with no recognised signal is
+    ``feature``, the intent most work is. An explicit intent always wins;
+    this is only consulted when none was given.
+    """
+    text = (task or "").strip().lower()
+    if not text:
+        return "unknown"
+    if definition_subject(text):
+        return "definition"
+    for intent, pattern in _INTENT_SIGNAL_PATTERNS:
+        if pattern.search(text):
+            return intent
+    return "feature"
 
 
 def normalize_context_values(values: list[str] | tuple[str, ...] | None) -> list[str]:

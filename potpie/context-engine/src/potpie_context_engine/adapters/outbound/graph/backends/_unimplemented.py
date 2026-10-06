@@ -145,6 +145,14 @@ class UnimplementedAnalytics:
 class UnimplementedSnapshot:
     profile: str
 
+    def export_data(self, *, pot_id: str) -> Mapping[str, Any]:
+        return _raise(self.profile, "snapshot", "export_data")
+
+    def import_data(
+        self, *, pot_id: str, payload: Mapping[str, Any]
+    ) -> SnapshotManifest:
+        return _raise(self.profile, "snapshot", "import_data")
+
     def export(self, *, pot_id: str, destination: str) -> SnapshotManifest:
         return _raise(self.profile, "snapshot", "export")
 

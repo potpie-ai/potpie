@@ -68,6 +68,14 @@ class HashingEmbedder:
     dimensions: int = _DEFAULT_DIMENSIONS
     name: str = "local-hashing-v1"
 
+    calibrated: bool = False
+    """Its cosine ranks, but does not measure meaning — see ``EmbedderPort``.
+
+    Feature hashing projects lexical overlap through random signs, so two
+    passages that say the same thing in different words are not near each other
+    and the *magnitude* carries almost no signal. Measured: blending this
+    cosine into resource relevance costs 0.047 top-1 against ignoring it."""
+
     def __post_init__(self) -> None:
         # A non-positive dimension would crash at runtime (modulo-by-zero in
         # ``_bucket`` for 0, negative indexing for <0); reject it up front.
@@ -98,6 +106,11 @@ class SentenceTransformerEmbedder:
     @property
     def name(self) -> str:
         return f"sentence-transformers/{self.model_name}"
+
+    @property
+    def calibrated(self) -> bool:
+        """A trained sentence encoder: its cosine is evidence, not just order."""
+        return True
 
     @property
     def dimensions(self) -> int:
@@ -337,11 +350,26 @@ def configured_embedding_model(*, include_env: bool = True) -> str:
     return DEFAULT_SENTENCE_TRANSFORMER_MODEL
 
 
+#: Env override for where sentence-transformer weights are cached.
+#:
+#: Named once, here, because two things resolve it: this module at build time,
+#: and ``setup`` when it records the location in ``config.json``. A second copy
+#: of the name is how ``config list`` came to advertise a path the runtime was
+#: not using.
+EMBEDDING_CACHE_ENV = "CONTEXT_ENGINE_EMBEDDING_CACHE"
+
+
+def embedding_cache_override() -> str | None:
+    """The env-configured cache location, if any — the one that wins at runtime."""
+    raw = (os.getenv(EMBEDDING_CACHE_ENV) or "").strip()
+    return raw or None
+
+
 def default_sentence_transformer_cache(*, include_env: bool = True) -> str:
     if include_env:
-        raw = (os.getenv("CONTEXT_ENGINE_EMBEDDING_CACHE") or "").strip()
-        if raw:
-            return raw
+        override = embedding_cache_override()
+        if override:
+            return override
     config = _local_config()
     raw = config.get("embedding_cache")
     if isinstance(raw, str) and raw.strip():
@@ -395,6 +423,7 @@ def _default_home() -> Path:
 
 __all__ = [
     "DEFAULT_SENTENCE_TRANSFORMER_MODEL",
+    "EMBEDDING_CACHE_ENV",
     "HashingEmbedder",
     "SEMANTIC_EMBEDDER_ALIASES",
     "SentenceTransformerEmbedder",
@@ -402,4 +431,5 @@ __all__ = [
     "configured_embedder_choice",
     "configured_embedding_model",
     "default_sentence_transformer_cache",
+    "embedding_cache_override",
 ]

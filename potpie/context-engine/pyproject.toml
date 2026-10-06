@@ -17,6 +17,15 @@ classifiers = ["Typing :: Typed"]
 # require any of them.
 dependencies = [
     "pydantic>=2.0",
+    # The resource index's default profile (sqlite_hybrid) scores vectors with
+    # this. A base dependency rather than an extra because retrieval over
+    # imported documents is part of the graph API's behaviour, not an optional
+    # delivery surface — and because a silently-lexical default would be
+    # indistinguishable from a working one until recall was measured. It is a
+    # small prebuilt wheel with no transitive deps; FTS5 comes from the stdlib.
+    # Loading is still probed at runtime: a CPython built without
+    # ``enable_load_extension`` degrades to lexical *and says so*.
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.optional-dependencies]
@@ -27,16 +36,21 @@ http = [
     "starlette>=1.3.1",
     "uvicorn[standard]>=0.32.0",
 ]
+# The embedded local graph store. falkordblite publishes no Windows wheel, and
+# an extra that installs the client, redis and hiredis but not the server it
+# exists to embed is three-quarters of a backend that then fails at first use
+# with advice to install the extra it came from. So the whole extra is marked:
+# on Windows `potpie[local]` installs nothing and the writer says why.
 local = [
-    "falkordb>=1.6.1",
+    "falkordb>=1.6.1; platform_system != 'Windows'",
     # Default CLI backend is FalkorDBLite on Python 3.12+.
-    "falkordblite>=0.10.0; python_version >= '3.12'",
+    "falkordblite>=0.10.0; python_version >= '3.12' and platform_system != 'Windows'",
     # redis 8 enables maintenance notifications that break FalkorDBLite's
     # hostless embedded connection; keep the bound wherever falkordblite ships.
-    "redis>=7.1,<8; python_version >= '3.12'",
+    "redis>=7.1,<8; python_version >= '3.12' and platform_system != 'Windows'",
     # Without hiredis, redis-py parses RESP replies element-by-element in pure
     # Python — graph reads spend seconds in the parser on large result sets.
-    "hiredis>=3.0.0; python_version >= '3.12'",
+    "hiredis>=3.0.0; python_version >= '3.12' and platform_system != 'Windows'",
 ]
 neo4j = [
     "neo4j>=5.28.0",

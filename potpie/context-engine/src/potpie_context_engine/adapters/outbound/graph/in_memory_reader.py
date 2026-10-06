@@ -16,13 +16,17 @@ silent stub.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from typing import Any
+
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
 
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
+    claim_is_applicable,
     embedding_score,
 )
-from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
+
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.retrieval_card import (
     build_retrieval_card,
@@ -69,14 +73,39 @@ class InMemoryClaimQueryStore:
         bucket = self.entity_property_index.setdefault((pot_id, entity_key), {})
         bucket.update({k: v for k, v in properties.items()})
 
+    def entity_properties_many(
+        self, *, pot_id: str, entity_keys: Iterable[str]
+    ) -> dict[str, dict[str, Any]]:
+        return {
+            key: self.entity_properties(pot_id=pot_id, entity_key=key)
+            for key in entity_keys
+        }
+
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
-        return dict(self.entity_property_index.get((pot_id, entity_key), {}))
+        properties = self.entity_property_index.get((pot_id, entity_key), {})
+        return {} if properties.get("retired", False) else dict(properties)
 
     # ------------------------------------------------------------------
     # ClaimQueryPort
     # ------------------------------------------------------------------
     def find_claims(self, filter_: ClaimQueryFilter) -> list[ClaimRow]:
-        candidates = [row for row in self.rows if row.pot_id == filter_.pot_id]
+        candidates = [
+            row
+            for row in self.rows
+            if row.pot_id == filter_.pot_id
+            and (
+                filter_.include_retired
+                or (
+                    not row.retired
+                    and not self.entity_property_index.get(
+                        (row.pot_id, row.subject_key), {}
+                    ).get("retired", False)
+                    and not self.entity_property_index.get(
+                        (row.pot_id, row.object_key), {}
+                    ).get("retired", False)
+                )
+            )
+        ]
         candidates = [row for row in candidates if _matches_filter(row, filter_, self)]
 
         if filter_.fact_query:
@@ -92,7 +121,9 @@ class InMemoryClaimQueryStore:
         out: dict[str, tuple[str, ...]] = {}
         for key in entity_keys:
             labels = self.entity_label_index.get((pot_id, key))
-            if labels:
+            if labels and not self.entity_property_index.get((pot_id, key), {}).get(
+                "retired", False
+            ):
                 out[key] = labels
         return out
 
@@ -157,6 +188,8 @@ def _matches_filter(
         return False
     if filter_.subgraph_in and row.subgraph not in filter_.subgraph_in:
         return False
+    if filter_.subgraph_not_in and row.subgraph in filter_.subgraph_not_in:
+        return False
     if filter_.mutation_id_in and row.mutation_id not in filter_.mutation_id_in:
         return False
     if filter_.source_ref_in and not _row_matches_source_refs(
@@ -165,7 +198,58 @@ def _matches_filter(
         return False
     if filter_.source_system_in and row.source_system not in filter_.source_system_in:
         return False
-    if not filter_.include_invalidated and row.invalid_at is not None:
+    if filter_.exact_text_in:
+        haystack = " ".join(
+            str(value)
+            for value in (
+                row.subject_key,
+                row.object_key,
+                row.claim_key,
+                row.fact,
+                row.description,
+                row.source_ref,
+                row.source_refs,
+                row.properties,
+            )
+            if value is not None
+        ).lower()
+        if not any(needle.lower() in haystack for needle in filter_.exact_text_in):
+            return False
+    if filter_.exact_text_pattern:
+        import re
+
+        haystack = " ".join(
+            str(value)
+            for value in (
+                row.subject_key,
+                row.object_key,
+                row.claim_key,
+                row.fact,
+                row.description,
+                row.source_ref,
+                row.source_refs,
+                row.properties,
+            )
+            if value is not None
+        ).lower()
+        if re.fullmatch(filter_.exact_text_pattern, haystack) is None:
+            return False
+    if filter_.environment_in and (row.environment or "").lower() not in {
+        value.lower() for value in filter_.environment_in
+    }:
+        return False
+    if filter_.truth_in and (row.truth or "").lower() not in {
+        value.lower() for value in filter_.truth_in
+    }:
+        return False
+    if filter_.endpoint_label:
+        subject_labels = store.entity_label_index.get((row.pot_id, row.subject_key), ())
+        object_labels = store.entity_label_index.get((row.pot_id, row.object_key), ())
+        if filter_.endpoint_label not in (*subject_labels, *object_labels):
+            return False
+    if not filter_.include_invalidated and not claim_is_applicable(
+        row, as_of=filter_.as_of
+    ):
         return False
     if filter_.valid_at_after and (
         row.valid_at is None or row.valid_at < filter_.valid_at_after
@@ -174,8 +258,6 @@ def _matches_filter(
     if filter_.valid_at_before and (
         row.valid_at is not None and row.valid_at > filter_.valid_at_before
     ):
-        return False
-    if filter_.as_of and row.valid_at is not None and row.valid_at > filter_.as_of:
         return False
     if filter_.subject_label:
         labels = store.entity_label_index.get((row.pot_id, row.subject_key), ())

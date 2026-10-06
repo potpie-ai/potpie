@@ -113,7 +113,13 @@ def test_instruction_events_return_directive_without_reading(event: str) -> None
     svc, reader, _ = _svc()
     res = svc.nudge(GraphNudgeRequest(pot_id=POT, event=event, session_id="s1"))
     assert res.ok and not res.silent
-    assert res.instruction and "graph mutate" in res.instruction
+    assert res.instruction
+    # The directive must name the current write flow. `graph mutate` is the
+    # legacy transition command: it skips the plan/approval/verify path the
+    # workbench is built around, so a nudge must never send an agent there.
+    assert "graph propose" in res.instruction
+    assert "graph commit" in res.instruction
+    assert "graph mutate" not in res.instruction
     assert res.inject_context is None
     assert reader.requests == []  # instruction direction never reads
 
