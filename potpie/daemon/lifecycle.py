@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import os
-import signal
 import socket
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -24,7 +25,15 @@ from potpie.daemon.discovery import (
     write_daemon_discovery,
     write_daemon_pid,
 )
+from potpie.daemon.log_reader import (
+    DEFAULT_LOG_TAIL_LINES,
+    FOLLOW_POLL_SECONDS,
+    follow_log,
+    read_log_tail,
+)
+from potpie.daemon.process_liveness import pid_alive as _pid_alive
 from potpie.runtime.controller import (
+    WINDOWS_DAEMON_CREATIONFLAGS,
     DaemonBootSpec,
     DaemonController,
     DaemonLaunchSpec,
@@ -56,34 +65,14 @@ class DaemonStopError(Exception):
         self.error = error
 
 
-def _pid_alive(pid: int) -> bool:
-    try:
-        waited_pid, _status = os.waitpid(pid, os.WNOHANG)
-    except OSError:
-        # A daemon launched by another CLI process is not our child. Retain the
-        # signal probe for that normal cross-process observation path.
-        pass
-    else:
-        # ``kill(pid, 0)`` still succeeds for an exited child that is a zombie
-        # on POSIX. Reap that child before deciding whether its PID is live.
-        if waited_pid == pid:
-            return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # EPERM means the process exists but this user cannot signal it. Treat
-        # that as live so status/start cannot mistake a cross-user process for
-        # a stale PID and attempt runtime-record cleanup.
-        return True
-    except OSError:
-        return False
-    return True
-
-
 class _RecordedDaemonProcess:
-    """Process handle for a child created by an earlier CLI invocation."""
+    """Process handle for a child created by an earlier CLI invocation.
+
+    It is observed, never signalled: the controller uses operating-system
+    termination only on a child it created itself (DAEMON-052, ADR-0012), so
+    ``terminate`` and ``kill`` refuse rather than act on a recorded PID that
+    may since have been reused.
+    """
 
     def __init__(self, pid: int, *, poll_interval_s: float = 0.05) -> None:
         self._pid = pid
@@ -107,10 +96,16 @@ class _RecordedDaemonProcess:
         return self._returncode
 
     def terminate(self) -> None:
-        os.kill(self._pid, signal.SIGTERM)
+        self._refuse_signal()
 
     def kill(self) -> None:
-        os.kill(self._pid, signal.SIGKILL)
+        self._refuse_signal()
+
+    def _refuse_signal(self) -> None:
+        raise PermissionError(
+            f"refusing to signal recorded daemon pid {self._pid}: only a "
+            "directly owned child may be terminated"
+        )
 
 
 @dataclass
@@ -126,6 +121,13 @@ class Daemon:
         default=None, init=False, repr=False
     )
     _pending_instance_id: str | None = field(default=None, init=False, repr=False)
+    _pending_observer: DaemonObserver | None = field(
+        default=None, init=False, repr=False
+    )
+    #: The PID recorded for the daemon ``_controller`` drives. For a daemon
+    #: this invocation started it is the PID the daemon reported for itself,
+    #: which differs from the launched PID under a Windows venv redirector.
+    _controller_daemon_pid: int | None = field(default=None, init=False, repr=False)
 
     def discovery(self) -> dict[str, object] | None:
         """Return the single canonical daemon discovery document."""
@@ -195,10 +197,43 @@ class Daemon:
             **({"backend": status["backend"]} if "backend" in status else {}),
         }
 
-    def logs(self, *, follow: bool = False) -> list[str]:
-        del follow
-        controller = self._controller or self._new_controller(backend=None)
-        return controller.logs()
+    def log_path(self) -> Path | None:
+        """The daemon log file, or ``None`` while the daemon has written none."""
+
+        for path in self._log_paths():
+            if path.exists():
+                return path
+        return None
+
+    def logs(
+        self,
+        *,
+        tail: int | None = DEFAULT_LOG_TAIL_LINES,
+        since: datetime | None = None,
+    ) -> list[str]:
+        """The last ``tail`` lines of the daemon log, newest last.
+
+        ``tail=None`` reads the whole file; ``since`` keeps lines at or after
+        that local wall-clock time.
+        """
+
+        path = self.log_path()
+        if path is None:
+            return []
+        return read_log_tail(path, tail=tail, since=since)
+
+    def follow_logs(
+        self,
+        *,
+        tail: int | None = DEFAULT_LOG_TAIL_LINES,
+        since: datetime | None = None,
+        poll_interval: float = FOLLOW_POLL_SECONDS,
+    ) -> Iterator[str]:
+        """Yield the log tail, then each line appended after it, until closed."""
+
+        return follow_log(
+            self.log_path, tail=tail, since=since, poll_interval=poll_interval
+        )
 
     def ensure(self, plan: SetupPlan | None = None) -> StepResult:
         if self.in_process:
@@ -250,23 +285,27 @@ class Daemon:
             self._run(controller.stop())
             self._cleanup_runtime_records()
             raise DaemonStartError("daemon boot identity was not retained")
+        daemon_pid = (
+            self._served_daemon_pid(instance_id=instance_id) or outcome.value.pid
+        )
         discovery = canonical_discovery(
             home=self.home,
             instance_id=instance_id,
-            pid=outcome.value.pid,
+            pid=daemon_pid,
             endpoint=endpoint,
         )
         try:
-            write_daemon_pid(self.home, outcome.value.pid)
+            write_daemon_pid(self.home, daemon_pid)
             write_daemon_discovery(self.home, discovery)
         except Exception:
             self._run(controller.stop())
             self._cleanup_runtime_records()
             raise
         self._controller = controller
+        self._controller_daemon_pid = daemon_pid
         status = self.status()
         return {
-            "pid": outcome.value.pid,
+            "pid": daemon_pid,
             "socket": endpoint.display,
             "bind": f"{endpoint.kind}:{endpoint.display}",
             "url": status.get("url", ""),
@@ -346,11 +385,36 @@ class Daemon:
             boot_factory=lambda: self._boot_spec(backend=backend),
             readiness_timeout_s=self.startup_timeout_s,
             stop_timeout_s=10.0,
-            log_paths=(
-                self.home / "logs" / "potpied.log",
-                self.home / "daemon.log",
-            ),
+            log_paths=self._log_paths(),
         )
+
+    def _log_paths(self) -> tuple[Path, ...]:
+        return (self.home / "logs" / "potpied.log", self.home / "daemon.log")
+
+    def _served_daemon_pid(self, *, instance_id: str) -> int | None:
+        """The PID the freshly started daemon reports for itself, if it says.
+
+        The launched PID is not always the daemon: in a Windows virtual
+        environment ``python.exe`` is a redirector that starts the real
+        interpreter as its own child, so the launched PID names the redirector.
+        The daemon's own cleanup matches its ``os.getpid()``, and liveness must
+        watch the process that serves, so the records carry the PID the
+        authenticated daemon reports. The launched PID stays the fallback.
+        """
+
+        observer = self._pending_observer
+        if observer is None:
+            return None
+        try:
+            served = self._run(observer.status())
+        except Exception:  # noqa: BLE001 - the launched PID is a safe fallback
+            return None
+        if not isinstance(served, Success):
+            return None
+        status = served.value
+        if status.instance_id != instance_id or status.pid <= 0:
+            return None
+        return status.pid
 
     def _controller_for_existing(
         self,
@@ -358,8 +422,13 @@ class Daemon:
         *,
         observer: DaemonObserver,
     ) -> DaemonController:
-        if self._controller is not None and self._controller.pid == pid:
-            return self._controller
+        current = self._controller
+        if (
+            current is not None
+            and current.pid is not None
+            and pid in (current.pid, self._controller_daemon_pid)
+        ):
+            return current
         controller = self._new_controller(backend=None)
         self._run(
             controller.attach(
@@ -369,6 +438,7 @@ class Daemon:
             )
         )
         self._controller = controller
+        self._controller_daemon_pid = pid
         return controller
 
     def _connection_for_pid(self, pid: int):
@@ -396,8 +466,14 @@ class Daemon:
         instance_id = str(uuid4())
         endpoint = select_runtime_endpoint(self.home, instance_id=instance_id)
         bearer_token = generate_bearer_token()
+        observer = DaemonObserver(
+            endpoint=endpoint,
+            bearer_token=bearer_token,
+            expected_instance_id=instance_id,
+        )
         self._pending_endpoint = endpoint
         self._pending_instance_id = instance_id
+        self._pending_observer = observer
         return DaemonBootSpec(
             launch=self._launch_spec(
                 backend=backend,
@@ -406,11 +482,7 @@ class Daemon:
                 ui_port=_available_loopback_port(),
                 bearer_token=bearer_token,
             ),
-            observer=DaemonObserver(
-                endpoint=endpoint,
-                bearer_token=bearer_token,
-                expected_instance_id=instance_id,
-            ),
+            observer=observer,
         )
 
     def _launch_spec(
@@ -448,6 +520,7 @@ class Daemon:
             command=(sys.executable, "-m", "potpie.daemon"),
             environment=environment,
             log_path=self.home / "logs" / "potpied.log",
+            creationflags=_daemon_creationflags(),
         )
 
     def _recorded_pid(self) -> int | None:
@@ -529,6 +602,12 @@ def _served_build(status: DaemonStatusResult) -> dict[str, Any]:
         "build": build,
         "stale": build_info.build_is_stale(build),
     }
+
+
+def _daemon_creationflags() -> int:
+    """Windows creation flags for the daemon child; POSIX uses a new session."""
+
+    return WINDOWS_DAEMON_CREATIONFLAGS if os.name == "nt" else 0
 
 
 def _available_loopback_port() -> int:

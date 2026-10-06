@@ -28,6 +28,7 @@ import atexit
 import json
 import logging
 import os
+import platform
 import time
 from typing import Any, Callable, Coroutine, TypeVar
 
@@ -45,7 +46,10 @@ from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
 )
-from potpie_context_engine.core.errors import GraphSubstrateUnavailable
+from potpie_context_engine.core.errors import (
+    CapabilityNotImplemented,
+    GraphSubstrateUnavailable,
+)
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -187,7 +191,21 @@ def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
 
         return FalkorDB.from_url(url).select_graph(name)
     # Lite (default): embedded FalkorDBLite over a local file — no server.
-    from redislite.falkordb_client import FalkorDB as LiteFalkorDB
+    try:
+        from redislite.falkordb_client import FalkorDB as LiteFalkorDB
+    except ModuleNotFoundError as exc:
+        # Matched on the module name only: any other import failure inside the
+        # driver is a bug, and packaging advice would hide it.
+        if exc.name not in {"redislite", "redislite.falkordb_client"}:
+            raise
+        raise CapabilityNotImplemented(
+            "graph.falkordb_lite.embedded_store",
+            detail=(
+                "the falkordb_lite backend needs FalkorDBLite (the 'redislite' "
+                "module), which this installation does not have"
+            ),
+            recommended_next_action=_local_extra_next_action(),
+        ) from exc
 
     path = settings.falkordb_lite_path()
     parent = os.path.dirname(path)
@@ -458,6 +476,29 @@ def _ensure_lite_durability(db: Any, path: str) -> None:
             _aof_dir(path),
             exc,
         )
+
+
+def _local_extra_next_action(system: str | None = None) -> str:
+    """The repair for a missing FalkorDBLite, which depends on the platform.
+
+    The ``local`` extra skips FalkorDBLite on Windows because no Windows build
+    of it exists, so telling a Windows user to install that extra sends them
+    in a circle.
+    """
+
+    if (system or platform.system()) == "Windows":
+        return (
+            "FalkorDBLite publishes no Windows build, so the falkordb_lite "
+            "backend cannot run here: set CONTEXT_ENGINE_BACKEND=embedded for "
+            "the file-backed local backend, or run FalkorDB as a server "
+            "(CONTEXT_ENGINE_FALKORDB_MODE=server and CONTEXT_ENGINE_FALKORDB_URL)"
+        )
+    return (
+        "install the embedded store with "
+        "`pip install 'potpie-context-engine[local]'` (FalkorDBLite ships "
+        "wheels for macOS and for Linux with glibc 2.39 or newer), or set "
+        "CONTEXT_ENGINE_BACKEND=embedded for the file-backed local backend"
+    )
 
 
 class FalkorDBGraphProvider:

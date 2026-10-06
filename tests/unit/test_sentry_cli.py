@@ -109,8 +109,12 @@ def test_in_process_cli_invocations_share_install_and_daemon_session_ids(
     second = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
     second_ctx = current_telemetry_context()
 
-    assert first.exit_code == 0, first.stdout
-    assert second.exit_code == 0, second.stdout
+    # `daemon status` is a vehicle here, not the subject: this asserts about
+    # telemetry identity. No daemon runs against this home, and that is now a
+    # `daemon_unavailable` at EXIT_UNAVAILABLE -- the command still ran and still
+    # emitted, which is all this test needs of it.
+    assert first.exit_code == _common.EXIT_UNAVAILABLE, first.stdout
+    assert second.exit_code == _common.EXIT_UNAVAILABLE, second.stdout
     assert first_ctx is not None
     assert second_ctx is not None
     assert first_ctx.anonymous_install_id == second_ctx.anonymous_install_id
@@ -128,6 +132,7 @@ def test_cli_root_configures_sentry_with_one_settings_load_and_no_eager_init(
     tmp_path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "context-home"))
     settings = SentrySettings(
         enabled=True,
         dsn="https://public@example.invalid/1",
@@ -156,7 +161,9 @@ def test_cli_root_configures_sentry_with_one_settings_load_and_no_eager_init(
 
     result = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
 
-    assert result.exit_code == 0, result.output
+    # See above: the probe reports no daemon at EXIT_UNAVAILABLE. What is under
+    # test is that the root callback loaded settings exactly once on the way in.
+    assert result.exit_code == _common.EXIT_UNAVAILABLE, result.output
     assert loaded == [None]
     assert error_settings == [settings]
     # The SDK is not initialised on the way in: metrics go to the telemetry
@@ -291,13 +298,17 @@ def test_cli_telemetry_identity_write_failure_is_nonfatal(
     xdg_file = tmp_path / "not-a-directory"
     xdg_file.write_text("not a directory", encoding="utf-8")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_file))
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "context-home"))
     install_id = load_anonymous_install_id()
     runner = CliRunner()
 
     result = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
 
     assert install_id.startswith("install_")
-    assert result.exit_code == 0, result.output
+    # Non-fatal means "the command still answered", not "it answered yes": the
+    # probe reports no daemon at EXIT_UNAVAILABLE, and the identity write
+    # failure adds nothing to that.
+    assert result.exit_code == _common.EXIT_UNAVAILABLE, result.output
     assert "NotADirectoryError" not in result.output
 
 
