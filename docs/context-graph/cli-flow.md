@@ -116,9 +116,9 @@ The V1 agent wrappers (`resolve`/`search`/`record`) and `status` ride the same
 graph internals as the workbench; they are not a "legacy V1 surface waiting on V2."
 
 ```bash
-potpie resolve <task> [--intent feature] [--include <csv>] [--mode fast|balanced|verify|deep] [--pot <ref>]
-potpie search  <query> [--include <csv>] [--pot <ref>]
-potpie record  --type <kind> --summary <text> [--scope <k:v>] [--pot <ref>]
+potpie resolve <task> [--intent <name>] [--include <csv>] [--mode fast|balanced|verify|deep] [--limit 12] [--pot <ref>]
+potpie search  <query> [--intent <name>] [--include <csv>] [--limit 12] [--pot <ref>]
+potpie record  --type <kind> --summary <text> [--detail <k=v> ...] [--scope <k:v>] [--pot <ref>]
 potpie status  [--intent <name>] [--harness claude] [--pot <ref>]
 
 potpie setup   [--repo .] [--pot default] [--agent claude] [--backend <profile>] \
@@ -128,6 +128,7 @@ potpie whoami
 potpie use     <ref> [--local | --managed]
 potpie config  get <key>
 potpie config  set <key> <value>
+potpie config  unset <key>
 potpie login   [--api-key/-k <key>] [--url/-u <url>]
 potpie logout
 potpie ui      [--open/--no-open] [--pot <ref>]

@@ -319,6 +319,7 @@ class LocalEngineOperations:
                     mode=request.mode,
                     source_policy=request.source_policy,
                     max_items=request.max_items,
+                    intent=request.intent,
                     metadata=request.metadata,
                 )
             )

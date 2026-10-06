@@ -1,6 +1,6 @@
 ---
 name: potpie-cli
-version: "3"
+version: "4"
 description: "Use when the task is centered on running, explaining, configuring, or troubleshooting the `potpie` command: doctor, login, pot management, source registration, resolve/search/record, graph workbench reads/writes, and pot scope behavior."
 ---
 
@@ -45,8 +45,9 @@ potpie source add repo <owner/repo> --pot <pot>
 ```
 
 `login` takes flags, not a positional key. `potpie status` is the one health
-check: daemon, pot, backend readiness and claim counts in a few lines; `doctor`
-adds the install, the backend's capabilities and the repo → pot mapping.
+check: daemon, pot, backend readiness, claim counts and open quality findings
+in a few lines; `doctor` adds the install, the backend's capabilities and the
+repo → pot mapping.
 
 Pot scope for `graph …`, `resolve`, `search` and `record` resolves in this
 order:
@@ -82,9 +83,10 @@ scans; for a repo, `.` or `current` registers the checkout you are in.
 potpie status
 potpie resolve "<task>"
 potpie resolve "<task>" --intent debugging --include prior_bugs,docs,timeline
-potpie search "query" --include docs
-potpie --json search "query" --include decisions,features
-potpie record --type fix --summary "<symptom → fix>" --scope service:<name>
+potpie search "query"
+potpie --json search "query"
+potpie search "query" --include decisions,features
+potpie record --type decision --summary "<the decision>" --detail rationale="<why>" --scope service:<name>
 ```
 
 Use one shared discovery pass across skills: run `resolve` concurrently with
@@ -97,18 +99,19 @@ focused views; those follow-ups can run concurrently once inputs are known.
 Stop when evidence and constraints are covered. Load the relevant use-case
 skills together; do not repeat resolve for each skill.
 
-`resolve` is the broad discovery read: it reads the families of `--intent`
-(default `feature`; the intent is not inferred from the task text, so pass
-`debugging` for a failure or `operations` for what changed) and returns a
-bounded envelope of `[family] fact` rows. `search` is the follow-up for a known
-phrase; its query is positional — there is no `--query`. Bare, it reads only
-infra, timeline and decisions, so name the family you want with `--include`
-(`--include docs` for a document phrase). An unknown include name comes back as
-`unknown_include`. `confidence` in either header is not a verdict; a small pot
-reads `low` with the right rows on top. `record` is the one-call write for a
-fix or a free-form note (`workflow`, `service_note`, `runbook_note`, …): it
-takes `--type`, `--summary` and `--scope` only, so a decision, preference, bug
-pattern or verification goes through `graph mutation-template` and a plan.
+`resolve` is the broad discovery read: the intent is inferred from the task
+text when `--intent` is omitted, and the reply is a bounded envelope of
+`subject PREDICATE object · fact` rows across families with a `+N more` footer.
+`search` is the follow-up for a known phrase; its query is positional — there
+is no `--query`. Bare search is broad (`--include docs` narrows it to document
+sections) and infers the definition intent for acronym questions. Unknown
+include names are errors. `--help` lists both vocabularies. `confidence` in
+either header is coverage, not a verdict; a small pot reads `low` with the
+right rows on top. `record` is the one-call write for a fix, decision,
+preference, bug pattern or verification; `--type` help names the `--detail`
+keys each type requires, and a repeated `--detail` key builds a list. A
+free-form note (`workflow`, `service_note`, `runbook_note`, …) takes a summary
+and any `--detail`.
 
 ## Graph Workbench
 
@@ -126,7 +129,8 @@ potpie --json graph quality summary
 One rule for `--json`: text for reads, `--json` for `propose`, `commit`, and
 anything a script parses. `catalog --task` does not narrow the catalog. Before
 ingestion, `graph catalog --profile full` exposes all public entity types with
-their identity policy, predicates, and allowed endpoints; `--profile read`
+their identity policy and descriptions, predicates, and allowed endpoints;
+`--profile read`
 stays compact for read-view discovery. Use the full ontology and the selection
 guidance in `potpie-graph` before choosing a write shape. `describe --examples`
 prints its examples only with `--json` and carries read examples only; the

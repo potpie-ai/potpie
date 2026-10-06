@@ -1801,14 +1801,20 @@ def test_graph_read_include_guess_error_carries_did_you_mean() -> None:
     )
 
 
-def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
+def test_graph_read_rejects_conflicting_fully_qualified_view_before_service_call() -> (
+    None
+):
+    # A qualified --view that names a *different* subgraph than --subgraph is
+    # a conflict: both targets are named and nothing is read. (An agreeing or
+    # absent --subgraph is an exact alias and executes once; see
+    # test_read_adjustments_cli.py.)
     _common.set_json(True)
     graph_service = _Graph()
     _common.set_runtime(_Host(graph_service))
 
     result = CliRunner().invoke(
         graph.graph_app,
-        ["read", "--subgraph", "debugging", "--view", "debugging.prior_occurrences"],
+        ["read", "--subgraph", "decisions", "--view", "debugging.prior_occurrences"],
     )
 
     assert result.exit_code == 1
@@ -1816,7 +1822,11 @@ def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
     emitted = json.loads(result.output)
     _assert_graph_envelope(emitted, "graph.read", ok=False)
     assert emitted["error"]["code"] == "validation_error"
-    assert "--subgraph <name> --view <view>" in emitted["error"]["message"]
+    assert "'debugging'" in emitted["error"]["message"]
+    assert "'decisions'" in emitted["error"]["message"]
+    assert emitted["recommended_next_action"] == (
+        "potpie graph read --subgraph debugging --view prior_occurrences"
+    )
 
 
 def _timeline_env() -> GraphReadResult:
@@ -2192,6 +2202,7 @@ def test_graph_catalog_read_profile_returns_compact_contract() -> None:
         "required_any_scope",
         "supported_filters",
         "next_read",
+        "next_read_is_template",
     }
     assert body["task_ranking"][0]["rank"] == 1
     assert "reason" in body["task_ranking"][0]
@@ -2209,7 +2220,7 @@ def test_graph_catalog_table_format_uses_compact_human_output() -> None:
 
     assert result.exit_code == 0
     assert "graph catalog profile=read" in result.output
-    assert "view | backed | filters" in result.output
+    assert "view | backed | requires | filters" in result.output
 
 
 def test_graph_catalog_table_format_shows_task_ranking_context() -> None:
@@ -2458,9 +2469,15 @@ def test_graph_describe_returns_executable_view_contract() -> None:
     assert body["view"]["result_shape"] == "entity_relations"
     assert "REPRODUCES" in body["view"]["inline_relations"]
     assert body["view"]["examples"][0]["command"].startswith("potpie graph read")
-    assert (
-        emitted["recommended_next_action"]
-        == "Use `potpie graph read --subgraph debugging --view prior_occurrences --json` after choosing a scope."
+    # Examples are authored in the ontology and are templates: their scope
+    # values are illustrative, and they say so.
+    assert body["view"]["examples"][0]["template"] is True
+    # The next read is templated over the view's own selector rule
+    # (prior_occurrences needs one of query/service/repo), instead of a bare
+    # command that fails on the missing selector.
+    assert emitted["recommended_next_action"] == (
+        "Fill the placeholders, then run `potpie graph read --subgraph debugging "
+        "--view prior_occurrences --query '<query>' --json`."
     )
     # The CLI is a thin client: the contract must be answered through the
     # service request, never a CLI-local domain call.
@@ -2611,3 +2628,585 @@ def test_timeline_recent_table_format() -> None:
     output = _plain_cli_output(result.output)
     assert "occurred_at |" in output
     assert "--- | ---" in output
+
+
+# --- adjusted, bounded and truthful reads --------------------------------------
+
+
+def _non_timeline_env() -> GraphReadResult:
+    return GraphReadResult(
+        graph_contract_version="v1.5",
+        ontology_version="2026-06-graph",
+        view="infra_topology.service_neighborhood",
+        subgraph="infra_topology",
+        read_shape="entity_relations",
+        coverage=(
+            {"view": "infra_topology.service_neighborhood", "status": "complete"},
+        ),
+        quality={"status": "ok"},
+        items=(
+            {
+                "entity_key": "service:payments-api",
+                "entity_type": "Service",
+                "score": 0.8,
+                "summary": "payments API",
+                "source_refs": ["repo:manifest"],
+                "relations": [
+                    {
+                        "predicate": "DEPENDS_ON",
+                        "from_key": "service:payments-api",
+                        "to_key": "service:ledger-api",
+                        "related_key": "service:ledger-api",
+                        "fact": "payments depends on ledger",
+                    }
+                ],
+            },
+        ),
+    )
+
+
+def _unsupported_query_read_result() -> GraphReadResult:
+    """What the real service returns for ``admin.inspection_slice --query QME``."""
+    message = (
+        "graph read view 'admin.inspection_slice' does not support filter "
+        "query; supported filters: source_ref"
+    )
+    return GraphReadResult(
+        graph_contract_version="v1.5",
+        ontology_version="2026-06-graph",
+        view="admin.inspection_slice",
+        subgraph="admin",
+        ok=False,
+        status="unsupported_filter",
+        message=message,
+        read_shape="raw_graph",
+        coverage=(
+            {
+                "view": "admin.inspection_slice",
+                "status": "unsupported",
+                "candidate_pool": 0,
+            },
+        ),
+        quality={"status": "unsupported", "reason": "unsupported_filter"},
+        unsupported=(
+            {
+                "name": "query",
+                "reason": "unsupported_filter",
+                "detail": {
+                    "view": "admin.inspection_slice",
+                    "supported_filters": ["source_ref"],
+                },
+            },
+        ),
+    )
+
+
+def test_graph_read_unsupported_filter_result_is_error_envelope() -> None:
+    # A view that cannot apply a filter refuses the read; an exit-0 empty page
+    # would read as a genuine empty answer.
+    _common.set_json(True)
+    graph_service = _Graph(read_result=_unsupported_query_read_result())
+    _common.set_runtime(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "admin",
+            "--view",
+            "inspection_slice",
+            "--query",
+            "QME",
+            "--limit",
+            "20",
+            "--detail",
+            "full",
+        ],
+    )
+
+    assert result.exit_code == 1
+    emitted = json.loads(result.output)
+    _assert_graph_envelope(emitted, "graph.read", ok=False)
+    assert emitted["error"]["code"] == "unsupported_filter"
+    assert "does not support filter query" in emitted["error"]["message"]
+    assert emitted["unsupported"][0]["name"] == "query"
+    assert emitted["unsupported"][0]["detail"]["supported_filters"] == ["source_ref"]
+    assert emitted["error"]["detail"]["quality"]["reason"] == "unsupported_filter"
+
+
+def test_graph_read_unsupported_filter_human_output_names_filter_and_exits() -> None:
+    _common.set_json(False)
+    graph_service = _Graph(read_result=_unsupported_query_read_result())
+    _common.set_runtime(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "admin",
+            "--view",
+            "inspection_slice",
+            "--query",
+            "QME",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "does not support filter query" in result.output
+    assert "supported filters: source_ref" in result.output
+    # Never dressed up as an ordinary empty page.
+    assert "(no rows)" not in result.output
+
+
+@pytest.mark.parametrize("format_", ["table", "events"])
+def test_graph_read_json_keeps_items_for_non_timeline_formats(format_: str) -> None:
+    # Only the timeline has an event projection; every other view keeps its
+    # items in the machine body whatever the human layout.
+    _common.set_json(True)
+    graph_service = _Graph(read_result=_non_timeline_env())
+    _common.set_runtime(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "infra_topology",
+            "--view",
+            "service_neighborhood",
+            "--scope",
+            "service:payments-api",
+            "--format",
+            format_,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.read")
+    assert body["items"], f"--format {format_} --json returned no data"
+    assert body["items"][0]["entity_key"] == "service:payments-api"
+
+
+def test_graph_read_rejects_an_unknown_format() -> None:
+    _common.set_json(True)
+    graph_service = _Graph(read_result=_non_timeline_env())
+    _common.set_runtime(_Host(graph_service))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "infra_topology",
+            "--view",
+            "service_neighborhood",
+            "--format",
+            "csv",
+        ],
+    )
+
+    assert result.exit_code == _common.EXIT_VALIDATION
+    emitted = json.loads(result.output)
+    assert emitted["error"]["code"] == "validation_error"
+    assert "--format must be one of" in emitted["error"]["message"]
+    assert graph_service.read_called is False
+
+
+@pytest.mark.parametrize("format_", ["auto", "table"])
+def test_full_catalog_exposes_the_ontology_for_ingestion(format_) -> None:
+    from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+        InMemoryGraphBackend,
+    )
+    from potpie_context_engine.application.services.graph_service import (
+        DefaultGraphService,
+    )
+    from potpie_context_engine.core.ontology import EDGE_TYPES, ENTITY_TYPES
+
+    service = DefaultGraphService(backend=InMemoryGraphBackend())
+
+    class CatalogGraph(_Graph):
+        def catalog(self, request):
+            return service.catalog(request)
+
+    _common.set_runtime(_Host(CatalogGraph()))
+    _common.set_json(False)
+    result = CliRunner().invoke(
+        graph.graph_app, ["catalog", "--profile", "full", "--format", format_]
+    )
+    assert result.exit_code == 0, result.output
+    output = " ".join(_plain_cli_output(result.output).split())
+    for spec in ENTITY_TYPES.values():
+        if spec.public:
+            assert spec.label in output
+            assert " ".join(spec.identity_policy.split()) in output
+            assert " ".join(spec.description.split()) in output
+    for spec in EDGE_TYPES.values():
+        if spec.public:
+            assert spec.edge_type in output
+            assert " ".join(spec.description.split()) in output
+            for subject, object_ in spec.allowed_pairs:
+                assert f"{subject} -> {object_}" in output
+
+
+def test_read_catalog_stays_compact_and_points_writers_to_full_catalog() -> None:
+    _common.set_runtime(_Host(_Graph()))
+    _common.set_json(False)
+    result = CliRunner().invoke(graph.graph_app, ["catalog", "--profile", "read"])
+    assert result.exit_code == 0
+    output = " ".join(_plain_cli_output(result.output).split())
+    assert "graph catalog --profile full" in output
+    assert "allowed subject -> object" not in output
+
+
+def test_full_neighborhood_diagnostic_redacts_credential_metadata(monkeypatch) -> None:
+    def neighborhood(self, *, pot_id, entity_key, **kwargs):
+        return GraphSlice(
+            pot_id=pot_id,
+            nodes=(
+                GraphNode(
+                    key=entity_key,
+                    labels=("Repository",),
+                    properties={
+                        "owner": "acme",
+                        "source_ref": "test:repository",
+                        "temp_clone_token": "fixture-secret",
+                        "sessionCookie": "fixture-cookie",
+                    },
+                ),
+            ),
+            edges=(),
+        )
+
+    monkeypatch.setattr(_Inspection, "neighborhood", neighborhood)
+    _common.set_json(True)
+    _common.set_runtime(_Host(_Graph(), backend=_Backend()))
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["neighborhood", "--entity", "repository:shop", "--detail", "full"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "fixture-secret" not in result.output
+    assert "fixture-cookie" not in result.output
+    body = _assert_graph_envelope(json.loads(result.output), "graph.neighborhood")
+    assert body["nodes"][0]["properties"]["owner"] == "acme"
+    assert body["nodes"][0]["properties"]["source_ref"] == "test:repository"
+
+
+def test_neighborhood_reports_a_missing_anchor_and_names_the_lookup(
+    monkeypatch,
+) -> None:
+    def neighborhood(self, *, pot_id, entity_key, **kwargs):
+        return GraphSlice(pot_id=pot_id, nodes=(), edges=())
+
+    monkeypatch.setattr(_Inspection, "neighborhood", neighborhood)
+    _common.set_json(True)
+    _common.set_runtime(_Host(_Graph(), backend=_Backend()))
+    result = CliRunner().invoke(
+        graph.graph_app, ["neighborhood", "--entity", "service:missing"]
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.neighborhood")
+    assert body["identity_status"] == "missing"
+    assert "potpie graph search-entities" in emitted["recommended_next_action"]
+
+
+def test_neighborhood_full_text_shows_bounded_extra_detail_and_hidden_counts() -> None:
+    payload = {
+        "entity_key": "service:web",
+        "identity_status": "exact",
+        "detail": "full",
+        "node_count": 7,
+        "truncated": True,
+        "relations": [
+            {
+                "predicate": "DEPENDS_ON",
+                "from": "service:web",
+                "to": f"service:{i}",
+                "source_refs": [],
+                "fact": f"dependency {i}",
+            }
+            for i in range(25)
+        ],
+        "nodes": [
+            {
+                "key": f"service:{i}",
+                "labels": ["Service"],
+                "properties": {"name": f"Node {i}"},
+            }
+            for i in range(7)
+        ],
+        "edges": [
+            {
+                "from": "service:web",
+                "to": f"service:{i}",
+                "predicate": "DEPENDS_ON",
+                "properties": {"confidence": 0.9},
+            }
+            for i in range(25)
+        ],
+    }
+
+    text = graph._neighborhood_human(payload)
+
+    assert "5 relations hidden" in text
+    assert "Node 0" in text
+    assert '"confidence":0.9' in text
+    assert "2 node details hidden" in text
+    assert "20 edge details hidden" in text
+    assert "completeness is unknown" in text
+
+
+def test_neighborhood_full_text_spells_out_the_anchor_answer_fields() -> None:
+    payload = {
+        "entity_key": "fix:cookie",
+        "identity_status": "exact",
+        "detail": "full",
+        "node_count": 1,
+        "relations": [],
+        "nodes": [
+            {
+                "key": "fix:cookie",
+                "labels": ["Fix"],
+                "properties": {
+                    "root_cause": "Shared cookie name across daemons",
+                    "fix_steps": ["Use a per-daemon cookie suffix"],
+                    "verification_status": "passed",
+                    "source_status": "current",
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+    text = graph._neighborhood_human(payload)
+
+    assert "root_cause: Shared cookie name across daemons" in text
+    assert 'fix_steps: ["Use a per-daemon cookie suffix"]' in text
+    assert "verification_status: passed" in text
+    assert "source_status: current" in text
+
+
+def test_neighborhood_byte_budget_preserves_fix_fields_and_exact_route() -> None:
+    payload = {
+        "entity_key": "fix:cookie",
+        "identity_status": "exact",
+        "detail": "full",
+        "depth": 2,
+        "direction": "both",
+        "limit": 20,
+        "predicates": ["VERIFIED"],
+        "truncated": False,
+        "node_count": 2,
+        "relations": [
+            {
+                "predicate": "VERIFIED",
+                "from_key": "activity:check",
+                "to_key": "fix:cookie",
+                "fact": "verified " + "x" * 3_000,
+                "source_refs": ["test:verification"],
+            }
+            for _ in range(20)
+        ],
+        "nodes": [
+            {
+                "key": "fix:cookie",
+                "labels": ["Fix"],
+                "properties": {
+                    "root_cause": "Shared cookie name across daemons",
+                    "fix_steps": ["Use a per-daemon cookie suffix"],
+                    "verification_status": "passed",
+                    "unrelated": "x" * 8_000,
+                },
+            },
+            {"key": "activity:check", "labels": ["Activity"], "properties": {}},
+        ],
+        "edges": [
+            {
+                "predicate": "VERIFIED",
+                "from": "activity:check",
+                "to": "fix:cookie",
+                "properties": {"fact": "x" * 3_000},
+            }
+            for _ in range(20)
+        ],
+    }
+    payload["relation_count"] = len(payload["relations"])
+
+    bounded = graph._bound_neighborhood_payload(payload, pot_id="p")
+
+    assert len(json.dumps(bounded, ensure_ascii=False).encode()) <= 32_768
+    assert bounded["omitted_relation_count"] > 0
+    assert bounded["omitted_field_count"] > 0
+    assert (
+        bounded["nodes"][0]["properties"]["root_cause"]
+        == "Shared cookie name across daemons"
+    )
+    assert bounded["nodes"][0]["properties"]["fix_steps"] == [
+        "Use a per-daemon cookie suffix"
+    ]
+    assert (
+        "--predicate VERIFIED --unbounded --pot p" in bounded["recommended_next_action"]
+    )
+
+
+def test_neighborhood_cli_byte_budget_includes_workbench_envelope(monkeypatch) -> None:
+    from potpie_context_engine.core.agent_envelope import DEFAULT_OUTPUT_BUDGET_BYTES
+
+    def neighborhood(self, *, pot_id, entity_key, **kwargs):
+        return GraphSlice(
+            pot_id=pot_id,
+            nodes=(
+                GraphNode(
+                    key=entity_key,
+                    labels=("Fix",),
+                    properties={
+                        "root_cause": "Shared cookie name",
+                        "fix_steps": ["Use a per-daemon suffix"],
+                        "diagnostic": "x" * 8_000,
+                    },
+                ),
+            ),
+            edges=tuple(
+                GraphEdge(
+                    predicate="VERIFIED",
+                    from_key=entity_key,
+                    to_key=f"activity:check-{index}",
+                    properties={"fact": "x" * 3_000, "source_refs": ["test:fix"]},
+                )
+                for index in range(30)
+            ),
+        )
+
+    monkeypatch.setattr(_Inspection, "neighborhood", neighborhood)
+    _common.set_json(True)
+    _common.set_runtime(_Host(_Graph(), backend=_Backend()))
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["neighborhood", "--entity", "fix:cookie", "--detail", "full"],
+    )
+
+    assert result.exit_code == 0, result.output
+    # One output budget: the whole emitted envelope, not only the body.
+    assert len(result.output.encode("utf-8")) <= DEFAULT_OUTPUT_BUDGET_BYTES
+    body = _assert_graph_envelope(json.loads(result.output), "graph.neighborhood")
+    assert body["nodes"][0]["properties"]["root_cause"] == "Shared cookie name"
+    assert body["omitted_relation_count"] > 0
+
+
+def test_graph_commit_verify_exits_zero_when_only_quality_regressed() -> None:
+    """The commit landed (`ok: true`); a quality regression is a warning, not a
+    failed write, so a script never retries a commit that went through."""
+    _common.set_json(True)
+    verification = GraphIngestionVerificationResult(
+        ok=False,
+        status="degraded",
+        plan_id="mutation-plan:test",
+        pot_id="p",
+        claim_keys=("claim:test",),
+        readback_claim_keys=("claim:test",),
+        readback_count=1,
+        quality_status="watch",
+        quality_regressions={"conflicting_claims": {"before": 0, "after": 1}},
+        detail="quality findings increased after commit",
+        recommended_next_action="Run the affected graph quality reports.",
+    )
+    workbench = _Workbench(commit_result=_commit_result(verification=verification))
+    _common.set_runtime(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["commit", "mutation-plan:test", "--verify"],
+    )
+
+    assert result.exit_code == 0, result.output
+    emitted = json.loads(result.output)
+    body = _assert_graph_envelope(emitted, "graph.commit")
+    assert body["status"] == "committed"
+    assert body["verification"]["status"] == "degraded"
+    assert body["verification"]["ok"] is False
+    assert any(
+        "post-commit verification degraded: quality findings increased" in warning
+        for warning in emitted["warnings"]
+    )
+
+
+def test_graph_commit_verify_exits_nonzero_when_a_committed_claim_is_missing() -> None:
+    _common.set_json(True)
+    verification = GraphIngestionVerificationResult(
+        ok=False,
+        status="failed",
+        plan_id="mutation-plan:test",
+        pot_id="p",
+        claim_keys=("claim:test",),
+        missing_claim_keys=("claim:test",),
+        readback_count=0,
+        detail="committed claim did not read back",
+    )
+    workbench = _Workbench(commit_result=_commit_result(verification=verification))
+    _common.set_runtime(_Host(_Graph(), graph_workbench=workbench))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["commit", "mutation-plan:test", "--verify"],
+    )
+
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
+
+
+def test_graph_commit_verify_help_says_what_exits_nonzero() -> None:
+    result = CliRunner().invoke(graph.graph_app, ["commit", "--help"])
+
+    assert result.exit_code == 0
+    # Rich wraps option help inside a bordered panel, so the border glyphs
+    # land mid-sentence; drop them before looking for the phrase.
+    text = " ".join(re.sub(r"[│╭╮╰╯─]", " ", _plain_cli_output(result.output)).split())
+    assert "exits 1 only when a committed claim does not read back" in text
+
+
+def test_graph_bulk_verify_reports_content_loss_separately_from_committed_count(
+    tmp_path,
+) -> None:
+    _common.set_json(True)
+    verification = GraphIngestionVerificationResult(
+        ok=False,
+        status="degraded",
+        plan_id="mutation-plan:test",
+        pot_id="p",
+        content_readback={
+            "checked_entities": ["service:fixture"],
+            "mismatches": [
+                {
+                    "entity_key": "service:fixture",
+                    "properties": ["description"],
+                }
+            ],
+        },
+        detail="content readback differs from the committed plan",
+    )
+    workbench = _Workbench(
+        proposal=_proposal(), commit_result=_commit_result(verification=verification)
+    )
+    _common.set_runtime(_Host(_Graph(), graph_workbench=workbench))
+    payload_file = tmp_path / "bulk.json"
+    payload_file.write_text(json.dumps(_bulk_mutation_payload(3)), encoding="utf-8")
+    result = CliRunner().invoke(
+        graph.graph_app,
+        ["bulk", "apply", "--file", str(payload_file), "--chunk-size", "2", "--verify"],
+    )
+    assert result.exit_code != 0
+    _assert_graph_envelope(json.loads(result.output), "graph.bulk.apply", ok=False)
+    body = json.loads(result.output)["error"]["detail"]
+    assert body["chunks_committed"] == 1
+    assert body["chunks_attempted"] == 1
+    assert body["chunks"][0]["commit"]["verification"]["content_readback"][
+        "mismatches"
+    ][0]["properties"] == ["description"]
+    assert body["issues"][0]["code"] == "verification_failed"
+    # Every chunk commit was asked to verify itself.
+    assert all(call[3] is True for call in workbench.commit_calls)

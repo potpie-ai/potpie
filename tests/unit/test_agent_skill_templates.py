@@ -18,6 +18,7 @@ import pytest
 import potpie.cli as _clipkg
 from potpie.skills.installer import _validate_potpie_command_tokens
 from potpie_context_engine.core.agent_context_port import CONTEXT_RECORD_TYPES
+from potpie_context_engine.core.context_records import REQUIRED_DETAIL_KEYS
 
 pytestmark = pytest.mark.unit
 
@@ -328,19 +329,14 @@ def test_use_case_skills_teach_resolve_first_and_record_for_one_learning() -> No
             f"{fragment} never mentions potpie record"
         )
     assert "potpie resolve" in _read("commands/potpie-feature.md")
-    # resolve does not infer its intent, so the skills pass it for failures.
-    assert "--intent debugging" in _read("potpie-graph/SKILL.md")
-    assert "--intent debugging" in _read("potpie-debug-memory/SKILL.md")
+    # resolve infers its intent from the task text; the skills say so.
+    graph = " ".join(_read("potpie-graph/SKILL.md").split())
+    assert "infers the intent from the task text" in graph
 
 
-def test_record_is_taught_only_for_the_types_it_accepts() -> None:
-    """``potpie record`` takes ``--type``/``--summary``/``--scope`` only.
-
-    A structured type (decision, preference, bug pattern, verification) needs
-    fields the command cannot carry and is refused, so the skills route those
-    through ``graph mutation-template`` and a plan instead.
-    """
-    structured = {"decision", "preference", "policy", "bug_pattern", "verification"}
+def test_record_examples_carry_the_details_each_type_requires() -> None:
+    """A structured record type validates its required ``--detail`` keys and
+    refuses without them, so every taught ``potpie record`` line names them."""
     for path in MD_FILES:
         rel = path.relative_to(TEMPLATES)
         for line in _bash_lines(path.read_text(encoding="utf-8")):
@@ -348,10 +344,16 @@ def test_record_is_taught_only_for_the_types_it_accepts() -> None:
                 continue
             tokens = shlex.split(line)
             record_type = tokens[tokens.index("--type") + 1]
-            assert record_type not in structured, (
-                f"{rel} teaches a one-call record for a structured type: {line}"
+            assert record_type in CONTEXT_RECORD_TYPES, (
+                f"{rel} teaches an unknown record type: {line}"
             )
-            assert "--detail" not in tokens, f"{rel} passes --detail to record: {line}"
+            details = {
+                tokens[index + 1].split("=", 1)[0]
+                for index, token in enumerate(tokens[:-1])
+                if token == "--detail"
+            }
+            missing = set(REQUIRED_DETAIL_KEYS.get(record_type, ())) - details
+            assert not missing, f"{rel} omits required --detail {missing}: {line}"
 
 
 def test_templates_state_the_measured_read_shapes() -> None:
@@ -590,29 +592,27 @@ def test_inline_potpie_commands_exist_on_this_cli() -> None:
 
 
 def test_templates_do_not_prescribe_a_threshold_the_views_ignore() -> None:
-    """``--query-threshold`` is a floor only ``preferences_for_scope`` and the
-    timeline apply; ``prior_occurrences`` and ``document_context`` rank their
-    pool and ignore it. A skill that passes the flag on those views teaches a
-    no-op, and the agent then trusts a full list as evidence.
+    """``--query-threshold`` is an absolute floor only ``preferences_for_scope``
+    applies; ``prior_occurrences`` ignores it and ``document_context`` /
+    ``timeline`` use a pool-relative floor instead. A skill that passes the flag
+    on those views teaches a no-op, and the agent then trusts a full list as
+    evidence.
     """
     for path in MD_FILES:
         rel = path.relative_to(TEMPLATES).as_posix()
         text = path.read_text(encoding="utf-8")
+        assert "default 0.7" not in text, rel
         for line in _bash_lines(text):
             if "--query-threshold" in line:
-                assert "preferences_for_scope" in line or "--view timeline" in line, (
+                assert "preferences_for_scope" in line, (
                     f"{rel} passes --query-threshold to a view that ignores it: {line}"
                 )
     graph = _read("potpie-graph/SKILL.md")
     assert "--direction out|in|both" in graph
     assert "graph neighborhood --entity" in graph
-    flat_debug = " ".join(_read("potpie-debug-memory/SKILL.md").split())
-    assert "`--query-threshold` does nothing here" in flat_debug
-    # A timeline --query filters on this CLI, so the skill must say so rather
-    # than promise a re-rank that never empties the window.
-    flat_timeline = " ".join(_read("potpie-change-timeline/SKILL.md").split())
-    assert "A `--query` filters the window" in flat_timeline
-    assert "never empties" not in flat_timeline
+    for rel in ("potpie-debug-memory/SKILL.md", "potpie-change-timeline/SKILL.md"):
+        flat = " ".join(_read(rel).split())
+        assert "`--query-threshold` does nothing here" in flat, rel
 
 
 def test_templates_state_pot_resolution_and_score_semantics() -> None:
