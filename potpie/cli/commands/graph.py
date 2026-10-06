@@ -14,6 +14,7 @@ import sys
 import time
 from contextlib import contextmanager
 from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -43,12 +44,15 @@ from potpie.cli.commands._common import (
     get_pot_service,
     is_json,
     json_error_formatter,
+    parse_scope_pairs,
     pot_scope_human,
     pot_scope_info,
     resolve_pot_id,
     run_engine_operation,
     run_engine_outcome,
+    set_json,
 )
+from potpie.cli.catalog_presenter import render_catalog
 from potpie.cli.read_presenter import (
     build_presentation_context,
     prepare_items,
@@ -61,18 +65,55 @@ from potpie.cli.telemetry.product_analytics import AnalyticsValue
 from potpie.cli.telemetry.usage_events import (
     capture_usage_command_succeeded,
 )
+from potpie_context_engine.core.adjustments import (
+    REASON_CANONICAL_ALIAS,
+    REASON_CANONICAL_CASE,
+    REASON_EXPLICIT_SINCE,
+    REASON_MACHINE_JSON,
+    REASON_MAXIMUM_SUPPORTED,
+    REASON_UNIT_ALIAS,
+    Adjustment,
+    adjustment_dicts,
+    adjustment_lines,
+    with_adjustments,
+)
+from potpie_context_engine.core.agent_envelope import DEFAULT_OUTPUT_BUDGET_BYTES
+from potpie_context_engine.core.cli_commands import (
+    append_pot,
+    graph_read_command,
+    graph_search_entities_command,
+    is_template,
+    join_command,
+)
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.graph_contract import (
     GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
 )
 from potpie_context_engine.core.graph_contract import ONTOLOGY_VERSION
+from potpie_context_engine.core.graph_workbench_ontology import ontology_contract
+from potpie_context_engine.core.ports.graph_service import bound_graph_read_result
+from potpie_context_engine.core.resource_projection import project_public_metadata
+from potpie_context_engine.core.vocabulary import (
+    local_claim_subgraphs,
+    local_entity_types,
+    local_predicates,
+    resolve_claim_subgraph,
+    resolve_entity_type,
+    resolve_predicate,
+    vocabulary_from_catalog,
+)
 from potpie_context_engine.core.graph_workbench import (
     GRAPH_WORKBENCH_COMMANDS,
     GraphUnsupported,
     GraphWorkbenchStatus,
 )
 from potpie_context_engine.domain.ports.observability import SPAN_KIND_INTERNAL
-from potpie_context_engine.core.graph_views import INCLUDE_TO_VIEW
+from potpie_context_engine.core.graph_views import (
+    INCLUDE_TO_VIEW,
+    resolve_subgraph_name,
+    resolve_view_selector,
+    view_depth_bounds,
+)
 from potpie_context_engine.requests import (
     CatalogRequest as EngineCatalogRequest,
     CommitRequest as EngineCommitRequest,
@@ -109,6 +150,12 @@ timeline_app = typer.Typer(help="Timeline reads over the active project pot.")
 graph_app.add_typer(inbox_app, name="inbox")
 graph_app.add_typer(quality_app, name="quality")
 graph_app.add_typer(bulk_app, name="bulk")
+
+# Graph command bodies are bounded to the shared agent output budget minus a
+# reserve for the workbench envelope wrapped around them, so the emitted JSON
+# as a whole stays within ``DEFAULT_OUTPUT_BUDGET_BYTES``.
+_ENVELOPE_RESERVE_BYTES = 2_048
+_GRAPH_BODY_BUDGET_BYTES = DEFAULT_OUTPUT_BUDGET_BYTES - _ENVELOPE_RESERVE_BYTES
 
 
 class _GraphCliCommandContext:
@@ -391,6 +438,7 @@ def _emit_graph_result(
     warnings: tuple[str, ...] = (),
     unsupported: tuple[GraphUnsupported, ...] = (),
     recommended_next_action: str | None = None,
+    adjustments: tuple[Adjustment, ...] = (),
 ) -> None:
     result, versions, payload_warnings, payload_unsupported = (
         normalize_workbench_result(payload)
@@ -435,16 +483,30 @@ def _emit_graph_result(
             unsupported=merged_unsupported,
             recommended_next_action=recommended_next_action
             or payload.get("recommended_next_action"),
+            adjustments=adjustment_dicts(adjustments),
         )
-    emit(env.to_dict(), human=_with_graph_warnings(human, merged_warnings))
+    emit(
+        env.to_dict(),
+        human=_with_graph_warnings(human, merged_warnings, adjustments=adjustments),
+    )
     if payload.get("ok", True) is False:
         raise typer.Exit(code=EXIT_VALIDATION)
 
 
-def _with_graph_warnings(human: str, warnings: tuple[str, ...]) -> str:
-    if not warnings:
-        return human
-    return "\n".join([human, *(f"! {warning}" for warning in warnings)])
+def _with_graph_warnings(
+    human: str,
+    warnings: tuple[str, ...],
+    *,
+    adjustments: tuple[Adjustment, ...] = (),
+) -> str:
+    """``human`` plus one ``~`` line per adjustment and one ``!`` per warning.
+
+    Adjustments come first because they describe what the result *is*
+    (depth-4 context, the canonical view); warnings describe what to do next.
+    """
+    lines = [human, *adjustment_lines(adjustments)]
+    lines.extend(f"! {warning}" for warning in warnings)
+    return "\n".join(lines)
 
 
 def _emit_inbox_result(ctx: _GraphCliCommandContext, result) -> None:
@@ -520,12 +582,21 @@ def graph_catalog(
     format_: str = typer.Option(
         "auto",
         "--format",
-        help="auto | table",
+        help="auto | table | json (json = the machine envelope, like --json)",
     ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     """Discover the graph contract: versions, views, mutation ops, ontology."""
     with _graph_command("graph.catalog") as ctx:
+        adjustments: list[Adjustment] = []
+        # Presentation is decided locally, before the engine is asked: an
+        # unknown --format must not cost a catalog fetch.
+        format_ = _preflight_machine_format(format_, adjustments)
+        profile = _preflight_catalog_profile(profile)
+        _preflight_catalog_format(format_)
+        if subgraph:
+            subgraph, subgraph_adjustments = resolve_subgraph_name(subgraph)
+            adjustments.extend(subgraph_adjustments)
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
@@ -535,9 +606,14 @@ def graph_catalog(
             )
         )
         payload = normalize_catalog_result(result.to_dict(), task=task)
-        payload = _catalog_payload_for_profile(payload, profile=profile)
-        human = _catalog_human(payload, format_=format_)
-        _emit_graph_result(ctx, payload, human=human)
+        payload = _catalog_payload_for_profile(payload, profile=profile, pot_id=pot_id)
+        human = render_catalog(payload, format_=format_)
+        _emit_graph_result(
+            ctx,
+            payload,
+            human=human,
+            adjustments=tuple(adjustments),
+        )
 
 
 @graph_app.command("read")
@@ -549,10 +625,14 @@ def graph_read(
         None, "--view", help="View name within --subgraph, e.g. prior_occurrences"
     ),
     query: str = typer.Option(None, "--query"),
-    query_threshold: float = typer.Option(
-        0.70,
+    query_threshold: float | None = typer.Option(
+        None,
         "--query-threshold",
-        help="Minimum semantic similarity for --query matches (0.0-1.0).",
+        help=(
+            "Minimum semantic similarity (0.0-1.0). Passage reads require a "
+            "calibrated index and exclude hits without measured similarity. "
+            "Omit to use the view's default filtering."
+        ),
     ),
     scope: str = typer.Option(None, "--scope", help="key:value[,key:value]"),
     current: bool = typer.Option(
@@ -595,7 +675,10 @@ def graph_read(
     format_: str = typer.Option(
         "auto",
         "--format",
-        help="auto | raw | events | table | jsonl (timeline defaults to events)",
+        help=(
+            "auto | raw | events | table | jsonl | json (timeline defaults to "
+            "events; json = the machine envelope, like --json)"
+        ),
     ),
     detail: str = typer.Option(
         "compact",
@@ -611,26 +694,44 @@ def graph_read(
 ) -> None:
     """V2-style read over a named view (routes through the read trunk)."""
     with _graph_command("graph.read") as ctx:
-        if not subgraph:
-            raise ValueError("--subgraph is required")
+        adjustments: list[Adjustment] = []
+        # Everything decidable without the engine is decided first: a bad
+        # --format, --detail or --limit costs zero engine calls, and an
+        # accepted alias costs exactly one.
+        format_, detail, relations, sort, dedupe = _preflight_read_presentation(
+            format_=format_,
+            detail=detail,
+            relations=relations,
+            sort=sort,
+            dedupe=dedupe,
+            adjustments=adjustments,
+        )
+        _require_positive_limit(limit)
         if not view:
             raise ValueError("--view is required")
-        if "." in view:
-            raise ValueError(
-                "graph read now requires --subgraph <name> --view <view>; "
-                f"got fully-qualified view {view!r}"
-            )
-        host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
-        ctx.set_pot_id(pot_id)
-        del current  # pot resolution already considers the current working tree.
-        since_dt, until_dt = _resolve_time_bounds(
-            since=since, until=until, window=time_window
+        if not subgraph and "." not in view:
+            raise ValueError("--subgraph is required")
+        selector = resolve_view_selector(subgraph, view)
+        adjustments.extend(selector.adjustments)
+        subgraph, view = selector.subgraph, selector.view
+        if direction is not None:
+            direction = direction.strip().lower()
+            if direction not in {"out", "in", "both"}:
+                raise ValueError("--direction must be one of: out, in, both")
+        depth = _bounded_read_depth(
+            subgraph=subgraph, view=view, depth=depth, adjustments=adjustments
         )
+        bounds = _resolve_time_bounds(since=since, until=until, window=time_window)
+        adjustments.extend(bounds.adjustments)
+        since_dt, until_dt = bounds.since, bounds.until
         query_threshold = _normalize_query_threshold(query_threshold)
         parsed_scope = _parse_scope(scope)
         if repo:
             parsed_scope["repo"] = _resolve_repo_scope(repo)
+        host = get_root_runtime()
+        pot_id = resolve_pot_id(host, pot)
+        ctx.set_pot_id(pot_id)
+        del current  # pot resolution already considers the current working tree.
         effective_format = _effective_requested_format(
             subgraph=subgraph, view=view, requested=format_
         )
@@ -665,6 +766,9 @@ def graph_read(
                 )
             )
         )
+        result = bound_graph_read_result(
+            result, pot_id=pot_id, max_bytes=_GRAPH_BODY_BUDGET_BYTES
+        )
         _emit_graph_read(
             ctx,
             result,
@@ -673,7 +777,8 @@ def graph_read(
             dedupe=dedupe,
             event_limit=limit,
             human_prefix=pot_scope_human(host, pot_id),
-            warnings=empty_pot_warnings(host, pot_id),
+            warnings=_empty_read_warnings(host, pot_id, result),
+            adjustments=tuple(adjustments),
         )
 
 
@@ -716,12 +821,22 @@ def timeline_recent(
 ) -> None:
     """Recent project events from the active/current pot, across all repo sources."""
     with contract():
+        adjustments: list[Adjustment] = []
+        format_, detail, relations, _sort, _dedupe = _preflight_read_presentation(
+            format_=format_,
+            detail=detail,
+            relations=relations,
+            sort="occurred_at",
+            dedupe="source_ref",
+            adjustments=adjustments,
+        )
+        _require_positive_limit(limit)
+        bounds = _resolve_time_bounds(since=since, until=until, window=time_window)
+        adjustments.extend(bounds.adjustments)
+        since_dt, until_dt = bounds.since, bounds.until
+        query_threshold = _normalize_query_threshold(query_threshold)
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
-        since_dt, until_dt = _resolve_time_bounds(
-            since=since, until=until, window=time_window
-        )
-        query_threshold = _normalize_query_threshold(query_threshold)
         scope = {"service": service} if service else {}
         read_limit = _service_limit_for_read(
             subgraph="recent_changes",
@@ -753,7 +868,8 @@ def timeline_recent(
             dedupe="source_ref",
             event_limit=limit,
             human_prefix=pot_scope_human(host, pot_id),
-            warnings=empty_pot_warnings(host, pot_id),
+            warnings=_empty_read_warnings(host, pot_id, result),
+            adjustments=tuple(adjustments),
         )
 
 
@@ -789,15 +905,25 @@ def graph_search_entities(
 ) -> None:
     """Narrow entity/claim lookup for identity resolution before a write."""
     with _graph_command("graph.search-entities") as ctx:
+        adjustments: list[Adjustment] = []
         effective_query = query or query_arg
         if not effective_query:
             raise ValueError("query is required")
         if supporting_claims < 0:
             raise ValueError("--supporting-claims must be >= 0")
+        _require_positive_limit(limit)
+        bounds = _resolve_time_bounds(since=since, until=until, window=None)
+        since_dt, until_dt = bounds.since, bounds.until
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
+        type_, predicate, subgraph = _canonical_search_vocabulary(
+            pot,
+            type_=type_,
+            predicate=predicate,
+            subgraph=subgraph,
+            adjustments=adjustments,
+        )
         result = run_engine_operation(
             get_engine_client(pot).search_entities(
                 EngineSearchEntitiesRequest(
@@ -827,7 +953,15 @@ def graph_search_entities(
             )
             or "(no matching entities)"
         )
-        warnings = empty_pot_warnings(host, pot_id)
+        human = f"identity={payload.get('match_status', 'unknown')}\n" + human
+        if payload.get("match_status") == "possible_matches":
+            human += "\nCandidates only; confirm the canonical key before traversing."
+        if payload.get("more_results_available"):
+            human += (
+                "\nMore candidates exist within the searched pool; narrow the "
+                "query or increase --limit."
+            )
+        warnings = empty_pot_warnings(host, pot_id) if not payload["entities"] else ()
         _emit_graph_result(
             ctx,
             payload,
@@ -838,6 +972,7 @@ def graph_search_entities(
             ),
             warnings=warnings,
             recommended_next_action=warnings[0] if warnings else None,
+            adjustments=tuple(adjustments),
         )
 
 
@@ -1266,13 +1401,20 @@ def graph_mutation_template(
         "--kind",
         help=f"template kind: {' | '.join(sorted(_MUTATION_TEMPLATES))}",
     ),
+    pot: str | None = typer.Option(
+        None,
+        "--pot",
+        help="Accepted for uniform invocation; not resolved or validated (schema-only).",
+    ),
 ) -> None:
     """Print a schema-only mutation skeleton for `graph propose`.
 
     Pure schema helper: emits placeholders for the harness to fill from
     sources it has actually read. It never inspects the repository or infers
-    graph facts.
+    graph facts. This command is unscoped and needs no engine connection.
+    An optional --pot is ignored: it is not resolved or validated.
     """
+    del pot
     with _graph_command("graph.mutation-template") as ctx:
         template = _MUTATION_TEMPLATES.get(kind.strip().lower())
         if template is None:
@@ -1288,12 +1430,13 @@ def graph_mutation_template(
                 request_id=ctx.request_id,
                 pot_id=ctx.pot_id,
                 result={"kind": kind, "template": template},
-                warnings=_legacy_warning(
-                    "graph.mutation-template", "graph.describe mutation examples"
-                ),
+                # No legacy warning: describe --examples renders *read*
+                # commands, and this skeleton is the only offline write shape.
                 recommended_next_action=(
-                    "Use `potpie graph describe <subgraph> --examples --json` once "
-                    "describe is implemented."
+                    "Fill the placeholders from sources you have read, then "
+                    "`potpie graph propose --file <mutation.json> --json`; "
+                    "`potpie graph describe <subgraph> --json` shows the entity "
+                    "types and predicates the payload must use."
                 ),
             ).to_dict(),
             human=rendered,
@@ -1401,7 +1544,14 @@ def graph_describe(
     with _graph_command("graph.describe") as ctx:
         if not subgraph:
             raise ValueError("subgraph is required")
-        del pot
+        adjustments: list[Adjustment] = []
+        if view:
+            selector = resolve_view_selector(subgraph, view)
+            adjustments.extend(selector.adjustments)
+            subgraph, view = selector.subgraph or subgraph, selector.view
+        else:
+            subgraph, subgraph_adjustments = resolve_subgraph_name(subgraph)
+            adjustments.extend(subgraph_adjustments)
         payload = run_engine_operation(
             get_engine_client().describe(
                 EngineDescribeRequest(
@@ -1411,18 +1561,34 @@ def graph_describe(
                 )
             )
         )
+        payload = _scoped_describe_payload(payload, pot_id=pot)
         subgraph_name = payload["subgraph"]["name"]
-        described = payload["view"]["name"] if view else subgraph_name
-        described_view = described.split(".", 1)[1] if "." in described else described
+        if view:
+            view_payload = payload["view"]
+            next_read = graph_read_command(
+                subgraph_name,
+                str(view_payload.get("view") or view),
+                pot_id=pot,
+                required_scope=view_payload.get("required_scope") or (),
+                required_any_scope=view_payload.get("required_any_scope") or (),
+                json_output=True,
+            )
+            recommended = (
+                f"Fill the placeholders, then run `{next_read}`."
+                if is_template(next_read)
+                else f"Run `{next_read}`."
+            )
+        else:
+            recommended = (
+                "Use `potpie graph describe <subgraph> --view <view> --json` "
+                "for one backed view."
+            )
         _emit_graph_result(
             ctx,
             payload,
             human=_describe_human(payload),
-            recommended_next_action=(
-                f"Use `potpie graph read --subgraph {subgraph_name} --view {described_view} --json` after choosing a scope."
-                if view
-                else "Use `potpie graph describe <subgraph> --view <view> --json` for one backed view."
-            ),
+            recommended_next_action=recommended,
+            adjustments=tuple(adjustments),
         )
 
 
@@ -1434,6 +1600,14 @@ def graph_neighborhood(
     direction: str = typer.Option("both", "--direction"),
     limit: int = typer.Option(50, "--limit"),
     detail: str = typer.Option("summary", "--detail", help="summary | full"),
+    unbounded: bool = typer.Option(
+        False,
+        "--unbounded",
+        help=(
+            "Return the complete selected slice even if it exceeds the normal "
+            "output budget."
+        ),
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.neighborhood") as ctx:
@@ -1444,7 +1618,23 @@ def graph_neighborhood(
             raise ValueError("--depth must be >= 1")
         if limit < 1:
             raise ValueError("--limit must be >= 1")
+        adjustments: list[Adjustment] = []
         detail_mode = (detail or "summary").strip().lower()
+        if detail_mode == "compact":
+            # The graph-read spelling of the same idea; one execution, disclosed.
+            adjustments.append(
+                Adjustment(
+                    field="detail",
+                    requested=detail,
+                    effective="summary",
+                    reason=REASON_CANONICAL_ALIAS,
+                    message=(
+                        "--detail compact is spelled summary on graph "
+                        "neighborhood; returned the summary detail"
+                    ),
+                )
+            )
+            detail_mode = "summary"
         if detail_mode not in {"summary", "full"}:
             raise ValueError("--detail must be one of: summary, full")
         host = get_root_runtime()
@@ -1463,10 +1653,21 @@ def graph_neighborhood(
             )
         )
         relations = [_neighborhood_relation(edge) for edge in sl.edges]
+        anchor_present = any(node.key == entity for node in sl.nodes)
+        if relations:
+            identity_status = "exact"
+        elif not anchor_present:
+            identity_status = "missing"
+        elif predicates or normalized_direction != "both":
+            identity_status = "no_matching_relations"
+        else:
+            identity_status = "isolated"
         payload = {
+            "identity_status": identity_status,
             "entity_key": entity,
             "depth": depth,
             "direction": normalized_direction,
+            "limit": limit,
             "predicates": list(predicates),
             "detail": detail_mode,
             "node_count": len(sl.nodes),
@@ -1479,7 +1680,7 @@ def graph_neighborhood(
                 {
                     "key": n.key,
                     "labels": list(n.labels),
-                    "properties": dict(n.properties),
+                    "properties": project_public_metadata(n.properties),
                 }
                 for n in sl.nodes
             ]
@@ -1488,14 +1689,21 @@ def graph_neighborhood(
                     "predicate": e.predicate,
                     "from": e.from_key,
                     "to": e.to_key,
-                    "properties": dict(e.properties),
+                    "properties": project_public_metadata(e.properties),
                 }
                 for e in sl.edges
             ]
+        if identity_status == "missing":
+            payload["recommended_next_action"] = graph_search_entities_command(
+                entity, pot_id=pot_id
+            )
+        if not unbounded:
+            payload = _bound_neighborhood_payload(payload, pot_id=pot_id)
         _emit_graph_result(
             ctx,
             payload,
             human=_neighborhood_human(payload),
+            adjustments=tuple(adjustments),
         )
 
 
@@ -1505,6 +1713,15 @@ def graph_propose(
         None, "--file", help="mutation JSON path; omit to read stdin"
     ),
     ttl: str = typer.Option("1h", "--ttl", help="plan expiry such as 30m, 1h, 2d"),
+    approved_by: str = typer.Option(
+        None,
+        "--approved-by",
+        help=(
+            "user-ref that pre-approves medium-risk operations; the plan then "
+            "commits with `graph commit <plan_id> --verify` and no second "
+            "--approved-by"
+        ),
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.propose") as ctx:
@@ -1517,6 +1734,7 @@ def graph_propose(
                 EngineProposeRequest(
                     mutation=_context_bound_mutation(payload),
                     ttl_seconds=_parse_ttl_seconds(ttl),
+                    approved_by=(approved_by or "").strip() or None,
                 )
             )
         )
@@ -1538,7 +1756,12 @@ def graph_commit(
     verify: bool = typer.Option(
         False,
         "--verify",
-        help="read back committed claim keys and run post-commit quality checks",
+        help=(
+            "read back committed claim keys and run post-commit quality checks; "
+            "exits 1 when a committed claim or its content does not read back or "
+            "verification did not complete — a quality regression alone is "
+            "reported in verification.status and as a warning"
+        ),
     ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
@@ -1570,11 +1793,43 @@ def graph_commit(
             ctx,
             result.to_dict(),
             human=_commit_human(result),
+            warnings=_verification_warnings(result),
         )
         if not result.ok:
             raise typer.Exit(code=EXIT_VALIDATION)
-        if verify and result.verification is not None and not result.verification.ok:
+        # The commit landed (`ok: true`). A quality regression alone does not
+        # contradict that, so it is a warning: a script must not treat a
+        # successful write as failed and retry it. Missing readback, lost
+        # content, or a verification that did not complete still exit 1.
+        if verify and _verification_failed(result):
             raise typer.Exit(code=EXIT_VALIDATION)
+
+
+def _verification_failed(result) -> bool:
+    verification = getattr(result, "verification", None)
+    if verification is None or verification.ok:
+        return False
+    return not _only_quality_regressed(verification)
+
+
+def _only_quality_regressed(verification) -> bool:
+    content = verification.content_readback
+    mismatches = content.get("mismatches") if isinstance(content, Mapping) else None
+    return bool(
+        verification.quality_regressions
+        and not verification.missing_claim_keys
+        and not mismatches
+        and verification.status not in {"error", "unknown_completion"}
+    )
+
+
+def _verification_warnings(result) -> tuple[str, ...]:
+    """The verification outcome as a warning, when it is not the exit code."""
+    verification = getattr(result, "verification", None)
+    if verification is None or verification.ok or verification.missing_claim_keys:
+        return ()
+    head = f"post-commit verification {verification.status}"
+    return (f"{head}: {verification.detail}" if verification.detail else head,)
 
 
 @bulk_app.command("apply")
@@ -1607,7 +1862,10 @@ def graph_bulk_apply(
     verify: bool = typer.Option(
         False,
         "--verify",
-        help="include graph data-plane status after the run",
+        help=(
+            "verify each committed chunk and include graph data-plane status "
+            "after the run"
+        ),
     ),
     manifest: str = typer.Option(
         None,
@@ -1730,11 +1988,23 @@ def graph_bulk_apply(
                     EngineCommitRequest(
                         plan_id=proposal.plan_id,
                         approved_by=approved_by,
+                        verify=verify,
                     )
                 )
             )
             entry["commit"] = _bulk_commit_summary(commit)
-            entry["ok"] = bool(commit.ok)
+            verification = getattr(commit, "verification", None)
+            if verification is not None and not verification.ok:
+                ok = False
+                run["issues"].append(
+                    {
+                        "code": "verification_failed",
+                        "message": verification.detail or verification.status,
+                        "severity": "error",
+                        "chunk": index,
+                    }
+                )
+            entry["ok"] = bool(commit.ok) and (verification is None or verification.ok)
             entry["status"] = commit.status
             if commit.ok:
                 run["chunks_committed"] += 1
@@ -1753,7 +2023,7 @@ def graph_bulk_apply(
                 )
             run["chunks"].append(entry)
             _write_bulk_manifest(manifest, run)
-            if not commit.ok and not continue_on_error:
+            if not entry["ok"] and not continue_on_error:
                 break
 
         run["ok"] = ok
@@ -1791,7 +2061,8 @@ def graph_history(
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
+        bounds = _resolve_time_bounds(since=since, until=until, window=None)
+        since_dt, until_dt = bounds.since, bounds.until
         result = run_engine_operation(
             get_engine_client(pot).history(
                 EngineHistoryRequest(
@@ -1857,7 +2128,8 @@ def graph_inbox_list(
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        since_dt, until_dt = _resolve_time_bounds(since=since, until=until, window=None)
+        bounds = _resolve_time_bounds(since=since, until=until, window=None)
+        since_dt, until_dt = bounds.since, bounds.until
         result = run_engine_operation(
             get_engine_client(pot).inbox_list(
                 EngineInboxListRequest(
@@ -2489,12 +2761,15 @@ def _describe_human(payload: Mapping[str, Any]) -> str:
     if isinstance(view, Mapping):
         filters = ", ".join(str(v) for v in view.get("supported_filters", ())) or "-"
         relations = ", ".join(str(v) for v in view.get("inline_relations", ())) or "-"
-        return (
-            f"{view.get('name')} ({view.get('result_shape')})\n"
-            f"purpose: {view.get('purpose')}\n"
-            f"filters: {filters}\n"
-            f"relations: {relations}"
-        )
+        lines = [
+            f"{view.get('name')} ({view.get('result_shape')})",
+            f"purpose: {view.get('purpose')}",
+            f"requires: {_describe_requirements(view)}",
+            f"filters: {filters}",
+            f"relations: {relations}",
+        ]
+        lines.extend(_describe_example_lines(view.get("examples")))
+        return "\n".join(lines)
     views = subgraph.get("views", ())
     view_names = ", ".join(str(v.get("name")) for v in views if isinstance(v, Mapping))
     relation_names = ", ".join(
@@ -2502,11 +2777,81 @@ def _describe_human(payload: Mapping[str, Any]) -> str:
         for r in subgraph.get("relation_types", ())
         if isinstance(r, Mapping)
     )
-    return (
-        f"{subgraph.get('name')}: {subgraph.get('purpose')}\n"
-        f"views: {view_names}\n"
-        f"relations: {relation_names}"
-    )
+    lines = [
+        f"{subgraph.get('name')}: {subgraph.get('purpose')}",
+        f"views: {view_names}",
+        f"relations: {relation_names}",
+    ]
+    lines.extend(_describe_example_lines(subgraph.get("examples")))
+    return "\n".join(lines)
+
+
+def _describe_requirements(view: Mapping[str, Any]) -> str:
+    required = [str(v) for v in view.get("required_scope", ()) or ()]
+    required_any = [str(v) for v in view.get("required_any_scope", ()) or ()]
+    parts: list[str] = []
+    if required:
+        parts.append("all of " + ", ".join(required))
+    if required_any:
+        parts.append("one of " + ", ".join(required_any))
+    return "; ".join(parts) or "nothing (pot-wide)"
+
+
+def _describe_example_lines(examples: Any) -> list[str]:
+    """Text rendering of contract examples, so ``--examples`` changes the
+    human output as well as the JSON body."""
+    if not isinstance(examples, list) or not examples:
+        return []
+    lines = ["examples (templates: substitute your own scope/query values):"]
+    for example in examples:
+        if not isinstance(example, Mapping) or not example.get("command"):
+            continue
+        description = str(example.get("description") or "").strip()
+        suffix = f"  # {description}" if description else ""
+        lines.append(f"  - {example['command']}{suffix}")
+    return lines
+
+
+def _plain_document(value: Any) -> Any:
+    """A JSON-shaped, mutable copy of a contract document."""
+    if isinstance(value, Mapping):
+        return {str(key): _plain_document(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain_document(item) for item in value]
+    return value
+
+
+def _scoped_describe_payload(
+    payload: Mapping[str, Any], *, pot_id: str | None
+) -> dict[str, Any]:
+    """The contract with the selected pot attached to its example commands.
+
+    The examples are authored inside the ontology, so they cannot know the
+    caller's pot; a copied example that omits it runs against whatever pot is
+    active later. Every example is a template (its scope values are
+    illustrative) and says so.
+    """
+    document = _plain_document(payload)
+
+    def _rewrite(examples: Any) -> None:
+        if not isinstance(examples, list):
+            return
+        for example in examples:
+            if not isinstance(example, dict) or not example.get("command"):
+                continue
+            example["command"] = append_pot(str(example["command"]), pot_id)
+            example["template"] = True
+
+    view = document.get("view")
+    if isinstance(view, dict):
+        _rewrite(view.get("examples"))
+    subgraph = document.get("subgraph")
+    if isinstance(subgraph, dict):
+        _rewrite(subgraph.get("examples"))
+        for entry in subgraph.get("views", ()) or ():
+            if isinstance(entry, dict):
+                _rewrite(entry.get("examples"))
+    return document
 
 
 def _safe(fn, default):
@@ -2517,30 +2862,8 @@ def _safe(fn, default):
 
 
 def _parse_scope(scope: str | None) -> dict[str, str]:
-    if not scope:
-        return {}
-    out: dict[str, str] = {}
-    for pair in scope.split(","):
-        pair = pair.strip()
-        if not pair:
-            continue
-        if ":" not in pair:
-            raise ValueError(
-                f"invalid --scope entry {pair!r}; expected key:value pairs"
-            )
-        key, value = pair.split(":", 1)
-        key = key.strip()
-        if not key:
-            raise ValueError(
-                f"invalid --scope entry {pair!r}; scope keys must not be empty"
-            )
-        value = value.strip()
-        if not value:
-            raise ValueError(
-                f"invalid --scope entry {pair!r}; scope values must not be empty"
-            )
-        out[key] = value
-    return out
+    """The shared strict parser; see ``_common.parse_scope_pairs``."""
+    return parse_scope_pairs(scope)
 
 
 def _parse_created_by(value: str | None) -> dict[str, Any]:
@@ -2792,6 +3115,9 @@ def _bulk_commit_summary(result) -> dict[str, Any]:
     }
     if result.diff:
         out["diff"] = result.diff.to_dict()
+    verification = getattr(result, "verification", None)
+    if verification is not None:
+        out["verification"] = verification.to_dict()
     return out
 
 
@@ -2916,29 +3242,253 @@ def _neighborhood_relation(edge) -> dict[str, Any]:
     }
 
 
+#: Answer-bearing fields on a fix-like anchor; rendered whole (bounded) rather
+#: than folded into the one-line property dump.
+_NEIGHBORHOOD_ANSWER_FIELDS = (
+    "root_cause",
+    "fix_steps",
+    "verification_status",
+    "resolution_status",
+    "source_status",
+)
+
+
 def _neighborhood_human(payload: Mapping[str, Any]) -> str:
     relations = payload.get("relations") or ()
     lines = [
         (
-            f"entity={payload.get('entity_key')} relations={len(relations)} "
+            f"entity={payload.get('entity_key')} "
+            f"identity={payload.get('identity_status', 'unknown')} "
+            f"relations={len(relations)} "
             f"nodes={payload.get('node_count')} detail={payload.get('detail')}"
         )
     ]
+    if payload.get("recommended_next_action"):
+        lines.append(f"Next: {payload['recommended_next_action']}")
     for rel in list(relations)[:20]:
         if not isinstance(rel, Mapping):
             continue
         refs = ", ".join(_string_list(rel.get("source_refs"))) or "no-source-ref"
         fact = rel.get("fact") or f"{rel.get('from')} -> {rel.get('to')}"
         lines.append(f"  • {rel.get('predicate')} [{refs}] {fact}")
+    if len(relations) > 20:
+        lines.append(
+            f"  … {len(relations) - 20} relations hidden; use --json for the "
+            "returned slice."
+        )
+    if payload.get("omitted_relation_count"):
+        lines.append(
+            f"  … {payload['omitted_relation_count']} relations omitted by output "
+            "budget."
+        )
+    if payload.get("detail") == "full":
+        lines.extend(_neighborhood_full_lines(payload))
+    if payload.get("truncated"):
+        lines.append("Bounded neighborhood; completeness is unknown beyond this slice.")
     return "\n".join(lines)
 
 
-def _catalog_payload_for_profile(
-    payload: Mapping[str, Any], *, profile: str
+def _neighborhood_full_lines(payload: Mapping[str, Any]) -> list[str]:
+    """Node and edge detail for ``--detail full``: the anchor first, with its
+    root cause, fix steps, verification and source status spelled out."""
+    lines: list[str] = []
+    nodes = list(payload.get("nodes") or ())
+    edges = list(payload.get("edges") or ())
+    anchor = next(
+        (node for node in nodes if node.get("key") == payload.get("entity_key")),
+        None,
+    )
+    displayed_nodes = ([anchor] if anchor else []) + [
+        node for node in nodes if node is not anchor
+    ][: 4 if anchor else 5]
+    for node in displayed_nodes:
+        properties = dict(node["properties"])
+        others = {
+            key: value
+            for key, value in properties.items()
+            if key not in _NEIGHBORHOOD_ANSWER_FIELDS
+        }
+        lines.append(
+            f"  node {node['key']} [{', '.join(node['labels'])}] "
+            f"properties={_bounded_neighborhood_properties(others)}"
+        )
+        if node is anchor:
+            for field in _NEIGHBORHOOD_ANSWER_FIELDS:
+                if field in properties:
+                    rendered, omitted = _bounded_neighborhood_answer(properties[field])
+                    lines.append(f"    {field}: {rendered}")
+                    if omitted:
+                        lines.append(f"    {field} omitted: {omitted}")
+    if len(nodes) > len(displayed_nodes):
+        lines.append(
+            f"  … {len(nodes) - len(displayed_nodes)} node details hidden; use "
+            "--json for the returned slice."
+        )
+    for edge in edges[:5]:
+        lines.append(
+            f"  edge {edge['from']} {edge['predicate']} {edge['to']} "
+            f"properties={_bounded_neighborhood_properties(edge['properties'])}"
+        )
+    if len(edges) > 5:
+        lines.append(
+            f"  … {len(edges) - 5} edge details hidden; use --json for the "
+            "returned slice."
+        )
+    return lines
+
+
+def _bounded_neighborhood_properties(properties: Mapping[str, Any]) -> str:
+    rendered = json.dumps(
+        dict(properties), ensure_ascii=False, default=str, separators=(",", ":")
+    )
+    return rendered if len(rendered) <= 320 else rendered[:317] + "…"
+
+
+def _bounded_neighborhood_answer(value: Any) -> tuple[str, str | None]:
+    if isinstance(value, (list, tuple)):
+        selected = [str(item)[:500] for item in value[:12]]
+        omitted = len(value) - len(selected)
+        clipped = sum(max(0, len(str(item)) - 500) for item in value[:12])
+        note = ", ".join(
+            part
+            for part in (
+                f"{omitted} items" if omitted else "",
+                f"{clipped} characters" if clipped else "",
+            )
+            if part
+        )
+        return json.dumps(selected, ensure_ascii=False), note or None
+    rendered = str(value)
+    if len(rendered) > 2_000:
+        return rendered[:2_000], f"{len(rendered) - 2_000} characters"
+    return rendered, None
+
+
+def _bound_neighborhood_payload(
+    payload: dict[str, Any], *, pot_id: str
 ) -> dict[str, Any]:
+    """Bound a neighborhood body to the graph output budget.
+
+    Long facts and property values are clipped first, then trailing relations
+    are dropped, then non-essential node properties. The anchor's answer
+    fields survive, and the reply names the exact ``--unbounded`` rerun.
+    """
+
+    def size(value: dict[str, Any]) -> int:
+        return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+
+    if size(payload) <= _GRAPH_BODY_BUDGET_BYTES:
+        return payload
+    bounded = dict(payload)
+    relations = [dict(row) for row in payload["relations"]]
+    edges = [dict(row) for row in payload.get("edges", ())]
+    nodes = [dict(row) for row in payload.get("nodes", ())]
+    bounded["relations"] = relations
+    if "edges" in payload:
+        bounded["edges"] = edges
+    if "nodes" in payload:
+        bounded["nodes"] = nodes
+    omitted_fields = 0
+    for row in relations:
+        if len(str(row.get("fact") or "")) > 2_000:
+            omitted_fields += 1
+            row["fact"] = str(row["fact"])[:2_000]
+        if len(row.get("source_refs") or ()) > 12:
+            omitted_fields += 1
+        row["source_refs"] = list(row.get("source_refs") or ())[:12]
+
+    def bound_value(value: Any) -> Any:
+        nonlocal omitted_fields
+        if isinstance(value, str):
+            if len(value) > 2_000:
+                omitted_fields += 1
+            return value[:2_000]
+        if isinstance(value, (list, tuple)):
+            if len(value) > 12:
+                omitted_fields += 1
+            return [bound_value(item) for item in value[:12]]
+        if isinstance(value, Mapping):
+            return {key: bound_value(item) for key, item in value.items()}
+        return value
+
+    for row in [*nodes, *edges]:
+        properties = row.get("properties")
+        if isinstance(properties, Mapping):
+            row["properties"] = {
+                key: bound_value(value) for key, value in properties.items()
+            }
+    total_relations = len(relations)
+    total_nodes = len(nodes)
+    while size(bounded) > _GRAPH_BODY_BUDGET_BYTES and relations:
+        relations.pop()
+        if edges:
+            edges.pop()
+    if nodes:
+        visible_keys = {payload["entity_key"]}
+        for row in relations:
+            visible_keys.update((row.get("from_key"), row.get("to_key")))
+        nodes[:] = [node for node in nodes if node.get("key") in visible_keys]
+    if size(bounded) > _GRAPH_BODY_BUDGET_BYTES:
+        essential = {"name", "summary", "description", *_NEIGHBORHOOD_ANSWER_FIELDS}
+        for node in nodes:
+            properties = node.get("properties")
+            if isinstance(properties, Mapping):
+                node["properties"] = {
+                    key: value for key, value in properties.items() if key in essential
+                }
+                omitted_fields += len(properties) - len(node["properties"])
+        for edge in edges:
+            omitted_fields += len(edge.get("properties") or ())
+            edge["properties"] = {}
+    bounded["relation_count"] = len(relations)
+    bounded["node_count"] = len(nodes) if "nodes" in payload else payload["node_count"]
+    bounded["total_relation_count"] = total_relations
+    bounded["total_node_count"] = total_nodes
+    bounded["omitted_relation_count"] = total_relations - len(relations)
+    bounded["omitted_node_count"] = total_nodes - len(nodes)
+    bounded["omitted_field_count"] = omitted_fields
+    bounded["output_budget_bytes"] = DEFAULT_OUTPUT_BUDGET_BYTES
+    bounded["truncated"] = True
+    tokens = [
+        "potpie",
+        "graph",
+        "neighborhood",
+        "--entity",
+        payload["entity_key"],
+        "--depth",
+        str(payload["depth"]),
+        "--direction",
+        payload["direction"],
+        "--limit",
+        str(payload["limit"]),
+        "--detail",
+        payload["detail"],
+    ]
+    if payload.get("predicates"):
+        tokens.extend(("--predicate", ",".join(payload["predicates"])))
+    tokens.extend(("--unbounded", "--pot", pot_id))
+    bounded["recommended_next_action"] = join_command(tokens)
+    return bounded
+
+
+def _preflight_catalog_profile(profile: str) -> str:
     mode = (profile or "full").strip().lower()
     if mode not in {"full", "read"}:
         raise ValueError("--profile must be one of: full, read")
+    return mode
+
+
+def _preflight_catalog_format(format_: str) -> str:
+    mode = (format_ or "auto").strip().lower()
+    if mode not in {"auto", "table"}:
+        raise ValueError("--format must be one of: auto, table, json")
+    return mode
+
+
+def _catalog_payload_for_profile(
+    payload: Mapping[str, Any], *, profile: str, pot_id: str | None = None
+) -> dict[str, Any]:
+    mode = _preflight_catalog_profile(profile)
     result = dict(payload)
     result["profile"] = mode
     if mode == "full":
@@ -2958,7 +3508,9 @@ def _catalog_payload_for_profile(
         }
     ]
     result["commands"] = read_commands
-    result["views"] = [_compact_catalog_view(view) for view in result.get("views", ())]
+    result["views"] = [
+        _compact_catalog_view(view, pot_id=pot_id) for view in result.get("views", ())
+    ]
     if "task_ranking" in result:
         result["task_ranking"] = [
             _compact_catalog_ranking(entry, rank=index + 1)
@@ -2978,7 +3530,16 @@ def _catalog_payload_for_profile(
     return result
 
 
-def _compact_catalog_view(view: Mapping[str, Any]) -> dict[str, Any]:
+def _compact_catalog_view(
+    view: Mapping[str, Any], *, pot_id: str | None = None
+) -> dict[str, Any]:
+    """The read-profile projection of one catalog view.
+
+    The data-plane catalog entry carries ``inputs`` but not the selector rules,
+    so the requirements come from the ontology contract (or the entry's own
+    ``extra`` for an extension view), and the next read is templated over them
+    and pinned to the selected pot.
+    """
     out = {
         key: view[key]
         for key in (
@@ -2994,10 +3555,36 @@ def _compact_catalog_view(view: Mapping[str, Any]) -> dict[str, Any]:
         )
         if key in view
     }
-    if "subgraph" in out and "view" in out:
-        out["next_read"] = (
-            f"potpie graph read --subgraph {out['subgraph']} --view {out['view']}"
+    contract = ontology_contract().view(str(view.get("name") or ""))
+    extra = view.get("extra") if isinstance(view.get("extra"), Mapping) else {}
+    if contract is not None:
+        out.setdefault("required_scope", list(contract.required_scope))
+        out.setdefault("required_any_scope", list(contract.required_any_scope))
+        out.setdefault("supported_filters", list(contract.supported_filters))
+        if "result_shape" not in out:
+            out["result_shape"] = contract.result_shape
+    else:
+        out.setdefault(
+            "required_scope", [str(v) for v in extra.get("required_scope", ())]
         )
+        out.setdefault(
+            "required_any_scope",
+            [str(v) for v in extra.get("required_any_scope", ())],
+        )
+        out.setdefault(
+            "supported_filters",
+            [str(v) for v in extra.get("supported_filters", view.get("inputs", ()))],
+        )
+    if "subgraph" in out and "view" in out:
+        command = graph_read_command(
+            str(out["subgraph"]),
+            str(out["view"]),
+            pot_id=pot_id,
+            required_scope=out.get("required_scope") or (),
+            required_any_scope=out.get("required_any_scope") or (),
+        )
+        out["next_read"] = command
+        out["next_read_is_template"] = is_template(command)
     return out
 
 
@@ -3012,48 +3599,6 @@ def _compact_catalog_ranking(entry: Mapping[str, Any], *, rank: int) -> dict[str
     return out
 
 
-def _catalog_human(payload: Mapping[str, Any], *, format_: str) -> str:
-    mode = (format_ or "auto").strip().lower()
-    if mode not in {"auto", "table"}:
-        raise ValueError("--format must be one of: auto, table")
-    if mode == "table" or payload.get("profile") == "read":
-        lines = [
-            f"graph catalog profile={payload.get('profile', 'full')} "
-            f"match={payload.get('match_mode')}"
-        ]
-        task = payload.get("task")
-        if task:
-            lines.append(f"task={task}")
-        rankings = payload.get("task_ranking") or ()
-        if rankings:
-            lines.append("rank | score | view | reason")
-            lines.append("--- | --- | --- | ---")
-            for entry in rankings[:8]:
-                reason = str(entry.get("reason") or "")
-                lines.append(
-                    f"{entry.get('rank')} | {entry.get('score')} | "
-                    f"{entry.get('view')} | {reason}"
-                )
-        lines.append("view | backed | filters")
-        lines.append("--- | --- | ---")
-        for view in payload.get("views", ()):
-            filters = ", ".join(view.get("supported_filters") or ()) or "-"
-            lines.append(
-                f"{view.get('name')} | {str(bool(view.get('backed'))).lower()} | {filters}"
-            )
-        return "\n".join(lines)
-
-    return (
-        f"graph contract v2 / ontology {ONTOLOGY_VERSION} "
-        f"(data-plane={payload['data_plane_graph_contract_version']}, match={payload['match_mode']})\n"
-        f"commands: {', '.join(payload['commands'])}\n"
-        f"views: {', '.join(v['name'] for v in payload['views'])}\n"
-        f"mutation ops: {', '.join(payload['mutation_operations'])}\n"
-        f"review-required: {', '.join(payload['review_required_operations'])}\n"
-        f"deferred: {', '.join(payload['deferred_operations'])}"
-    )
-
-
 def _emit_graph_read(
     ctx: _GraphCliCommandContext,
     result,
@@ -3064,6 +3609,7 @@ def _emit_graph_read(
     event_limit: int | None = None,
     human_prefix: str | None = None,
     warnings: tuple[str, ...] = (),
+    adjustments: tuple[Adjustment, ...] = (),
 ) -> None:
     normalized_format = _effective_read_format(result, format_)
     payload = _read_payload(
@@ -3074,10 +3620,39 @@ def _emit_graph_read(
         event_limit=event_limit,
     )
     if payload.get("ok", True) is False:
+        if normalized_format == "jsonl" and not is_json():
+            # A refused or partial stream has one structured receipt, never
+            # prose or supplemental rows that could be mistaken for the answer.
+            typer.echo(json.dumps(with_adjustments(payload, adjustments), default=str))
+            raise typer.Exit(code=EXIT_VALIDATION)
         human = _error_message_from_result(payload)
+        fallback = payload.get("fallback_context")
+        if fallback:
+            human += (
+                "\n\n"
+                + fallback["label"]
+                + "\n"
+                + _read_human(
+                    replace(
+                        result,
+                        items=tuple(fallback.get("items", ())),
+                        coverage=tuple(fallback.get("coverage", ())),
+                        quality=fallback.get("quality", {}),
+                        ok=True,
+                        effective_request=fallback.get("effective_request", {}),
+                        fallback_context={},
+                    ),
+                    format_=normalized_format,
+                    sort=sort,
+                    dedupe=dedupe,
+                    event_limit=event_limit,
+                )
+            )
         if human_prefix:
             human = "\n".join((human_prefix, human))
-        _emit_graph_result(ctx, payload, human=human, warnings=warnings)
+        _emit_graph_result(
+            ctx, payload, human=human, warnings=warnings, adjustments=adjustments
+        )
         raise typer.Exit(code=EXIT_VALIDATION)
 
     if not is_json():
@@ -3089,6 +3664,7 @@ def _emit_graph_read(
             event_limit=event_limit,
             human_prefix=human_prefix,
             warnings=warnings,
+            adjustments=adjustments,
         )
         return
 
@@ -3131,6 +3707,7 @@ def _emit_graph_read(
             warnings=warnings,
         ),
         warnings=warnings,
+        adjustments=adjustments,
     )
 
 
@@ -3143,9 +3720,16 @@ def _emit_read(
     event_limit: int | None = None,
     human_prefix: str | None = None,
     warnings: tuple[str, ...] = (),
+    adjustments: tuple[Adjustment, ...] = (),
 ) -> None:
+    warnings = warnings + tuple(getattr(result, "warnings", ()))
     normalized_format = _effective_read_format(result, format_)
     if normalized_format == "jsonl":
+        # The row stream on stdout stays rows only; notices ride stderr.
+        for line in adjustment_lines(adjustments):
+            typer.echo(line, err=True)
+        for warning in warnings:
+            typer.echo(f"! {warning}", err=True)
         rows = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
         if not rows:
             rows = _raw_item_rows(result)
@@ -3160,7 +3744,7 @@ def _emit_read(
         event_limit=event_limit,
     )
     emit(
-        payload,
+        with_adjustments(payload, adjustments),
         human=_with_read_context(
             _read_human(
                 result,
@@ -3171,19 +3755,273 @@ def _emit_read(
             ),
             human_prefix=human_prefix,
             warnings=warnings,
+            adjustments=adjustments,
         ),
     )
 
 
+def _empty_read_warnings(host: Any, pot_id: str, result: Any) -> tuple[str, ...]:
+    """Empty-pot guidance, asked for only when the read came back empty.
+
+    A populated answer needs no guidance, and asking costs the pot's graph
+    counts plus, on an empty pot, a sibling-pot lookup.
+    """
+    if getattr(result, "items", ()):
+        return ()
+    return empty_pot_warnings(host, pot_id)
+
+
 def _with_read_context(
-    human: str, *, human_prefix: str | None, warnings: tuple[str, ...]
+    human: str,
+    *,
+    human_prefix: str | None,
+    warnings: tuple[str, ...],
+    adjustments: tuple[Adjustment, ...] = (),
 ) -> str:
     lines: list[str] = []
     if human_prefix:
         lines.append(human_prefix)
     lines.append(human)
+    lines.extend(adjustment_lines(adjustments))
     lines.extend(f"! {warning}" for warning in warnings)
     return "\n".join(lines)
+
+
+# --- Preflight: decided locally, before any engine call --------------------
+
+_READ_FORMATS = frozenset({"auto", "raw", "events", "table", "jsonl"})
+_READ_SORTS = frozenset({"auto", "score", "occurred_at"})
+_READ_DEDUPES = frozenset({"auto", "none", "source_ref", "activity"})
+
+
+def _preflight_machine_format(format_: str, adjustments: list[Adjustment]) -> str:
+    """``--format json`` means the machine envelope the root ``--json`` emits.
+
+    The request preserves the caller's information contract exactly, so it is
+    honoured and disclosed. ``jsonl`` is a different contract (a row stream)
+    and is left alone.
+    """
+    value = (format_ or "auto").strip().lower()
+    if value != "json":
+        return value
+    if not is_json():
+        set_json(True)
+    adjustments.append(
+        Adjustment(
+            field="format",
+            requested=format_,
+            effective="auto",
+            reason=REASON_MACHINE_JSON,
+            message=(
+                "--format json emits the machine JSON envelope (the same "
+                "output as the root --json flag); layout format left at auto"
+            ),
+        )
+    )
+    return "auto"
+
+
+def _preflight_read_presentation(
+    *,
+    format_: str,
+    detail: str,
+    relations: str,
+    sort: str,
+    dedupe: str,
+    adjustments: list[Adjustment],
+) -> tuple[str, str, str, str, str]:
+    """Validate and canonicalize every presentation value before the read.
+
+    Unknown values fail here, with zero engine calls. Exact aliases with a
+    canonical equivalent — ``json`` for the machine envelope, ``summary`` for
+    graph read's ``compact`` detail — execute once and are disclosed. Unknown
+    serialization formats are refused, never downgraded to prose.
+    """
+    format_ = _preflight_machine_format(format_, adjustments)
+    if format_ not in _READ_FORMATS:
+        raise ValueError(
+            "--format must be one of: auto, raw, events, table, jsonl, json"
+        )
+    detail_value = (detail or "compact").strip().lower()
+    if detail_value == "summary":
+        adjustments.append(
+            Adjustment(
+                field="detail",
+                requested=detail,
+                effective="compact",
+                reason=REASON_CANONICAL_ALIAS,
+                message=(
+                    "--detail summary is spelled compact on graph read; "
+                    "returned the compact detail"
+                ),
+            )
+        )
+        detail_value = "compact"
+    if detail_value not in {"compact", "full"}:
+        raise ValueError("--detail must be one of: compact, full")
+    relations_value = (relations or "summary").strip().lower()
+    if relations_value not in {"summary", "full"}:
+        raise ValueError("--relations must be one of: summary, full")
+    sort_value = (sort or "auto").strip().lower()
+    if sort_value not in _READ_SORTS:
+        raise ValueError("--sort must be one of: auto, score, occurred_at")
+    dedupe_value = (dedupe or "auto").strip().lower()
+    if dedupe_value not in _READ_DEDUPES:
+        raise ValueError("--dedupe must be one of: auto, none, source_ref, activity")
+    return format_, detail_value, relations_value, sort_value, dedupe_value
+
+
+def _require_positive_limit(limit: int) -> None:
+    """``--limit`` is a result budget; zero and negative values are refused
+    rather than reinterpreted as "everything"."""
+    if limit is None or limit < 1:
+        raise ValueError("--limit must be >= 1")
+
+
+def _bounded_read_depth(
+    *,
+    subgraph: str,
+    view: str,
+    depth: int | None,
+    adjustments: list[Adjustment],
+) -> int | None:
+    """Cap ``--depth`` at the view's advertised maximum, disclosed.
+
+    ``--depth 100`` on the service neighbourhood returns the deepest supported
+    slice with one notice instead of a refusal. Zero and negative depths are
+    refused. Views that advertise no budget pass the value through so the
+    engine can report it as an unsupported filter.
+    """
+    if depth is None:
+        return None
+    bounds = view_depth_bounds(f"{subgraph}.{view}")
+    if depth < 1:
+        supported = f" (this view walks 1..{bounds[1]})" if bounds else ""
+        raise ValueError(f"--depth must be >= 1{supported}")
+    if bounds is None:
+        return depth
+    _default, maximum = bounds
+    if depth <= maximum:
+        return depth
+    adjustments.append(
+        Adjustment(
+            field="depth",
+            requested=depth,
+            effective=maximum,
+            reason=REASON_MAXIMUM_SUPPORTED,
+            max_supported=maximum,
+            message=(
+                f"Depth {depth} exceeds the supported maximum {maximum}; "
+                f"returned depth-{maximum} context."
+            ),
+        )
+    )
+    return maximum
+
+
+def _advertised_vocabulary(pot: str | None) -> dict[str, tuple[str, ...]]:
+    """The serving engine's entity types / predicates / subgraphs, or ``{}``.
+
+    Asked for only when a value is unknown to the in-process registry, so
+    ordinary lookups keep their cost and a valid extension is still accepted.
+    """
+    try:
+        catalog = run_engine_operation(
+            get_engine_client(pot).catalog(EngineCatalogRequest())
+        )
+    except Exception:  # noqa: BLE001 - discovery is best-effort guidance
+        return {}
+    return vocabulary_from_catalog(catalog)
+
+
+def _canonical_search_vocabulary(
+    pot: str | None,
+    *,
+    type_: str | None,
+    predicate: str | None,
+    subgraph: str | None,
+    adjustments: list[Adjustment],
+) -> tuple[str | None, str | None, str | None]:
+    """``--type`` / ``--predicate`` / ``--subgraph`` as the graph spells them.
+
+    An exact case/spacing variant executes once as the canonical token and is
+    disclosed. A value neither the local registry nor the engine's catalog
+    advertises is refused before retrieval with a bounded list of valid
+    choices: a confident zero-match answer cannot be told apart from a filter
+    that was impossible. Nothing here picks a near miss.
+    """
+    advertised: dict[str, tuple[str, ...]] | None = None
+
+    def _resolve(value, *, argument, field, resolver, local, catalog_key, noun):
+        nonlocal advertised
+        if not value:
+            return None
+        match = resolver(value, known=local)
+        if match.canonical is None:
+            if advertised is None:
+                advertised = _advertised_vocabulary(pot)
+            remote = advertised.get(catalog_key) or ()
+            if remote:
+                match = resolver(value, known=tuple(dict.fromkeys((*local, *remote))))
+        if match.canonical is None:
+            candidates = list(match.candidates)
+            fail(
+                code="unsupported_filter",
+                message=(
+                    f"unknown {argument} value {value!r}: the graph vocabulary "
+                    f"has no such {noun}, so the filter cannot be applied."
+                ),
+                detail={
+                    "argument": argument,
+                    "requested": value,
+                    "candidates": candidates,
+                },
+                next_action=(
+                    f"use one of: {', '.join(candidates)}; "
+                    "`potpie graph catalog --profile full --json` lists the "
+                    "full vocabulary"
+                ),
+            )
+        if match.canonical != value:
+            adjustments.append(
+                Adjustment(
+                    field=field,
+                    requested=value,
+                    effective=match.canonical,
+                    reason=REASON_CANONICAL_CASE,
+                    message=f"{argument} {value!r} read as {match.canonical!r}",
+                )
+            )
+        return match.canonical
+
+    canonical_type = _resolve(
+        type_,
+        argument="--type",
+        field="type",
+        resolver=resolve_entity_type,
+        local=local_entity_types(),
+        catalog_key="entity_types",
+        noun="entity type",
+    )
+    canonical_predicate = _resolve(
+        predicate,
+        argument="--predicate",
+        field="predicate",
+        resolver=resolve_predicate,
+        local=local_predicates(),
+        catalog_key="predicates",
+        noun="predicate",
+    )
+    canonical_subgraph = _resolve(
+        subgraph,
+        argument="--subgraph",
+        field="subgraph",
+        resolver=resolve_claim_subgraph,
+        local=local_claim_subgraphs(),
+        catalog_key="subgraphs",
+        noun="subgraph",
+    )
+    return canonical_type, canonical_predicate, canonical_subgraph
 
 
 def _read_payload(
@@ -3195,14 +4033,20 @@ def _read_payload(
     event_limit: int | None = None,
 ) -> dict:
     payload = result.to_dict()
-    if format_ in ("events", "table"):
-        events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
-        if payload.get("detail") != "full":
-            payload.pop("items", None)
-        payload["read_shape"] = "events"
-        payload["events"] = events
-        payload["event_count"] = len(events)
-        payload["freshness"] = _timeline_freshness(events)
+    if format_ not in ("events", "table"):
+        return payload
+    if not _is_timeline_view(payload.get("view")):
+        # Only the timeline view has an event projection. Outside it,
+        # `--format` is a rendering choice over the same items, so they stay
+        # in the machine body too.
+        return payload
+    events = _timeline_events(result, sort=sort, dedupe=dedupe, limit=event_limit)
+    if payload.get("detail") != "full":
+        payload.pop("items", None)
+    payload["read_shape"] = "events"
+    payload["events"] = events
+    payload["event_count"] = len(events)
+    payload["freshness"] = _timeline_freshness(events)
     return payload
 
 
@@ -3218,6 +4062,45 @@ def _read_human(
     sort: str = "auto",
     dedupe: str = "auto",
     event_limit: int | None = None,
+) -> str:
+    """The read body plus its truthful scope, bounds and output budget."""
+    body = _read_human_body(
+        result, format_=format_, sort=sort, dedupe=dedupe, event_limit=event_limit
+    )
+    effective = getattr(result, "effective_request", {})
+    lines = []
+    if effective:
+        scope = effective.get("scope") or "selected pot"
+        lines.append(f"scope={scope} limit={effective.get('limit')}")
+        if effective.get("since") or effective.get("until"):
+            lines.append(
+                f"window={effective.get('since') or 'unbounded'} .. "
+                f"{effective.get('until') or 'unbounded'}"
+            )
+    for report in result.coverage:
+        meta = report.get("metadata", {})
+        if report.get("completeness") in {"truncated", "unknown"}:
+            lines.append(
+                f"Bounded result: completeness={report['completeness']} "
+                f"ranking_omitted={meta.get('ranking_omitted', 'unknown')} "
+                f"projection_omitted={meta.get('projection_omitted', 0)}. "
+                "Narrow the scope/query or increase --limit for more context; "
+                "this is not a continuation."
+            )
+    budget = getattr(result, "output_budget", None)
+    if budget:
+        lines.append(
+            f"Output budget {budget.get('max_bytes')} bytes; "
+            f"omitted_items={budget.get('omitted_items', 0)}; "
+            f"bounded_entities={len(budget.get('omitted_fields_by_entity', {}))}."
+        )
+        if budget.get("recommended_next_action"):
+            lines.append(f"Next: {budget['recommended_next_action']}")
+    return "\n".join([*lines, body])
+
+
+def _read_human_body(
+    result, *, format_: str, sort: str, dedupe: str, event_limit: int | None
 ) -> str:
     ctx = build_presentation_context(
         result,
@@ -3477,22 +4360,77 @@ def _timeline_freshness(events: list[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True, slots=True)
+class _TimeBounds:
+    """Parsed ``--since`` / ``--until`` / ``--time-window`` plus disclosures."""
+
+    since: datetime | None
+    until: datetime | None
+    adjustments: tuple[Adjustment, ...] = ()
+
+
 def _resolve_time_bounds(
     *, since: str | None, until: str | None, window: str | None
-) -> tuple[datetime | None, datetime | None]:
+) -> _TimeBounds:
+    """Effective UTC bounds, with every deviation from the request disclosed.
+
+    An explicit ``--since`` still wins over a relative ``--time-window``, and
+    the unused window is reported as an adjustment naming the bound applied
+    instead. Reversed bounds are refused before retrieval with both instants;
+    the dates are never swapped, and no unfiltered read runs in their place.
+    """
+    adjustments: list[Adjustment] = []
     until_dt = _parse_instant(until) if until else None
     since_dt = _parse_instant(since) if since else None
+    if since_dt is not None and until_dt is not None and since_dt > until_dt:
+        raise ValueError(
+            f"--since {since_dt.isoformat()} is after --until {until_dt.isoformat()}; "
+            "the window is empty. Swap the bounds or drop one; dates were not "
+            "reordered for you."
+        )
     if since_dt is not None:
-        return since_dt, until_dt
+        if window:
+            adjustments.append(
+                Adjustment(
+                    field="time_window",
+                    requested=window,
+                    effective=None,
+                    reason=REASON_EXPLICIT_SINCE,
+                    message=(
+                        f"--time-window {window} ignored: the explicit --since "
+                        f"{since_dt.isoformat()} was applied instead"
+                    ),
+                )
+            )
+        return _TimeBounds(
+            since=since_dt, until=until_dt, adjustments=tuple(adjustments)
+        )
     if window:
+        duration, canonical = _parse_window(window)
         end = until_dt or datetime.now(timezone.utc)
-        return end - _parse_duration(window), until_dt
-    return None, until_dt
+        start = end - duration
+        if canonical != window.strip():
+            adjustments.append(
+                Adjustment(
+                    field="time_window",
+                    requested=window,
+                    effective=canonical,
+                    reason=REASON_UNIT_ALIAS,
+                    message=(
+                        f"--time-window {window!r} read as {canonical} "
+                        f"(since {start.isoformat()})"
+                    ),
+                )
+            )
+        return _TimeBounds(since=start, until=until_dt, adjustments=tuple(adjustments))
+    return _TimeBounds(since=None, until=until_dt)
 
 
-def _normalize_query_threshold(value: float) -> float:
+def _normalize_query_threshold(value: float | None) -> float | None:
+    if value is None:
+        return None
     threshold = float(value)
-    if threshold < 0.0 or threshold > 1.0:
+    if not 0.0 <= threshold <= 1.0:
         raise ValueError("--query-threshold must be between 0.0 and 1.0")
     return threshold
 
@@ -3512,19 +4450,53 @@ def _parse_instant(value: str) -> datetime:
     return dt
 
 
-def _parse_duration(value: str) -> timedelta:
-    m = re.fullmatch(r"\s*(\d+)\s*([mhdw])\s*", value.strip().lower())
-    if not m:
-        raise ValueError("--time-window must look like 30m, 24h, 7d, or 2w")
+#: Explicit unit aliases. Each spelled-out form has exactly one canonical
+#: single-letter reading, so ``7days`` is ``7d`` and nothing else; anything
+#: outside this table (``7 fortnights``, ``yesterday``) stays a refusal.
+_DURATION_UNITS: dict[str, str] = {
+    "m": "m",
+    "min": "m",
+    "mins": "m",
+    "minute": "m",
+    "minutes": "m",
+    "h": "h",
+    "hr": "h",
+    "hrs": "h",
+    "hour": "h",
+    "hours": "h",
+    "d": "d",
+    "day": "d",
+    "days": "d",
+    "w": "w",
+    "wk": "w",
+    "wks": "w",
+    "week": "w",
+    "weeks": "w",
+}
+
+
+def _parse_window(value: str) -> tuple[timedelta, str]:
+    """``(duration, canonical spelling)`` for a relative window."""
+    m = re.fullmatch(r"\s*(\d+)\s*([a-z]+)\s*", (value or "").lower())
+    unit = _DURATION_UNITS.get(m.group(2)) if m else None
+    if not m or unit is None:
+        raise ValueError(
+            "--time-window must look like 30m, 24h, 7d, or 2w "
+            "(minutes/hours/days/weeks are accepted spellings)"
+        )
     amount = int(m.group(1))
-    unit = m.group(2)
+    canonical = f"{amount}{unit}"
     if unit == "m":
-        return timedelta(minutes=amount)
+        return timedelta(minutes=amount), canonical
     if unit == "h":
-        return timedelta(hours=amount)
+        return timedelta(hours=amount), canonical
     if unit == "d":
-        return timedelta(days=amount)
-    return timedelta(weeks=amount)
+        return timedelta(days=amount), canonical
+    return timedelta(weeks=amount), canonical
+
+
+def _parse_duration(value: str) -> timedelta:
+    return _parse_window(value)[0]
 
 
 def _parse_ttl_seconds(value: str) -> int:
@@ -3674,6 +4646,10 @@ def _commit_human(result) -> str:
             lines.append(verification.detail)
     if result.detail:
         lines.append(result.detail)
+    if result.recommended_next_action:
+        lines.append(f"next: {result.recommended_next_action}")
+    if verification is not None and verification.recommended_next_action:
+        lines.append(f"next: {verification.recommended_next_action}")
     return "\n".join(lines)
 
 
