@@ -59,6 +59,22 @@ def _default_in_process_cli_host(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_harness_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Never let a test write into the *developer's* ``~/.claude`` & friends.
+
+    Skills install where the harness reads them, which is the real home
+    directory, so a suite that installs skills would otherwise overwrite the
+    live ``~/.claude``, ``~/.cursor``, ``~/.agents`` and ``~/.config/opencode``.
+    ``POTPIE_HARNESS_HOME`` is the explicit redirect for that.
+    """
+    monkeypatch.setenv(
+        "POTPIE_HARNESS_HOME", str(tmp_path_factory.mktemp("potpie-harness-home"))
+    )
+
+
+@pytest.fixture(autouse=True)
 def _isolated_home(
     monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:

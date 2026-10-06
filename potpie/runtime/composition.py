@@ -43,6 +43,7 @@ from potpie_context_engine.adapters.outbound.session.injection_ledger import (
 )
 from potpie.skills.targets import (
     ClaudeAgentTarget,
+    ClaudePluginAgentTarget,
     CodexAgentTarget,
     CursorAgentTarget,
     OpenCodeAgentTarget,
@@ -139,6 +140,10 @@ def build_local_runtime(
         skills = DefaultSkillManager(
             targets={
                 "claude": ClaudeAgentTarget(),
+                # Project scope only: the plugin keeps its own
+                # ``.claude-plugin/plugin.json`` as the plugin root. Registered so
+                # the harness is known and global scope refuses with a repair.
+                "claude-plugin": ClaudePluginAgentTarget(),
                 "codex": CodexAgentTarget(),
                 "cursor": CursorAgentTarget(),
                 "opencode": OpenCodeAgentTarget(),

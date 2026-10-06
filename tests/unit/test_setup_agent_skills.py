@@ -329,3 +329,23 @@ def test_post_setup_wizard_runs_skills_after_integrations(
     setup_ux.maybe_prompt_github_login(repo=repo, setup_agent="claude")
 
     assert calls == ["agents", "claude"]
+
+
+def test_skill_support_files_install_and_refresh_with_the_skill(tmp_path):
+    """A skill's extra files travel with it and are refreshed by a forced install."""
+    from potpie.skills.installer import install_agent_bundle
+
+    install_agent_bundle(tmp_path, skill_ids=["potpie-graph"], support_files=False)
+    skill = tmp_path / ".agents/skills/potpie-graph"
+    extra = skill / "agents/openai.yaml"
+    assert extra.exists()
+    packaged = extra.read_text(encoding="utf-8")
+    assert "potpie-graph" in packaged
+    # Naming one skill installs that skill only — not the routing block.
+    assert not (tmp_path / "AGENTS.md").exists()
+
+    extra.write_text("outdated", encoding="utf-8")
+    install_agent_bundle(
+        tmp_path, skill_ids=["potpie-graph"], support_files=False, force=True
+    )
+    assert extra.read_text(encoding="utf-8") == packaged
