@@ -8,6 +8,7 @@ and never out from under another process that is still using it.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -135,3 +136,20 @@ def test_a_server_is_handed_over_to_the_process_still_using_it(lite_db) -> None:
 
     assert falkordb_writer.shutdown_embedded_servers() == 1
     assert _wait_until_gone(pid)
+
+
+def test_a_clean_stop_is_not_mistaken_for_a_crash(lite_db) -> None:
+    # A server that died without saving leaves its handshake file behind, and
+    # without a complete AOF the graph is refused. A server this process
+    # stopped cleanly must not leave that record.
+    path, started = lite_db
+    falkordb_writer.build_falkordb_graph(_LiteSettings(path)).query("RETURN 1")
+    pid = _server_pid(path)
+    started.append(pid)
+
+    assert falkordb_writer.shutdown_embedded_servers() == 1
+    assert _wait_until_gone(pid)
+
+    assert falkordb_writer._died_without_saving(path) is False
+    shutil.rmtree(falkordb_writer._aof_dir(path))  # an AOF that never completed
+    falkordb_writer._refuse_untrustworthy_state(path)  # must not raise
