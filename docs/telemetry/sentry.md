@@ -172,5 +172,6 @@ UV_CACHE_DIR=/private/tmp/uv-cache \
 uv run potpie --json daemon status
 ```
 
-Expected result: command exits `0`, prints daemon status JSON, and creates
+Expected result: the command prints daemon status JSON (exit `2` with
+`daemon_unavailable` when no daemon is running, `0` when one is serving) and creates
 `/tmp/potpie-xdg/potpie/telemetry/identity.json` without requiring a Sentry DSN.

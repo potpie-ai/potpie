@@ -222,11 +222,18 @@ potpie source remove <id> [--pot <ref>]
 ## Daemon (local infra)
 
 ```bash
-potpie daemon start | status | logs [--follow] | restart | stop
+potpie daemon start | status | logs [--tail N] [--since 15m|ISO-8601] [--follow] | restart | stop
 ```
 
 - **`daemon`** (`commands/daemon.py` → `host.daemon`) — local recovery tooling, not
   onboarding steps. `DaemonStartError` → exit 2.
+- **`daemon status`** exits `0` only when the daemon answers its authenticated
+  handshake. A daemon that is down, or whose process exists but does not answer,
+  is `daemon_unavailable` (exit 2); the JSON payload keeps the status fields
+  alongside the error keys.
+- **`daemon logs`** prints the last 200 lines by default (`--tail 0` for the whole
+  file). `--since` takes an ISO-8601 time or an age such as `15m`; `--follow`
+  streams new lines until interrupted (one JSON object per line with `--json`).
 - Supporting-service admin CLI (`potpie service …`) is not part of the OSS surface;
   the detached daemon does not expose a compatible `/admin/services` discovery
   contract for those commands.

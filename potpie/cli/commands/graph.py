@@ -3557,21 +3557,12 @@ def _resolve_repo_scope(repo: str) -> str:
 
 
 def _current_repo_remote_for_scope() -> str | None:
-    import subprocess
+    from potpie_context_engine.domain.git_probe import run_git_probe
 
-    try:
-        proc = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-            check=False,
-        )
-    except Exception:  # noqa: BLE001
+    remote = run_git_probe(["config", "--get", "remote.origin.url"], timeout=1)
+    if not remote:
         return None
-    if proc.returncode != 0:
-        return None
-    return _normalize_repo_for_scope(proc.stdout.strip())
+    return _normalize_repo_for_scope(remote)
 
 
 def _normalize_repo_for_scope(value: str) -> str:
