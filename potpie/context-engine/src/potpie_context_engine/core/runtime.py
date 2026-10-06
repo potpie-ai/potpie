@@ -1,4 +1,11 @@
-"""Public graph runtime composition and async-safe service facade."""
+"""Graph runtime composition and async-safe service facade.
+
+``build_graph_runtime`` and ``GraphRuntime`` are the supported composition
+surface for an embedding host: a process that brings its own graph backend
+and plan/inbox stores and serves many pots from one runtime. Import them from
+``potpie_context_engine.api``; this module path is an implementation detail.
+The bridges below are internal.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +14,10 @@ import importlib
 import inspect
 import logging
 import threading
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from potpie_context_engine.core.commit_service import (
     GraphCommitService,
@@ -34,6 +41,13 @@ from potpie_context_engine.core.reconciliation_flags import (
     reconciliation_config_from_env,
 )
 from potpie_context_engine.core.workbench_service import GraphWorkbenchService
+
+if TYPE_CHECKING:
+    from potpie_context_engine.core.ports.graph.preview_store import (
+        RollbackPreviewStorePort,
+    )
+    from potpie_context_engine.core.ports.resource_index import ResourceIndexPort
+    from potpie_context_engine.core.ports.resource_store import ResourceStorePort
 
 
 class RuntimeCompositionError(TypeError):
@@ -444,7 +458,31 @@ class NoOpGraphObserver:
 
 @dataclass(frozen=True, slots=True)
 class GraphRuntime(GraphCommitSurface):
-    """One fully wired graph runtime sharing one definition and policy."""
+    """One fully wired graph runtime sharing one definition and policy.
+
+    Build it with :func:`build_graph_runtime`; do not construct or
+    ``dataclasses.replace`` it directly. A runtime is not bound to a pot: every
+    operation that touches context data takes the pot explicitly, and the host
+    authenticates the caller and authorizes that pot before calling.
+
+    Stable for embedding hosts:
+
+    * attributes ``backend`` (the definition-bound, sync/async-bridged view of
+      the supplied backend, satisfying ``GraphBackend``), ``plan_store``,
+      ``inbox_store``, ``definition``, ``policy``, ``reconciliation_config``,
+      ``observability`` and ``graph`` (a ``GraphService``);
+    * the operations ``status``, ``catalog``, ``resolve``, ``describe``,
+      ``read``, ``search``, ``record``, ``search_entities``, ``mutate``,
+      ``propose``, ``commit``, ``commit_status``, ``verify_commit``,
+      ``history``, ``quality`` and the ``inbox_*`` family;
+    * the commit-history operations ``journal_status``, ``commits``,
+      ``commit_show``, ``revert_preview``, ``rollback_preview``,
+      ``apply_preview``, ``disable_rollback`` and ``rebuild_commits``.
+
+    Every operation has an ``*_async`` twin; use the twin from inside a running
+    event loop. ``workbench``, ``commit_service``, ``commit_mirror`` and
+    underscore members are composition details with no stability promise.
+    """
 
     backend: GraphBackend
     plan_store: GraphPlanStorePort
@@ -780,25 +818,54 @@ def build_graph_runtime(
     plan_store: GraphPlanStorePort,
     inbox_store: GraphInboxStorePort | None = None,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
+    *,
     policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY,
     observability: GraphObserver | None = None,
     reconciliation_config: ReconciliationConfig | None = None,
-    resource_index: Any = None,
-    resource_store: Any = None,
+    resource_index: ResourceIndexPort | None = None,
+    resource_store: ResourceStorePort | None = None,
     commit_mirror: Any = None,
-    preview_store: Any = None,
+    preview_store: RollbackPreviewStorePort | None = None,
     commit_host: str = "local",
-    commit_actor: Any = None,
-    commit_authorize: Any = None,
+    commit_actor: Callable[[], str] | None = None,
+    commit_authorize: Callable[[str, str], Awaitable[object]] | None = None,
 ) -> GraphRuntime:
     """Validate composition and return the single supported graph runtime.
 
-    ``resource_index`` is a ``ResourceIndexPort`` backing the ``resources``
-    include family. It is optional and unvalidated on purpose: a runtime
+    This is the supported builder for an embedding host. Every dependency and
+    wiring choice is a construction argument, so a host never patches the
+    returned runtime or its collaborators. Supplied dependencies are borrowed:
+    the runtime never closes them.
+
+    Stable parameters:
+
+    * ``backend``, ``plan_store``, ``inbox_store`` and ``definition`` may be
+      passed by position or keyword. Ports may implement each method as a
+      sync method, an ``*_async`` coroutine, or both.
+    * Everything else is keyword-only: ``policy``, ``observability`` (a
+      ``GraphObserver``; observer failures never hide results),
+      ``reconciliation_config`` (read once from the environment when omitted),
+      ``resource_index`` and ``resource_store`` (the document store behind the
+      ``resources`` include family), and the commit-history wiring:
+      ``commit_mirror`` (the rebuildable commit listing index),
+      ``preview_store`` (a ``RollbackPreviewStorePort``), ``commit_host`` and
+      ``commit_actor`` (the host label and a callable returning the acting
+      principal; a rollback preview can only be applied by the host and actor
+      that created it) and ``commit_authorize`` (an async ``(pot_id, access)``
+      check that raises to deny, where access is ``"read"``, ``"write"`` or
+      ``"admin"``).
+
+    When ``commit_actor`` or ``commit_authorize`` is omitted the runtime falls
+    back to a single-user local policy; a multi-tenant host must pass both.
+
+    ``resource_index`` is optional and unvalidated on purpose: a runtime
     composed without a document store (an ingestion pipeline, a test) is a
     legitimate deployment, and the read trunk substitutes a fail-closed profile
     that answers ``match_mode="disabled"`` rather than dropping the family from
     the advertised contract.
+
+    Raises ``RuntimeCompositionError`` when a dependency does not implement
+    its documented contract.
     """
 
     if not isinstance(definition, GraphDefinition):
@@ -863,6 +930,12 @@ def build_graph_runtime(
         )
     observer = observability or NoOpGraphObserver()
     _require_methods(observer, "observability", ("observe",))
+    for name, value in (
+        ("commit_actor", commit_actor),
+        ("commit_authorize", commit_authorize),
+    ):
+        if value is not None and not callable(value):
+            raise RuntimeCompositionError(f"{name} must be callable")
 
     try:
         composition = importlib.import_module("potpie_context_engine.composition")

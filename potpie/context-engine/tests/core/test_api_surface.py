@@ -28,3 +28,18 @@ def test_api_reexports_are_the_internal_contracts() -> None:
     assert api.GraphWorkbenchService is GraphWorkbenchService
     assert api.ReconciliationConfig is ReconciliationConfig
     assert api.DEFAULT_RECONCILIATION_CONFIG == ReconciliationConfig()
+
+
+def test_runtime_builder_is_exported_by_the_engine_api_not_the_core_api() -> None:
+    """The builder composes the engine's default graph service, so it is an
+    engine-level export; the core surface never reaches that implementation."""
+    from potpie_context_engine import api as engine_api
+    from potpie_context_engine.core import api as core_api
+
+    assert {"GraphRuntime", "build_graph_runtime"}.isdisjoint(core_api.__all__)
+    assert {"GraphRuntime", "build_graph_runtime"} <= set(engine_api.__all__)
+    assert {
+        "GraphObserver",
+        "NoOpGraphObserver",
+        "RuntimeCompositionError",
+    } <= set(core_api.__all__)
