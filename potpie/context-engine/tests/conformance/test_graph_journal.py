@@ -997,3 +997,43 @@ def test_restore_validation_keeps_system_edges_scoped_and_unknown_edges_closed()
     unknown = replace(claim, fields={**claim.fields, "predicate": "UNKNOWN_INTERNAL"})
     with pytest.raises(JournalError, match="unknown edge type"):
         validate_state({**records, "system": unknown}, pot_id="p")
+
+
+def test_protocol_restore_checks_run_only_with_the_protocol_extension(monkeypatch):
+    from potpie_context_engine.core import protocols as protocol_module
+    from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION
+    from potpie_context_engine.core.journal_inverse import protocols_enabled_for
+    from potpie_context_engine.protocols import protocols_definition
+
+    definition = protocols_definition()
+    assert protocols_enabled_for(definition) is True
+    assert protocols_enabled_for(DEFAULT_GRAPH_DEFINITION) is False
+
+    record = JournalRecord(
+        "protocol:x",
+        "p",
+        "protocol:not-its-identity",
+        "entity",
+        {"labels": ("Protocol",), "properties": {"namespace": "acme"}},
+    )
+    calls = []
+    original = protocol_module.protocol_entity_key
+
+    def recording(label, properties):
+        calls.append(label)
+        return original(label, properties)
+
+    monkeypatch.setattr(protocol_module, "protocol_entity_key", recording)
+    with pytest.raises(JournalError):
+        validate_state({"protocol:x": record}, pot_id="p")
+    # Off by default: the refusal came from the ordinary definition, and no
+    # protocol identity check ran.
+    assert calls == []
+    with pytest.raises(JournalError, match="protocol"):
+        validate_state(
+            {"protocol:x": record},
+            pot_id="p",
+            definition=definition,
+            protocols_enabled=True,
+        )
+    assert calls == ["Protocol"]

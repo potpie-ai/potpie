@@ -20,8 +20,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from potpie_context_engine.core.commit_service import (
+    UNNAMED_COMMIT_ACTOR,
     GraphCommitService,
     GraphCommitSurface,
+    deny_commit_access,
 )
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
@@ -855,8 +857,10 @@ def build_graph_runtime(
       check that raises to deny, where access is ``"read"``, ``"write"`` or
       ``"admin"``).
 
-    When ``commit_actor`` or ``commit_authorize`` is omitted the runtime falls
-    back to a single-user local policy; a multi-tenant host must pass both.
+    Both belong to the host. When ``commit_authorize`` is omitted, commit
+    history and rollback are refused; when ``commit_actor`` is omitted, restore
+    receipts and previews record an anonymous ``"unnamed"`` actor, never the
+    account that owns the process.
 
     ``resource_index`` is optional and unvalidated on purpose: a runtime
     composed without a document store (an ingestion pipeline, a test) is a
@@ -982,19 +986,16 @@ def build_graph_runtime(
         resource_index=resource_index,
         **({"resource_store": resource_store} if resource_store is not None else {}),
     )
-    import getpass
-
-    async def local_authorize(pot_id, access):
-        if access not in {"read", "write", "admin"}:
-            raise ValueError("unknown commit access")
-
+    # Fail closed: a runtime composed without an explicit authorization serves
+    # no commit history and applies no rollback, and an unnamed actor is
+    # recorded as such rather than as whoever owns the process.
     commits = GraphCommitService(
         journal=runtime_backend.journal,
         mirror=commit_mirror,
         previews=preview_store,
         host=commit_host,
-        actor=commit_actor or (lambda: "local:" + getpass.getuser()),
-        authorize=commit_authorize or local_authorize,
+        actor=commit_actor or (lambda: UNNAMED_COMMIT_ACTOR),
+        authorize=commit_authorize or deny_commit_access,
     )
     workbench.commit_service = commits
     return GraphRuntime(

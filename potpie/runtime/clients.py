@@ -49,10 +49,15 @@ from potpie.runtime.resource_manager import (
 )
 from potpie_context_engine import ContextEngine, Failure, Outcome, Success
 from potpie_context_engine.requests import (
+    ApplyPreviewRequest,
     CatalogRequest,
     CommitRequest,
+    CommitShowRequest,
+    CommitStatusRequest,
+    CommitsRequest,
     DataPlaneStatusRequest,
     DescribeRequest,
+    DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
     HistoryRequest,
@@ -65,6 +70,7 @@ from potpie_context_engine.requests import (
     InboxMarkRejectedRequest,
     InboxShowRequest,
     InspectRequest,
+    JournalStatusRequest,
     MutateRequest,
     NeighborhoodRequest,
     NudgeRequest,
@@ -72,6 +78,7 @@ from potpie_context_engine.requests import (
     ProposeRequest,
     QualityRequest,
     ReadRequest,
+    RebuildCommitsRequest,
     RecordRequest,
     RepairRequest,
     ResetContextRequest,
@@ -84,10 +91,13 @@ from potpie_context_engine.requests import (
     ResourceListRequest,
     ResourceRmRequest,
     ResourceStatusRequest,
+    RevertPreviewRequest,
+    RollbackPreviewRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
+    VerifyCommitRequest,
 )
 
 
@@ -274,6 +284,43 @@ class EngineClient(ABC):
         self, request: ResourceIndexRebuildRequest
     ) -> ClientOutcome:
         return await self._dispatch(EngineOperation.RESOURCE_INDEX_REBUILD, request)
+
+    async def commit_status(self, request: CommitStatusRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.COMMIT_STATUS, request)
+
+    async def verify_commit(self, request: VerifyCommitRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.VERIFY_COMMIT, request)
+
+    async def journal_status(self, request: JournalStatusRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.JOURNAL_STATUS, request)
+
+    async def commits(self, request: CommitsRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.COMMITS, request)
+
+    async def commit_show(self, request: CommitShowRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.COMMIT_SHOW, request)
+
+    async def revert_preview(self, request: RevertPreviewRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.REVERT_PREVIEW, request)
+
+    async def rollback_preview(self, request: RollbackPreviewRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.ROLLBACK_PREVIEW, request)
+
+    async def apply_preview(
+        self,
+        request: ApplyPreviewRequest,
+        *,
+        confirmation: DestructiveConfirmation | None = None,
+    ) -> ClientOutcome:
+        return await self._dispatch(
+            EngineOperation.APPLY_PREVIEW, request, confirmation
+        )
+
+    async def disable_rollback(self, request: DisableRollbackRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.DISABLE_ROLLBACK, request)
+
+    async def rebuild_commits(self, request: RebuildCommitsRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.REBUILD_COMMITS, request)
 
 
 EngineHandler: TypeAlias = Callable[
@@ -477,6 +524,64 @@ async def _resource_index_rebuild(
     )
 
 
+async def _commit_status(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.commit_status(cast(CommitStatusRequest, request))
+
+
+async def _verify_commit(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.verify_commit(cast(VerifyCommitRequest, request))
+
+
+async def _journal_status(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.journal_status(cast(JournalStatusRequest, request))
+
+
+async def _commits(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
+    return await engine.commits(cast(CommitsRequest, request))
+
+
+async def _commit_show(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.commit_show(cast(CommitShowRequest, request))
+
+
+async def _revert_preview(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.revert_preview(cast(RevertPreviewRequest, request))
+
+
+async def _rollback_preview(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.rollback_preview(cast(RollbackPreviewRequest, request))
+
+
+async def _apply_preview(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.apply_preview(cast(ApplyPreviewRequest, request))
+
+
+async def _disable_rollback(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.disable_rollback(cast(DisableRollbackRequest, request))
+
+
+async def _rebuild_commits(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.rebuild_commits(cast(RebuildCommitsRequest, request))
+
+
 _ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
     EngineOperation.RESOLVE: _resolve,
     EngineOperation.SEARCH: _search,
@@ -516,6 +621,16 @@ _ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
     EngineOperation.RESOURCE_INDEX_STATUS: _resource_index_status,
     EngineOperation.RESOURCE_INDEX_BUILD: _resource_index_build,
     EngineOperation.RESOURCE_INDEX_REBUILD: _resource_index_rebuild,
+    EngineOperation.COMMIT_STATUS: _commit_status,
+    EngineOperation.VERIFY_COMMIT: _verify_commit,
+    EngineOperation.JOURNAL_STATUS: _journal_status,
+    EngineOperation.COMMITS: _commits,
+    EngineOperation.COMMIT_SHOW: _commit_show,
+    EngineOperation.REVERT_PREVIEW: _revert_preview,
+    EngineOperation.ROLLBACK_PREVIEW: _rollback_preview,
+    EngineOperation.APPLY_PREVIEW: _apply_preview,
+    EngineOperation.DISABLE_ROLLBACK: _disable_rollback,
+    EngineOperation.REBUILD_COMMITS: _rebuild_commits,
 }
 
 if set(_ENGINE_HANDLERS) != set(ENGINE_OPERATION_CATALOG):
