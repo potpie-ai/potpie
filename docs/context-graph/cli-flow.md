@@ -116,9 +116,9 @@ The V1 agent wrappers (`resolve`/`search`/`record`) and `status` ride the same
 graph internals as the workbench; they are not a "legacy V1 surface waiting on V2."
 
 ```bash
-potpie resolve <task> [--intent feature] [--include <csv>] [--mode fast|balanced|verify|deep] [--pot <ref>]
-potpie search  <query> [--include <csv>] [--pot <ref>]
-potpie record  --type <kind> --summary <text> [--scope <k:v>] [--pot <ref>]
+potpie resolve <task> [--intent <name>] [--include <csv>] [--mode fast|balanced|verify|deep] [--limit 12] [--pot <ref>]
+potpie search  <query> [--intent <name>] [--include <csv>] [--limit 12] [--pot <ref>]
+potpie record  --type <kind> --summary <text> [--detail <k=v> ...] [--scope <k:v>] [--pot <ref>]
 potpie status  [--intent <name>] [--harness claude] [--pot <ref>]
 
 potpie setup   [--repo .] [--pot default] [--agent claude] [--backend <profile>] \
@@ -128,6 +128,7 @@ potpie whoami
 potpie use     <ref> [--local | --managed]
 potpie config  get <key>
 potpie config  set <key> <value>
+potpie config  unset <key>
 potpie login   [--api-key/-k <key>] [--url/-u <url>]
 potpie logout
 potpie ui      [--open/--no-open] [--pot <ref>]
@@ -446,7 +447,7 @@ The **canonical write door is `graph propose` → `graph commit --verify`** (Spi
 that internally calls propose+commit.
 
 ```bash
-potpie graph propose [--file <path> | (stdin)] [--ttl 1h] [--pot <ref>]
+potpie graph propose [--file <path> | (stdin)] [--ttl 1h] [--approved-by <who>] [--pot <ref>]
 potpie graph commit  <plan_id> [--approved-by <who>] [--verify] [--pot <ref>]
 
 potpie graph mutate  [--file <path> | (stdin)] [--dry-run] [--allow-review-required] [--approved-by <who>] [--pot <ref>]
@@ -471,8 +472,11 @@ potpie graph nudge --event <e> --session <id> [--path <p>] [--scope <k:v>] [--qu
   `{"event":{…}}`/`{"claim":{…}}` shapes will not parse. The DSL, validation/risk, and
   the diff shape are owned by [writing.md](./writing.md).
 - **`graph commit <plan_id>`** applies a stored plan by id; the agent does **not**
-  resend mutations. `--verify` reads the committed claims back and downgrades on
-  missing readback / quality regressions. Medium/high-risk plans need `--approved-by`.
+  resend mutations. `--verify` reads the committed claims back; it exits 1 when
+  a claim or its content does not read back or verification did not complete,
+  and reports a quality regression alone as a warning. Medium/high-risk plans
+  need `--approved-by`, either on the commit or on `propose`, which stores the
+  approval with the plan.
 - **`graph mutate`** — legacy wrapper (emits a warning steering to propose/commit).
   `--dry-run` previews; `--allow-review-required` + `--approved-by` auto-applies
   medium/high-risk ops.

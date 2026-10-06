@@ -181,14 +181,15 @@ CLI.
 
 ---
 
-## 4. `potpie-graph` v7 — the taught read/write loop
+## 4. `potpie-graph` v8 — the taught read/write loop
 
 This is the contract skill: it points the agent at the *live* catalog rather than
 baking the ontology into prose. The discipline it teaches (full read mechanics in
 [querying.md](./querying.md), full write mechanics in [writing.md](./writing.md)):
 
 1. **Discover once, in parallel.** One shared discovery pass across skills:
-   `potpie resolve` (with `--intent` — it is not inferred from the task text),
+   `potpie resolve` (the intent is inferred from the task text unless `--intent`
+   names one),
    scope-only `preferences_for_scope --repo current` for code work, and an
    untyped `graph search-entities` for a named entity with an unknown key.
    Before ingestion, `graph catalog --profile full` supplies the live ontology

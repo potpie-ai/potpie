@@ -1,6 +1,6 @@
 ---
 name: potpie-debug-memory
-version: "3"
+version: "4"
 description: "Use while debugging or troubleshooting failures, flaky tests, incidents, production alerts, CI failures, local dev setup issues, repeated bugs, prior fixes, failed attempts, and verification history."
 ---
 
@@ -20,12 +20,12 @@ returned pot IDs before combining results. Local file discovery can run alongsid
 these reads. Use returned keys for later scoped reads rather than guessing.
 
 Search by symptom, not just component name: exact error text, failing test,
-command, environment, service, dependency, and synonyms. `resolve` does not
-infer the intent from the task text, so pass `--intent debugging`; it then
-reads prior bugs, infra and the timeline:
+command, environment, service, dependency, and synonyms. The shared resolve call
+infers intent from words like *why / broken / stale / failing / error* and returns
+prior bugs, the timeline and infra as triples (`--intent debugging` pins it):
 
 ```bash
-potpie resolve "<symptom in the user's words, plus the exact error text>" --intent debugging
+potpie resolve "<symptom in the user's words, plus the exact error text>"
 ```
 
 Runbooks and their recovery steps live in ingested documents and notes, which
@@ -90,16 +90,19 @@ summaries, investigations, diagnostic signals and runbook notes are one call
 too:
 
 ```bash
-potpie record --type fix --summary "<symptom → fix, in the words a searcher would type>" --scope service:<service-name>
+potpie record --type fix --summary "<symptom → fix, in the words a searcher would type>" --detail root_cause="<cause>" --detail fix_steps="<step one>" --detail fix_steps="<step two>" --detail verification_status=verified --scope service:<service-name>
+potpie record --type bug_pattern --summary "<distinctive symptom>" --detail kind=<kind> --scope service:<service-name>
+potpie record --type verification --summary "<what was checked>" --detail target_ref=<fix-key> --detail outcome=<worked|didnt_work|partial>
 potpie record --type incident_summary --summary "<what happened, impact, and resolution>" --scope service:<service-name>
 ```
 
-`record` takes `--type`, `--summary` and `--scope` only. The `fix` key is
-minted from the whole summary, so keep it short and lead with the distinctive
-symptom, and `--scope` should be a key a read already returned.
+A repeated `--detail` key builds a list; `--type` help names the keys each
+type requires. The `fix` and `bug_pattern` keys are minted from the whole
+summary, so keep it short and lead with the distinctive symptom, and
+`--scope` should be a key a read already returned.
 
-A root cause with fix steps, a bug pattern on its own, a verification, or a fix
-plus the attempts that failed is a plan:
+The plan flow is for a multi-op batch — a fix plus the attempts that failed
+plus the verification edge:
 
 ```bash
 potpie graph mutation-template --kind bug-fix

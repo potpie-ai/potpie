@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -228,6 +229,12 @@ def test_local_identity_remains_no_auth(runtime) -> None:
     assert runtime.root.auth.logout() is None
 
 
+def test_agent_context_reports_quality_through_the_composed_workbench(
+    runtime,
+) -> None:
+    assert runtime.engine.agent_context.workbench is runtime.engine.graph_workbench
+
+
 def test_agent_context_delegates_and_composes_status(runtime) -> None:
     graph = MagicMock()
     pots = MagicMock()
@@ -254,8 +261,22 @@ def test_agent_context_delegates_and_composes_status(runtime) -> None:
     assert service.resolve(resolve_request) is resolve_result
     assert service.search(search_request) is search_result
     assert service.record(record_request) is record_result
-    graph.resolve.assert_called_once_with(resolve_request)
-    graph.search.assert_called_once_with(search_request)
+    # The agent door fills an unset intent and says it did; everything else
+    # reaches the graph service unchanged.
+    graph.resolve.assert_called_once_with(
+        replace(
+            resolve_request,
+            intent="feature",
+            metadata={"intent_source": "inferred"},
+        )
+    )
+    graph.search.assert_called_once_with(
+        replace(
+            search_request,
+            intent="unknown",
+            metadata={"intent_source": "inferred"},
+        )
+    )
     graph.record.assert_called_once_with(record_request)
 
     pots.aggregate_status.return_value = SimpleNamespace(
