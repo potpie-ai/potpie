@@ -463,30 +463,49 @@ class _Backend:
         return _Inspection()
 
 
+def _snapshot_payload() -> dict:
+    return {
+        "format_version": "2",
+        "pot_id": "p",
+        "entities": [
+            {"key": "service:web", "labels": ["Service"], "properties": {}},
+            {"key": "service:api", "labels": ["Service"], "properties": {}},
+        ],
+        "claims": [
+            {
+                "claim_key": "claim:p:web-depends-on-api",
+                "subject_key": "service:web",
+                "predicate": "DEPENDS_ON",
+                "object_key": "service:api",
+            }
+        ],
+    }
+
+
 class _Snapshot:
+    """The portable data API; a path never reaches the executing backend."""
+
     def __init__(self) -> None:
-        self.export_calls: list[tuple[str, str]] = []
-        self.import_calls: list[tuple[str, str]] = []
+        self.export_calls: list[str] = []
+        self.import_calls: list[tuple[str, dict]] = []
 
-    def export(self, *, pot_id: str, destination: str) -> SnapshotManifest:
-        self.export_calls.append((pot_id, destination))
+    def export_data(self, *, pot_id: str) -> dict:
+        self.export_calls.append(pot_id)
+        return _snapshot_payload()
+
+    def import_data(self, *, pot_id: str, payload) -> SnapshotManifest:
+        self.import_calls.append((pot_id, dict(payload)))
         return SnapshotManifest(
             pot_id=pot_id,
-            location=destination,
-            format_version="test",
-            entity_count=3,
-            claim_count=7,
+            location="",
+            entity_count=len(payload.get("entities", ())),
+            claim_count=len(payload.get("claims", ())),
         )
 
-    def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
-        self.import_calls.append((pot_id, source))
-        return SnapshotManifest(
-            pot_id=pot_id,
-            location=source,
-            format_version="test",
-            entity_count=3,
-            claim_count=7,
-        )
+
+def _write_snapshot_file(path: Path) -> Path:
+    path.write_text(json.dumps(_snapshot_payload()), encoding="utf-8")
+    return path
 
 
 class _SnapshotBackend(_Backend):
@@ -898,7 +917,11 @@ def test_graph_destructive_commands_require_yes_in_json_mode(
     args: list[str],
     command: str,
     backend_factory: type[_Backend],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_snapshot_file(tmp_path / "snapshot.json")
     _common.set_json(True)
     backend = backend_factory()
     _common.set_runtime(_Host(_Graph(), backend=backend))
@@ -918,7 +941,7 @@ def test_graph_destructive_commands_require_yes_in_json_mode(
 
 
 def test_graph_import_yes_dispatches_without_prompt(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     backend = _SnapshotBackend()
     _common.set_runtime(_Host(_Graph(), backend=backend))
@@ -930,7 +953,8 @@ def test_graph_import_yes_dispatches_without_prompt(
         return original_get_engine_client(explicit_pot)
 
     monkeypatch.setattr(graph, "get_engine_client", get_engine_client)
-    expected_source = str(Path("snapshot.json").resolve())
+    monkeypatch.chdir(tmp_path)
+    _write_snapshot_file(tmp_path / "snapshot.json")
 
     result = CliRunner().invoke(
         graph.graph_app,
@@ -940,12 +964,13 @@ def test_graph_import_yes_dispatches_without_prompt(
     assert result.exit_code == 0, result.output
     assert "Import snapshot" not in _plain_cli_output(result.output)
     assert selected_pots == ["p"]
-    assert backend.snapshot.import_calls == [("p", expected_source)]
-    assert "imported 7 claims" in result.output
+    # The CLI read the file; the backend received the snapshot itself.
+    assert backend.snapshot.import_calls == [("p", _snapshot_payload())]
+    assert "imported 2 entities and 1 claims" in result.output
 
 
-def test_graph_export_dispatches_absolute_path_to_resolved_pot(
-    monkeypatch: pytest.MonkeyPatch,
+def test_graph_export_writes_the_snapshot_in_the_cli_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     backend = _SnapshotBackend()
     _common.set_runtime(_Host(_Graph(), backend=backend))
@@ -957,14 +982,18 @@ def test_graph_export_dispatches_absolute_path_to_resolved_pot(
         return original_get_engine_client(explicit_pot)
 
     monkeypatch.setattr(graph, "get_engine_client", get_engine_client)
-    expected_destination = str(Path("backup.json").resolve())
+    monkeypatch.chdir(tmp_path)
 
-    result = CliRunner().invoke(graph.graph_app, ["export", "backup.json"])
+    result = CliRunner().invoke(
+        graph.graph_app, ["export", "backup.json", "--graph-only"]
+    )
 
     assert result.exit_code == 0, result.output
     assert selected_pots == ["p"]
-    assert backend.snapshot.export_calls == [("p", expected_destination)]
-    assert "exported 7 claims" in result.output
+    assert backend.snapshot.export_calls == ["p"]
+    written = json.loads((tmp_path / "backup.json").read_text(encoding="utf-8"))
+    assert written == _snapshot_payload()
+    assert "exported 2 entities and 1 claims" in result.output
 
 
 @pytest.mark.parametrize(
@@ -1023,15 +1052,19 @@ def test_graph_required_inputs_are_declared_in_help(
     [
         (["inspect", "service:web"], "inspection", "neighborhood"),
         (["neighborhood", "--entity", "service:web"], "inspection", "neighborhood"),
-        (["export", "out.json"], "snapshot", "export"),
-        (["import", "in.json", "--yes"], "snapshot", "import_"),
+        (["export", "out.json", "--graph-only"], "snapshot", "export_data"),
+        (["import", "in.json", "--yes"], "snapshot", "import_data"),
     ],
 )
 def test_graph_capability_failures_come_from_the_executing_backend(
     args: list[str],
     capability: str,
     method: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_snapshot_file(tmp_path / "in.json")
     _common.set_json(True)
     backend = _UnsupportedBackend()
     _common.set_runtime(_Host(_Graph(), backend=backend))

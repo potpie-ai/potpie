@@ -737,8 +737,8 @@ potpie graph neighborhood --entity <key> [--predicate <p>] [--depth 2] [--direct
                           [--limit 50] [--detail summary|full] [--unbounded] [--pot <ref>]
 potpie graph inspect <entity_key> [--depth 2] [--pot <ref>]      # legacy alias of neighborhood
 
-potpie graph export <file> [--pot <ref>]
-potpie graph import <file> [--yes/-y] [--pot <ref>]
+potpie graph export <file|folder> [--overwrite] [--graph-only] [--pot <ref>]
+potpie graph import <file|folder> [--graph-only] [--yes/-y] [--pot <ref>]
 potpie graph repair [--semantic-index] [--entity-summaries] [--entity-labels] [--all] [--yes/-y] [--pot <ref>]
 ```
 
@@ -750,6 +750,11 @@ potpie graph repair [--semantic-index] [--entity-summaries] [--entity-labels] [-
   the backend that executes the operation. The CLI does not preflight snapshot
   support against its own local backend profile. Per-profile coverage is in
   [architecture.md](./architecture.md).
+- **`graph export`/`graph import`** move a pot's entities, claims and document
+  text as a readable folder (or one `.json` file). The CLI writes and reads the
+  files; the engine exchanges the snapshot as data. Import merges, refuses
+  conflicting content, and needs `--yes` outside a terminal. See
+  [snapshots.md](./snapshots.md).
 
 Snapshots (`graph export`/`import`) are supported on `in_memory`, `embedded`,
 `falkordb_lite`, `falkordb`, and `neo4j`. `graph inspect`/`neighborhood` remains
