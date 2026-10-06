@@ -24,6 +24,8 @@ binding targets. Daemon revision 2 restricts forceful termination to directly
 owned child processes. Process revision 1, Resource Manager revision 1, and
 Daemon revision 1 remain historically addressable at
 `047cbe067c9c726e7e14f066675453372d8a8406`.
+SPEC-CHANGE-0013 proposes Context Engine revision 2, a supported graph-runtime
+builder for embedding hosts; revision 1 stays binding until it is accepted.
 Existing architecture documents and code remain implementation snapshots and
 can disagree with the target while migration is incomplete.
 
@@ -132,6 +134,7 @@ read order.
 | ADR-0010 | [Correct Resource Manager authentication outcomes](decisions/ADR-0010-resource-manager-authentication-outcomes.md) | accepted |
 | ADR-0011 | [Capability-oriented Potpie layout](decisions/ADR-0011-capability-oriented-potpie-layout.md) | accepted |
 | ADR-0012 | [Restrict forceful daemon termination](decisions/ADR-0012-restrict-forceful-daemon-termination.md) | accepted |
+| ADR-0013 | [Graph-runtime builder for embedding hosts](decisions/ADR-0013-embedding-host-graph-runtime-builder.md) | proposed |
 
 ## Open Questions
 
@@ -155,6 +158,7 @@ active behavior depends on a deferred question.
 | [SPEC-CHANGE-0010](changes/SPEC-CHANGE-0010-initialize-potpie-capability-contract.md) | SPEC-POTPIE-CAPABILITIES | 0 → 1 | accepted |
 | [SPEC-CHANGE-0011](changes/SPEC-CHANGE-0011-stabilize-conformance-record-paths.md) | SPEC-PROCESS | 1 → 2 | accepted |
 | [SPEC-CHANGE-0012](changes/SPEC-CHANGE-0012-restrict-daemon-signal-fallback.md) | SPEC-DAEMON | 1 → 2 | accepted |
+| [SPEC-CHANGE-0013](changes/SPEC-CHANGE-0013-embedding-host-graph-runtime-builder.md) | SPEC-CONTEXT-ENGINE | 1 → 2 | proposed |
 
 ## Conformance Summary
 
