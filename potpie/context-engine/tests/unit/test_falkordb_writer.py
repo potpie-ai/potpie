@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
-    _OWNED_SERVERS,
+    _OPEN_SERVERS,
     FalkorDBGraphWriter,
     _aof_dir,
     _aof_is_ready,
@@ -27,7 +27,7 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     _lite_server_config,
     _records_from_result,
     _refuse_untrustworthy_state,
-    _remember_owned_server,
+    _remember_open_server,
     build_falkordb_graph,
     shutdown_embedded_servers,
 )
@@ -692,43 +692,59 @@ def test_unclean_shutdown_with_a_complete_aof_serves_normally(tmp_path) -> None:
 # --- Leaked embedded servers -------------------------------------------------
 
 
-def test_only_servers_this_process_started_are_shut_down(tmp_path) -> None:
-    """Never stop a server we merely attached to — it belongs to another process.
+def _client(events: list, *, other_clients: int = 0, shutdown=None):
+    """A redislite-shaped client whose server has ``other_clients`` besides us."""
+    return SimpleNamespace(
+        connection=SimpleNamespace(
+            set_retry=lambda retry: events.append(("retries", retry.get_retries())),
+            connection_pool=SimpleNamespace(
+                disconnect=lambda: events.append(("disconnect",))
+            ),
+            client_list=lambda: [{"id": str(i)} for i in range(other_clients + 1)],
+            shutdown=shutdown or (lambda **kwargs: events.append(("shutdown", kwargs))),
+        )
+    )
 
-    redislite sets ``cleanupregistry`` on the client that spawned the server;
-    an attaching client leaves it False. Shutting that one down would take the
-    daemon's graph out from under it.
+
+def test_a_server_another_process_uses_is_left_running(tmp_path) -> None:
+    """Never stop a server out from under another process.
+
+    ``potpie setup`` starts the server, launches the daemon, and exits while the
+    daemon is attached. Stopping the server then left the daemon answering
+    every request with a connection error until it was restarted.
     """
-    _OWNED_SERVERS.clear()
-    attached = SimpleNamespace(connection=SimpleNamespace(cleanupregistry=False))
-    _remember_owned_server(attached, str(tmp_path / "attached.db"))
-    assert _OWNED_SERVERS == {}
+    _OPEN_SERVERS.clear()
+    events: list = []
+    _remember_open_server(_client(events, other_clients=1), str(tmp_path / "shared.db"))
+
+    assert shutdown_embedded_servers() == 0
+    assert ("shutdown", {"save": True, "now": True, "force": True}) not in events
+    assert _OPEN_SERVERS == {}
 
 
-def test_shutdown_stops_owned_servers_and_forgets_them(tmp_path) -> None:
-    """``daemon stop`` must actually stop the server it started.
+def test_the_last_user_stops_the_server_and_forgets_it(tmp_path) -> None:
+    """``daemon stop`` must actually stop the server, even one it attached to.
 
     redislite's own atexit hook declines to shut down a server with more than
     one connection open, and any process that has issued concurrent queries —
     every daemon — has a pool by then. So the server outlives the daemon,
     reparented to init, holding the db file until reboot.
     """
-    _OWNED_SERVERS.clear()
-    calls: list[tuple[str, object]] = []
-    owner = SimpleNamespace(
-        connection=SimpleNamespace(
-            cleanupregistry=True,
-            set_retry=lambda retry: calls.append(("retries", retry.get_retries())),
-            shutdown=lambda **kwargs: calls.append(("shutdown", kwargs)),
-        )
-    )
-    _remember_owned_server(owner, str(tmp_path / "owned.db"))
+    _OPEN_SERVERS.clear()
+    events: list = []
+    path = str(tmp_path / "graph.db")
+    _remember_open_server(_client(events), path)
+    _remember_open_server(_client(events), path)
 
     assert shutdown_embedded_servers() == 1
-    # Retries go off first: the server answers SHUTDOWN by dropping the
-    # connection, and redis-py would back off for seconds before accepting it.
-    assert calls == [
+    # Every pool of ours closes before anyone is counted, with retries off:
+    # the server answers SHUTDOWN by dropping the connection, and redis-py
+    # would back off for seconds before accepting that.
+    assert events == [
         ("retries", 0),
+        ("disconnect",),
+        ("retries", 0),
+        ("disconnect",),
         ("shutdown", {"save": True, "now": True, "force": True}),
     ]
     # Idempotent: a second stop has nothing left to do.
@@ -736,17 +752,12 @@ def test_shutdown_stops_owned_servers_and_forgets_them(tmp_path) -> None:
 
 
 def test_shutdown_survives_a_server_that_is_already_gone(tmp_path) -> None:
-    _OWNED_SERVERS.clear()
+    _OPEN_SERVERS.clear()
 
     def _boom(**_kwargs):
         raise ConnectionError("server already gone")
 
-    owner = SimpleNamespace(
-        connection=SimpleNamespace(
-            cleanupregistry=True, set_retry=lambda _retry: None, shutdown=_boom
-        )
-    )
-    _remember_owned_server(owner, str(tmp_path / "gone.db"))
+    _remember_open_server(_client([], shutdown=_boom), str(tmp_path / "gone.db"))
 
     assert shutdown_embedded_servers() == 0  # counted only what actually stopped
-    assert _OWNED_SERVERS == {}
+    assert _OPEN_SERVERS == {}
