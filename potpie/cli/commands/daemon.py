@@ -90,9 +90,11 @@ def daemon_status() -> None:
     Exit 0 means the daemon answered an authenticated handshake, so
     ``potpie daemon status || potpie daemon start`` reads as it should. A
     daemon that is down, or whose process exists but does not answer, is
-    ``daemon_unavailable`` (exit 2). The JSON payload still carries the full
-    status under the error keys, so a caller gating on the exit code can
-    report what it found.
+    ``daemon_unavailable`` (exit 2). A daemon started by another Potpie
+    version answers only status and shutdown; it is ``daemon_incompatible``
+    (exit 2), reports ``stale: true``, and ``potpie daemon restart`` replaces
+    it. The JSON payload still carries the full status under the error keys,
+    so a caller gating on the exit code can report what it found.
     """
 
     with contract():
@@ -100,7 +102,17 @@ def daemon_status() -> None:
         if st.get("up") and st.get("ready"):
             emit(st, human=_status_human(st))
             return
-        if st.get("up"):
+        code = "daemon_unavailable"
+        if st.get("up") and st.get("compatible") is False:
+            # It answers status and shutdown under a control-scoped ticket,
+            # so the restart that replaces it works without a manual stop.
+            code = "daemon_incompatible"
+            message = (
+                f"detached daemon process {st.get('pid')} was started by a "
+                "different Potpie version and does not serve this one's operations"
+            )
+            next_action = "restart it with 'potpie daemon restart'"
+        elif st.get("up"):
             message = (
                 f"detached daemon process {st.get('pid')} exists but is not "
                 "answering (stopped, wedged, or still starting)"
@@ -111,7 +123,7 @@ def daemon_status() -> None:
             next_action = "start it with 'potpie daemon start'"
         with json_error_formatter(lambda payload: {**st, **payload}):
             fail(
-                code="daemon_unavailable",
+                code=code,
                 message=message,
                 detail=st.get("detail"),
                 next_action=next_action,
@@ -134,7 +146,7 @@ def _build_note(build: dict[str, Any], stale: object) -> str:
     if stale is True:
         ours = build_info.short_rev(build_info.build_stamp().get("rev"))
         return (
-            f"{rev} (stale: this CLI is {ours}; "
+            f"{rev} (stale: this CLI is {ours or 'another build'}; "
             "run 'potpie daemon restart' to serve this build)"
         )
     if stale is False:

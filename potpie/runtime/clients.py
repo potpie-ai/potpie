@@ -11,12 +11,14 @@ from uuid import uuid4
 from potpie.runtime.coordinator import OperationCoordinator
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
+    DaemonControlOperation,
     EngineOperation,
     SafetyClass,
     operation_capabilities,
     operation_catalog_fingerprint,
 )
 from potpie.runtime.protocol import (
+    CONTROL_TICKET_OPERATIONS,
     PROTOCOL_MAX_VERSION,
     PROTOCOL_MIN_VERSION,
     PROTOCOL_VERSION,
@@ -880,7 +882,14 @@ class DaemonEngineClient(EngineClient):
 
 
 class DaemonControlClient:
-    """Finite typed client for live daemon handshake and shutdown control."""
+    """Finite typed client for live daemon handshake and shutdown control.
+
+    :meth:`handshake` establishes full compatibility, which is what readiness
+    means for this client. A daemon whose operation catalog differs still
+    answers with a ticket scoped to daemon control; the client keeps it, so
+    :meth:`status` and :meth:`shutdown` reach a daemon from another build
+    while every context operation stays refused.
+    """
 
     def __init__(
         self,
@@ -893,12 +902,82 @@ class DaemonControlClient:
         self._expected_instance_id = expected_instance_id
         self._request_id_factory = request_id_factory or (lambda: str(uuid4()))
         self._handshake_result: HandshakeResult | None = None
+        self._control_result: HandshakeResult | None = None
 
     @property
     def handshake_result(self) -> HandshakeResult | None:
+        """The fully compatible handshake, if one succeeded."""
         return self._handshake_result
 
+    @property
+    def control_result(self) -> HandshakeResult | None:
+        """The handshake whose ticket reaches status and shutdown, if any."""
+        return self._handshake_result or self._control_result
+
+    @property
+    def catalog_compatible(self) -> bool | None:
+        """Whether the daemon serves this client's operation catalog.
+
+        ``None`` until a handshake has been answered.
+        """
+        if self._handshake_result is not None:
+            return True
+        if self._control_result is not None:
+            return False
+        return None
+
     async def handshake(
+        self,
+    ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
+        exchanged = await self._exchange_handshake()
+        if isinstance(exchanged, Failure):
+            return exchanged
+        result = exchanged.value
+        validation_error = _validate_handshake_result(
+            result,
+            expected_instance_id=self._expected_instance_id,
+        )
+        if validation_error is not None:
+            if (
+                _validate_control_handshake_result(
+                    result, expected_instance_id=self._expected_instance_id
+                )
+                is None
+            ):
+                self._control_result = result
+            return Failure(validation_error)
+        self._handshake_result = result
+        return Success(result)
+
+    async def control_handshake(
+        self,
+    ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
+        """A handshake good enough for status and shutdown, reusing one held."""
+
+        held = self.control_result
+        if held is not None:
+            return Success(held)
+        exchanged = await self._exchange_handshake()
+        if isinstance(exchanged, Failure):
+            return exchanged
+        result = exchanged.value
+        validation_error = _validate_control_handshake_result(
+            result, expected_instance_id=self._expected_instance_id
+        )
+        if validation_error is not None:
+            return Failure(validation_error)
+        if (
+            _validate_handshake_result(
+                result, expected_instance_id=self._expected_instance_id
+            )
+            is None
+        ):
+            self._handshake_result = result
+        else:
+            self._control_result = result
+        return Success(result)
+
+    async def _exchange_handshake(
         self,
     ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
         request = HandshakeRequest(
@@ -929,19 +1008,13 @@ class DaemonControlClient:
                     message="daemon handshake returned an invalid result",
                 )
             )
-        validation_error = _validate_handshake_result(
-            result,
-            expected_instance_id=self._expected_instance_id,
-        )
-        if validation_error is not None:
-            return Failure(validation_error)
-        self._handshake_result = result
         return Success(result)
 
     async def shutdown(
         self, *, reason: str = "client_requested"
     ) -> Success[ShutdownResult] | Failure[RuntimeBoundaryError]:
-        if self._handshake_result is None:
+        handshake = self.control_result
+        if handshake is None:
             return Failure(
                 ProtocolError(
                     code="handshake_required",
@@ -954,7 +1027,7 @@ class DaemonControlClient:
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
             payload=ShutdownPayload(reason=reason),
-            compatibility_ticket=self._handshake_result.compatibility_ticket,
+            compatibility_ticket=handshake.compatibility_ticket,
         )
         response_or_error = await _send_protocol_request(
             transport=self._transport,
@@ -979,7 +1052,8 @@ class DaemonControlClient:
     async def status(
         self,
     ) -> Success[DaemonStatusResult] | Failure[RuntimeBoundaryError]:
-        if self._handshake_result is None:
+        handshake = self.control_result
+        if handshake is None:
             return Failure(
                 ProtocolError(
                     code="handshake_required",
@@ -992,7 +1066,7 @@ class DaemonControlClient:
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
             payload=DaemonStatusPayload(),
-            compatibility_ticket=self._handshake_result.compatibility_ticket,
+            compatibility_ticket=handshake.compatibility_ticket,
         )
         response_or_error = await _send_protocol_request(
             transport=self._transport,
@@ -1136,6 +1210,77 @@ def _validate_handshake_result(
     *,
     expected_instance_id: str | None,
 ) -> ProtocolError | None:
+    """Full compatibility: readiness for every operation in this catalog."""
+
+    identity_error = _validate_handshake_identity(
+        result, expected_instance_id=expected_instance_id
+    )
+    if identity_error is not None:
+        return identity_error
+    if result.operation_catalog_fingerprint != operation_catalog_fingerprint():
+        return ProtocolError(
+            code="operation_catalog_mismatch",
+            message="daemon and client operation catalogs do not match",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    if not result.compatibility_ticket:
+        return ProtocolError(
+            code="compatibility_ticket_missing",
+            message="daemon handshake did not return a compatibility ticket",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    missing = sorted(set(operation_capabilities()) - set(result.capabilities))
+    if missing:
+        return ProtocolError(
+            code="daemon_capability_missing",
+            message="daemon does not support the required operation catalog",
+            details={"missing_capabilities": tuple(missing)},
+            recommended_next_action="install compatible Potpie versions",
+        )
+    return None
+
+
+def _validate_control_handshake_result(
+    result: HandshakeResult,
+    *,
+    expected_instance_id: str | None,
+) -> ProtocolError | None:
+    """Enough for daemon status and shutdown, whatever the catalog.
+
+    Those operations' wire semantics follow the protocol version, so a daemon
+    whose catalog differs still answers them under a control-scoped ticket.
+    """
+
+    identity_error = _validate_handshake_identity(
+        result, expected_instance_id=expected_instance_id
+    )
+    if identity_error is not None:
+        return identity_error
+    if not result.compatibility_ticket:
+        return ProtocolError(
+            code="compatibility_ticket_missing",
+            message="daemon handshake did not return a compatibility ticket",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    required = {DaemonControlOperation.HANDSHAKE.value} | {
+        operation.value for operation in CONTROL_TICKET_OPERATIONS
+    }
+    missing = sorted(required - set(result.capabilities))
+    if missing:
+        return ProtocolError(
+            code="daemon_capability_missing",
+            message="daemon does not support daemon status and shutdown",
+            details={"missing_capabilities": tuple(missing)},
+            recommended_next_action="install compatible Potpie versions",
+        )
+    return None
+
+
+def _validate_handshake_identity(
+    result: HandshakeResult,
+    *,
+    expected_instance_id: str | None,
+) -> ProtocolError | None:
     if expected_instance_id is not None and result.instance_id != expected_instance_id:
         return ProtocolError(
             code="daemon_instance_mismatch",
@@ -1159,26 +1304,6 @@ def _validate_handshake_result(
                 "daemon_min": result.protocol_min,
                 "daemon_max": result.protocol_max,
             },
-            recommended_next_action="install compatible Potpie versions",
-        )
-    if result.operation_catalog_fingerprint != operation_catalog_fingerprint():
-        return ProtocolError(
-            code="operation_catalog_mismatch",
-            message="daemon and client operation catalogs do not match",
-            recommended_next_action="restart with a compatible Potpie version",
-        )
-    if not result.compatibility_ticket:
-        return ProtocolError(
-            code="compatibility_ticket_missing",
-            message="daemon handshake did not return a compatibility ticket",
-            recommended_next_action="restart with a compatible Potpie version",
-        )
-    missing = sorted(set(operation_capabilities()) - set(result.capabilities))
-    if missing:
-        return ProtocolError(
-            code="daemon_capability_missing",
-            message="daemon does not support the required operation catalog",
-            details={"missing_capabilities": tuple(missing)},
             recommended_next_action="install compatible Potpie versions",
         )
     return None
