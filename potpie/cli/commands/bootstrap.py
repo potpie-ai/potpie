@@ -142,7 +142,9 @@ def register(root: typer.Typer) -> None:
             "--embeddings",
             help=(
                 "Embedding mode for local semantic search "
-                "(sentence-transformers, auto, local, none)."
+                "(auto, sentence-transformers, local, none). Defaults to auto: "
+                "sentence-transformers when the potpie[embeddings] extra is "
+                "installed, otherwise the bundled hashing embedder."
             ),
         ),
         embedding_model: str = typer.Option(
@@ -726,8 +728,12 @@ def _setup_embeddings_choice(raw: str | None) -> str:
     if raw is not None:
         choice = normalize_embedding_mode(raw)
     else:
+        # `auto`, not `sentence-transformers`: the base install leaves the
+        # embeddings extra out, and an explicit choice it cannot honour warns on
+        # every later command. `auto` uses sentence-transformers once the extra
+        # is installed; setup reports the fallback, and the extra, once.
         configured = configured_embedder_choice()
-        choice = normalize_embedding_mode(configured or "sentence-transformers")
+        choice = normalize_embedding_mode(configured or "auto")
     aliases = {
         "legacy": "sentence-transformers",
         "sbert": "sentence-transformers",

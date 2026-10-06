@@ -216,7 +216,13 @@ jobs:
             test -n "$engine_wheel"
             find_links+=(--find-links dist/context-engine)
             local_specs+=("potpie-context-engine==${CONTEXT_ENGINE_VERSION}")
-            install_targets+=("${engine_wheel}[all]")
+            if [[ "$RELEASE_SCOPE" == "context-engine" ]]; then
+              install_targets+=("${engine_wheel}[all]")
+            else
+              # The root wheel asks for the engine extras its base install
+              # needs; the smoke below runs on that base, without embeddings.
+              install_targets+=("${engine_wheel}")
+            fi
           fi
 
           if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "potpie" ]]; then

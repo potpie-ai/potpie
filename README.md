@@ -35,6 +35,27 @@ python3 -m pip install --user potpie
 > `uv tool install potpie` is recommended for CLI installs because global
 > mutation of Python packages is generally not recommended.
 
+The base package is the complete local product: the CLI, the daemon and the
+local FalkorDB graph backend. Heavier features are optional extras:
+
+| Extra | Adds |
+| --- | --- |
+| `embeddings` | Semantic search with sentence-transformers. This pulls in PyTorch. Without it, Potpie uses its bundled hashing embedder. |
+| `ingest` | GitHub ingestion and the reconciliation agent. |
+| `telemetry` | Error reporting and OpenTelemetry tracing. |
+| `ui` | The CLI's animated logo. |
+| `all` | Everything above, plus the Neo4j, Postgres and Hatchet adapters. |
+
+`daemon`, `local` and `auth` are accepted for existing install scripts: the
+daemon and the local backend are already in the base package, and `auth` adds
+`keyring`.
+
+```bash
+uv tool install 'potpie[embeddings]'
+# or everything:
+uv tool install 'potpie[all]'
+```
+
 ### Step 2: Run the Potpie setup wizard
 
 ```bash

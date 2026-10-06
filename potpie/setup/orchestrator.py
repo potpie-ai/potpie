@@ -26,6 +26,7 @@ from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.domain.embedding_modes import (
     EMBEDDING_MODEL_PREP_SKIPPED_ALIASES,
     SEMANTIC_EMBEDDER_ALIASES,
+    SEMANTIC_EMBEDDINGS_INSTALL_HINT,
     normalize_embedding_mode,
 )
 from potpie_context_engine.domain.git_probe import run_git_probe
@@ -323,7 +324,8 @@ class DefaultSetupOrchestrator:
                 return StepResult(
                     "embeddings.model",
                     FAILED,
-                    "sentence-transformers is unavailable; using local-hashing-v1",
+                    "sentence-transformers is unavailable; using local-hashing-v1 "
+                    f"— {SEMANTIC_EMBEDDINGS_INSTALL_HINT}",
                     metadata={
                         "mode": plan.embeddings,
                         "model": plan.embedding_model,
