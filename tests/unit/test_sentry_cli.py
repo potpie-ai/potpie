@@ -18,6 +18,8 @@ from potpie.cli.telemetry.identity_store import identity_path
 from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
+    PotArchived,
+    PotNameConflict,
     PotNotFound,
 )
 
@@ -217,6 +219,13 @@ def test_contract_records_success_metrics_without_command_metadata(
             2,
         ),
         (PotNotFound("missing pot"), "pot_not_found", "pot_not_found", 1),
+        (PotArchived("archived pot"), "pot_archived", "pot_archived", 1),
+        (
+            PotNameConflict("name taken"),
+            "pot_name_conflict",
+            "pot_name_conflict",
+            1,
+        ),
         (ContextEngineDisabled("disabled"), "unavailable", "unavailable", 2),
         (typer.Exit(code=7), "exit", "exit", 7),
     ],

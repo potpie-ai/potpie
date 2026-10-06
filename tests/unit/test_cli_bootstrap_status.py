@@ -712,6 +712,9 @@ def _make_doctor_host(
     mock_host.pots.repo_default.return_value = repo_default
     known_pot_ids = {pid for pid in (active_pot_id, repo_default) if pid}
     mock_host.pots.list_pots.return_value = [_Pot(pid) for pid in sorted(known_pot_ids)]
+    # Repo→pot resolution reads the pot service's one-call repo source index;
+    # a bare MagicMock would answer it with an empty iterator anyway.
+    mock_host.pots.list_repo_sources.return_value = []
     return mock_host
 
 
@@ -766,7 +769,8 @@ def test_doctor_json_effective_prefers_single_linked_repo_pot_over_active(
             self.name = name
 
     class _RepoSource:
-        kind = "repo"
+        pot_id = "pot-linked"
+        pot_name = "linked"
         name = "github.com/acme/shop"
         location = "github.com/acme/shop"
 
@@ -781,9 +785,7 @@ def test_doctor_json_effective_prefers_single_linked_repo_pot_over_active(
         _NamedPot("pot-active", "active"),
         _NamedPot("pot-linked", "linked"),
     ]
-    mock_host.pots.list_sources.side_effect = lambda *, pot_id: (
-        [_RepoSource()] if pot_id == "pot-linked" else []
-    )
+    mock_host.pots.list_repo_sources.return_value = [_RepoSource()]
     _common.set_runtime(mock_host)
     monkeypatch.setattr(
         bootstrap, "current_repo_identity_for_cli", lambda: "github.com/acme/shop"
