@@ -546,3 +546,21 @@ async def test_local_client_binds_apply_preview_confirmation_to_exact_request() 
     assert acquisition.destructive_intent.selector == selector
     assert acquisition.destructive_intent.request_id == "apply-request"
     assert engine.calls == [("apply_preview", {"preview_id": "rollback-preview:1"})]
+
+
+def test_resource_writes_hold_the_context_exclusively() -> None:
+    """Imports and removals write bytes, graph claims and journal receipts in
+    one workflow, fenced by the journal's resource guard; they must not
+    interleave with graph commits, rollback previews or applies on the same
+    context. Index rebuilds touch only derived rows and read the context."""
+    for operation in (EngineOperation.RESOURCE_IMPORT, EngineOperation.RESOURCE_RM):
+        spec = ENGINE_OPERATION_CATALOG[operation]
+        assert spec.safety is SafetyClass.EXCLUSIVE_CONTEXT_MUTATION, operation
+    for operation in (
+        EngineOperation.RESOURCE_INDEX_BUILD,
+        EngineOperation.RESOURCE_INDEX_REBUILD,
+    ):
+        spec = ENGINE_OPERATION_CATALOG[operation]
+        assert (
+            spec.safety is SafetyClass.SHARED_CONTEXT_READ_EXCLUSIVE_RESOURCE_WRITE
+        ), operation

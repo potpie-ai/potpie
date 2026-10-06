@@ -137,6 +137,55 @@ async def test_a_failed_graph_reset_keeps_the_documents(tmp_path) -> None:
     assert any(pot_root.rglob("*.txt"))
 
 
+@pytest.mark.anyio
+async def test_a_journaling_pot_is_refused_before_graph_or_documents_change(
+    tmp_path,
+) -> None:
+    """Reset and archive share one rule while journal capture is active: refuse
+    up front. The graph reset and the document purge each refuse on their own;
+    without one check first, a reset could stop between them."""
+    from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+        InMemoryGraphBackend,
+    )
+    from potpie_context_engine.core.graph_mutations import (
+        EntityUpsert,
+        ProvenanceContext,
+    )
+    from potpie_context_engine.core.reconciliation import MutationBatch
+    from potpie_context_engine import Failure
+
+    backend = InMemoryGraphBackend()
+    backend.journal.activate(pot_id="pot-1", rollback_enabled=True)
+    backend.mutation.apply(
+        MutationBatch(
+            entity_upserts=[
+                EntityUpsert("service:a", ("Entity", "Service"), {"summary": "kept"})
+            ]
+        ),
+        expected_pot_id="pot-1",
+        provenance_context=ProvenanceContext(mutation_id="c1"),
+    )
+    store = LocalResourceStore(home=tmp_path / "home")
+    pot_root = _seed_document(store, "pot-1", tmp_path / "import")
+    operations = LocalEngineOperations(
+        SimpleNamespace(
+            backend=backend,
+            resources=ResourceFacade(store=store, journal=backend.journal),
+        )
+    )
+
+    outcome = await operations.reset_context(
+        ContextIdentity("pot-1"), ResetContextRequest()
+    )
+
+    assert isinstance(outcome, Failure)
+    assert outcome.error.code == "journal_capture_active"
+    assert "journal-status" in outcome.error.recommended_next_action
+    kept = backend.claim_query.entity_properties(pot_id="pot-1", entity_key="service:a")
+    assert kept["summary"] == "kept"
+    assert any(pot_root.rglob("*.txt"))
+
+
 def test_remove_source_does_not_touch_resources(tmp_path) -> None:
     """``source remove`` is registration-only: documents stay until ``resource
     rm`` or pot teardown."""
@@ -195,6 +244,23 @@ def test_archive_purges_the_pots_documents(runtime, tmp_path) -> None:
     assert payload["archived"] is True
     assert payload["resources_purged"] is True
     assert not pot_root.exists()
+
+
+def test_archive_of_a_journaling_pot_changes_nothing_and_keeps_it_usable(
+    runtime, tmp_path
+) -> None:
+    pot = runtime.root.pots.create_pot(name=POT_NAME, use=True)
+    _import(tmp_path)
+    runtime.engine.backend.journal.activate(pot_id=pot.pot_id, rollback_enabled=True)
+    pot_root = tmp_path / "home" / "resources" / pot_dir_name(pot.pot_id)
+
+    result = CliRunner().invoke(pots.pot_app, ["archive", POT_NAME, "--confirm"])
+
+    assert result.exit_code == 1, result.stdout
+    assert json.loads(result.stdout)["code"] == "journal_capture_active"
+    assert any(pot_root.rglob("*.txt"))
+    (live,) = [p for p in runtime.root.pots.list_pots() if p.pot_id == pot.pot_id]
+    assert not getattr(live, "archived", False)
 
 
 def test_pot_reset_says_documents_were_cleared(runtime, tmp_path) -> None:

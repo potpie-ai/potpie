@@ -65,6 +65,21 @@ from potpie_context_engine.core.semantic_mutations import (
 
 from .resource_journal import journal_resource_workflow, reject_journal_admin
 
+
+def _protocols_enabled(graph: Any) -> bool:
+    """Whether the composed graph definition carries the protocol extension.
+
+    Protocol source protection belongs to that opt-in extension: without it
+    there are no protocol claims to protect, so a facade composed without a
+    protocol-bearing graph never runs those checks.
+    """
+    from potpie_context_engine.core.definition import GraphDefinition
+    from potpie_context_engine.core.journal_inverse import protocols_enabled_for
+
+    definition = getattr(graph, "definition", None)
+    return isinstance(definition, GraphDefinition) and protocols_enabled_for(definition)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,14 +184,15 @@ class ResourceFacade:
 
         prior = self._current_manifest(pot_id=pot_id, slug=slug)
 
-        protect_protocol_source(
-            self.store,
-            self.claims,
-            pot_id=pot_id,
-            slug=slug,
-            files=files,
-            source_dir=source_dir,
-        )
+        if _protocols_enabled(self.graph):
+            protect_protocol_source(
+                self.store,
+                self.claims,
+                pot_id=pot_id,
+                slug=slug,
+                files=files,
+                source_dir=source_dir,
+            )
         manifest = self.store.import_dir(
             pot_id=pot_id,
             slug=slug,
@@ -654,7 +670,8 @@ class ResourceFacade:
             raise
         from .protocol_resources import protect_protocol_source
 
-        protect_protocol_source(self.store, self.claims, pot_id=pot_id, slug=slug)
+        if _protocols_enabled(self.graph):
+            protect_protocol_source(self.store, self.claims, pot_id=pot_id, slug=slug)
         manifest = self.store.current_manifest(pot_id=pot_id, slug=slug)
         evidence_refs = tuple(
             ref

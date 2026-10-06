@@ -38,7 +38,12 @@ from potpie_context_engine import (
     Outcome,
     Success,
 )
+from potpie_context_engine.application.services.resource_journal import (
+    JOURNAL_CAPTURE_ACTIVE,
+    refuse_while_journaling,
+)
 from potpie_context_engine.core.commit_service import CommitAccessDenied
+from potpie_context_engine.core.graph_journal import JournalError
 from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
@@ -525,6 +530,15 @@ class LocalEngineOperations:
         del request
 
         def reset() -> ResetContextResult:
+            # A pot whose graph journal is capturing is refused before anything
+            # is touched: the graph reset and the document purge each refuse on
+            # their own, so checking once here keeps reset and archive from
+            # stopping half-way (graph cleared, documents kept).
+            refuse_while_journaling(
+                getattr(self._services.backend, "journal", None),
+                context.value,
+                "pot reset",
+            )
             result = self._services.backend.mutation.reset_pot(context.value)
             reset_ok = bool(result.get("ok", True))
             # Documents go only after the graph reset succeeded: a failed reset
@@ -1237,6 +1251,26 @@ class LocalEngineOperations:
                     message=str(exc),
                     details={"detail": exc.detail} if exc.detail is not None else {},
                     recommended_next_action=exc.recommended_next_action,
+                )
+            )
+        except JournalError as exc:
+            if exc.code == JOURNAL_CAPTURE_ACTIVE:
+                return Failure(
+                    DomainError(
+                        code=JOURNAL_CAPTURE_ACTIVE,
+                        message=str(exc),
+                        recommended_next_action=(
+                            "inspect the pot's journal with 'potpie graph "
+                            "journal-status'; no command retires journal "
+                            "capture yet"
+                        ),
+                    )
+                )
+            return Failure(
+                DomainError(
+                    code="validation_error",
+                    message=str(exc),
+                    details={"detail": getattr(exc, "detail", None)},
                 )
             )
         except ValueError as exc:
