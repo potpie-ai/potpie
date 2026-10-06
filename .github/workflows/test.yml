@@ -200,6 +200,31 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
+      # Disposable graph servers for the server-backed suites (protocol
+      # backends, record capture, temporal and answer acceptance, atomic
+      # Neo4j writes, graph journal conformance). Tests reach them only
+      # through the PROTOCOL_TEST_* / POTPIE_JOURNAL_FALKOR_PORT variables
+      # below and use their own graph names.
+      protocol-falkordb:
+        image: falkordb/falkordb:v4.16.0
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      protocol-neo4j:
+        image: neo4j:5.26-community
+        env:
+          NEO4J_AUTH: neo4j/protocol-test
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p protocol-test 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 20
 
     steps:
       - name: Checkout
@@ -220,29 +245,31 @@ jobs:
         # telemetry and UI extras that these suites exercise.
         run: uv sync --frozen --all-packages --all-extras --no-cache
 
-      # Graph journal conformance runs against a private FalkorDB, and the
-      # crash test kills and restarts a disposable AOF-enabled one by name.
-      - name: Start graph journal FalkorDB fixtures
+      # Graph journal conformance shares the protocol FalkorDB service above.
+      # The crash test kills and restarts a disposable AOF-enabled server by
+      # container name, which a service container cannot offer.
+      - name: Start graph journal crash fixture
         run: |
-          docker run -d --name journal-falkordb-ci -p 127.0.0.1:6382:6379 -e BROWSER=0 falkordb/falkordb:v4.16.0
           docker run -d --name pie-journal-crash-ci -p 127.0.0.1:6381:6379 -e BROWSER=0 -e 'REDIS_ARGS=--appendonly yes --appendfsync always' falkordb/falkordb:v4.16.0
-          for container in journal-falkordb-ci pie-journal-crash-ci; do
-            ready=0
-            for attempt in $(seq 1 30); do
-              if docker exec "$container" redis-cli ping | grep -q PONG; then ready=1; break; fi
-              sleep 1
-            done
-            if [ "$ready" != 1 ]; then docker logs "$container"; exit 1; fi
+          for attempt in $(seq 1 30); do
+            if docker exec pie-journal-crash-ci redis-cli ping | grep -q PONG; then exit 0; fi
+            sleep 1
           done
+          docker logs pie-journal-crash-ci
+          exit 1
 
       - name: Run context-engine package tests
         working-directory: potpie/context-engine
         env:
           POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
           ENV: "development"
-          POTPIE_JOURNAL_FALKOR_PORT: "6382"
+          PROTOCOL_TEST_FALKORDB_URL: redis://127.0.0.1:6380
+          POTPIE_JOURNAL_FALKOR_PORT: "6380"
           POTPIE_JOURNAL_CRASH_CONTAINER: pie-journal-crash-ci
           POTPIE_JOURNAL_CRASH_PORT: "6381"
+          PROTOCOL_TEST_NEO4J_URI: bolt://127.0.0.1:7687
+          PROTOCOL_TEST_NEO4J_USERNAME: neo4j
+          PROTOCOL_TEST_NEO4J_PASSWORD: protocol-test
         run: uv run --project . pytest tests -m "not premerge_journey"
 
   potpie-windows-unit:

@@ -527,8 +527,8 @@ potpie graph neighborhood --entity <key> [--predicate <p>] [--depth 2] [--direct
                           [--limit 50] [--detail summary|full] [--pot <ref>]
 potpie graph inspect <entity_key> [--depth 2] [--pot <ref>]      # legacy alias of neighborhood
 
-potpie graph export <file> [--pot <ref>]
-potpie graph import <file> [--pot <ref>]
+potpie graph export <file|folder> [--overwrite] [--graph-only] [--pot <ref>]
+potpie graph import <file|folder> [--graph-only] [--yes] [--pot <ref>]
 potpie graph repair [--semantic-index] [--entity-summaries] [--all] [--pot <ref>]
 ```
 
@@ -540,9 +540,14 @@ potpie graph repair [--semantic-index] [--entity-summaries] [--all] [--pot <ref>
   support against its own local backend profile. Per-profile coverage is in
   [architecture.md](./architecture.md).
 
-> **Roadmap (not yet wired):** `snapshot` (`graph export/import`) is real only on the
-> `in_memory`/`embedded` backends; `graph inspect`/`neighborhood` is unavailable on
-> `neo4j`. On the OSS default `falkordb_lite`, export/import are unavailable.
+- **`graph export`/`graph import`** move a pot's entities, claims and document
+  text as a readable folder (or one `.json` file). The CLI writes and reads the
+  files; the engine exchanges the snapshot as data. Import merges, refuses
+  conflicting content, and needs `--yes` outside a terminal. See
+  [snapshots.md](./snapshots.md).
+
+> **Roadmap (not yet wired):** `graph inspect`/`neighborhood` is unavailable on
+> `neo4j`.
 
 ---
 
