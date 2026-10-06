@@ -159,6 +159,7 @@ active behavior depends on a deferred question.
 | [SPEC-CHANGE-0011](changes/SPEC-CHANGE-0011-stabilize-conformance-record-paths.md) | SPEC-PROCESS | 1 → 2 | accepted |
 | [SPEC-CHANGE-0012](changes/SPEC-CHANGE-0012-restrict-daemon-signal-fallback.md) | SPEC-DAEMON | 1 → 2 | accepted |
 | [SPEC-CHANGE-0013](changes/SPEC-CHANGE-0013-embedding-host-graph-runtime-builder.md) | SPEC-CONTEXT-ENGINE | 1 → 2 | proposed |
+| [SPEC-CHANGE-0015](changes/SPEC-CHANGE-0015-keep-daemon-control-across-catalog-change.md) | SPEC-DAEMON | 2 → 3 | proposed |
 
 ## Conformance Summary
 

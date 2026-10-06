@@ -90,8 +90,26 @@ class HandshakePayload:
 LifecycleState = Literal["starting", "ready", "draining", "failed", "stopped"]
 
 
+#: The daemon-control operations a control-scoped compatibility ticket
+#: authorizes. A daemon issues that ticket when the client's operation catalog
+#: differs from its own, so a client can still see and stop a daemon from
+#: another build. Their wire semantics are governed by ``PROTOCOL_VERSION``,
+#: not by the catalog fingerprint: changing the handshake, status, or shutdown
+#: wire shape requires a protocol version change.
+CONTROL_TICKET_OPERATIONS: frozenset[DaemonControlOperation] = frozenset(
+    {DaemonControlOperation.STATUS, DaemonControlOperation.SHUTDOWN}
+)
+
+
 @dataclass(frozen=True, slots=True)
 class HandshakeResult:
+    """A daemon's handshake answer.
+
+    ``compatibility_ticket`` authorizes the full catalog when
+    ``operation_catalog_fingerprint`` equals the client's own, and only
+    :data:`CONTROL_TICKET_OPERATIONS` when it differs.
+    """
+
     protocol_min: int
     protocol_max: int
     instance_id: str
@@ -273,6 +291,7 @@ def _validate_request_identity(protocol_version: int, request_id: str) -> None:
 
 
 __all__ = [
+    "CONTROL_TICKET_OPERATIONS",
     "PROTOCOL_MAX_VERSION",
     "PROTOCOL_MIN_VERSION",
     "PROTOCOL_VERSION",

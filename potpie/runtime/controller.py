@@ -121,6 +121,12 @@ class DaemonBootSpec:
 
 DaemonBootFactory: TypeAlias = Callable[[], DaemonBootSpec]
 
+#: Handshake refusals that waiting cannot change: a daemon serving another
+#: catalog or protocol stays that way, so readiness polling stops at once.
+_SETTLED_HANDSHAKE_REFUSALS: Final = frozenset(
+    {"operation_catalog_mismatch", "protocol_version_incompatible"}
+)
+
 
 class DaemonObserver:
     """Observe readiness and stop through the authenticated typed protocol."""
@@ -150,6 +156,14 @@ class DaemonObserver:
     def instance_id(self) -> str:
         return self._instance_id
 
+    @property
+    def catalog_compatible(self) -> bool | None:
+        """Whether the daemon serves this build's operation catalog.
+
+        ``None`` until the daemon has answered a handshake.
+        """
+        return self._client.catalog_compatible
+
     async def wait_ready(
         self, process: DaemonProcessHandle, *, timeout_s: float
     ) -> Success[None] | Failure[RuntimeBoundaryError]:
@@ -176,6 +190,8 @@ class DaemonObserver:
             if isinstance(handshake, Success):
                 return Success(None)
             last_failure = handshake
+            if handshake.error.code in _SETTLED_HANDSHAKE_REFUSALS:
+                break
             await asyncio.sleep(
                 min(self._poll_interval_s, max(0.0, deadline - loop.time()))
             )
@@ -192,17 +208,18 @@ class DaemonObserver:
     async def request_stop(
         self,
     ) -> Success[object] | Failure[RuntimeBoundaryError]:
-        if self._client.handshake_result is None:
-            handshake = await self._client.handshake()
-            if isinstance(handshake, Failure):
-                return handshake
+        # Shutdown needs only a control-scoped ticket, which a daemon from
+        # another build still issues, so an attached older daemon stays
+        # stoppable without a signal.
+        handshake = await self._client.control_handshake()
+        if isinstance(handshake, Failure):
+            return handshake
         return await self._client.shutdown(reason="controller_requested")
 
     async def status(self):
-        if self._client.handshake_result is None:
-            handshake = await self._client.handshake()
-            if isinstance(handshake, Failure):
-                return handshake
+        handshake = await self._client.control_handshake()
+        if isinstance(handshake, Failure):
+            return handshake
         return await self._client.status()
 
     async def close(self) -> None:
