@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from potpie import build_info
 from potpie.daemon.discovery import (
     DaemonDiscoveryError,
     canonical_discovery,
@@ -29,6 +30,7 @@ from potpie.runtime.controller import (
     DaemonLaunchSpec,
     DaemonObserver,
 )
+from potpie.runtime.protocol import DaemonStatusResult
 from potpie.runtime.resource_manager import ResourceLifecycleError
 from potpie.runtime.ownership import RuntimeOwnershipLock
 from potpie.runtime.server import generate_bearer_token
@@ -175,6 +177,7 @@ class Daemon:
             if isinstance(daemon_status, Success):
                 result["backend"] = daemon_status.value.backend_profile
                 result["url"] = daemon_status.value.ui_url
+                result.update(_served_build(daemon_status.value))
         finally:
             self._run(observer.close())
             if existing_controller is None:
@@ -504,6 +507,28 @@ class Daemon:
                 retry_posture="safe",
             )
         )
+
+
+def _served_build(status: DaemonStatusResult) -> dict[str, Any]:
+    """Which build is serving, and whether it is this process's.
+
+    The daemon is detached and outlives the install that started it, so after
+    an upgrade the CLI is new while the daemon still serves the old code.
+    ``stale`` is that comparison; a daemon from before build reporting yields
+    nothing to compare and so no keys.
+    """
+    if status.build is None:
+        return {}
+    build = {
+        "rev": status.build.rev,
+        "dirty": status.build.dirty,
+        "built_at": status.build.built_at,
+    }
+    return {
+        "version": status.version,
+        "build": build,
+        "stale": build_info.build_is_stale(build),
+    }
 
 
 def _available_loopback_port() -> int:

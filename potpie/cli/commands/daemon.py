@@ -6,6 +6,7 @@ from typing import Any, NoReturn
 
 import typer
 
+from potpie import build_info
 from potpie.cli.commands._common import (
     EXIT_UNAVAILABLE,
     contract,
@@ -81,7 +82,30 @@ def daemon_start() -> None:
 def daemon_status() -> None:
     with contract():
         st = _detached_daemon().status()
-        emit(st, human=f"daemon: {st['mode']} (up={st['up']})")
+        emit(st, human=_status_human(st))
+
+
+def _status_human(st: dict[str, Any]) -> str:
+    lines = [f"daemon: {st['mode']} (up={st['up']})"]
+    build = st.get("build")
+    if isinstance(build, dict):
+        lines.append(f"  build: {_build_note(build, st.get('stale'))}")
+    return "\n".join(lines)
+
+
+def _build_note(build: dict[str, Any], stale: object) -> str:
+    rev = build_info.short_rev(build.get("rev")) or "rev unknown"
+    if build.get("dirty"):
+        rev = f"{rev}, dirty"
+    if stale is True:
+        ours = build_info.short_rev(build_info.build_stamp().get("rev"))
+        return (
+            f"{rev} (stale: this CLI is {ours}; "
+            "run 'potpie daemon restart' to serve this build)"
+        )
+    if stale is False:
+        return f"{rev} (current)"
+    return rev
 
 
 @daemon_app.command("logs")

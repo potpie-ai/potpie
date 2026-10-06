@@ -11,12 +11,13 @@ from pathlib import Path
 
 import uvicorn
 
+from potpie import build_info
 from potpie.daemon.discovery import (
     remove_daemon_runtime_records,
     write_daemon_credential,
 )
 from potpie.daemon.http.ui import build_ui_app
-from potpie.runtime import CanonicalDaemonRuntime, RuntimeEndpoint
+from potpie.runtime import CanonicalDaemonRuntime, DaemonBuild, RuntimeEndpoint
 from potpie.runtime.clients import TypedEngineOperationHandler
 from potpie.runtime.composition import LocalRuntimeComposition, build_local_runtime
 from potpie.runtime.local_engine import build_local_resource_manager
@@ -69,6 +70,10 @@ async def _run() -> None:
     ui_port = int(_required_env(_ENV_UI_PORT))
     ui_url = f"http://127.0.0.1:{ui_port}"
     bearer_token = _consume_required_env(_ENV_BEARER_TOKEN)
+    # Read at boot: an editable install reads its stamp from git, and the
+    # checkout may move on while this process keeps serving the code it
+    # started with.
+    stamp = build_info.build_stamp()
 
     composition = build_local_runtime()
     resource_manager = build_local_resource_manager(composition.engine)
@@ -97,6 +102,12 @@ async def _run() -> None:
         ),
         backend_profile=str(composition.root.backend.profile),
         ui_url=ui_url,
+        version=build_info.distribution_version(),
+        build=DaemonBuild(
+            rev=stamp.get("rev"),
+            dirty=stamp.get("dirty"),
+            built_at=stamp.get("built_at"),
+        ),
         coordinator=composition.coordinator,
     )
     try:

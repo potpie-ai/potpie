@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import os
+import subprocess
+import tempfile
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +21,7 @@ DISTRIBUTION_DEFAULT_INPUT_NAMES_BY_FIELD = {
 }
 BUILD_INFO_INPUT_NAMES_BY_FIELD = {
     "GIT_SHA": ("POTPIE_BUILD_GIT_SHA", "GITHUB_SHA"),
+    "DIRTY": ("POTPIE_BUILD_DIRTY",),
     "BUILD_TIME": ("POTPIE_BUILD_TIME",),
 }
 
@@ -38,6 +41,12 @@ REQUIRED_DISTRIBUTION_DEFAULTS = (
     "github_client_id",
 )
 _DOTENV_SEARCH_START: Final[Path] = Path(__file__).resolve().parent
+# The project root this helper ships in (``scripts/`` sits directly under it),
+# in a checkout and in an unpacked sdist alike.
+_SOURCE_ROOT: Final[Path] = Path(__file__).resolve().parents[1]
+_GIT_TIMEOUT_S: Final[float] = 10.0
+_TRUE_FLAGS: Final = frozenset({"1", "true", "yes", "on"})
+_FALSE_FLAGS: Final = frozenset({"0", "false", "no", "off"})
 
 
 def distribution_default_values(
@@ -64,12 +73,61 @@ def build_info_values(
     environ: Mapping[str, str] | None = None,
     *,
     dotenv_start: Path | None = None,
+    source_root: Path | None = None,
 ) -> dict[str, str]:
+    """Build identity for ``potpie/runtime/_build_info.py``.
+
+    ``GIT_SHA`` comes from the build environment, else from the git checkout
+    being built. ``DIRTY`` is ``"true"``/``"false"`` when known and ``""``
+    otherwise: it describes the tree the rev was built from, so an explicit
+    ``POTPIE_BUILD_DIRTY`` wins, and a checkout only answers for the rev it
+    has checked out. Like the ``.env`` lookup, the checkout is consulted for
+    an explicit ``environ`` only when ``source_root`` is given too.
+    """
     source = _merged_build_environ(environ, dotenv_start=dotenv_start)
+    checkout_rev, checkout_dirty = (
+        checkout_identity(source_root or _SOURCE_ROOT)
+        if environ is None or source_root is not None
+        else ("", "")
+    )
+    explicit_rev = _env("POTPIE_BUILD_GIT_SHA", source) or _env("GITHUB_SHA", source)
+    rev = explicit_rev or checkout_rev
+    dirty = _flag_value(_env("POTPIE_BUILD_DIRTY", source))
+    if not dirty and rev and rev == checkout_rev:
+        dirty = checkout_dirty
     return {
-        "GIT_SHA": _env("POTPIE_BUILD_GIT_SHA", source) or _env("GITHUB_SHA", source),
+        "GIT_SHA": rev,
+        "DIRTY": dirty,
         "BUILD_TIME": _env("POTPIE_BUILD_TIME", source) or _utc_now(),
     }
+
+
+def checkout_identity(root: Path) -> tuple[str, str]:
+    """``(rev, dirty)`` of the git checkout rooted at ``root``, else ``("", "")``.
+
+    Only a checkout whose top level *is* ``root`` counts: an sdist unpacked
+    inside some other repository must not stamp that repository's HEAD.
+
+    ``dirty`` means modified *tracked* files (the ``git describe --dirty``
+    definition), not untracked ones. Installers that build from a clone drop
+    their own untracked markers into it (uv writes ``.ok``), and a clean rev
+    must still stamp as clean there.
+    """
+    identity = _git(root, "rev-parse", "--show-toplevel", "HEAD")
+    lines = identity.splitlines() if identity else []
+    if len(lines) != 2:
+        return "", ""
+    toplevel, rev = (line.strip() for line in lines)
+    try:
+        same_root = Path(toplevel).resolve() == root.resolve()
+    except OSError:
+        same_root = False
+    if not same_root or not rev:
+        return "", ""
+    status = _git(root, "status", "--porcelain", "--untracked-files=no")
+    if status is None:
+        return rev, ""
+    return rev, "true" if status else "false"
 
 
 def should_validate_distribution_defaults(
@@ -145,13 +203,26 @@ def prefer_existing_build_info_values(
     if not existing:
         return dict(values)
     source = _merged_build_environ(environ, dotenv_start=dotenv_start)
+
+    def has_input(name: str) -> bool:
+        return any(
+            _env(input_name, source)
+            for input_name in BUILD_INFO_INPUT_NAMES_BY_FIELD[name]
+        )
+
     merged = dict(values)
     for name in values:
-        input_names = BUILD_INFO_INPUT_NAMES_BY_FIELD[name]
-        if name in existing and not any(
-            _env(input_name, source) for input_name in input_names
-        ):
+        if name != "DIRTY" and name in existing and not has_input(name):
             merged[name] = existing[name]
+    # The dirty flag describes the tree its rev was built from, so it is kept
+    # only together with a kept rev; a stamp that predates the flag says "".
+    if (
+        "DIRTY" in values
+        and not has_input("DIRTY")
+        and "GIT_SHA" in existing
+        and not has_input("GIT_SHA")
+    ):
+        merged["DIRTY"] = existing.get("DIRTY", "")
     return merged
 
 
@@ -172,6 +243,44 @@ def _clean(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _flag_value(value: str) -> str:
+    lowered = value.strip().lower()
+    if lowered in _TRUE_FLAGS:
+        return "true"
+    if lowered in _FALSE_FLAGS:
+        return "false"
+    return ""
+
+
+def _git(root: Path, *args: str) -> str | None:
+    """``git -C root *args`` stdout, or ``None`` when git is absent or refuses.
+
+    Output goes to a temp file rather than a pipe: on Windows a git grandchild
+    that outlives the timeout keeps an inherited pipe open, and the reader
+    join would never return.
+    """
+    kwargs: dict[str, object] = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        with tempfile.TemporaryFile() as out:
+            completed = subprocess.run(
+                ["git", "--no-optional-locks", "-C", str(root), *args],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=subprocess.DEVNULL,
+                timeout=_GIT_TIMEOUT_S,
+                **kwargs,
+            )
+            if completed.returncode != 0:
+                return None
+            out.seek(0)
+            return out.read().decode("utf-8", errors="replace").strip()
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
 
 
 def _utc_now() -> str:
