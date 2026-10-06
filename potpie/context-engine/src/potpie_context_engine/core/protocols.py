@@ -12,6 +12,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from potpie_context_engine.core.agent_envelope import DEFAULT_OUTPUT_BUDGET_BYTES
 from potpie_context_engine.core.graph_views import GraphViewSpec
 from potpie_context_engine.core.identity import IdentityClass
 from potpie_context_engine.core.ontology import EdgeTypeSpec, EntityTypeSpec
@@ -260,12 +261,12 @@ PROTOCOL_VIEW = GraphViewSpec(
         "property_reference": {
             label: sorted(props) for label, props in PUBLIC_PROPERTIES.items()
         },
-        "identity": "Use potpie_context_engine.core.protocols.protocol_entity; revision/profile and raw discriminator types are significant. Unknown revisions require immutable unresolved_source.",
+        "identity": "Use potpie_context_engine.api.protocol_entity; revision/profile and raw discriminator types are significant. Unknown revisions require immutable unresolved_source.",
         "limits": {
             "messages": 12,
             "fields_per_message": 128,
             "claims_per_traversal": 2048,
-            "response_bytes": 196608,
+            "response_bytes": DEFAULT_OUTPUT_BUDGET_BYTES,
         },
         "source_coverage": "Message source_coverage is {status: complete|partial|unknown, source_ref, digest, locator}; absent coverage remains unknown. expected_field_count counts materialized paths.",
         "corrections": "Only declared non-identity properties may be patched with evidence. New revisions create identities; unresolved contradictions belong in inbox/history.",

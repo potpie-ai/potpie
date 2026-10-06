@@ -490,9 +490,9 @@ def test_config_set_accepts_every_known_key(
 
     _real_config(tmp_path, monkeypatch)
 
-    # ``resource_index`` only takes an index profile; its validation is
-    # covered by its own test above.
-    values = {"resource_index": "sqlite_fts"}
+    # ``resource_index`` only takes an index profile and ``graph.protocols``
+    # only on/off; their validation is covered by their own tests.
+    values = {"resource_index": "sqlite_fts", "graph.protocols": "on"}
     for key in KNOWN_CONFIG_KEYS:
         value = values.get(key, "x")
         result = runner.invoke(cli_main.app, ["config", "set", key, value])
@@ -712,3 +712,85 @@ def test_config_unset_refuses_an_empty_key(
 
     assert result.exit_code == _common.EXIT_VALIDATION, result.output
     assert json.loads(result.output)["code"] == "validation_error"
+
+
+# --- `graph.protocols`: the opt-in protocol ontology switch -----------------------
+
+
+def test_config_set_graph_protocols_normalizes_and_says_a_restart_applies_it(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _real_config(tmp_path, monkeypatch)
+
+    on = runner.invoke(
+        cli_main.app, ["--json", "config", "set", "graph.protocols", "ON"]
+    )
+    assert on.exit_code == 0, on.output
+    payload = json.loads(on.output)
+    assert payload["value"] == "on" and payload["persisted"] is True
+    assert payload["restart_required"] is True
+    assert "potpie daemon restart" in payload["next_action"]
+    assert service.get("graph.protocols") == "on"
+    assert service.graph_protocols_enabled() is True
+
+    human = runner.invoke(cli_main.app, ["config", "set", "graph.protocols", "false"])
+    assert human.exit_code == 0, human.output
+    assert "set graph.protocols=off" in human.output
+    assert "potpie daemon restart" in human.output
+    assert service.graph_protocols_enabled() is False
+
+
+def test_config_set_graph_protocols_refuses_a_value_that_is_not_on_or_off(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _real_config(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        cli_main.app, ["--json", "config", "set", "graph.protocols", "enabled"]
+    )
+
+    assert result.exit_code == _common.EXIT_VALIDATION, result.output
+    payload = json.loads(result.output)
+    assert payload["code"] == "validation_error"
+    assert payload["detail"]["values"] == ["on", "off"]
+    assert service.get("graph.protocols") is None
+
+
+def test_config_unset_graph_protocols_turns_it_off_on_the_next_start(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _real_config(tmp_path, monkeypatch)
+    service.set("graph.protocols", "on")
+
+    result = runner.invoke(
+        cli_main.app, ["--json", "config", "unset", "graph.protocols"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["removed"] is True and payload["restart_required"] is True
+    assert service.graph_protocols_enabled() is False
+
+
+@pytest.mark.parametrize(
+    ("stored", "enabled"),
+    [
+        (None, False),
+        ("", False),
+        ("off", False),
+        ("maybe", False),
+        ("on", True),
+        (" True ", True),
+        (True, True),
+        (False, False),
+    ],
+)
+def test_graph_protocols_defaults_off_and_reads_only_on_as_enabled(
+    tmp_path, stored, enabled
+) -> None:
+    if stored is not None:
+        (tmp_path / "config.json").write_text(
+            json.dumps({"graph.protocols": stored}), encoding="utf-8"
+        )
+
+    assert LocalConfigService(home=tmp_path).graph_protocols_enabled() is enabled
