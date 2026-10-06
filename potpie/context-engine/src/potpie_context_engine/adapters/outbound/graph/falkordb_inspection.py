@@ -40,20 +40,25 @@ _MAX_DEPTH = 4
 _NODES_CYPHER = """
 MATCH (e:Entity {group_id: $gid})
 RETURN e.entity_key AS key, labels(e) AS labels, properties(e) AS props
+ORDER BY CASE WHEN e.entity_key STARTS WITH 'docsection:' THEN 1 ELSE 0 END, e.entity_key
 LIMIT $limit
 """
 
 _EDGES_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
 WHERE ($include_invalid OR r.invalid_at IS NULL)
   AND ($preds IS NULL OR r.name IN $preds)
 RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate, properties(r) AS props
+ORDER BY CASE
+    WHEN a.entity_key STARTS WITH 'docsection:' OR b.entity_key STARTS WITH 'docsection:' THEN 1
+    ELSE 0
+END, a.entity_key, b.entity_key, r.name
 LIMIT $limit
 """
 
 # Edges incident (either direction) to the current BFS frontier.
 _INCIDENT_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
 WHERE (a.entity_key IN $frontier OR b.entity_key IN $frontier)
   AND ($include_invalid OR r.invalid_at IS NULL)
 RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate, properties(r) AS props
