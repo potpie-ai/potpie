@@ -27,12 +27,7 @@ from potpie_context_engine.core.agent_envelope import (
     derive_overall_confidence,
 )
 from potpie_context_engine.core.graph_views import INCLUDE_TO_VIEW
-from potpie_context_engine.core.graph_contract import (
-    fence_untrusted_text,
-    origin_trust_or_default,
-)
-
-_TEXT_KEYS = ("fact", "summary", "description", "text", "body", "title")
+from potpie_context_engine.core.graph_contract import origin_trust_or_default
 
 
 @dataclass(slots=True)
@@ -92,16 +87,17 @@ class EnvelopeBuilder:
             resp = include_result.response
             for ranked in resp.items:
                 payload = dict(ranked.candidate.payload)
-                trust = origin_trust_or_default(payload.get("origin_trust"))
                 items.append(
                     EvidenceItem(
                         include=inc,
                         candidate_key=ranked.candidate.candidate_key,
                         score=ranked.score,
-                        payload=_fence_untrusted_payload(payload, trust),
+                        payload=payload,
                         coverage_status=resp.coverage_status,
                         breakdown=dict(ranked.breakdown),
-                        origin_trust=trust,
+                        origin_trust=origin_trust_or_default(
+                            payload.get("origin_trust")
+                        ),
                     )
                 )
             coverage.append(
@@ -127,16 +123,6 @@ class EnvelopeBuilder:
             as_of=as_of,
             metadata=dict(metadata or {}),
         )
-
-
-def _fence_untrusted_payload(payload: Mapping[str, object], trust: str) -> dict[str, object]:
-    """Copy payload, fencing attacker-influenced text fields when untrusted."""
-    out = dict(payload)
-    for key in _TEXT_KEYS:
-        val = out.get(key)
-        if isinstance(val, str) and val:
-            out[key] = fence_untrusted_text(val, trust)
-    return out
 
 
 def envelope_to_dict(envelope: AgentEnvelope) -> dict[str, object]:
