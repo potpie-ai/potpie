@@ -322,6 +322,26 @@ def test_append_event_validates_entity_refs_and_endpoints() -> None:
     assert any(i.code == "unknown_entity_type" for i in plan.errors)
 
 
+def test_append_event_without_endpoints_is_rejected() -> None:
+    # The lowerer emits one claim per actor/target/mention, so an event with
+    # none writes nothing at all; accepting it produced a clean commit and an
+    # empty timeline.
+    plan = validate_semantic_request(
+        _req(
+            {
+                "op": "append_event",
+                "verb": "merged_pr",
+                "occurred_at": "2026-06-08T00:00:00Z",
+                "description": "merged PR #42",
+            }
+        )
+    )
+
+    assert not plan.ok
+    assert plan.decision == "rejected"
+    assert any(i.code == "empty_event" for i in plan.errors)
+
+
 def test_end_relation_validity_requires_exact_object() -> None:
     plan = validate_semantic_request(
         _req(
@@ -391,6 +411,32 @@ def test_subgraph_for_predicate() -> None:
     assert subgraph_for_predicate("RESOLVED") == "debugging"
     assert subgraph_for_predicate("DEPENDS_ON") == "infra_topology"
     assert subgraph_for_predicate("DECIDED") == "decisions"
+
+
+def test_reference_material_predicates_route_to_the_knowledge_subgraph() -> None:
+    # An unmapped category falls back to "memory" silently, so both the
+    # category and the entity types are pinned explicitly.
+    assert subgraph_for_predicate("SECTION_OF") == "knowledge"
+    assert subgraph_for_predicate("DOCUMENTS") == "knowledge"
+
+
+def test_document_patch_routes_to_the_knowledge_subgraph() -> None:
+    # Document's entity category is "evidence", which is not in the category
+    # map — without the explicit entity-type entry this lands in "memory".
+    plan = validate_semantic_request(
+        _req(
+            {
+                "op": "patch_entity",
+                "subject": {"key": "document:q3-review", "type": "Document"},
+                "patch": {"summary": "Q3 capacity review, imported from PDF."},
+                "expected_entity_version": "entity-version:1",
+                "reason": "record the imported document",
+            },
+            allow_review_required=True,
+            approved_by="user:alice",
+        )
+    )
+    assert plan.accepted_ops[0].subgraph == "knowledge"
 
 
 # --- lowering ---------------------------------------------------------------
@@ -628,9 +674,12 @@ def test_lowering_append_event_creates_activity_and_edges() -> None:
     assert "PERFORMED" in edge_types
     assert "TOUCHED" in edge_types
     for edge in plan.batch.edge_upserts:
-        assert edge.properties["valid_at"] == "2026-06-08T00:00:00Z"
+        assert edge.properties["valid_at"] == "2026-06-08T00:00:00+00:00"
+        assert edge.properties["occurred_at"] == "2026-06-08T00:00:00+00:00"
     labels = {lbl for e in plan.batch.entity_upserts for lbl in e.labels}
     assert "Activity" in labels
+    activity = next(e for e in plan.batch.entity_upserts if "Activity" in e.labels)
+    assert activity.properties["occurred_at"] == "2026-06-08T00:00:00+00:00"
 
 
 def test_lowering_retract_produces_invalidation() -> None:
@@ -641,6 +690,7 @@ def test_lowering_retract_produces_invalidation() -> None:
         "predicate": "DEPENDS_ON",
         "object": {"key": "service:ledger-api", "type": "Service"},
         "reason": "dependency removed",
+        "valid_until": "2026-06-08T05:30:00+05:30",
     }
     req = _req(op, allow_review_required=True, approved_by="user:alice")
     plan = validate_semantic_request(req)
@@ -648,6 +698,7 @@ def test_lowering_retract_produces_invalidation() -> None:
     lower_semantic_request(req, plan)
     assert len(plan.batch.invalidations) == 1
     assert plan.batch.invalidations[0].target_edge[0] == "DEPENDS_ON"
+    assert plan.batch.invalidations[0].valid_to == "2026-06-08T00:00:00+00:00"
 
 
 def test_lowering_supersede_claim_replaces_claim_and_invalidates_old_relation() -> None:
@@ -661,6 +712,7 @@ def test_lowering_supersede_claim_replaces_claim_and_invalidates_old_relation() 
             "superseded_by": {"key": "service:ledger-new", "type": "Service"},
             "reason": "ledger dependency moved",
             "description": "payments now depends on the new ledger service",
+            "valid_until": "2026-06-08T05:30:00+05:30",
         },
         allow_review_required=True,
         approved_by="user:alice",
@@ -682,6 +734,7 @@ def test_lowering_supersede_claim_replaces_claim_and_invalidates_old_relation() 
         "service:ledger-old",
     )
     assert invalidation.superseded_by_key == "service:ledger-new"
+    assert invalidation.valid_to == "2026-06-08T00:00:00+00:00"
     assert plan.accepted_ops[0].claim_keys
 
 
@@ -717,3 +770,55 @@ def test_lowering_merge_duplicate_entities_writes_merge_record() -> None:
     assert edge.properties["merge_external_ids"]["losing"]["source"].endswith("v1.yaml")
     assert plan.batch.invalidations == []
     assert plan.accepted_ops[0].claim_keys
+
+
+# --- contract-version alias + the approval warning's flag ---------------------
+
+
+def test_the_workbench_contract_version_is_accepted_as_an_alias() -> None:
+    """``graph catalog`` and ``graph status`` print ``v2``; a payload that
+    copied that value was refused with ``unsupported_contract_version``."""
+    req = SemanticMutationRequest.parse(
+        {"pot_id": "p", "graph_contract_version": "v2", "operations": [_link()]}
+    )
+
+    assert req.graph_contract_version == GRAPH_CONTRACT_VERSION
+    plan = validate_semantic_request(req)
+    assert plan.ok
+    assert plan.decision == "apply"
+
+
+def test_an_unsupported_contract_version_names_what_is_accepted() -> None:
+    req = SemanticMutationRequest.parse(
+        {"pot_id": "p", "graph_contract_version": "v9", "operations": [_link()]}
+    )
+
+    plan = validate_semantic_request(req)
+
+    issue = next(i for i in plan.errors if i.code == "unsupported_contract_version")
+    assert "'v9'" in issue.message
+    assert "v1.5" in issue.message
+    assert "v2" in issue.message
+    assert "omit the field" in issue.message
+
+
+def test_the_approval_warning_names_the_flag_commit_actually_takes() -> None:
+    """``--allow-review-required`` exists only on the legacy ``graph mutate``;
+    following the old warning cost a guaranteed failed ``graph commit``."""
+    op = {
+        "op": "patch_entity",
+        "subject": {"key": "service:payments-api", "type": "Service"},
+        "patch": {"summary": "Payments API service"},
+        "expected_entity_version": "entity-version:1",
+        "reason": "tighten display metadata",
+    }
+
+    plan = validate_semantic_request(_req(op))
+
+    warning = next(i for i in plan.issues if i.code == "approval_required")
+    assert (
+        "potpie graph commit <plan_id> --approved-by <user-ref> --verify"
+        in warning.message
+    )
+    assert "--allow-review-required" not in warning.message
+    assert "propose" in warning.message

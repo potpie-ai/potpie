@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from potpie_context_engine.application.readers._common import (
+    EXCLUDE_KNOWLEDGE_SUBGRAPH,
     ReadRequest,
     ReadResponse,
     claim_candidate_key,
@@ -71,7 +72,12 @@ class OwnersReader:
             coverage_status=coverage_status_from_count(
                 found=len(ranked), requested=req.max_items
             ),
-            meta={"anchor_keys": list(anchor_keys), "candidate_pool": len(rows)},
+            meta={
+                "ranking_omitted": max(0, len(candidates) - len(ranked)),
+                "candidate_pool_unit": "claims",
+                "anchor_keys": list(anchor_keys),
+                "candidate_pool": len(rows),
+            },
         )
 
     def _rows(self, req: ReadRequest, *, anchor_keys: Iterable[str]) -> list[ClaimRow]:
@@ -81,6 +87,7 @@ class OwnersReader:
             "include_invalidated": req.include_invalidated,
             "as_of": req.as_of,
             "source_ref_in": req.source_refs,
+            "subgraph_not_in": EXCLUDE_KNOWLEDGE_SUBGRAPH,
             "limit": max(req.max_items * 8, 64),
             "fact_query": req.query,
         }
@@ -107,6 +114,7 @@ class OwnersReader:
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
                         source_ref_in=req.source_refs,
+                        subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
                         limit=max(req.max_items * 8, 64),
                     )
                 )
@@ -122,6 +130,7 @@ class OwnersReader:
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
                         source_ref_in=req.source_refs,
+                        subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
                         limit=max(req.max_items * 8, 64),
                     )
                 )

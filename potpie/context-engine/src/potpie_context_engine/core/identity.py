@@ -54,12 +54,15 @@ class IdentityClass(str, Enum):
 # Slug grammar — lowercase letters, digits, hyphens. Class prefix
 # (``service:``, ``feature:``, ...) is separated by a single colon.
 # Repository / nested keys use additional colons (``repo:github:owner/name``).
-_SLUG_BODY_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+# Anchored with ``\Z`` rather than ``$``: ``$`` also matches just before a
+# trailing newline, which would let ``q3-review\n`` pass as a slug and mint a
+# second key for the same name.
+_SLUG_BODY_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?\Z")
 
 # External-id slug body permits a slightly broader alphabet — issue
 # trackers and source systems use uppercase, digits, hyphens, and
 # slashes. We canonicalize to lowercase but preserve other characters.
-_EXTERNAL_ID_SAFE_RE = re.compile(r"^[a-z0-9._/\-]+$")
+_EXTERNAL_ID_SAFE_RE = re.compile(r"^[a-z0-9._/\-]+\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +202,17 @@ def mint_entity_key(
     return ":".join(segments)
 
 
+def is_valid_slug_body(text: str) -> bool:
+    """True when ``text`` is a well-formed slug body (no class prefix).
+
+    The single public reader of the slug grammar. Callers that need to
+    validate an agent-supplied name segment — resource ``--doc`` /
+    ``--section``, for instance — use this instead of re-deriving the
+    regex, so the grammar stays in one place.
+    """
+    return isinstance(text, str) and _SLUG_BODY_RE.match(text) is not None
+
+
 def validate_entity_key(spec: IdentitySpec, key: str) -> bool:
     """Confirm ``key`` matches ``spec``'s grammar (prefix + valid body).
 
@@ -218,8 +232,8 @@ def validate_entity_key(spec: IdentitySpec, key: str) -> bool:
     for seg in rest.split(":"):
         if not _SLUG_BODY_RE.match(seg) and not _EXTERNAL_ID_SAFE_RE.match(seg):
             # Allow content-hash hex bodies for CONTENT_HASH specs.
-            if spec.klass is IdentityClass.CONTENT_HASH and re.match(
-                r"^[0-9a-f]{8,32}$", seg
+            if spec.klass is IdentityClass.CONTENT_HASH and re.fullmatch(
+                r"[0-9a-f]{8,32}", seg
             ):
                 continue
             return False
@@ -302,6 +316,7 @@ __all__ = [
     "IdentitySpec",
     "all_identities",
     "get_identity",
+    "is_valid_slug_body",
     "mint_entity_key",
     "register_identity",
     "validate_entity_key",
