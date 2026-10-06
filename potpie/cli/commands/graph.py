@@ -47,6 +47,7 @@ from potpie.cli.commands._common import (
     pot_scope_info,
     resolve_pot_id,
     run_engine_operation,
+    run_engine_outcome,
 )
 from potpie.cli.read_presenter import (
     build_presentation_context,
@@ -1553,14 +1554,23 @@ def graph_commit(
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        result = run_engine_operation(
-            get_engine_client(pot).commit(
-                EngineCommitRequest(
-                    plan_id=plan_id,
-                    approved_by=approved_by,
-                    verify=verify,
-                )
-            )
+        from potpie.cli.commit_recovery import commit_with_recovery
+
+        quoted_plan = shlex.quote(plan_id)
+        quoted_pot = shlex.quote(pot_id)
+        result = commit_with_recovery(
+            get_engine_client(pot),
+            plan_id=plan_id,
+            pot_id=pot_id,
+            approved_by=approved_by,
+            verify=verify,
+            history_command=(
+                f"potpie --json graph history --plan {quoted_plan} --pot {quoted_pot}"
+            ),
+            retry_command=(
+                f"potpie --json graph commit {quoted_plan} --verify --pot {quoted_pot}"
+            ),
+            run=run_engine_outcome,
         )
         _emit_graph_result(
             ctx,
@@ -3668,6 +3678,8 @@ def _commit_human(result) -> str:
             )
         if verification.missing_claim_keys:
             lines.append(f"missing_claim_keys={list(verification.missing_claim_keys)}")
+        if not verification.ok and verification.detail:
+            lines.append(verification.detail)
     if result.detail:
         lines.append(result.detail)
     return "\n".join(lines)
@@ -3729,3 +3741,8 @@ def _quality_human(result) -> str:
 
 
 __all__ = ["backend_app", "graph_app", "timeline_app"]
+
+
+from potpie.cli.commands.graph_commits import register_commit_commands  # noqa: E402
+
+register_commit_commands(graph_app)

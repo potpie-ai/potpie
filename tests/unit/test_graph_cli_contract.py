@@ -319,6 +319,9 @@ class _Workbench:
         self.quality_result = quality_result
         self.propose_calls = []
         self.commit_calls = []
+        self.deferred_verification = []
+        self.status_calls = []
+        self.verify_calls = []
         self.history_calls = []
         self.inbox_calls = []
         self.quality_calls = []
@@ -329,11 +332,36 @@ class _Workbench:
             raise AssertionError("propose should not be called")
         return self.proposal
 
-    def commit(self, plan_id, *, pot_id, approved_by=None, verify=False):
+    def commit(
+        self,
+        plan_id,
+        *,
+        pot_id,
+        approved_by=None,
+        verify=False,
+        defer_verification=False,
+    ):
         self.commit_calls.append((plan_id, pot_id, approved_by, verify))
+        self.deferred_verification.append(defer_verification)
         if self.commit_result is None:
             raise AssertionError("commit should not be called")
+        if verify and defer_verification:
+            return replace(self.commit_result, verification=None)
         return self.commit_result
+
+    def commit_status(self, plan_id, *, pot_id):
+        self.status_calls.append((plan_id, pot_id))
+        if self.commit_result is None:
+            raise AssertionError("commit_status should not be called")
+        return self.commit_result
+
+    def verify_commit(self, plan_id, *, pot_id):
+        self.verify_calls.append((plan_id, pot_id))
+        if self.commit_result is None:
+            raise AssertionError("verify_commit should not be called")
+        return self.commit_result.verification or GraphIngestionVerificationResult(
+            ok=True, status="ok", plan_id=plan_id, pot_id=pot_id
+        )
 
     def history(self, **kwargs):
         self.history_calls.append(kwargs)
@@ -1212,7 +1240,11 @@ def test_graph_commit_verify_passes_hard_gate_flag() -> None:
     emitted = json.loads(result.output)
     body = _assert_graph_envelope(emitted, "graph.commit")
     assert body["status"] == "committed"
+    assert body["verification"]["status"] == "ok"
     assert workbench.commit_calls == [("mutation-plan:test", "p", None, True)]
+    # The receipt comes back before the readback, which runs as its own read.
+    assert workbench.deferred_verification == [True]
+    assert workbench.verify_calls == [("mutation-plan:test", "p")]
 
 
 def test_graph_commit_verify_exits_nonzero_when_gate_fails() -> None:
@@ -1400,6 +1432,7 @@ def test_graph_history_plan_returns_envelope() -> None:
             "since": None,
             "until": None,
             "limit": 50,
+            "include_claims": True,
         }
     ]
 

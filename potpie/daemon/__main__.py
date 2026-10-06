@@ -18,9 +18,10 @@ from potpie.daemon.discovery import (
 )
 from potpie.daemon.http.ui import build_ui_app
 from potpie.runtime import CanonicalDaemonRuntime, DaemonBuild, RuntimeEndpoint
-from potpie.runtime.clients import TypedEngineOperationHandler
+from potpie.runtime.clients import LocalEngineClient, TypedEngineOperationHandler
 from potpie.runtime.composition import LocalRuntimeComposition, build_local_runtime
 from potpie.runtime.local_engine import build_local_resource_manager
+from potpie.runtime.resource_manager import ContextResourceManager, ContextSelector
 from potpie.runtime.server import run_foreground
 from potpie_context_engine.bootstrap.logging_setup import configure_logging
 
@@ -81,7 +82,10 @@ async def _run() -> None:
     composition.start_background_work()
     resource_manager = build_local_resource_manager(composition.engine)
     ui_server = _build_ui_server(
-        composition=composition, port=ui_port, bearer_token=bearer_token
+        composition=composition,
+        port=ui_port,
+        bearer_token=bearer_token,
+        resource_manager=resource_manager,
     )
     ui_task = asyncio.create_task(ui_server.serve())
     runtime = CanonicalDaemonRuntime(
@@ -189,7 +193,11 @@ def _stop_embedded_graph_servers() -> None:
 
 
 def _build_ui_server(
-    *, composition: LocalRuntimeComposition, port: int, bearer_token: str
+    *,
+    composition: LocalRuntimeComposition,
+    port: int,
+    bearer_token: str,
+    resource_manager: ContextResourceManager,
 ) -> uvicorn.Server:
     # The explorer takes the same per-boot secret as the typed endpoint: the
     # CLI reads it from the owner-only credential file and spends it on a
@@ -199,6 +207,7 @@ def _build_ui_server(
         graph=composition.engine.graph,
         backend=composition.engine.backend,
         bearer_token=bearer_token,
+        engine_client=_ui_engine_client(composition, resource_manager),
     )
     config = uvicorn.Config(
         app,
@@ -210,6 +219,28 @@ def _build_ui_server(
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     return server
+
+
+def _ui_engine_client(
+    composition: LocalRuntimeComposition, resource_manager: ContextResourceManager
+) -> Callable[[str], LocalEngineClient]:
+    """Typed clients for explorer routes, on the daemon's own manager and locks.
+
+    The explorer's commit routes send the same typed operations the CLI does,
+    so selection, archived-pot refusal and operation locking are shared with
+    every daemon request rather than reimplemented for the browser.
+    """
+
+    def build(pot_id: str) -> LocalEngineClient:
+        return LocalEngineClient(
+            selector=ContextSelector(kind="explicit", value=pot_id),
+            authentication={"kind": "daemon_ui"},
+            resource_manager=resource_manager,
+            coordinator=composition.coordinator,
+            context_free_handler=composition.graph_metadata,
+        )
+
+    return build
 
 
 async def _wait_for_ui_start(
