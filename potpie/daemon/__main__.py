@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import uvicorn
@@ -28,6 +30,8 @@ _ENV_ENDPOINT_PORT = "POTPIE_DAEMON_ENDPOINT_PORT"
 _ENV_INSTANCE_ID = "POTPIE_DAEMON_INSTANCE_ID"
 _ENV_UI_PORT = "POTPIE_DAEMON_UI_PORT"
 _ENV_BEARER_TOKEN = "POTPIE_DAEMON_BEARER_TOKEN"  # noqa: S105 - env key name
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -78,7 +82,7 @@ async def _run() -> None:
         ),
         ownership_lock_path=home / "daemon.runtime.lock",
         instance_id=instance_id,
-        shutdown_resources=resource_manager.shutdown,
+        shutdown_resources=_then_stop_embedded_graph_servers(resource_manager.shutdown),
         after_ownership_acquired=lambda _ownership: write_daemon_credential(
             home, bearer_token
         ),
@@ -100,6 +104,46 @@ async def _run() -> None:
             await ui_task
         with contextlib.suppress(Exception):
             await runtime.stop()
+
+
+def _then_stop_embedded_graph_servers(
+    release_resources: Callable[[], Awaitable[object]],
+) -> Callable[[], Awaitable[object]]:
+    """Release the engine resources, then the embedded graph server under them.
+
+    The ``falkordb_lite`` server is a separate, daemonized process; nothing else
+    stops it when the daemon exits, so without this every ``potpie daemon
+    stop`` strands a ``redis-server`` holding the db file open until the
+    machine reboots. It runs inside the runtime's resource shutdown, before the
+    ownership lock is released, so a daemon started right after this one can
+    never attach to a server that is about to be stopped.
+    """
+
+    async def shutdown() -> object:
+        try:
+            return await release_resources()
+        finally:
+            await asyncio.to_thread(_stop_embedded_graph_servers)
+
+    return shutdown
+
+
+def _stop_embedded_graph_servers() -> None:
+    """Stop the embedded graph servers this process started; never raise.
+
+    Shutdown must not be the reason a stop fails, so the import is local and
+    every failure is logged rather than propagated.
+    """
+    try:
+        from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
+            shutdown_embedded_servers,
+        )
+
+        stopped = shutdown_embedded_servers()
+        if stopped:
+            logger.info("stopped %d embedded graph server(s)", stopped)
+    except Exception:  # noqa: BLE001
+        logger.debug("embedded graph server shutdown failed", exc_info=True)
 
 
 def _build_ui_server(

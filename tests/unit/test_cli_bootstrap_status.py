@@ -834,3 +834,53 @@ def test_doctor_human_output_includes_repo_line_when_in_repo(
     assert result.exit_code == 0, result.stdout
     assert "github.com/acme/shop" in result.stdout
     assert "pot-default" in result.stdout
+
+
+def test_doctor_reports_embedded_graph_servers_for_the_lite_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Leaked embedded graph servers are reported, never stopped, by doctor."""
+    from potpie_context_engine.adapters.outbound.graph import falkordb_writer
+
+    report = {
+        "running": 2,
+        "for_this_graph": 1,
+        "unattributed": [{"pid": 4242, "started_at": 0.0}],
+        "detail": "1 embedded graph server(s) are running that this graph does not use",
+    }
+    paths: list[str] = []
+
+    def _report(path: str) -> dict:
+        paths.append(path)
+        return report
+
+    monkeypatch.setattr(falkordb_writer, "embedded_server_report", _report)
+    db_path = str(tmp_path / "doctor-graph.db")
+    monkeypatch.setenv("FALKORDB_LITE_PATH", db_path)
+    mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default=None)
+    mock_host.backend.profile = "falkordb_lite"
+    _common.set_runtime(mock_host)
+    monkeypatch.setattr(bootstrap, "current_repo_identity_for_cli", lambda: None)
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["embedded_graph_servers"] == report
+    assert paths == [db_path]
+
+    human = runner.invoke(cli_main.app, ["doctor"])
+    assert human.exit_code == 0, human.stdout
+    assert "embedded servers: 1 embedded graph server(s)" in human.stdout
+
+
+def test_doctor_reports_no_embedded_graph_servers_for_other_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_host = _make_doctor_host(active_pot_id="pot-active", repo_default=None)
+    _common.set_runtime(mock_host)
+    monkeypatch.setattr(bootstrap, "current_repo_identity_for_cli", lambda: None)
+
+    result = runner.invoke(cli_main.app, ["--json", "doctor"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["embedded_graph_servers"] is None
