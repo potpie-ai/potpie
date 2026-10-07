@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -34,13 +35,15 @@ def test_a_live_process_is_alive_and_an_exited_one_is_not() -> None:
 @_POSIX_ONLY
 def test_an_exited_unreaped_child_is_not_alive() -> None:
     """A zombie still owns its pid and ``kill(pid, 0)`` would say yes."""
-    child = subprocess.Popen([sys.executable, "-c", "pass"], stdout=subprocess.PIPE)
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
     try:
-        assert child.stdout is not None
-        child.stdout.read()  # EOF once the child has exited, still unreaped
+        # Block until the child has exited but leave it unreaped (a zombie).
+        # Waiting for stdout EOF is not enough: the child closes its pipes
+        # before the kernel marks it exited, and on Linux that window is wide
+        # enough for the liveness probe to see a still-running process.
+        os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
         assert pid_alive(child.pid) is False
     finally:
-        child.stdout.close()
         child.wait(timeout=10)
 
 
