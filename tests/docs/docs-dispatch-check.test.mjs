@@ -11,7 +11,11 @@ function makeInputs(changedPaths, docsPath = 'docs', spokeId = 'demo') {
   const configPath = join(root, 'docs/config.json');
   const changedFilesPath = join(root, 'changed.txt');
   mkdirSync(join(root, 'docs'), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ spokeId, docsPath }));
+  writeFileSync(configPath, JSON.stringify({
+    spokeId,
+    docsPath,
+    documentationContractVersion: 1,
+  }));
   writeFileSync(changedFilesPath, `${changedPaths.join('\n')}\n`);
   return { configPath, changedFilesPath };
 }
