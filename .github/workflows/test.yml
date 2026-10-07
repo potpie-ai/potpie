@@ -251,7 +251,7 @@ jobs:
       - name: Start graph journal crash fixture
         run: |
           docker run -d --name pie-journal-crash-ci -p 127.0.0.1:6381:6379 -e BROWSER=0 -e 'REDIS_ARGS=--appendonly yes --appendfsync always' falkordb/falkordb:v4.16.0
-          for attempt in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker exec pie-journal-crash-ci redis-cli ping | grep -q PONG; then exit 0; fi
             sleep 1
           done
