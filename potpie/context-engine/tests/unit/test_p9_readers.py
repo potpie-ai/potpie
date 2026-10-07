@@ -20,6 +20,7 @@ from potpie_context_engine.application.readers import (
     DecisionsReader,
     DocsReader,
     FeaturesReader,
+    GenerationLineageReader,
     InfraTopologyReader,
     OwnersReader,
     PriorBugsReader,
@@ -1158,6 +1159,164 @@ class TestNewUseCaseReaders:
             response.items[0].candidate.payload["subject_key"]
             == "document:graph-runbook"
         )
+
+
+class TestGenerationLineageReader:
+    def test_until_bound_excludes_rows_without_valid_at(self) -> None:
+        until = _NOW
+        rows = [
+            replace(
+                _row(
+                    predicate="GENERATED_FROM",
+                    subject_key="code:repo:unknown-time",
+                    object_key="prompt:unknown-time",
+                ),
+                valid_at=None,
+            ),
+            _row(
+                predicate="GENERATED_FROM",
+                subject_key="code:repo:at-until",
+                object_key="prompt:at-until",
+                valid_at=until,
+            ),
+        ]
+
+        class Query:
+            def find_claims(self, filter_):
+                return rows
+
+        reader = GenerationLineageReader(claim_query=Query(), ranker=RankingService())
+        response = reader.read(ReadRequest(pot_id="pot-1", until=until, max_items=10))
+
+        assert [item.candidate.payload["subject_key"] for item in response.items] == [
+            "code:repo:at-until"
+        ]
+
+    def test_temporal_bounds_are_propagated_and_enforced_inclusively(self) -> None:
+        since = _NOW - timedelta(days=3)
+        until = _NOW + timedelta(days=3)
+        rows = [
+            _row(
+                predicate="GENERATED_FROM",
+                subject_key="code:repo:before",
+                object_key="prompt:before",
+                valid_at=since - timedelta(seconds=1),
+            ),
+            _row(
+                predicate="GENERATED_FROM",
+                subject_key="code:repo:at-since",
+                object_key="prompt:at-since",
+                valid_at=since,
+            ),
+            _row(
+                predicate="GENERATED_FROM",
+                subject_key="code:repo:at-until",
+                object_key="prompt:at-until",
+                valid_at=until,
+            ),
+            _row(
+                predicate="GENERATED_FROM",
+                subject_key="code:repo:after",
+                object_key="prompt:after",
+                valid_at=until + timedelta(seconds=1),
+            ),
+        ]
+
+        class Query:
+            def __init__(self) -> None:
+                self.filters = []
+
+            def find_claims(self, filter_):
+                self.filters.append(filter_)
+                return rows
+
+        query = Query()
+        reader = GenerationLineageReader(claim_query=query, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", since=since, until=until, max_items=10)
+        )
+
+        assert {item.candidate.payload["subject_key"] for item in response.items} == {
+            "code:repo:at-since",
+            "code:repo:at-until",
+        }
+        assert query.filters
+        assert query.filters[0].valid_at_after == since
+        assert query.filters[0].valid_at_before == until
+
+    def test_path_matches_are_collected_before_max_items_truncation(self) -> None:
+        store = InMemoryClaimQueryStore()
+        for index in range(100):
+            store.add(
+                _row(
+                    predicate="GENERATED_FROM",
+                    subject_key=f"code:repo:filler-{index}",
+                    object_key="prompt:filler",
+                    properties={"path": "src/other.py"},
+                )
+            )
+        store.add(
+            _row(
+                predicate="GENERATED_FROM",
+                subject_key="code:repo:target",
+                object_key="prompt:target",
+                properties={"path": "src/target.py"},
+            )
+        )
+        reader = GenerationLineageReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"path": "src/target.py"},
+                max_items=1,
+            )
+        )
+
+        assert len(response.items) == 1
+        assert response.items[0].candidate.payload["subject_key"] == "code:repo:target"
+
+    def test_path_query_falls_back_from_semantic_cap_before_truncation(self) -> None:
+        rows = [
+            _row(
+                predicate="GENERATED_FROM",
+                subject_key="code:repo:filler",
+                object_key="prompt:filler",
+                fact="unrelated",
+                properties={"path": "src/other.py"},
+            ),
+            _row(
+                predicate="GENERATED_FROM",
+                subject_key="code:repo:target",
+                object_key="prompt:target",
+                fact="target",
+                properties={"path": "src/target.py"},
+            ),
+        ]
+
+        class CappedSemanticQuery:
+            def __init__(self) -> None:
+                self.filters = []
+
+            def find_claims(self, filter_):
+                self.filters.append(filter_)
+                return rows[:1] if filter_.fact_query else rows
+
+        query = CappedSemanticQuery()
+        reader = GenerationLineageReader(claim_query=query, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"path": "src/target.py"},
+                query="target",
+                max_items=1,
+            )
+        )
+
+        assert len(response.items) == 1
+        assert response.items[0].candidate.payload["subject_key"] == "code:repo:target"
+        assert any(filter_.fact_query is None for filter_ in query.filters)
 
 
 # ---------------------------------------------------------------------------

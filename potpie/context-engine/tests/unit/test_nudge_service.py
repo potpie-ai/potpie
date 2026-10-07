@@ -13,6 +13,7 @@ from potpie_context_engine.adapters.outbound.session.injection_ledger import (
     InMemoryInjectionLedger,
 )
 from potpie_context_engine.application.services.nudge_service import NudgeService
+from potpie_context_engine.core.graph_contract import ONTOLOGY_VERSION
 from potpie_context_engine.domain.nudge import (
     NUDGE_POLICIES,
     GraphNudgeRequest,
@@ -39,7 +40,7 @@ class _FakeReader:
         items = tuple(self.by_view.get(view_name, ()))
         return GraphReadResult(
             graph_contract_version="v1.5",
-            ontology_version="2026-06-graph",
+            ontology_version=ONTOLOGY_VERSION,
             view=view_name,
             subgraph=request.subgraph,
             items=items,

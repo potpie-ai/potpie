@@ -16,16 +16,21 @@ your session on your subscription.
 | `PreToolUse(Bash)` → `bash_pre` | `pre_deploy` *(deploy/infra command only; else silent)* | inject | env-qualified service neighborhood for a deploy command |
 | `PostToolUse(Bash)` → `bash_post` | `test_failed` *(test command, failed)* | inject | prior-occurrence matches by symptom + recent changes for scope |
 | `PostToolUse(Bash)` → `bash_post` | `test_passed` *(test command, passed)* | instruct | "you resolved X after editing Y — record the bug+fix if non-obvious" |
-| `Stop` → `stop` | `stop` | instruct | "capture durable learnings (new prefs, decisions, fixes)" |
+| `UserPromptSubmit` → `user_prompt` | lineage capture | silent | stores the latest prompt for this session (fail-open) |
+| `PostToolUse(Write\|Edit)` → `post_edit` | lineage capture | silent | links the edited span to the latest prompt (fail-open; never blocks) |
+| `Stop` → `stop` | `stop` | instruct | "capture durable learnings (prefs, decisions, fixes) and provenance specs" |
 
-`hooks.json` wires each event to a coarse hint (`session_start`, `pre_edit`,
-`bash_pre`, `bash_post`, `stop`). The adapter (`hooks/potpie_nudge.py`) performs
-mechanical refinement: a `bash_pre` becomes `pre_deploy` only for a deploy/infra
-command, a `bash_post` becomes `test_failed`/`test_passed` only for a test command
-and by its outcome, and anything else stays silent. It then forwards exactly one
-`potpie graph nudge` call and injects the result. This refinement makes **no model
-call**. The adapter is fail-safe: any error or a missing `potpie` binary means it
-injects nothing and exits cleanly, so a hook problem can never block your session.
+`hooks.json` wires each event to a coarse hint (`session_start`, `user_prompt`,
+`pre_edit`, `post_edit`, `bash_pre`, `bash_post`, `stop`). The adapter
+(`hooks/potpie_nudge.py`) performs mechanical refinement for nudge events and
+fail-open lineage capture for prompt/edit events. A `bash_pre` becomes
+`pre_deploy` only for a deploy/infra command, a `bash_post` becomes
+`test_failed`/`test_passed` only for a test command and by its outcome, and
+anything else stays silent. Nudge events forward exactly one `potpie graph nudge`
+call. Lineage events call `potpie lineage capture` and inject nothing. This
+refinement makes **no model call**. The adapter is fail-safe: any error or a
+missing `potpie` binary means it injects nothing and exits cleanly, so a hook
+problem can never block your session.
 
 ## Requirements
 
@@ -46,7 +51,8 @@ injects nothing and exits cleanly, so a hook problem can never block your sessio
 `hooks/potpie_nudge.py` and replacing `${CLAUDE_PLUGIN_ROOT}` with the directory
 path. See `hooks/hooks.json` for the exact event→command mapping.
 
-`potpie install --agent claude-plugin` drops this whole directory into your repo.
+`potpie skills install --agent claude-plugin --scope project --path .` drops this
+whole directory into your repo under `.claude/potpie-plugin/`.
 
 ## Skills
 
@@ -56,11 +62,13 @@ source ingestion. Skills run in-session on your subscription.
 
 ## Other harnesses
 
-The same adapter works for Codex and Cursor via `--harness codex|cursor`; their hook
-systems differ, so wire them per their docs to invoke
-`python3 potpie_nudge.py --harness <name> --event <hint>`. The adapter's payload
-accessors already tolerate common key shapes (`session_id`, `tool_input.file_path`,
-`tool_input.command`).
+The same adapter works for Codex and Cursor via `--harness codex|cursor`.
+
+- **Cursor:** `potpie skills install --agent cursor --scope project --path .` → `.cursor/hooks.json` + `.cursor/hooks/potpie_nudge.py`
+- **Codex:** `potpie skills install --agent codex --scope project --path .` → `.codex/hooks.json` + `.codex/hooks/potpie_nudge.py`
+
+Enable hooks in the harness settings. The adapter tolerates common payload shapes
+(`session_id`, `file_path`, `filePath`, `tool_input.file_path`, `prompt`, `content`).
 
 ## Debugging
 

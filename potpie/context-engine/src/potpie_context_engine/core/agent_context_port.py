@@ -64,6 +64,7 @@ READER_BACKED_INCLUDES: frozenset[str] = frozenset(
         # incl. generic RELATED_TO). Backed by RawGraphReader; used by the
         # graph explorer, not an agent use-case family.
         "raw_graph",
+        "generation_lineage",
     }
 )
 

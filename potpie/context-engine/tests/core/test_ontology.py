@@ -31,7 +31,7 @@ pytestmark = pytest.mark.unit
 def test_version_is_the_unified_version() -> None:
     # Owned by potpie_context_engine.core.graph_contract (the V1.5 contract home) and mirrored on
     # the ontology module; the graph catalog reports the same string.
-    assert ONTOLOGY_VERSION == "2026-06-graph"
+    assert ONTOLOGY_VERSION == "2026-09-graph"
 
 
 def test_catalog_contains_the_seven_topology_entities() -> None:
@@ -94,6 +94,31 @@ def test_catalog_contains_feature_entity() -> None:
 
 def test_catalog_contains_code_asset_entity() -> None:
     assert "CodeAsset" in CANONICAL_LABELS
+
+
+def test_catalog_contains_provenance_entities() -> None:
+    for label in ("GenerationSession", "PromptTurn", "SpecRequirement"):
+        assert label in CANONICAL_LABELS
+
+
+def test_catalog_contains_provenance_predicates() -> None:
+    for edge in (
+        "IN_SESSION",
+        "GENERATED_FROM",
+        "DERIVED_FROM",
+        "IMPLEMENTS",
+        "MODIFIES",
+        "USED_CONTEXT",
+    ):
+        assert edge in CANONICAL_EDGE_TYPES
+
+
+def test_implements_is_code_to_spec_not_feature() -> None:
+    assert "IMPLEMENTS" in allowed_edge_types_between(
+        ("CodeAsset",), ("SpecRequirement",)
+    )
+    assert "IMPLEMENTS" not in allowed_edge_types_between(("Feature",), ("CodeAsset",))
+    assert "IMPLEMENTED_IN" in allowed_edge_types_between(("Feature",), ("CodeAsset",))
 
 
 def test_feature_key_prefix_convention() -> None:

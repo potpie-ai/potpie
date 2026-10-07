@@ -16,6 +16,9 @@ from potpie_context_engine.application.readers.coding_preferences import (
 from potpie_context_engine.application.readers.decisions import DecisionsReader
 from potpie_context_engine.application.readers.docs import DocsReader
 from potpie_context_engine.application.readers.features import FeaturesReader
+from potpie_context_engine.application.readers.generation_lineage import (
+    GenerationLineageReader,
+)
 from potpie_context_engine.application.readers.infra_topology import InfraTopologyReader
 from potpie_context_engine.application.readers.owners import OwnersReader
 from potpie_context_engine.application.readers.prior_bugs import PriorBugsReader
@@ -26,6 +29,7 @@ __all__ = [
     "DecisionsReader",
     "DocsReader",
     "FeaturesReader",
+    "GenerationLineageReader",
     "InfraTopologyReader",
     "OwnersReader",
     "PriorBugsReader",

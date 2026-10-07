@@ -16,6 +16,7 @@ from potpie_context_engine.bootstrap import observability_runtime
 from potpie.cli.commands import _common, graph
 from potpie.cli.telemetry import product_analytics
 from potpie.cli.telemetry.context import TelemetryContext
+from potpie_context_engine.core.graph_contract import ONTOLOGY_VERSION
 from potpie_context_engine.core.graph_plans import (
     GraphIngestionVerificationResult,
     GraphMutationCommitResult,
@@ -123,7 +124,7 @@ class _Graph:
             raise self.catalog_error
         return GraphCatalogResult(
             graph_contract_version="v1.5",
-            ontology_version="2026-06-graph",
+            ontology_version=ONTOLOGY_VERSION,
             commands=("catalog", "read", "search-entities", "mutate"),
             truth_classes=("agent_claim",),
             mutation_operations=(
@@ -190,7 +191,7 @@ class _Graph:
             ),
             match_mode="lexical",
             graph_contract_version="v1.5",
-            ontology_version="2026-06-graph",
+            ontology_version=ONTOLOGY_VERSION,
         )
 
 
@@ -747,7 +748,7 @@ def _assert_graph_envelope(
     assert payload["request_id"].startswith("req:")
     assert payload["pot_id"] in {pot_id, None}
     assert payload["graph_contract_version"] == "v2"
-    assert payload["ontology_version"] == "2026-06-graph"
+    assert payload["ontology_version"] == ONTOLOGY_VERSION
     assert "subgraph_versions" in payload
     assert "warnings" in payload
     assert "unsupported" in payload
@@ -1724,7 +1725,7 @@ def test_graph_read_missing_required_scope_result_is_error_envelope() -> None:
     graph_service = _Graph(
         read_result=GraphReadResult(
             graph_contract_version="v1.5",
-            ontology_version="2026-06-graph",
+            ontology_version=ONTOLOGY_VERSION,
             view="features.feature_context",
             subgraph="features",
             ok=False,
@@ -1822,7 +1823,7 @@ def test_graph_read_rejects_fully_qualified_view_before_service_call() -> None:
 def _timeline_env() -> GraphReadResult:
     return GraphReadResult(
         graph_contract_version="v1.5",
-        ontology_version="2026-06-graph",
+        ontology_version=ONTOLOGY_VERSION,
         view="recent_changes.timeline",
         subgraph="recent_changes",
         read_shape="entity_relations",

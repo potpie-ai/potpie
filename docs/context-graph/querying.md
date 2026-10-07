@@ -23,7 +23,7 @@ server-side answer summary anywhere in the read trunk.
 
 The CLI exposes two read shapes over the **same** service and canonical claim
 store. Both are shipped today (the data plane is
-`GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`).
+`GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-09-graph"`).
 
 | Altitude | Surface | Who | Commands |
 |---|---|---|---|
@@ -53,7 +53,7 @@ flowchart LR
   q_in["resolve / search / graph read / nudge"]
   q_orch["ReadOrchestrator.resolve()"]
   q_vocab["includes_for_request<br/>(agent_context_port)"]
-  q_readers["9 P9 readers"]
+  q_readers["10 P9 readers"]
   q_cqp[("ClaimQueryPort.find_claims")]
   q_rank["RankingService (P7)"]
   q_env["EnvelopeBuilder.build()"]
@@ -73,7 +73,7 @@ things:
 
 1. **normalize `intent` → include families** via `includes_for_request`
    (`domain/agent_context_port.py`);
-2. **route each include to its P9 reader** through a `_routing` dict of **9 readers**;
+2. **route each include to its P9 reader** through a `_routing` dict of **10 readers**;
 3. **run each reader over the canonical `ClaimQueryPort`** (no reader touches storage
    directly);
 4. **hand `(include, ReadResponse)` pairs to `EnvelopeBuilder.build()`** → one
@@ -121,7 +121,7 @@ per-claim probability. Per-claim trust is carried on each item as the ranker `sc
 
 ---
 
-## 4. Reader pattern and the 9 readers
+## 4. Reader pattern and the 10 readers
 
 Each P9 reader (`application/readers/`) is small and uniform. Shared scaffolding lives
 in `_common.py`: `ReadRequest`/`ReadResponse`, `make_task_context`,
@@ -132,7 +132,7 @@ in `_common.py`: `ReadRequest`/`ReadResponse`, `make_task_context`,
 use-case-specific `scope_overlap` → builds `Candidate`s → delegates ranking to the
 shared `RankingService`.
 
-The 9 readers map one-to-one onto the 9 named views (§8):
+The 10 readers map one-to-one onto the 10 named views (§8):
 
 | Reader (`include`) | Predicates it reads | Notes |
 |---|---|---|
@@ -144,6 +144,7 @@ The 9 readers map one-to-one onto the 9 named views (§8):
 | `decisions` | `DECIDED`, `AFFECTS` | active/superseded decisions for a scope |
 | `owners` | `OWNED_BY`, `MEMBER_OF` | ownership by scope/path |
 | `docs` | `Document RELATED_TO scope` | scoped document context |
+| `generation_lineage` | `GENERATED_FROM`, `IMPLEMENTS`, `IN_SESSION`, `DERIVED_FROM`, `MODIFIES`, `USED_CONTEXT` | which prompt/spec/session produced a code span (`provenance.lineage`) |
 | `raw_graph` | every live `:RELATES_TO` edge (incl. generic `RELATED_TO`) | unscoped, for the explorer UI — **not** an agent retrieval family |
 
 > Known spec/reader drift: the `service_neighborhood` view spec
@@ -152,7 +153,7 @@ The 9 readers map one-to-one onto the 9 named views (§8):
 > `_INFRA_PREDICATES`). The table above documents what the reader reads.
 
 The vocabulary single source of truth is `domain/agent_context_port.py`: it owns
-`CONTEXT_INTENTS` (11), `READER_BACKED_INCLUDES` (9), `CONTEXT_INCLUDE_VALUES` (derived
+`CONTEXT_INTENTS` (11), `READER_BACKED_INCLUDES` (10), `CONTEXT_INCLUDE_VALUES` (derived
 from the ontology's `advertised_include_families()`), `PLANNED_INCLUDES`
 (advertised-but-unbacked → surfaced as `not_implemented`), `DEFAULT_INTENT_INCLUDES`, and
 `CONTEXT_RESOLVE_RECIPES`. `context_port_manifest()` is the stable agent-facing
@@ -275,8 +276,8 @@ declarative `<subgraph>.<view>` contract (`GraphViewSpec`, `domain/graph_views.p
 `traversal` flag. An import-time guard (`_check_views_coherent`) asserts every
 `v1_include ∈ CONTEXT_INCLUDE_VALUES`.
 
-There are **8 subgraphs** (`debugging`, `recent_changes`, `infra_topology`, `decisions`,
-`features`, `code_topology`, `knowledge`, `admin`) and **9 views**:
+There are **9 subgraphs** (`debugging`, `recent_changes`, `infra_topology`, `decisions`,
+`features`, `code_topology`, `knowledge`, `provenance`, `admin`) and **10 views**:
 
 | Subgraph | View | Backing reader | Use when |
 |---|---|---|---|
@@ -288,6 +289,7 @@ There are **8 subgraphs** (`debugging`, `recent_changes`, `infra_topology`, `dec
 | `features` | `feature_context` | `features` | Feature summary, ownership, implementation links. |
 | `code_topology` | `ownership_by_path` | `owners` | Who owns a path/module. |
 | `knowledge` | `document_context` | `docs` | Scoped document/runbook context. |
+| `provenance` | `lineage` | `generation_lineage` | Which prompt/spec/session produced a code span. |
 | `admin` | `inspection_slice` | `raw_graph` | Operator/explorer raw slice. |
 
 > Note the corrected names: the prior-occurrences view is under subgraph **`debugging`**
