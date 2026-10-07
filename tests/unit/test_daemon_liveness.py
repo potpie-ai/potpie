@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +42,21 @@ def test_an_exited_unreaped_child_is_not_alive() -> None:
         # Waiting for stdout EOF is not enough: the child closes its pipes
         # before the kernel marks it exited, and on Linux that window is wide
         # enough for the liveness probe to see a still-running process.
-        os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+        if hasattr(os, "waitid"):
+            os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+        else:  # os.waitid is missing on macOS before Python 3.13: poll ps instead.
+            deadline = time.monotonic() + 10
+            while (
+                "Z"
+                not in subprocess.run(
+                    ["ps", "-o", "stat=", "-p", str(child.pid)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                ).stdout
+            ):
+                assert time.monotonic() < deadline, "child never became a zombie"
+                time.sleep(0.01)
         assert pid_alive(child.pid) is False
     finally:
         child.wait(timeout=10)
