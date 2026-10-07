@@ -31,6 +31,7 @@ class EvidenceItem:
     payload: Mapping[str, Any]
     coverage_status: str
     breakdown: Mapping[str, float] = field(default_factory=dict)
+    origin_trust: str = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,7 @@ class AgentEnvelope:
                     "payload": dict(item.payload),
                     "coverage_status": item.coverage_status,
                     "breakdown": dict(item.breakdown),
+                    "origin_trust": item.origin_trust,
                 }
                 for item in self.items
             ],

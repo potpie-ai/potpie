@@ -27,6 +27,7 @@ from potpie_context_engine.core.agent_envelope import (
     derive_overall_confidence,
 )
 from potpie_context_engine.core.graph_views import INCLUDE_TO_VIEW
+from potpie_context_engine.core.graph_contract import origin_trust_or_default
 
 
 @dataclass(slots=True)
@@ -85,14 +86,18 @@ class EnvelopeBuilder:
                 continue
             resp = include_result.response
             for ranked in resp.items:
+                payload = dict(ranked.candidate.payload)
                 items.append(
                     EvidenceItem(
                         include=inc,
                         candidate_key=ranked.candidate.candidate_key,
                         score=ranked.score,
-                        payload=dict(ranked.candidate.payload),
+                        payload=payload,
                         coverage_status=resp.coverage_status,
                         breakdown=dict(ranked.breakdown),
+                        origin_trust=origin_trust_or_default(
+                            payload.get("origin_trust")
+                        ),
                     )
                 )
             coverage.append(

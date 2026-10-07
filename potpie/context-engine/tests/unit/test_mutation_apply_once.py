@@ -263,3 +263,20 @@ def test_embedded_concurrent_processes_share_one_durable_receipt(tmp_path) -> No
     assert len(persisted["mutation_receipts"]) == 1
     backend = EmbeddedGraphBackend(home=tmp_path)
     assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
+
+
+def test_in_memory_apply_caps_self_declared_trusted_origin() -> None:
+    backend = InMemoryGraphBackend()
+    plan = _plan()
+    plan.edge_upserts[0].properties["origin_trust"] = "trusted"
+
+    backend.mutation.apply(
+        plan,
+        expected_pot_id=POT,
+        provenance_context=ProvenanceContext(
+            mutation_id=MUTATION_ID, origin_trust="external"
+        ),
+    )
+
+    rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
+    assert rows[0].origin_trust == "external"

@@ -26,6 +26,11 @@ from potpie_context_engine.domain.nudge import (
     canonical_nudge_event,
 )
 from potpie_context_engine.domain.ports.injection_ledger import InjectionLedgerPort
+from potpie_context_engine.core.graph_contract import (
+    fence_untrusted_text,
+    is_untrusted_origin,
+    origin_trust_or_default,
+)
 from potpie_context_engine.core.ports.graph_service import (
     GraphReadRequest,
     GraphReadResult,
@@ -161,8 +166,9 @@ def _format_inject_context(items: list[tuple[float, str, dict[str, Any]]]) -> st
     """Compact, source-ref-first context block for the session.
 
     Leads with the agent-authored retrieval card (``description``) when present,
-    falls back to ``fact``/``summary``; appends scope + source so the agent can
-    treat each line as cited graph truth.
+    falls back to ``fact``/``summary``. Trusted lines are cited graph memory.
+    ``external`` / ``unknown`` lines are fenced so they are not treated as
+    instructions or as indistinguishable project truth.
     """
     lines = ["Relevant project memory (Potpie graph):"]
     for _score, view, item in items:
@@ -187,13 +193,19 @@ def _format_inject_context(items: list[tuple[float, str, dict[str, Any]]]) -> st
         refs = payload.get("source_refs")
         if isinstance(refs, (list, tuple)) and refs:
             source = refs[0]
-        meta: list[str] = []
+        trust = origin_trust_or_default(payload.get("origin_trust"))
+        meta: list[str] = [f"origin_trust={trust}"]
         if scope_bits:
             meta.append(", ".join(scope_bits))
         if source:
             meta.append(f"src={source}")
         suffix = f" ({'; '.join(meta)})" if meta else ""
-        lines.append(f"- [{view}] {text}{suffix}")
+        display = fence_untrusted_text(str(text), trust)
+        if is_untrusted_origin(trust):
+            lines.append(f"- [{view}]{suffix}")
+            lines.extend(display.splitlines())
+        else:
+            lines.append(f"- [{view}] {display}{suffix}")
     return "\n".join(lines)
 
 

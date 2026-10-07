@@ -147,6 +147,7 @@ class SemanticMutation:
     """Value object for ``assert_claim`` against a literal (no entity)."""
 
     truth: str | None = None
+    origin_trust: str | None = None
     confidence: float | None = None
     evidence: tuple[GraphEvidenceRef, ...] = ()
     description: str | None = None
@@ -219,6 +220,7 @@ class SemanticMutation:
             object=GraphEntityRef.parse(raw.get("object")),
             value=raw.get("value"),
             truth=_opt_str(raw.get("truth")),
+            origin_trust=_opt_str(raw.get("origin_trust")),
             confidence=float(confidence) if confidence is not None else None,
             evidence=evidence,
             description=_opt_str(raw.get("description")),
@@ -261,6 +263,7 @@ class SemanticMutationRequest:
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
     idempotency_key: str | None = None
     created_by: MutationActor = field(default_factory=MutationActor)
+    origin_trust: str | None = None
     dry_run: bool = False
     allow_review_required: bool = False
     approved_by: str | None = None

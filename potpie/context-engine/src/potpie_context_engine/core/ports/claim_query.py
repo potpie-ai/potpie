@@ -53,6 +53,7 @@ class ClaimRow:
     evidence: tuple[Mapping[str, Any], ...] = ()
     graph_contract_version: str | None = None
     ontology_version: str | None = None
+    origin_trust: str = "unknown"
 
 
 @dataclass(frozen=True, slots=True)

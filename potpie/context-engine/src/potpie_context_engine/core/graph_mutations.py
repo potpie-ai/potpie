@@ -110,6 +110,7 @@ class ProvenanceContext:
     actor_surface: str | None = None
     actor_client_name: str | None = None
     actor_auth_method: str | None = None
+    origin_trust: str | None = None
     mutation_id: str | None = None
     """Caller-reserved execution id used to make retried applies idempotent."""
 
