@@ -1,0 +1,82 @@
+{
+  "connector": "repo_docs",
+  "event_type": "codeowners",
+  "action": "create",
+  "source_id": "repo_docs:codeowners:acme-platform:create",
+  "occurred_at": "2026-01-15T00:00:00Z",
+  "repo_name": "acme/platform",
+  "payload": {
+    "path": "CODEOWNERS",
+    "content": "# Acme platform ownership\n/services/auth-service/     @platform-platform @maya-chen\n/services/api-gateway/       @platform-edge @jordan-park\n/services/checkout-api/      @platform-checkout @sam-kim\n/services/user-profile-api/  @platform-identity @priya-shah\n",
+    "rules": [
+      {
+        "pattern": "/services/auth-service/",
+        "owners": ["@platform-platform", "@maya-chen"],
+        "line_no": 2
+      },
+      {
+        "pattern": "/services/api-gateway/",
+        "owners": ["@platform-edge", "@jordan-park"],
+        "line_no": 3
+      },
+      {
+        "pattern": "/services/checkout-api/",
+        "owners": ["@platform-checkout", "@sam-kim"],
+        "line_no": 4
+      },
+      {
+        "pattern": "/services/user-profile-api/",
+        "owners": ["@platform-identity", "@priya-shah"],
+        "line_no": 5
+      }
+    ],
+    "assignments": [
+      {
+        "service": "auth-service",
+        "team": "@platform-platform",
+        "lead": {
+          "handle": "@maya-chen",
+          "name": "Maya Chen",
+          "bench_alias": "bench-user-14"
+        },
+        "on_call": {
+          "handle": "@jordan-park",
+          "name": "Jordan Park",
+          "bench_alias": "bench-user-4",
+          "rotation": "SRE primary on-call"
+        }
+      },
+      {
+        "service": "api-gateway",
+        "team": "@platform-edge",
+        "lead": {
+          "handle": "@jordan-park",
+          "name": "Jordan Park",
+          "bench_alias": "bench-user-4"
+        }
+      },
+      {
+        "service": "checkout-api",
+        "team": "@platform-checkout",
+        "lead": {
+          "handle": "@sam-kim",
+          "name": "Sam Kim",
+          "bench_alias": "bench-user-1"
+        }
+      },
+      {
+        "service": "user-profile-api",
+        "team": "@platform-identity",
+        "lead": {
+          "handle": "@priya-shah",
+          "name": "Priya Shah",
+          "bench_alias": "bench-user-7"
+        }
+      }
+    ]
+  },
+  "_meta": {
+    "captured_from": "synthetic",
+    "redactions": []
+  }
+}
