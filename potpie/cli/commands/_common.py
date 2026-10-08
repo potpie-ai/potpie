@@ -665,7 +665,11 @@ def contract() -> Iterator[None]:
         fail(
             code="unavailable",
             message=str(exc),
-            next_action="check backend/daemon readiness with 'potpie doctor'",
+            # Some unavailability has a specific, known repair (e.g. a graph
+            # substrate that shut down uncleanly); prefer it over the generic
+            # pointer at doctor.
+            next_action=getattr(exc, "recommended_next_action", None)
+            or "check backend/daemon readiness with 'potpie doctor'",
             exit_code=EXIT_UNAVAILABLE,
         )
     except PotNotFound as exc:
@@ -732,6 +736,8 @@ def _record_cli_contract_metrics(
 
     attributes = _cli_metric_attributes(result=result, error_code=error_code)
     duration_ms = max((time.perf_counter() - started_at) * 1000.0, 0.0)
+    # No flush here: the CLI routes these to the telemetry spool, which a
+    # detached flusher ships after the command has already answered.
     try:
         sentry_metrics_runtime.count(
             "ce.cli.invocations_total",
@@ -745,11 +751,6 @@ def _record_cli_contract_metrics(
         )
     except Exception:  # noqa: BLE001
         pass
-    finally:
-        try:
-            sentry_metrics_runtime.flush(timeout=2.0)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def _cli_metric_attributes(

@@ -176,7 +176,11 @@ def test_build_info_defaults_git_sha_to_github_sha() -> None:
         {"GITHUB_SHA": "abc123", "POTPIE_BUILD_TIME": "2026-06-28T00:00:00Z"}
     )
 
-    assert values == {"GIT_SHA": "abc123", "BUILD_TIME": "2026-06-28T00:00:00Z"}
+    assert values == {
+        "GIT_SHA": "abc123",
+        "DIRTY": "",
+        "BUILD_TIME": "2026-06-28T00:00:00Z",
+    }
 
 
 def test_write_distribution_mapping_does_not_emit_env_var_constants(tmp_path) -> None:
@@ -439,6 +443,7 @@ def test_prefer_existing_build_info_preserves_missing_field_inputs(
 
     assert values == {
         "GIT_SHA": "old-sha",
+        "DIRTY": "",
         "BUILD_TIME": "2026-06-28T00:00:00Z",
     }
 

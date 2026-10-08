@@ -19,7 +19,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-import subprocess
 from typing import Callable
 from urllib.parse import urlparse
 
@@ -29,6 +28,7 @@ from potpie_context_engine.domain.embedding_modes import (
     SEMANTIC_EMBEDDER_ALIASES,
     normalize_embedding_mode,
 )
+from potpie_context_engine.domain.git_probe import run_git_probe
 from potpie_context_engine.core.lifecycle import (
     DONE,
     FAILED,
@@ -405,26 +405,10 @@ def _resolve_setup_repo_location(location: str) -> str:
 
 
 def _current_git_remote(cwd: Path) -> str | None:
-    try:
-        proc = subprocess.run(  # noqa: S603 - fixed argv, never invokes a shell.
-            [  # noqa: S607 - the user's Git installation is intentionally used.
-                "git",
-                "-C",
-                str(cwd),
-                "remote",
-                "get-url",
-                "origin",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except Exception:
+    remote = run_git_probe(["remote", "get-url", "origin"], cwd=cwd, timeout=2)
+    if not remote:
         return None
-    if proc.returncode != 0:
-        return None
-    return _normalize_repo_ref(proc.stdout.strip())
+    return _normalize_repo_ref(remote)
 
 
 def _normalize_repo_ref(value: str) -> str | None:

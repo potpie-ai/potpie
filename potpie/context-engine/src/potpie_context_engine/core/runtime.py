@@ -142,6 +142,18 @@ class _ClaimQueryPortBridge:
     async def entity_labels_async(self, *args: Any, **kwargs: Any) -> Any:
         return await self._bridge.call_async("entity_labels", *args, **kwargs)
 
+    def entity_properties_many(self, *, pot_id, entity_keys):
+        if callable(getattr(self._target, "entity_properties_many", None)) or callable(
+            getattr(self._target, "entity_properties_many_async", None)
+        ):
+            return self._bridge.call(
+                "entity_properties_many", pot_id=pot_id, entity_keys=entity_keys
+            )
+        return {
+            key: self.entity_properties(pot_id=pot_id, entity_key=key)
+            for key in entity_keys
+        }
+
     def entity_properties(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("entity_properties", *args, **kwargs)
 

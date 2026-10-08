@@ -697,3 +697,26 @@ body {
   font-size: 13px;
   max-width: 80%;
 }
+
+.session-required {
+  max-width: 34rem;
+  margin: 12vh auto 0;
+  padding: 0 16px;
+  color: var(--muted-2);
+}
+
+.session-required h1 {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.session-required code {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  background: var(--control);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+}

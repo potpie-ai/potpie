@@ -71,11 +71,6 @@ exclude = [
     "/potpie/sandbox",
 ]
 
-[tool.hatch.build.force-include]
-"potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
-"potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json"
-"potpie/cli/templates/claude_plugin/hooks/hooks.json" = "potpie/cli/templates/claude_plugin/hooks/hooks.json"
-
 [tool.hatch.build.targets.sdist]
 include = [
     "/LICENSE",
@@ -88,6 +83,7 @@ include = [
     "/potpie/__init__.py",
     "/potpie/agent_context.py",
     "/potpie/auth",
+    "/potpie/build_info.py",
     "/potpie/cli",
     "/potpie/config",
     "/potpie/daemon",

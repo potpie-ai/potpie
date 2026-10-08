@@ -64,12 +64,15 @@ editable package. Published-package users should use `uv tool install potpie` or
 `potpie skills install [<id>] --agent claude` materializes the packaged skill
 bundle into an agent harness through the explicit root skill service. The
 default scope is global, so skills are installed once into the selected
-harness's user-level skills directory:
+harness's user-level skills directory.
 
-The shipped templates live under `potpie/cli/templates/`: project
-bundles in `agent_bundle/` and `claude_bundle/`, compact global instruction
-blocks in `global_agent_bundle/`, and the Claude Code plugin in
-`claude_plugin/`.
+The shipped templates live under `potpie/cli/templates/`, with one source for
+each kind of file:
+
+- `agent_bundle/.agents/skills/` — every skill. All harnesses install their
+  skills from here, remapped to the harness's own skills directory.
+- `routing/POTPIE.md` — the compact instruction block merged into a harness's
+  `AGENTS.md` or `CLAUDE.md`, globally and per repository.
 
 | Harness | Global path |
 |---------|-------------|
@@ -78,16 +81,27 @@ blocks in `global_agent_bundle/`, and the Claude Code plugin in
 | OpenCode | `~/.config/opencode/skills/<skill>/SKILL.md` |
 | Codex | `$HOME/.agents/skills/<skill>/SKILL.md` |
 
-For harnesses with documented file-backed global instructions, install/update
-also refreshes a compact Potpie managed block in `~/.claude/CLAUDE.md` and
-`~/.codex/AGENTS.md`. Existing user-authored content is preserved; Potpie only
+`POTPIE_HARNESS_HOME` moves these roots away from the real home directory (the
+test suite pins it); `CONTEXT_ENGINE_HOME` deliberately does not, because a
+harness keeps reading its own home whatever Potpie's state directory is.
+
+For harnesses with documented file-backed global instructions, a bundle install
+or update (no skill id) also refreshes the compact Potpie managed block in
+`~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`; naming one skill id installs
+only that skill. Existing user-authored content is preserved; Potpie only
 appends or updates the `<!-- potpie-start -->` / `<!-- potpie-end -->` managed
-section.
+section, and `skills remove --all` takes that section back out.
 
 Remove one global skill with `potpie skills remove <id> --agent claude`, or
 delete every globally installed Potpie skill for a harness with
 `potpie skills remove --all --agent claude`. Use `--scope project --path .` for
-repo-local cleanup.
+repo-local cleanup. A skill removed by id is remembered as disabled, so a later
+bundle install skips it until it is installed again by id.
+
+`potpie --json skills status --agent <harness>` lists `installed`, `missing`,
+`outdated`, `drifted` (installed, but its files no longer match the bundle — a
+subset of `outdated` with the same repair) and `disabled`. `--path` is resolved
+against the caller's working directory and must already exist.
 
 Use `--scope project --path .` for repo-local installs. The bundle teaches
 feature / debugging / review / operations / docs / onboarding workflows over
