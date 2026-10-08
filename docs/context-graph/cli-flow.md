@@ -419,7 +419,7 @@ index and the lifecycle.
 
 ```bash
 potpie skills list             [--agent ...] [--scope global|project] [--path .]
-potpie skills install [<id>]   [--agent claude|claude-plugin|codex|cursor|opencode] [--scope global|project] [--path .]
+potpie skills install [<id>]   [--agent claude|codex|cursor|opencode] [--scope global|project] [--path .]
 potpie skills update  [<id> | --all] [--agent ...] [--scope global|project] [--path .]
 potpie skills remove  [<id> | --all] [--agent ...] [--scope global|project] [--path .]
 potpie skills status           [--agent ...] [--scope global|project] [--path .]
