@@ -224,13 +224,11 @@ result:
 | `/potpie-feature` | Load Potpie context **before** feature work (reads preferences, decisions, and the infra neighborhood). |
 | `/potpie-record` | Record durable learnings **after** useful work (resolve identity → propose/commit `--verify`). |
 
-> **Roadmap (not yet wired):** the Claude Code plugin has no first-class CLI
-> install path. The bundle `claude-plugin` agent type exists
-> (`install_agent_bundle(agent="claude-plugin")` lays it under
-> `.claude/potpie-plugin/`), but no `potpie` command invokes it and the plugin's
-> own README still references a non-existent `potpie install`. Install today is
-> manual (`/plugin marketplace add`); folding it into the managed install/drift
-> path is pending.
+> **Install path:** `potpie skills install --agent claude-plugin --scope project`
+> lays the Claude Code plugin bundle under `.claude/potpie-plugin/`
+> (`install_agent_bundle(agent="claude-plugin")`). Registering it with Claude Code
+> is still manual (`/plugin marketplace add <path>`); folding the plugin into the
+> managed drift/`skills status` path is pending.
 
 ---
 
