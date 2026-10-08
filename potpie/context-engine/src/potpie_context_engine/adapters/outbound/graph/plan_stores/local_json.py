@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,41 @@ class LocalJsonGraphPlanStore:
             by_pot = plans.setdefault(record.pot_id, {})
             by_pot[record.plan_id] = record.to_dict()
             self._save(state)
+
+    def reserve_idempotency(
+        self,
+        *,
+        record: GraphMutationPlanRecord,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> tuple[GraphMutationPlanRecord, bool]:
+        with locked_json_store(self._path):
+            state = self._load()
+            by_pot = state.setdefault("plans", {}).setdefault(record.pot_id, {})
+            for raw in by_pot.values():
+                if not isinstance(raw, dict):
+                    continue
+                existing = GraphMutationPlanRecord.from_dict(raw)
+                key = str(
+                    existing.original_payload.get("idempotency_key") or ""
+                ).strip()
+                if key != idempotency_key or not existing.reserves_idempotency:
+                    continue
+                same_request = (
+                    _request_fingerprint(existing.original_payload)
+                    == request_fingerprint
+                )
+                if not same_request:
+                    raise ValueError(
+                        f"idempotency_key {idempotency_key!r} is already bound to "
+                        f"plan {existing.plan_id!r} with different content"
+                    )
+                if existing.status in {"conflict", "error", "expired"}:
+                    continue
+                return existing, False
+            by_pot[record.plan_id] = record.to_dict()
+            self._save(state)
+            return record, True
 
     def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
         raw = self._load().get("plans", {}).get(pot_id, {}).get(plan_id)
@@ -145,6 +181,13 @@ def _record_in_window(
             continue
         return True
     return False
+
+
+def _request_fingerprint(payload: dict[str, Any] | Any) -> str:
+    normalized = dict(payload)
+    normalized.pop("expected_subgraph_versions", None)
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=20).hexdigest()
 
 
 __all__ = ["LocalJsonGraphPlanStore"]

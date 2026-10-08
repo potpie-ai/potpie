@@ -17,16 +17,32 @@ downstream consumers can read it without re-parsing free text.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
+from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
 
 class ContextRecordValidationError(ValueError):
-    """Raised when a structured payload does not match its record_type schema."""
+    """Raised when a structured payload does not match its record_type schema.
+
+    Carries the repair as well as the complaint. Every message here names the
+    field that is wrong or absent, and for a long time there was no way to
+    supply one from the CLI at all — so the refusal read as "this record type
+    cannot be written" rather than "pass one more argument". The next action
+    survives the daemon RPC, which re-raises a remote validation failure as a
+    plain ``ValueError`` with ``detail``/``recommended_next_action`` re-attached,
+    so an in-process host and a daemon host give the same advice.
+    """
+
+    RECOMMENDED_NEXT_ACTION = (
+        "supply the field named above with `potpie record --detail <field>=<value>` "
+        "(repeat --detail for more fields)"
+    )
 
     def __init__(self, record_type: str, message: str) -> None:
         super().__init__(f"{record_type}: {message}")
         self.record_type = record_type
         self.message = message
+        self.recommended_next_action = self.RECOMMENDED_NEXT_ACTION
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +74,9 @@ class FixRecord:
     kind: str | None = None
     scope_kind: str | None = None
     attempted_failed_fixes: tuple[str, ...] = ()
+    incident_id: str | None = None
+    fix_id: str | None = None
+    bug_pattern_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +88,7 @@ class BugPatternRecord:
     summary: str
     scope_kind: str | None = None
     reproduction_steps: tuple[str, ...] = ()
+    bug_pattern_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +172,30 @@ _RECORD_TYPE_TO_CLASS: dict[str, type[Any]] = {
     "decision": DecisionRecord,
     "verification": VerificationRecord,
 }
+
+
+#: The ``--detail`` keys each builder below refuses to go without. A table
+#: rather than something read off the builders, because the builders express
+#: the requirement in code (``_require_non_empty_string``) and ``--type``'s
+#: help has to print it before any payload exists; the test suite holds the
+#: two together by proving every listed key is genuinely refused when absent.
+#: ``fix`` requires nothing: its signature falls back to the summary and
+#: ``fix_steps`` may be absent (only an explicitly empty list is refused).
+REQUIRED_DETAIL_KEYS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "fix": (),
+        "bug_pattern": ("kind",),
+        "preference": ("policy_kind",),
+        "policy": ("policy_kind",),
+        "decision": ("rationale",),
+        "verification": ("target_ref", "outcome"),
+    }
+)
+
+
+def required_detail_keys(record_type: str) -> tuple[str, ...]:
+    """``--detail`` keys ``record_type`` cannot be written without."""
+    return REQUIRED_DETAIL_KEYS.get(record_type, ())
 
 
 def has_structured_schema(record_type: str) -> bool:
@@ -270,6 +314,13 @@ def _build_fix(*, summary: str, details: Mapping[str, Any]) -> FixRecord:
             "attempted_failed_fixes",
             record_type,
         ),
+        incident_id=_optional_string(
+            details.get("incident_id"), "incident_id", record_type
+        ),
+        fix_id=_optional_string(details.get("fix_id"), "fix_id", record_type),
+        bug_pattern_id=_optional_string(
+            details.get("bug_pattern_id"), "bug_pattern_id", record_type
+        ),
     )
 
 
@@ -291,7 +342,16 @@ def _build_bug_pattern(*, summary: str, details: Mapping[str, Any]) -> BugPatter
             "reproduction_steps",
             record_type,
         ),
+        bug_pattern_id=_optional_string(
+            details.get("bug_pattern_id"), "bug_pattern_id", record_type
+        ),
     )
+
+
+def _optional_string(value: object, field_name: str, record_type: str) -> str | None:
+    if value is None:
+        return None
+    return _require_non_empty_string(value, field_name, record_type)
 
 
 def _build_preference(*, summary: str, details: Mapping[str, Any]) -> PreferenceRecord:

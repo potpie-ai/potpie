@@ -16,6 +16,16 @@ class GraphPlanStorePort(Protocol):
         """Insert or replace a plan record."""
         ...
 
+    def reserve_idempotency(
+        self,
+        *,
+        record: GraphMutationPlanRecord,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> tuple[GraphMutationPlanRecord, bool]:
+        """Atomically reserve a request key; return record and whether inserted."""
+        ...
+
     def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
         """Return one plan for a pot, if present."""
         ...
@@ -46,6 +56,14 @@ class GraphPlanStorePort(Protocol):
 @runtime_checkable
 class AsyncGraphPlanStorePort(Protocol):
     async def save_async(self, record: GraphMutationPlanRecord) -> None: ...
+
+    async def reserve_idempotency_async(
+        self,
+        *,
+        record: GraphMutationPlanRecord,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> tuple[GraphMutationPlanRecord, bool]: ...
 
     async def get_async(
         self, *, pot_id: str, plan_id: str

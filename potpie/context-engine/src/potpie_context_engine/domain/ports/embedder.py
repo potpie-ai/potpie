@@ -29,6 +29,28 @@ class EmbedderPort(Protocol):
         """Vector dimensionality (constant for a given embedder)."""
         ...
 
+    @property
+    def calibrated(self) -> bool:
+        """Whether this embedder's cosine means "close in meaning".
+
+        Every embedder here produces a *comparable* cosine — that is what makes
+        ranking by it legal. Not every embedder produces a *meaningful* one. The
+        bundled hashing embedder scores lexical overlap projected through random
+        signs, so its cosine ranks acceptably and its magnitude carries almost
+        no information about whether a passage answers a question.
+
+        Consumers that only order by similarity can ignore this. Consumers that
+        read the number as evidence must not: blending the hashing embedder's
+        cosine into relevance is measurably *worse* than ignoring it (top-1
+        0.705 → 0.658), while blending a sentence-transformers cosine is
+        measurably better (0.700 → 0.721). One flag, two correct behaviours,
+        instead of a constant that is right for exactly one deployment.
+
+        Optional in the protocol: a third-party embedder that has not declared
+        itself is treated as uncalibrated, which is the conservative branch.
+        """
+        ...
+
     def embed(self, text: str) -> tuple[float, ...]:
         """Embed one text into a unit-norm vector of length :attr:`dimensions`."""
         ...

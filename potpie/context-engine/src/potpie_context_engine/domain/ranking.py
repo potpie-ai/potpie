@@ -43,6 +43,28 @@ _DEFAULT_WEIGHTS: Mapping[str, float] = {
 }
 
 
+# Weights for a **query-driven** read (``TaskContext.query`` set). Browsing a
+# scope and answering a phrase are different tasks: the first wants the best
+# claims about a thing, the second wants the claims that answer *this*, and
+# only relevance can tell those apart. Under the default weights relevance is
+# 1.3 of 5.9 ≈ 22% of the score, so the gap between an exact hit and an
+# unrelated row shrinks by ~4x on its way through ``_combine`` — measured on
+# the resource corpus, a 0.34-vs-0.00 similarity gap arrives as 0.07 of final
+# score, which recency and strength then overturn. Relevance leads here and the
+# task-independent factors (recency, corroboration) step back to tie-breakers.
+#
+# Still a weighted mean over the same factors, so R3's rule holds: no single
+# weak signal can veto a candidate, it can only re-rank it.
+_QUERY_WEIGHTS: Mapping[str, float] = {
+    "semantic_similarity": 2.5,
+    "scope_overlap": 1.1,
+    "strength": 0.6,
+    "coverage_quality": 0.5,
+    "recency": 0.3,
+    "corroboration": 0.3,
+}
+
+
 _STRENGTH_TO_SCORE: dict[str, float] = {
     "deterministic": 1.00,
     "attested": 0.80,
@@ -64,6 +86,14 @@ class TaskContext:
     intent: str | None = None
     freshness_preference: str = "balanced"  # 'fresh' | 'balanced' | 'historical'
     now: datetime | None = None
+    query: str | None = None
+    """The read's query text, when it had one.
+
+    Selects the weight profile: a read carrying a query is scored for
+    relevance, one without it for standing (see ``_QUERY_WEIGHTS``). Kept on
+    the context rather than passed to ``rank`` so the ranker stays a pure
+    function of ``(candidates, context)``.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +135,11 @@ class RankingService:
         default_factory=lambda: dict(_STRENGTH_TO_SCORE)
     )
     recency_half_life: timedelta = _DEFAULT_RECENCY_HALF_LIFE
+    query_weights: Mapping[str, float] = field(
+        default_factory=lambda: dict(_QUERY_WEIGHTS)
+    )
+    """Weights used when the context carries a query. Injectable alongside
+    ``weights`` so a tuned ranker keeps both profiles under its own control."""
 
     def rank(
         self,
@@ -118,13 +153,20 @@ class RankingService:
         the agent asks.
         """
         now = context.now or datetime.now(tz=timezone.utc)
+        weights = self.weights_for(context)
         ranked: list[RankedItem] = []
         for cand in candidates:
             breakdown = self._score_one(cand, now=now, context=context)
-            score = self._combine(breakdown)
+            score = self._combine(breakdown, weights=weights)
             ranked.append(RankedItem(candidate=cand, score=score, breakdown=breakdown))
         ranked.sort(key=lambda r: r.score, reverse=True)
         return ranked
+
+    def weights_for(self, context: TaskContext) -> Mapping[str, float]:
+        """The weight profile this task calls for."""
+        if context.query and context.query.strip():
+            return self.query_weights
+        return self.weights
 
     # ------------------------------------------------------------------
     # Internals
@@ -151,7 +193,9 @@ class RankingService:
             "coverage_quality": _coverage_quality_score(cand.coverage_status),
         }
 
-    def _combine(self, breakdown: Mapping[str, float]) -> float:
+    def _combine(
+        self, breakdown: Mapping[str, float], *, weights: Mapping[str, float]
+    ) -> float:
         """Weighted arithmetic mean of the per-factor scores (R3).
 
         No single soft signal can veto a candidate: a zero factor contributes
@@ -161,7 +205,7 @@ class RankingService:
         weighted = 0.0
         weight_sum = 0.0
         for factor, value in breakdown.items():
-            weight = self.weights.get(factor, 0.0)
+            weight = weights.get(factor, 0.0)
             if weight <= 0:
                 continue
             weighted += weight * max(0.0, min(1.0, value))
