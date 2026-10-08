@@ -45,7 +45,7 @@ def _frontmatter_and_body(path: Path) -> tuple[dict[str, str], str]:
 
 
 def test_skill_has_one_canonical_source() -> None:
-    """Every harness, the Claude Code plugin included, installs this one file."""
+    """Every harness installs this one file."""
     assert AGENT_SKILL.is_file()
     assert list(TEMPLATES.rglob("potpie-repo-baseline/SKILL.md")) == [AGENT_SKILL]
 

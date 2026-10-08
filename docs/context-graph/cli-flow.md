@@ -451,8 +451,9 @@ potpie graph nudge --event <e> --session <id> [--path <p>] [--scope <k:v>] [--qu
 - **`graph bulk apply`** — chunked NDJSON/JSON application with resumability
   (`--start-chunk`, `--manifest`), `--continue-on-error`, and idempotency.
 - **`graph mutation-template`** — emits a static schema-only skeleton (no host call).
-- **`graph nudge`** — the zero-token in-session trigger (`host.nudge.nudge`); the
-  trigger model and the Claude Code hook are in [ingestion-nudge.md](./ingestion-nudge.md).
+- **`graph nudge`** — the zero-token in-session trigger (`host.nudge.nudge`) a
+  harness calls from its own lifecycle hooks; the trigger model and the event
+  mapping are in [ingestion-nudge.md](./ingestion-nudge.md).
   `NudgeEvent` values: `session_start, pre_edit, pre_deploy, test_failed, test_passed, stop`.
 
 ### Inbox (`graph inbox …`) — capture uncertain work
@@ -544,7 +545,6 @@ through services and capability ports.
 | `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | batch chunk size (default 20) |
 | `CONTEXT_ENGINE_RECONCILIATION_ENABLED` / `_INFER_LABELS` / `_CONFLICT_DETECT` / `_AUTO_SUPERSEDE` | reconciliation feature flags |
 | `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS`, `GITHUB_WEBHOOK_SECRET`, `CONTEXT_ENGINE_INGEST_422` | webhook/ingest controls |
-| `POTPIE_HOOK_DEBUG`, `POTPIE_HOOK_TIMEOUT`, `POTPIE_BIN`, `POTPIE_POT` | nudge-hook env |
 
 Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >
 `falkordb_lite`. There is **no `NotImplementedError` gate** on falkordb anywhere.
@@ -559,7 +559,7 @@ flowchart LR
   cf_status["status"]
   cf_read["graph catalog → graph read / search-entities"]
   cf_write["graph propose → graph commit --verify"]
-  cf_nudge["graph nudge (zero-token hook)"]
+  cf_nudge["graph nudge (zero-token, harness-invoked)"]
 
   cf_setup --> cf_status --> cf_read --> cf_write
   cf_nudge -.-> cf_read

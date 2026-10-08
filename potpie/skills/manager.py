@@ -82,6 +82,29 @@ def validate_skill_source(source: str) -> None:
         )
 
 
+def _support_metadata(
+    *,
+    support_files: tuple[str, ...],
+    retired_removed: tuple[str, ...] = (),
+    leftovers: tuple[Mapping[str, str], ...] = (),
+) -> dict[str, Any]:
+    """The result metadata for a support-file sweep, naming only what happened.
+
+    ``retired_files_removed`` and ``leftovers`` describe files an earlier
+    release installed that this one no longer ships: the ones the sweep could
+    prove were untouched and deleted, and the ones left for the user with the
+    step that clears them.
+    """
+    metadata: dict[str, Any] = {}
+    if support_files:
+        metadata["support_files"] = list(support_files)
+    if retired_removed:
+        metadata["retired_files_removed"] = list(retired_removed)
+    if leftovers:
+        metadata["leftovers"] = [dict(item) for item in leftovers]
+    return metadata
+
+
 @dataclass(slots=True)
 class DefaultSkillManager:
     targets: dict[str, AgentTargetPort] = field(default_factory=dict)
@@ -117,7 +140,6 @@ class DefaultSkillManager:
         target: AgentTargetPort,
         *,
         scope: str,
-        support_files: tuple[str, ...] = (),
         unavailable: tuple[str, ...] = (),
         not_installed: tuple[str, ...] = (),
     ) -> dict[str, Any]:
@@ -133,8 +155,6 @@ class DefaultSkillManager:
         metadata: dict[str, Any] = {"scope": scope}
         if root is not None:
             metadata["target_root"] = str(root)
-        if support_files:
-            metadata["support_files"] = list(support_files)
         if unavailable:
             metadata["unavailable"] = list(unavailable)
         if not_installed:
@@ -281,40 +301,46 @@ class DefaultSkillManager:
     @staticmethod
     def _install_support_files(
         target: AgentTargetPort, *, path: str | None = None
-    ) -> tuple[str, ...]:
-        """Write the harness's instruction file / slash commands; say which.
+    ) -> dict[str, Any]:
+        """Write the harness's instruction file; say what the sweep touched.
 
-        Returns the files it touched so the caller can report them. They used to
-        be written on every install, including one that named a single skill,
-        and never appeared in the result at all — so a command asked for one
-        skill and silently edited the user's ``CLAUDE.md``.
+        Returns metadata naming the files it wrote so the caller can report
+        them. They used to be written on every install, including one that
+        named a single skill, and never appeared in the result at all — so a
+        command asked for one skill and silently edited the user's
+        ``CLAUDE.md``.
         """
         installer = getattr(target, "install_support_files", None)
         if not callable(installer):
-            return ()
+            return {}
         result = installer(path=path)
         created = tuple(getattr(result, "created", ()) or ())
         updated = tuple(getattr(result, "updated", ()) or ())
-        return created + updated
+        return _support_metadata(
+            support_files=created + updated,
+            retired_removed=tuple(getattr(result, "removed", ()) or ()),
+            leftovers=tuple(getattr(result, "leftovers", ()) or ()),
+        )
 
     @staticmethod
     def _remove_support_files(
         target: AgentTargetPort, *, path: str | None = None
-    ) -> tuple[str, ...]:
-        """Take the harness's instruction file / slash commands back out.
+    ) -> dict[str, Any]:
+        """Take the harness's instruction file back out.
 
         Symmetric with :meth:`_install_support_files`, and only reached by the
         sweep for the same reason: these files belong to the bundle as a whole,
         not to any one id. Without it ``skills remove --all`` deleted every
-        skill directory and left ``CLAUDE.md`` and the ``/potpie-*`` slash
-        commands in place, so the harness went on advertising commands whose
-        skills were gone.
+        skill directory and left ``CLAUDE.md`` routing to skills that were gone.
         """
         remover = getattr(target, "remove_support_files", None)
         if not callable(remover):
-            return ()
+            return {}
         result = remover(path=path)
-        return tuple(getattr(result, "removed", ()) or ())
+        return _support_metadata(
+            support_files=tuple(getattr(result, "removed", ()) or ()),
+            leftovers=tuple(getattr(result, "leftovers", ()) or ()),
+        )
 
     def list(
         self, *, agent: str = "claude", scope: str = "global", path: str | None = None
@@ -407,7 +433,7 @@ class DefaultSkillManager:
         # id is a request for that skill, and honouring it by also rewriting
         # CLAUDE.md — a file the user wrote — is a bigger edit than the one they
         # asked for, made without saying so.
-        support = () if requested else self._install_support_files(target, path=path)
+        support = {} if requested else self._install_support_files(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="install",
@@ -416,9 +442,9 @@ class DefaultSkillManager:
                 **self._metadata(
                     target,
                     scope=scope,
-                    support_files=support,
                     unavailable=tuple(unavailable),
                 ),
+                **support,
                 **({"preserved_user_edits": preserved} if preserved else {}),
             },
         )
@@ -484,13 +510,14 @@ class DefaultSkillManager:
             # commands could resolve the same ``--path`` to different roots.
             target.install(skill_id=sid, version=info.version, path=path)
             changed.append(sid)
-        support = () if requested else self._install_support_files(target, path=path)
+        support = {} if requested else self._install_support_files(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="update",
             changed=tuple(changed),
             metadata={
-                **self._metadata(target, scope=scope, support_files=support),
+                **self._metadata(target, scope=scope),
+                **support,
                 **({"preserved_user_edits": preserved} if preserved else {}),
             },
         )
@@ -541,17 +568,19 @@ class DefaultSkillManager:
         # support files outlive the skill directories (a hand-deleted
         # `.claude/skills` leaves them orphaned), so gating on `changed` would
         # make the second `remove --all` the one that finally cannot clean up.
-        support = self._remove_support_files(target, path=path) if all_ else ()
+        support = self._remove_support_files(target, path=path) if all_ else {}
         return SkillOperationResult(
             agent=agent,
             operation="remove",
             changed=tuple(changed),
-            metadata=self._metadata(
-                target,
-                scope=scope,
-                support_files=support,
-                not_installed=tuple(not_installed),
-            ),
+            metadata={
+                **self._metadata(
+                    target,
+                    scope=scope,
+                    not_installed=tuple(not_installed),
+                ),
+                **support,
+            },
         )
 
     def status(

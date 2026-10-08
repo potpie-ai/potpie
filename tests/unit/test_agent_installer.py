@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -15,6 +18,7 @@ from potpie.skills.installer import (
     install_skill_bundle,
     iter_template_files,
     resolve_install_root,
+    uninstall_agent_bundle,
     validate_packaged_skill_command_snippets,
 )
 from potpie.skills.manager import DefaultSkillManager
@@ -356,8 +360,10 @@ def test_install_agent_bundle_claude_creates_claude_files(tmp_path: Path) -> Non
     assert "<!-- potpie-start -->" in content
     assert "potpie graph read" in content
     assert "context_resolve" not in content
-    assert (repo / ".claude" / "commands" / "potpie-feature.md").exists()
-    assert (repo / ".claude" / "commands" / "potpie-record.md").exists()
+    # The skills and the routing block are the whole Claude install: no slash
+    # commands, no plugin directory.
+    assert not (repo / ".claude" / "commands").exists()
+    assert sorted(p.name for p in (repo / ".claude").iterdir()) == ["skills"]
     assert (repo / ".claude" / "skills" / "potpie-cli" / "SKILL.md").exists()
 
 
@@ -434,20 +440,119 @@ def test_install_agent_bundle_claude_updates_changed_section_without_force(
     assert "context_resolve" not in content
 
 
-def test_install_agent_bundle_claude_plugin_lays_out_plugin_dir(tmp_path: Path) -> None:
+# --- files earlier releases installed for Claude ---
+
+
+def _git_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
-    repo.mkdir()
+    (repo / ".git").mkdir(parents=True)
+    return repo
 
-    result = install_agent_bundle(repo, agent="claude-plugin")
 
-    base = repo / ".claude" / "potpie-plugin"
-    assert (base / ".claude-plugin" / "plugin.json").exists()
-    assert (base / "hooks" / "hooks.json").exists()
-    assert (base / "hooks" / "potpie_nudge.py").exists()
-    assert (base / "skills" / "potpie-graph" / "SKILL.md").exists()
-    # Everything is created on a fresh repo; nothing skipped.
-    assert ".claude/potpie-plugin/.claude-plugin/plugin.json" in result.created
-    assert not result.skipped
+def _ship(monkeypatch: pytest.MonkeyPatch, name: str, content: str) -> None:
+    """Pretend ``content`` is the one version of a retired command Potpie shipped."""
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    monkeypatch.setitem(
+        agent_installer._RETIRED_CLAUDE_COMMANDS, name, frozenset({digest})
+    )
+
+
+def test_retired_command_hashes_cover_both_commands() -> None:
+    retired = agent_installer._RETIRED_CLAUDE_COMMANDS
+    assert set(retired) == {"potpie-feature.md", "potpie-record.md"}
+    for digests in retired.values():
+        assert digests
+        assert all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in digests)
+
+
+def test_claude_sweep_deletes_retired_commands_still_as_shipped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _git_repo(tmp_path)
+    _ship(monkeypatch, "potpie-feature.md", "Load context first.\n")
+    _ship(monkeypatch, "potpie-record.md", "Record what you learned.\n")
+    commands = repo / ".claude" / "commands"
+    commands.mkdir(parents=True)
+    (commands / "potpie-feature.md").write_bytes(b"Load context first.\n")
+    # A text-mode write on Windows stored CRLF; it is still the shipped file.
+    (commands / "potpie-record.md").write_bytes(b"Record what you learned.\r\n")
+
+    result = install_agent_bundle(repo, agent="claude")
+
+    assert sorted(result.removed) == [
+        ".claude/commands/potpie-feature.md",
+        ".claude/commands/potpie-record.md",
+    ]
+    assert result.leftovers == []
+    assert not commands.exists()
+
+
+def test_claude_sweep_leaves_an_edited_retired_command_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _git_repo(tmp_path)
+    _ship(monkeypatch, "potpie-feature.md", "Load context first.\n")
+    commands = repo / ".claude" / "commands"
+    commands.mkdir(parents=True)
+    edited = commands / "potpie-feature.md"
+    edited.write_text("Load context first.\nAnd my own step.\n", encoding="utf-8")
+    own = commands / "deploy.md"
+    own.write_text("The user's own command.\n", encoding="utf-8")
+
+    result = install_agent_bundle(repo, agent="claude")
+
+    assert result.removed == []
+    assert [item["path"] for item in result.leftovers] == [
+        ".claude/commands/potpie-feature.md"
+    ]
+    assert "delete it" in result.leftovers[0]["recommended_next_action"]
+    assert edited.exists()
+    assert own.exists()
+
+
+def test_claude_sweep_reports_the_old_plugin_directory_without_deleting_it(
+    tmp_path: Path,
+) -> None:
+    repo = _git_repo(tmp_path)
+    manifest = repo / ".claude" / "potpie-plugin" / ".claude-plugin" / "plugin.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"name": "potpie"}), encoding="utf-8")
+
+    installed = install_agent_bundle(repo, agent="claude")
+    removed = uninstall_agent_bundle(repo, agent="claude")
+
+    for result in (installed, removed):
+        assert [item["path"] for item in result.leftovers] == [".claude/potpie-plugin"]
+        assert (
+            "/plugin marketplace remove potpie"
+            in (result.leftovers[0]["recommended_next_action"])
+        )
+    assert manifest.exists()
+    # Only Potpie's own manifest identifies the directory.
+    manifest.write_text(json.dumps({"name": "another-plugin"}), encoding="utf-8")
+    assert install_agent_bundle(repo, agent="claude").leftovers == []
+
+
+def test_only_a_claude_support_sweep_touches_retired_commands(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = _git_repo(tmp_path)
+    _ship(monkeypatch, "potpie-feature.md", "Load context first.\n")
+    shipped = repo / ".claude" / "commands" / "potpie-feature.md"
+    shipped.parent.mkdir(parents=True)
+    shipped.write_text("Load context first.\n", encoding="utf-8")
+
+    install_agent_bundle(
+        repo, agent="claude", skill_ids=("potpie-cli",), support_files=False
+    )
+    install_agent_bundle(repo, agent="codex")
+    install_agent_bundle(repo, agent="claude", dry_run=True)
+    assert shipped.exists()
+
+    removed = uninstall_agent_bundle(repo, agent="claude")
+
+    assert ".claude/commands/potpie-feature.md" in removed.removed
+    assert not shipped.exists()
 
 
 def test_install_agent_bundle_cursor_writes_cursor_skills(tmp_path: Path) -> None:

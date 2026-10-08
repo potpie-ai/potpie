@@ -302,8 +302,8 @@ class ProjectAgentTarget:
         root = Path(path) if path else self.path
         # Support files are the caller's *other* request; see
         # ``install_support_files``. Bundling them in here is what made
-        # ``skills install potpie-cli`` also write CLAUDE.md, two slash commands
-        # and a second skill, none of them named in ``changed``.
+        # ``skills install potpie-cli`` also write CLAUDE.md and other files,
+        # none of them named in ``changed``.
         install_agent_bundle(
             root,
             agent=self.agent,
@@ -340,58 +340,12 @@ class ProjectAgentTarget:
         ).parent
         shutil.rmtree(skill_dir, ignore_errors=True)
         # The harness's skills directory is Potpie's own; once the last skill
-        # leaves it, an empty `.claude/potpie-plugin/skills/` still reads as an
-        # install to anyone opening the repo.
+        # leaves it, an empty `.claude/skills/` still reads as an install to
+        # anyone opening the repo.
         prune_empty_dirs(skill_dir.parent, stop_at=self.target_root)
         data = self._load()
         data.pop(skill_id, None)
         self._save(data)
-
-
-@dataclass(slots=True)
-class ProjectOnlyAgentTarget:
-    """A harness that only has a project-scope install, refusing global scope.
-
-    Registered so the agent is *known* rather than merely absent. Left out of
-    the registry, ``--agent claude-plugin`` answered every subcommand with "no
-    install target registered … Known: claude, codex, cursor, opencode" — a
-    listing that implies the harness is unsupported, while its bundle ships in
-    the wheel and installs fine one flag away.
-    """
-
-    agent: str
-    reason: str
-    scope: str = "global"
-
-    def _refuse(self) -> None:
-        raise ValueError(self.reason)
-
-    def installed(self) -> Mapping[str, str]:
-        self._refuse()
-        return {}  # pragma: no cover - _refuse always raises
-
-    def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
-        del skill_id, path
-        self._refuse()
-        return False  # pragma: no cover - _refuse always raises
-
-    def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
-        del skill_id, version, path
-        self._refuse()
-
-    def install_support_files(self, *, path: str | None = None) -> InstallResult:
-        del path
-        self._refuse()
-        raise AssertionError  # pragma: no cover - _refuse always raises
-
-    def remove_support_files(self, *, path: str | None = None) -> UninstallResult:
-        del path
-        self._refuse()
-        raise AssertionError  # pragma: no cover - _refuse always raises
-
-    def remove(self, *, skill_id: str) -> None:
-        del skill_id
-        self._refuse()
 
 
 class CursorAgentTarget(FileBackedAgentTarget):
@@ -438,25 +392,11 @@ class CodexAgentTarget(FileBackedAgentTarget):
         )
 
 
-class ClaudePluginAgentTarget(ProjectOnlyAgentTarget):
-    def __init__(self) -> None:
-        super().__init__(
-            agent="claude-plugin",
-            reason=(
-                "The Claude Code plugin installs into a project, not a home "
-                "directory: it has to keep its '.claude-plugin/plugin.json' as "
-                "the plugin root. Re-run with '--scope project --path <repo>'."
-            ),
-        )
-
-
 __all__ = [
     "ClaudeAgentTarget",
-    "ClaudePluginAgentTarget",
     "CodexAgentTarget",
     "CursorAgentTarget",
     "FileBackedAgentTarget",
     "OpenCodeAgentTarget",
     "ProjectAgentTarget",
-    "ProjectOnlyAgentTarget",
 ]

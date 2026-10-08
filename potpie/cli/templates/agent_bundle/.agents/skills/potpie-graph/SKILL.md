@@ -395,8 +395,8 @@ invented edge in a diagram is a fact the reader will repeat.
 
 ## Responding To Nudges
 
-A Potpie hook may call `graph nudge` and inject its result into your session. The
-hook never reasons — you do.
+A harness hook may call `graph nudge` and inject its result into your session.
+The hook never reasons — you do.
 
 - **`inject_context`** → treat the injected facts as graph truth for this task; they
   were ranked for your current scope, so use them rather than re-fetching.

@@ -181,6 +181,20 @@ def test_remove_all_reports_the_support_files_it_took_back(repo) -> None:
     assert not (repo / ".claude" / "commands").exists()
 
 
+def test_a_claude_sweep_names_the_old_plugin_directory_it_left(repo) -> None:
+    """A leftover from an earlier release is reported, with the step that clears it."""
+    manifest = repo / ".claude" / "potpie-plugin" / ".claude-plugin" / "plugin.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"name": "potpie"}), encoding="utf-8")
+
+    result = _skills_cli("install", "--agent", "claude", "--path", str(repo))
+
+    assert result.exit_code == 0, result.output
+    assert "left in place: .claude/potpie-plugin" in result.output
+    assert "/plugin marketplace remove potpie" in result.output
+    assert manifest.exists()
+
+
 def test_add_refuses_a_source_that_is_not_there(repo) -> None:
     _common.set_json(True)
 

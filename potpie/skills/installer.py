@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 import re
 import shlex
 from collections.abc import Callable
@@ -24,11 +26,38 @@ _MANAGED_MARKER_RE = re.compile(
 _DEFAULT_MERGE_FILES = frozenset({"AGENTS.md", "CLAUDE.md"})
 _BASH_BLOCK_RE = re.compile(r"```bash\s*\n(.*?)\n```", re.DOTALL)
 
-AGENT_TYPES = ("default", "codex", "claude", "claude-plugin", "cursor", "opencode")
+AGENT_TYPES = ("default", "codex", "claude", "cursor", "opencode")
 _SOURCE_SKILLS_PREFIX = ".agents/skills/"
-# The Claude Code plugin installs as a self-contained directory so its
-# ``.claude-plugin/plugin.json`` stays the plugin root for ``/plugin marketplace add``.
-_CLAUDE_PLUGIN_PREFIX = ".claude/potpie-plugin"
+
+# Earlier releases wrote two slash commands into a repository's
+# ``.claude/commands/`` and, on request, a Claude Code plugin under
+# ``.claude/potpie-plugin/``. Neither ships any more. A command file is Potpie's
+# to delete only while it is byte-for-byte one of the versions Potpie wrote
+# (SHA-256 with LF line endings); an edited copy is the user's.
+_RETIRED_CLAUDE_COMMANDS_DIR = Path(".claude/commands")
+_RETIRED_CLAUDE_COMMANDS: dict[str, frozenset[str]] = {
+    "potpie-feature.md": frozenset(
+        {
+            "37376dd13143b3606d5f2c8c6ad66a83d084ca8e8bd48b7d14dda709187367e8",
+            "42ec892a825ba2a026c21709ff543777bf5e5c67c6886762daec1980ecbb8d5f",
+            "45475ab13ab3f9c94625b5a3be35aadbacb2e7656a82e93a7a747b6828f0d385",
+            "667aebfb2e23f9c3797e61441bc2294bfcc7fb406ceb80f4e321e11a34b6d43c",
+            "80f7ebf684c2124fe686312460591ded0ff455495c0cf114a121f70d4e40a468",
+            "fa0dc815b5e330d64d9bb909af3db117cde32205f410b667ecfc314d85ccc1d8",
+        }
+    ),
+    "potpie-record.md": frozenset(
+        {
+            "20b01220be5369e3ac63a8930ce814c0f223ccc0d4a7c897f346275d0b8e2e93",
+            "2d8380e61c141c4244d08defd7bc77b0660461050c3bbec16d08a22a1f749ea7",
+            "598dece2a755203bb7b449c499d4ac2a0ecede9311936d57e286b11a62bb71bf",
+            "8078b147c6be8e4b3c7c2b3cfc6adb014336efdcb8c81f2946ead8cd35570526",
+            "8ec9c00249a67875298d3a55267013096be2cc17086a986f954599004d0f77e2",
+            "c2f57c4822f92a2e01499999a0a831e2d1b2f4523b7b1ff0c313605ce840ccbf",
+        }
+    ),
+}
+_RETIRED_CLAUDE_PLUGIN_DIR = Path(".claude/potpie-plugin")
 
 
 @dataclass
@@ -38,6 +67,10 @@ class InstallResult:
     updated: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # Files an earlier release installed that a sweep deleted because they were
+    # still exactly as shipped, and the ones it left for the user to decide on.
+    removed: list[str] = field(default_factory=list)
+    leftovers: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)
@@ -57,6 +90,7 @@ class UninstallResult:
     root: str
     removed: list[str] = field(default_factory=list)
     unchanged: list[str] = field(default_factory=list)
+    leftovers: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)
@@ -262,13 +296,12 @@ def validate_packaged_skill_command_snippets(
     may contain other shell commands whose correctness depends on the user's repo.
     """
     selected = _normalize_skill_ids(skill_ids)
-    for bundle_name in ("agent_bundle", "claude_plugin"):
-        for rel_path, content in _iter_bundle_files(bundle_name):
-            if not _is_skill_markdown(rel_path):
-                continue
-            if not _selected_skill_matches(rel_path, selected):
-                continue
-            validate_skill_command_snippets(content, rel_path=rel_path)
+    for rel_path, content in _iter_bundle_files("agent_bundle"):
+        if not _is_skill_markdown(rel_path):
+            continue
+        if not _selected_skill_matches(rel_path, selected):
+            continue
+        validate_skill_command_snippets(content, rel_path=rel_path)
 
 
 def validate_skill_command_snippets(content: str, *, rel_path: Path) -> None:
@@ -501,7 +534,7 @@ def _uninstall_bundle(
     its own list of paths is a second opinion about what install owns, and the
     two drift the moment a file is added to a bundle. That drift is the defect
     itself: ``skills remove --all`` deleted every skill directory and left the
-    harness instruction file and the ``/potpie-*`` slash commands loaded.
+    harness instruction file loaded.
     """
     for rel_path, _content in _iter_bundle_files(bundle_name):
         if include is not None and not include(rel_path):
@@ -567,8 +600,8 @@ def prune_empty_dirs(directory: Path, *, stop_at: Path) -> None:
     Stops at the first non-empty parent, so a ``.claude/`` that still holds
     skills — or anything the user put there — survives. Without it a full
     uninstall left the shape of the install behind: an empty
-    ``.claude/potpie-plugin/skills/`` that reads, to anyone who opens the repo,
-    as a plugin that is still there.
+    ``.claude/skills/`` that reads, to anyone who opens the repo, as an install
+    that is still there.
     """
     root = stop_at.resolve()
     current = directory.resolve()
@@ -602,16 +635,6 @@ def _opencode_bundle_remap(rel_path: Path) -> Path | None:
 
 def _claude_skills_bundle_remap(rel_path: Path) -> Path | None:
     return _remap_skills_path(rel_path, ".claude/skills")
-
-
-def _claude_plugin_remap(rel_path: Path) -> Path | None:
-    # Install the whole plugin under one directory, preserving its internal layout.
-    return Path(_CLAUDE_PLUGIN_PREFIX) / rel_path
-
-
-def _claude_plugin_skill_remap(rel_path: Path) -> Path | None:
-    remapped = _remap_skills_path(rel_path, "skills")
-    return Path(_CLAUDE_PLUGIN_PREFIX) / remapped if remapped is not None else None
 
 
 def install_skill_bundle(
@@ -713,38 +736,6 @@ def _global_instructions_filename(agent: str) -> str | None:
     return None
 
 
-def _claude_bundle_include(
-    rel_path: Path, selected: frozenset[str] | None, *, support_files: bool
-) -> bool:
-    """Claude's project bundle carries support files only: the slash commands.
-
-    "Install the skill I named" and "install this harness's supporting files"
-    are two different requests. Skills come from the one canonical
-    ``agent_bundle`` (remapped below), so a skill directory here would be a
-    second copy that could drift; it is never installed.
-    """
-    del selected
-    if _skill_id_from_generic_skill_path(rel_path) is not None:
-        return False
-    return support_files
-
-
-def _claude_plugin_include(
-    rel_path: Path, selected: frozenset[str] | None, *, support_files: bool
-) -> bool:
-    """Same split for the plugin bundle.
-
-    Its skills are remapped from ``agent_bundle`` into ``skills/<id>/``.
-    Everything the bundle itself carries — ``.claude-plugin/``, ``commands/``,
-    ``hooks/``, the README — is what makes the directory a loadable plugin, so
-    it travels with any install that is allowed to write support files.
-    """
-    del selected
-    if _skill_id_from_generic_skill_path(rel_path) is not None:
-        return False
-    return support_files
-
-
 @dataclass(frozen=True)
 class _BundlePlan:
     """One packaged bundle, which of its files apply, and where they land."""
@@ -778,30 +769,9 @@ def _agent_bundle_plans(
                 "routing", lambda _rel: support_files, _routing_remap("CLAUDE.md")
             ),
             _BundlePlan(
-                "claude_bundle",
-                lambda rel: _claude_bundle_include(
-                    rel, selected, support_files=support_files
-                ),
-            ),
-            _BundlePlan(
                 "agent_bundle",
                 lambda rel: _include_selected_skills(rel, selected),
                 _claude_skills_bundle_remap,
-            ),
-        )
-    if normalized == "claude-plugin":
-        return (
-            _BundlePlan(
-                "claude_plugin",
-                lambda rel: _claude_plugin_include(
-                    rel, selected, support_files=support_files
-                ),
-                _claude_plugin_remap,
-            ),
-            _BundlePlan(
-                "agent_bundle",
-                lambda rel: _include_selected_skills(rel, selected),
-                _claude_plugin_skill_remap,
             ),
         )
     if normalized == "cursor":
@@ -844,14 +814,14 @@ def install_agent_bundle(
     """Install agent bundle files into the nearest git repo root under *path*.
 
     - ``default`` / ``codex``: ``AGENTS.md`` + ``.agents/skills/``
-    - ``claude``: ``CLAUDE.md`` (+ ``.claude/`` when present in bundle)
-    - ``claude-plugin``: the Claude Code plugin under ``.claude/potpie-plugin/``
+    - ``claude``: ``CLAUDE.md`` + ``.claude/skills/``
     - ``cursor``: ``AGENTS.md`` + ``.cursor/skills/``
     - ``opencode``: ``.opencode/skills/``
 
     ``support_files=False`` installs only the selected skills, leaving the
-    harness's instruction file and slash commands alone — what a caller naming
-    one skill id actually asked for.
+    harness's instruction file alone — what a caller naming one skill id
+    actually asked for. A support-file install for Claude also sweeps the files
+    earlier releases put there (see :func:`_sweep_retired_claude_files`).
     """
     root = resolve_install_root(path)
     result = InstallResult(root=str(root))
@@ -869,6 +839,10 @@ def install_agent_bundle(
             remap=plan.remap,
             dry_run=dry_run,
         )
+    if support_files and _normalized_agent(agent) == "claude":
+        removed, leftovers = _sweep_retired_claude_files(root, dry_run=dry_run)
+        result.removed.extend(removed)
+        result.leftovers.extend(leftovers)
 
     return result
 
@@ -883,11 +857,9 @@ def uninstall_agent_bundle(
 
     Skill directories are the target's own business (it removes them one id at a
     time). What this owns is everything the install wrote that no ``changed``
-    entry ever named: the instruction file's managed section, the ``/potpie-*``
-    slash commands, and — for the Claude Code plugin — the manifest and hooks
-    that make the directory loadable. Leaving those behind is why a harness kept
-    advertising Potpie slash commands after ``skills remove --all`` had removed
-    every skill they refer to.
+    entry ever named: the instruction file's managed section. Leaving it behind
+    is why a harness kept routing to Potpie skills after ``skills remove --all``
+    had removed every one of them.
     """
     root = resolve_install_root(path)
     result = UninstallResult(root=str(root))
@@ -902,7 +874,82 @@ def uninstall_agent_bundle(
             remap=plan.remap,
             dry_run=dry_run,
         )
+    if _normalized_agent(agent) == "claude":
+        removed, leftovers = _sweep_retired_claude_files(root, dry_run=dry_run)
+        result.removed.extend(removed)
+        result.leftovers.extend(leftovers)
     return result
+
+
+def _normalized_agent(agent: str) -> str:
+    return agent.strip().lower() if agent else "default"
+
+
+def _sweep_retired_claude_files(
+    install_root: Path, *, dry_run: bool
+) -> tuple[list[str], list[dict[str, str]]]:
+    """Clear what earlier releases installed for Claude and this one no longer ships.
+
+    Returns ``(removed, leftovers)``. A retired slash command is deleted only
+    when its bytes are a version Potpie wrote; anything else — an edited command,
+    the plugin directory Claude Code may still have registered — is reported
+    with the step that clears it, never deleted.
+    """
+    removed: list[str] = []
+    leftovers: list[dict[str, str]] = []
+    for name, shipped in _RETIRED_CLAUDE_COMMANDS.items():
+        rel = _RETIRED_CLAUDE_COMMANDS_DIR / name
+        target = install_root / rel
+        if not target.is_file():
+            continue
+        if _lf_sha256(target) in shipped:
+            if not dry_run:
+                _remove_installed_file(target)
+                prune_empty_dirs(target.parent, stop_at=install_root)
+            removed.append(rel.as_posix())
+            continue
+        leftovers.append(
+            {
+                "path": rel.as_posix(),
+                "recommended_next_action": (
+                    f"Potpie no longer ships the /{Path(name).stem} command and "
+                    "this copy was edited after install; delete it if you no "
+                    "longer use it."
+                ),
+            }
+        )
+    if _is_retired_claude_plugin(install_root / _RETIRED_CLAUDE_PLUGIN_DIR):
+        leftovers.append(
+            {
+                "path": _RETIRED_CLAUDE_PLUGIN_DIR.as_posix(),
+                "recommended_next_action": (
+                    "Potpie no longer ships a Claude Code plugin. In Claude Code "
+                    "run '/plugin marketplace remove potpie', then delete "
+                    f"'{_RETIRED_CLAUDE_PLUGIN_DIR.as_posix()}/'."
+                ),
+            }
+        )
+    return removed, leftovers
+
+
+def _lf_sha256(path: Path) -> str | None:
+    """SHA-256 of a file with CRLF folded to LF (text writes on Windows add CR)."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _is_retired_claude_plugin(directory: Path) -> bool:
+    """Is this the plugin directory Potpie used to install, by its own manifest?"""
+    try:
+        manifest = json.loads(
+            (directory / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return False
+    return isinstance(manifest, dict) and manifest.get("name") == "potpie"
 
 
 def available_skill_ids(*, agent: str = "default") -> frozenset[str]:
@@ -933,8 +980,6 @@ def project_skill_path(root: str | Path, *, agent: str, skill_id: str) -> Path:
         return install_root / ".cursor" / "skills" / skill_id / "SKILL.md"
     if normalized == "claude":
         return install_root / ".claude" / "skills" / skill_id / "SKILL.md"
-    if normalized == "claude-plugin":
-        return install_root / _CLAUDE_PLUGIN_PREFIX / "skills" / skill_id / "SKILL.md"
     if normalized == "opencode":
         return install_root / ".opencode" / "skills" / skill_id / "SKILL.md"
     return install_root / ".agents" / "skills" / skill_id / "SKILL.md"

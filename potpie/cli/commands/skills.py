@@ -12,7 +12,9 @@ that still pass it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 import typer
@@ -130,7 +132,8 @@ def skills_install(
                 changed=res.changed,
                 support_files=res.metadata.get("support_files"),
                 unavailable=res.metadata.get("unavailable"),
-            ),
+            )
+            + _format_retired_files(res.metadata),
         )
 
 
@@ -183,7 +186,8 @@ def skills_update(
                 changed=res.changed,
                 support_files=res.metadata.get("support_files"),
                 unavailable=res.metadata.get("unavailable"),
-            ),
+            )
+            + _format_retired_files(res.metadata),
         )
 
 
@@ -226,7 +230,8 @@ def skills_remove(
                 removed=res.changed,
                 support_files=res.metadata.get("support_files"),
                 not_installed=res.metadata.get("not_installed"),
-            ),
+            )
+            + _format_retired_files(res.metadata),
         )
 
 
@@ -305,7 +310,7 @@ def _format_skill_operation(
     else:
         line = f"Potpie skills for {agent} are already up to date"
     # Named, because these are files the command wrote that the caller did not
-    # list — the harness instruction file and its slash commands.
+    # list — the harness instruction file.
     if support_files:
         line = f"{line}\n{verb} support files: {', '.join(support_files)}"
     # And the mirror image: a sweep that covered less than the catalog says so,
@@ -313,6 +318,22 @@ def _format_skill_operation(
     if unavailable:
         line = f"{line}\nnot carried by the {agent} bundle: {', '.join(unavailable)}"
     return line
+
+
+def _format_retired_files(metadata: Mapping[str, Any]) -> str:
+    """Name what a sweep did about files an earlier release installed.
+
+    Empty when there were none, so it appends to the usual summary unchanged.
+    """
+    lines: list[str] = []
+    removed = metadata.get("retired_files_removed") or ()
+    if removed:
+        lines.append(f"removed retired Potpie files: {', '.join(removed)}")
+    for item in metadata.get("leftovers") or ():
+        lines.append(
+            f"left in place: {item.get('path')} — {item.get('recommended_next_action')}"
+        )
+    return "".join(f"\n{line}" for line in lines)
 
 
 def _format_skill_remove(

@@ -1322,7 +1322,7 @@ def graph_nudge(
     """Event→action policy brain: inject ranked context, prompt a write, or stay silent.
 
     Deterministic and free — reads via the local embedder, never calls a model.
-    Hooks forward their event + path here and inject the result.
+    A harness forwards its lifecycle event + path here and injects the result.
     """
     with _graph_command("graph.nudge") as ctx:
         host = get_root_runtime()
@@ -1344,9 +1344,9 @@ def graph_nudge(
             ctx,
             result.to_dict(),
             human=_nudge_human(result),
-            warnings=_legacy_warning("graph.nudge", "the installed hook adapter"),
             recommended_next_action=(
-                "Hooks should read the `result` object from this workbench envelope."
+                "A harness should read the `result` object from this workbench "
+                "envelope."
             ),
         )
 

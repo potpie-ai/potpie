@@ -47,9 +47,9 @@ of `SKILL.md` files under
 Adding or editing a skill means editing the bundled markdown — nothing else.
 
 There are **8 skills in the agent bundle**, and it is the only copy: every
-harness — the Claude Code plugin included — installs its skills from it,
-remapped to the harness's own layout. The compact instruction block merged into
-`AGENTS.md` / `CLAUDE.md` likewise has one source, `templates/routing/POTPIE.md`.
+harness installs its skills from it, remapped to the harness's own layout. The
+compact instruction block merged into `AGENTS.md` / `CLAUDE.md` likewise has one
+source, `templates/routing/POTPIE.md`.
 
 ## 2. Installation, targets & drift (`DefaultSkillManager`)
 
@@ -69,7 +69,6 @@ and a `--scope project` install routes through `ProjectAgentTarget` instead:
 | `codex` | `CodexAgentTarget` | `~/.agents/skills` |
 | `cursor` | `CursorAgentTarget` | `~/.cursor/skills` |
 | `opencode` | `OpenCodeAgentTarget` | `~/.config/opencode/skills` |
-| `claude-plugin` | `ClaudePluginAgentTarget` | none — project scope only; global scope is refused with the `--scope project --path <repo>` repair |
 
 Global roots hang off `POTPIE_HARNESS_HOME` when it is set (the test suite pins
 it), otherwise the real home directory; `CONTEXT_ENGINE_HOME` deliberately does
@@ -78,18 +77,23 @@ not move them.
 Install mechanics (`potpie/skills/installer.py`):
 
 - Templates are copied/remapped per harness layout: `claude → .claude/skills`,
-  `cursor → .cursor/skills`, `opencode → .opencode/skills`, and the Claude Code
-  plugin (`claude-plugin`) installs as one self-contained directory under
-  `.claude/potpie-plugin/` so its `.claude-plugin/plugin.json` stays the plugin
-  root.
+  `cursor → .cursor/skills`, `opencode → .opencode/skills`.
 - `AGENTS.md` / `CLAUDE.md` are **merged**, not overwritten — managed content
   lives between `<!-- potpie-start -->` / `<!-- potpie-end -->` markers
   (`_merge_managed_markdown`), preserving the user's own instructions.
-- **Support files belong to the sweep.** The instruction block and the
-  `/potpie-*` slash commands are written only by a bundle install or update (no
-  skill id) and named in the result's `metadata.support_files`; naming one skill
-  id installs that skill alone. `skills remove --all` takes the same files back
-  out — the managed section only, so a user's own `CLAUDE.md` text survives.
+- **Support files belong to the sweep.** The instruction block is written only
+  by a bundle install or update (no skill id) and named in the result's
+  `metadata.support_files`; naming one skill id installs that skill alone.
+  `skills remove --all` takes the same block back out — the managed section
+  only, so a user's own `CLAUDE.md` text survives.
+- **Retired Claude files.** Earlier releases also wrote two slash commands into
+  a repository's `.claude/commands/` and offered a Claude Code plugin directory
+  under `.claude/`; neither ships now. A project-scope Claude sweep (install or
+  update without an id, or `remove --all`) deletes a leftover command file only
+  when its bytes match a version Potpie shipped
+  (`metadata.retired_files_removed`). An edited command file, or the old plugin
+  directory (recognised by a manifest naming `potpie`), is never deleted: it is
+  listed under `metadata.leftovers` with the step that clears it.
 - **Drift tracking:** each target writes a JSON manifest
   (`skills_<agent>_<scope>.json`, plus a per-repository suffix at project scope)
   recording the installed version, and a content hash. A skill whose files no
@@ -206,35 +210,13 @@ baking the ontology into prose. The discipline it teaches (full read mechanics i
 
 ---
 
-## 5. The Claude Code plugin (hooks + slash commands)
+## 5. Nudges: the agent's half of the loop
 
-`potpie/cli/templates/claude_plugin/` is a self-contained Claude Code
-plugin: `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` declare
-it. It carries no skill sources of its own: `potpie skills install --agent
-claude-plugin --scope project --path .` lays the directory under
-`.claude/potpie-plugin/` and copies the canonical skills into its `skills/`.
-
-### Five model-free lifecycle hooks
-
-`hooks/hooks.json` wires five lifecycle hook entries to one thin, fail-safe
-adapter, `hooks/potpie_nudge.py`:
-
-| Harness event | Matcher | Adapter event |
-|---|---|---|
-| `SessionStart` | — | `session_start` |
-| `PreToolUse` | `Write\|Edit\|MultiEdit\|NotebookEdit` | `pre_edit` |
-| `PreToolUse` | `Bash` | `bash_pre` → `pre_deploy` (only on deploy markers) |
-| `PostToolUse` | `Bash` | `bash_post` → `test_failed` / `test_passed` (only on test markers) |
-| `Stop` | — | `stop` |
-
-The hook **never reasons.** It maps the harness event to a `NudgeEvent`, shells
-`potpie --json graph nudge`, and renders the result as Claude
-`hookSpecificOutput.additionalContext` (or a `systemMessage` at `Stop`). Any
-error, missing binary, or unparseable payload → exit 0 with no output. The nudge
-trigger model, the executor, and dedup are owned by
+Potpie ships no hook adapter. A harness that wants nudges wires its own
+lifecycle hooks to `potpie --json graph nudge --event <e> --session <id>`
+and injects the result; the trigger model, the executor, dedup, and the event
+mapping a harness should use are owned by
 [ingestion-nudge.md](./ingestion-nudge.md).
-
-### The agent's half of the loop
 
 `potpie-graph` → "Responding To Nudges" teaches what to do with an injected
 result:
@@ -246,18 +228,6 @@ result:
   auto-write. The agent picks the truth class, resolves identity, writes a
   retrieval-grade description, then propose/commit or inbox. Writes are
   idempotent by `idempotency_key`, so a repeat capture never duplicates.
-
-### Two slash commands
-
-| Command | Purpose |
-|---|---|
-| `/potpie-feature` | Load Potpie context **before** feature work (reads preferences, decisions, and the infra neighborhood). |
-| `/potpie-record` | Record durable learnings **after** useful work (`potpie record` for one fix or note; resolve identity → propose/commit `--verify` for the rest). |
-
-The plugin is installed and removed through the managed skills path
-(`potpie skills install|remove --agent claude-plugin --scope project --path .`),
-so its skills get the same drift tracking as every other harness; Claude Code
-then loads it with `/plugin marketplace add ./.claude/potpie-plugin`.
 
 ---
 
@@ -288,7 +258,7 @@ install path.
 
 ## See also
 
-- [ingestion-nudge.md](./ingestion-nudge.md) — the zero-token nudge trigger model the plugin hook fires, and the server-side reconciliation pipeline.
+- [ingestion-nudge.md](./ingestion-nudge.md) — the zero-token nudge trigger model a harness calls through `graph nudge`, and the server-side reconciliation pipeline.
 - [querying.md](./querying.md) — the read mechanics (catalog/read/search-entities and the AgentEnvelope) the skills drive.
 - [writing.md](./writing.md) — the propose → commit `--verify` write door, the semantic DSL, inbox, and quality scoring.
 - [cli-flow.md](./cli-flow.md) — the full `potpie skills` and `potpie graph …` command/flag reference.

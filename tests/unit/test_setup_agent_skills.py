@@ -47,7 +47,7 @@ def fake_sink(monkeypatch: pytest.MonkeyPatch) -> _FakeSink:
     return sink
 
 
-def test_install_agents_to_repo_writes_claude_bundle(tmp_path: Path) -> None:
+def test_install_agents_to_repo_writes_the_claude_routing_block(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()

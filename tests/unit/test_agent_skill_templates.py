@@ -250,8 +250,7 @@ def test_templates_document_nudge_handling() -> None:
 
 def test_agent_instructions_use_the_cli_graph_surface() -> None:
     assert "potpie graph read" in _read("routing/POTPIE.md")
-    plugin_instructions = (
-        "claude_plugin/commands/potpie-feature.md",
+    skill_instructions = (
         "potpie-change-timeline/SKILL.md",
         "potpie-debug-memory/SKILL.md",
         "potpie-graph/SKILL.md",
@@ -260,7 +259,7 @@ def test_agent_instructions_use_the_cli_graph_surface() -> None:
         "potpie-repo-baseline/SKILL.md",
         "potpie-source-ingestion/SKILL.md",
     )
-    for path in plugin_instructions:
+    for path in skill_instructions:
         assert "potpie graph read" in _read(path), path
 
 
@@ -321,13 +320,11 @@ def test_use_case_skills_teach_resolve_first_and_record_for_one_learning() -> No
         "potpie-project-preferences/SKILL.md",
         "potpie-debug-memory/SKILL.md",
         "potpie-graph/SKILL.md",
-        "commands/potpie-record.md",
         "potpie-cli/SKILL.md",
     ):
         assert "potpie record" in _read(fragment), (
             f"{fragment} never mentions potpie record"
         )
-    assert "potpie resolve" in _read("commands/potpie-feature.md")
     # resolve does not infer its intent, so the skills pass it for failures.
     assert "--intent debugging" in _read("potpie-graph/SKILL.md")
     assert "--intent debugging" in _read("potpie-debug-memory/SKILL.md")

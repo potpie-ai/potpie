@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 )
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 
+import potpie.skills.installer as agent_installer
 from potpie.runtime.composition import build_local_runtime
 from potpie.skills.catalog import RECOMMENDED_SKILL_IDS
 
@@ -186,8 +189,8 @@ def test_installing_one_named_skill_does_not_touch_the_instruction_file(
     """Naming a skill asks for that skill, not for an edit to AGENTS.md.
 
     ``skills install potpie-cli`` used to also rewrite the harness instruction
-    file the user wrote, plus its slash commands and — for Claude — a second
-    skill, while reporting only the one id it was given.
+    file the user wrote, and — for Claude — a second skill, while reporting
+    only the one id it was given.
     """
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = _root_runtime()
@@ -292,31 +295,24 @@ def test_remove_all_takes_the_support_files_with_it(
     """The mirror of the sweep that wrote them.
 
     ``skills remove --all`` deleted every skill directory and left ``CLAUDE.md``
-    and the ``/potpie-*`` slash commands in place, so the harness went on
-    offering commands whose skills were gone — and ``skills status`` reported a
-    clean uninstall.
+    in place, so the harness went on routing to skills that were gone — and
+    ``skills status`` reported a clean uninstall.
     """
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = _root_runtime()
     repo = _repo(tmp_path)
-    host.skills.install(agent="claude", path=str(repo), scope="project")
-    commands = repo / ".claude" / "commands"
-    assert sorted(p.name for p in commands.iterdir()) == [
-        "potpie-feature.md",
-        "potpie-record.md",
-    ]
+    installed = host.skills.install(agent="claude", path=str(repo), scope="project")
+    assert installed.metadata["support_files"] == ["CLAUDE.md"]
 
     result = host.skills.remove(
         agent="claude", all_=True, path=str(repo), scope="project"
     )
 
-    assert not commands.exists()
     assert not (repo / "CLAUDE.md").exists()
     assert not (repo / ".claude").exists()
-    # Named, exactly as the install names them: they are files the command
-    # touched that no id in ``removed`` accounts for.
-    assert "CLAUDE.md" in result.metadata["support_files"]
-    assert ".claude/commands/potpie-feature.md" in result.metadata["support_files"]
+    # Named, exactly as the install names it: a file the command touched that
+    # no id in ``removed`` accounts for.
+    assert result.metadata["support_files"] == ["CLAUDE.md"]
 
 
 def test_remove_all_keeps_the_parts_of_claude_md_the_user_wrote(
@@ -343,22 +339,45 @@ def test_remove_all_keeps_the_parts_of_claude_md_the_user_wrote(
     assert "potpie-start" not in text
 
 
-def test_remove_all_unloads_the_claude_code_plugin(monkeypatch, tmp_path: Path) -> None:
-    """The plugin's manifest and hooks are its support files."""
+def test_claude_sweeps_report_what_earlier_releases_left_behind(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Retired files are cleared only when provably untouched, else reported."""
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = _root_runtime()
     repo = _repo(tmp_path)
-    host.skills.install(agent="claude-plugin", path=str(repo), scope="project")
-    plugin = repo / ".claude" / "potpie-plugin"
-    assert (plugin / ".claude-plugin" / "plugin.json").exists()
+    shipped = "Load context first.\n"
+    monkeypatch.setitem(
+        agent_installer._RETIRED_CLAUDE_COMMANDS,
+        "potpie-feature.md",
+        frozenset({hashlib.sha256(shipped.encode("utf-8")).hexdigest()}),
+    )
+    command = repo / ".claude" / "commands" / "potpie-feature.md"
+    command.parent.mkdir(parents=True)
+    command.write_text(shipped, encoding="utf-8")
+    manifest = repo / ".claude" / "potpie-plugin" / ".claude-plugin" / "plugin.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"name": "potpie"}), encoding="utf-8")
 
-    host.skills.remove(
-        agent="claude-plugin", all_=True, path=str(repo), scope="project"
+    installed = host.skills.install(agent="claude", path=str(repo), scope="project")
+
+    assert installed.metadata["retired_files_removed"] == [
+        ".claude/commands/potpie-feature.md"
+    ]
+    assert [item["path"] for item in installed.metadata["leftovers"]] == [
+        ".claude/potpie-plugin"
+    ]
+    assert not command.exists()
+    assert manifest.exists()
+
+    removed = host.skills.remove(
+        agent="claude", all_=True, path=str(repo), scope="project"
     )
 
-    # A directory that still holds `.claude-plugin/plugin.json` is still a
-    # loadable plugin, whatever happened to the skills underneath it.
-    assert not plugin.exists()
+    assert [item["path"] for item in removed.metadata["leftovers"]] == [
+        ".claude/potpie-plugin"
+    ]
+    assert manifest.exists()
 
 
 def test_removing_one_named_skill_leaves_the_support_files_alone(
@@ -377,7 +396,6 @@ def test_removing_one_named_skill_leaves_the_support_files_alone(
     assert result.changed == ("potpie-cli",)
     assert "support_files" not in result.metadata
     assert (repo / "CLAUDE.md").exists()
-    assert (repo / ".claude" / "commands" / "potpie-feature.md").exists()
 
 
 def test_remove_says_which_ids_were_never_installed(
@@ -440,7 +458,7 @@ def test_an_unknown_agent_is_refused_at_project_scope_too(
         assert "clawd" in str(exc.value)
         assert "claude" in str(exc.value)  # the "Known:" listing
     # And the registered harnesses still work at project scope.
-    assert host.skills.list(agent="claude-plugin", path=str(repo), scope="project")
+    assert host.skills.list(agent="claude", path=str(repo), scope="project")
 
 
 def test_a_read_only_target_names_the_directory_to_fix(

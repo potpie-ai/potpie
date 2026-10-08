@@ -202,59 +202,6 @@ def test_list_reports_the_installed_version_and_drift(
     assert never.drifted is False
 
 
-# --- the Claude Code plugin --------------------------------------------------
-
-
-def test_the_plugin_installs_at_project_scope(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = _root_runtime()
-    repo = _repo(tmp_path, "repo")
-
-    result = host.skills.install(agent="claude-plugin", path=str(repo), scope="project")
-
-    plugin = repo / ".claude" / "potpie-plugin"
-    assert (plugin / ".claude-plugin" / "plugin.json").exists()
-    assert (plugin / "skills" / "potpie-graph" / "SKILL.md").exists()
-    # Every harness installs from the canonical agent bundle, so the plugin
-    # cannot drift onto an older copied skill body.
-    assert SKILL in result.changed
-    assert "unavailable" not in result.metadata
-    assert (
-        host.skills.install(
-            agent="claude-plugin", path=str(repo), scope="project"
-        ).changed
-        == ()
-    )
-
-
-def test_the_plugin_refuses_global_scope_with_a_repair(
-    monkeypatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = _root_runtime()
-
-    with pytest.raises(ValueError) as exc:
-        host.skills.install(agent="claude-plugin")
-
-    # Not "no install target registered … Known: claude, codex, …", which reads
-    # as "this harness is unsupported" for a bundle that ships in the wheel.
-    assert "--scope project" in str(exc.value)
-
-
-def test_naming_a_skill_uses_the_canonical_plugin_bundle(
-    monkeypatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
-    host = _root_runtime()
-    repo = _repo(tmp_path, "repo")
-
-    result = host.skills.install(
-        agent="claude-plugin", skill_id=SKILL, path=str(repo), scope="project"
-    )
-    assert result.changed == (SKILL,)
-    assert (repo / ".claude/potpie-plugin/skills" / SKILL / "SKILL.md").exists()
-
-
 def test_disabled_skill_survives_bundle_install(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "potpie"))
     host = _root_runtime()

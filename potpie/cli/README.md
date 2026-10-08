@@ -73,9 +73,6 @@ each kind of file:
   skills from here, remapped to the harness's own skills directory.
 - `routing/POTPIE.md` — the compact instruction block merged into a harness's
   `AGENTS.md` or `CLAUDE.md`, globally and per repository.
-- `claude_bundle/` — Claude Code's `/potpie-*` slash commands.
-- `claude_plugin/` — the Claude Code plugin (manifest, hooks, commands); its
-  skills are copied in from `agent_bundle/` at install time.
 
 | Harness | Global path |
 |---------|-------------|

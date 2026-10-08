@@ -48,7 +48,7 @@ def test_ignored_templates_are_force_included(tracked_templates: list[str]) -> N
     )
     hidden = {line for line in ignored.stdout.splitlines() if line}
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    force_included = set(metadata["tool"]["hatch"]["build"]["force-include"])
+    force_included = set(metadata["tool"]["hatch"]["build"].get("force-include", {}))
 
     assert hidden - force_included == set()
 
