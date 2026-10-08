@@ -137,7 +137,7 @@ depend on the user's repo.)
 ### CLI surface
 
 ```bash
-potpie skills list   [--agent claude|claude-plugin|codex|cursor|opencode] [--scope global|project] [--path]
+potpie skills list   [--agent claude|codex|cursor|opencode] [--scope global|project] [--path]
 potpie skills install [<id>] [--agent …] [--scope …] [--path]
 potpie skills update  [<id>|--all] [--agent …] [--scope …] [--path]
 potpie skills status  [--agent …] [--scope …] [--path]     # installed, missing, outdated, drifted, disabled
