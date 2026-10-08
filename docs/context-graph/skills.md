@@ -101,11 +101,15 @@ Install mechanics (`potpie/skills/installer.py`, one `install_bundle` and one
   (`metadata.retired_files_removed`). An edited command file, or the old plugin
   directory (recognised by a manifest naming `potpie`), is never deleted: it is
   listed under `metadata.leftovers` with the step that clears it.
-- **Drift tracking:** each target writes a JSON manifest
-  (`skills_<agent>_<scope>.json`, plus a per-repository suffix at project scope)
-  recording the installed version, and a content hash. A skill whose files no
-  longer match the bundle is **drifted** — reported inside `outdated` and fixed
-  by the same reinstall — while a hand-edited one is left alone by a sweep
+- **Drift tracking:** each target keeps one JSON manifest in the Potpie home
+  (`skill_manifest_<agent>_<scope>.json`, plus a per-repository suffix at
+  project scope) recording, per skill, the installed version, a content hash
+  and the disabled flag. The three per-target files earlier releases wrote
+  (`skills_…`, `skill_hashes_…`, `skill_disabled_…`) are folded into it on
+  first read and then deleted; an unreadable one contributes nothing and
+  nothing crashes. A skill whose files no longer match the bundle is
+  **drifted** — reported inside `outdated` and fixed by the same reinstall —
+  while a hand-edited one is left alone by a sweep
   (`metadata.preserved_user_edits`). A skill removed by id is **disabled**:
   bundle installs skip it until it is installed by id again. `status()`
   partitions skills into installed / missing / outdated / disabled, and

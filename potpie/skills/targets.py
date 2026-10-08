@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -21,33 +20,10 @@ from potpie.skills.installer import (
     resolve_install_root,
     uninstall_bundle,
 )
+from potpie.skills.manifest import Record, SkillManifest
 
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 _SCOPES = ("global", "project")
-
-
-def _read_version_manifest(path: Path) -> dict[str, str]:
-    """The recorded ``skill id -> version`` map, or an empty one it can repair.
-
-    The manifest is a *cache* of what install last wrote; the files on disk are
-    the truth about what is installed. So an unreadable one is answered with
-    "no recorded versions", which surfaces as ``installed_version="unknown"``,
-    lands every present skill in ``skills status --outdated``, and is repaired
-    by the reinstall that report already tells the user to run.
-
-    Catching only ``JSONDecodeError`` is not enough: a manifest holding valid
-    JSON of the wrong *shape* — a list, a string, anything a stray write leaves
-    behind — would raise ``AttributeError`` out of ``skills list`` and be
-    reported as an internal error, for a cache file the next install rewrites.
-    """
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, Mapping):
-        return {}
-    return {str(k): str(v) for k, v in data.items()}
 
 
 def _file_digest(path: Path) -> str | None:
@@ -60,7 +36,7 @@ def _file_digest(path: Path) -> str | None:
 def _project_manifest_slug(root: Path) -> str:
     """A per-project manifest suffix: a readable name plus a collision-proof digest.
 
-    The version manifest used to be keyed by agent and scope alone, so every
+    The manifest used to be keyed by agent and scope alone, so every
     repository on the machine shared one record of "which skills are installed
     at project scope". Installing in one project reported the others up to date;
     ``skills remove --all`` in one marked every other project on the machine
@@ -80,7 +56,8 @@ class AgentTarget:
     :data:`~potpie.skills.harnesses.HARNESS_LAYOUTS`: under the harness home at
     ``global`` scope, under the repository containing ``path`` at ``project``
     scope. What was installed — versions, content hashes, disabled skills — is
-    recorded under ``home``.
+    recorded in one :class:`~potpie.skills.manifest.SkillManifest` under
+    ``home``.
     """
 
     agent: str
@@ -155,35 +132,18 @@ class AgentTarget:
     # --- install records ------------------------------------------------------
 
     @property
-    def _path(self) -> Path:
-        name = f"skills_{self.agent}_{self.scope}"
+    def manifest(self) -> SkillManifest:
+        stem = f"{self.agent}_{self.scope}"
         if self.scope == "project":
-            name = f"{name}_{_project_manifest_slug(self.target_root)}"
-        return self.home / f"{name}.json"
-
-    @property
-    def _hash_path(self) -> Path:
-        return self._path.with_name(
-            self._path.name.replace("skills_", "skill_hashes_", 1)
-        )
-
-    @property
-    def _disabled_path(self) -> Path:
-        return self._path.with_name(
-            self._path.name.replace("skills_", "skill_disabled_", 1)
-        )
-
-    def _save_to(self, path: Path, data: Mapping[str, str]) -> None:
-        self.home.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(dict(data), fh, indent=2)
+            stem = f"{stem}_{_project_manifest_slug(self.target_root)}"
+        return SkillManifest(self.home, stem)
 
     # --- AgentTargetPort ------------------------------------------------------
 
     def installed(self) -> Mapping[str, str]:
-        manifest = _read_version_manifest(self._path)
+        records = self.manifest.read()
         return {
-            sid: manifest.get(sid, "unknown")
+            sid: records.get(sid, {}).get("version", "unknown")
             for sid in RECOMMENDED_SKILL_IDS
             if self._skill_file(sid).exists()
         }
@@ -211,20 +171,26 @@ class AgentTarget:
         return not (result.created or result.updated)
 
     def locally_modified(self, *, skill_id: str) -> bool:
-        expected = _read_version_manifest(self._hash_path).get(skill_id)
+        expected = self.manifest.read().get(skill_id, {}).get("sha256")
         current = _file_digest(self._skill_file(skill_id))
         return expected is not None and current is not None and current != expected
 
     def disabled(self) -> frozenset[str]:
-        return frozenset(_read_version_manifest(self._disabled_path))
+        return frozenset(
+            sid
+            for sid, record in self.manifest.read().items()
+            if record.get("disabled")
+        )
 
     def set_disabled(self, *, skill_id: str, disabled: bool) -> None:
-        state = _read_version_manifest(self._disabled_path)
-        if disabled:
-            state[skill_id] = "disabled"
-        else:
-            state.pop(skill_id, None)
-        self._save_to(self._disabled_path, state)
+        def change(records: dict[str, Record]) -> None:
+            record = records.setdefault(skill_id, {})
+            if disabled:
+                record["disabled"] = True
+            else:
+                record.pop("disabled", None)
+
+        self.manifest.update(change)
 
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
         # The instruction file is the caller's *other* request (see
@@ -233,15 +199,16 @@ class AgentTarget:
         root, skills_dir = self._placement(path)
         install_bundle(root, skills_dir=skills_dir, skill_ids=(skill_id,), force=True)
         skill_md = self._skill_file(skill_id, path=path)
-        versions = _read_version_manifest(self._path)
-        if skill_md.exists():
-            versions[skill_id] = version
-        self._save_to(self._path, versions)
         digest = _file_digest(skill_md)
-        if digest:
-            hashes = _read_version_manifest(self._hash_path)
-            hashes[skill_id] = digest
-            self._save_to(self._hash_path, hashes)
+
+        def change(records: dict[str, Record]) -> None:
+            record = records.setdefault(skill_id, {})
+            if skill_md.exists():
+                record["version"] = version
+            if digest:
+                record["sha256"] = digest
+
+        self.manifest.update(change)
 
     def install_instructions(self, *, path: str | None = None) -> InstallResult | None:
         placement = self._instructions(path)
@@ -271,9 +238,13 @@ class AgentTarget:
     def remove(self, *, skill_id: str) -> None:
         root, skills_dir = self._placement(None)
         uninstall_bundle(root, skills_dir=skills_dir, skill_ids=(skill_id,))
-        versions = _read_version_manifest(self._path)
-        versions.pop(skill_id, None)
-        self._save_to(self._path, versions)
+
+        def change(records: dict[str, Record]) -> None:
+            # The hash and the disabled flag outlive the files; only the
+            # version said "installed".
+            records.get(skill_id, {}).pop("version", None)
+
+        self.manifest.update(change)
 
 
 __all__ = ["AgentTarget"]

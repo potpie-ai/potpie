@@ -503,7 +503,7 @@ def test_a_manifest_of_the_wrong_shape_does_not_crash_the_read(
     host.skills.install(
         agent="codex", skill_id="potpie-cli", path=str(repo), scope="project"
     )
-    manifest = next(potpie_home.glob("skills_codex_project_*.json"))
+    manifest = next(potpie_home.glob("skill_manifest_codex_project_*.json"))
     manifest.write_text('["not", "a", "dict"]', encoding="utf-8")
 
     rows = {
