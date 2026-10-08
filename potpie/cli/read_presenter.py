@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -199,6 +200,7 @@ def render_items_bullets(
         "view": getattr(result, "view", None),
         "backed": getattr(result, "backed", None),
         "unsupported": getattr(result, "unsupported", ()),
+        "coverage": getattr(result, "coverage", ()),
     }
     quality = getattr(result, "quality", {}) or {}
     lines = _items_header_lines(payload, len(items), quality)
@@ -209,6 +211,8 @@ def render_items_bullets(
     limit = _effective_limit(ctx.event_limit, default=_DEFAULT_ITEM_LIMIT)
     for item in items[:limit]:
         lines.extend(_item_bullet_lines(item, ctx))
+        lines.extend(_protocol_lines(item, ctx))
+    lines.extend(_omitted_item_lines(items, limit=limit))
     return "\n".join(lines)
 
 
@@ -262,6 +266,18 @@ def render_items_table(
         row.append(_escape_table_cell(_relations_cell(item, ctx)))
         lines.append(" | ".join(str(cell) for cell in row))
 
+    for item in items[:limit]:
+        lines.extend(_protocol_lines(item, ctx))
+
+    for item in items[:limit]:
+        details = item.get("details")
+        if isinstance(details, Mapping) and details:
+            entity_key = _item_entity_key(item) or "item"
+            lines.append("")
+            lines.append(f"details for {entity_key}")
+            lines.extend(_detail_lines(details, indent="  "))
+    lines.extend(_omitted_item_lines(items, limit=limit))
+
     if ctx.relations == "full":
         for item in items[:limit]:
             relation_lines = _format_relations_full_lines(item, indent="  ")
@@ -302,8 +318,19 @@ def _items_header_lines(
 ) -> list[str]:
     lines = [
         f"view={payload.get('view')} backed={payload.get('backed')} "
-        f"items={item_count} quality={quality.get('status')}"
+        f"items={item_count} quality={quality.get('status')} "
+        f"confidence={quality.get('confidence', 'unknown')}"
     ]
+    for report in payload.get("coverage", ()):
+        metadata = report.get("metadata", {})
+        if "query_threshold" in metadata:
+            threshold = metadata["query_threshold"]
+            lines.append(
+                f"match={metadata.get('match_mode')} "
+                f"query_threshold={threshold if threshold is not None else 'auto'} "
+                f"filter={metadata.get('threshold_mode')} "
+                f"similarity_calibrated={metadata.get('similarity_calibrated')}"
+            )
     if quality.get("status") == "unsupported":
         reason = quality.get("reason") or "unsupported_filter"
         names = ", ".join(
@@ -375,6 +402,11 @@ def _item_bullet_lines(
     refs = _string_list(item.get("source_refs"))
     if refs:
         lines.append(f"    refs: {', '.join(refs)}")
+    if item.get("fetch"):
+        lines.append(f"    fetch: {item['fetch']}")
+    details = item.get("details")
+    if isinstance(details, Mapping) and details:
+        lines.extend(_detail_lines(details, indent="    "))
     claim = item.get("claim")
     if ctx.detail == "full" and isinstance(claim, Mapping):
         claim_parts = [
@@ -397,6 +429,38 @@ def _item_bullet_lines(
     elif ctx.relations == "full":
         lines.extend(_format_relations_full_lines(item, indent="    "))
     return lines
+
+
+def _detail_lines(details: Mapping[str, Any], *, indent: str) -> list[str]:
+    lines: list[str] = []
+    for key, value in details.items():
+        if value is None or value == "" or value == []:
+            continue
+        if isinstance(value, Mapping):
+            lines.append(f"{indent}{key}:")
+            lines.extend(_detail_lines(value, indent=indent + "  "))
+        elif isinstance(value, list):
+            lines.append(f"{indent}{key}:")
+            for entry in value:
+                rendered = (
+                    json.dumps(entry, ensure_ascii=False)
+                    if isinstance(entry, Mapping)
+                    else str(entry)
+                )
+                lines.append(f"{indent}  - {rendered}")
+        else:
+            lines.append(f"{indent}{key}: {value}")
+    return lines
+
+
+def _omitted_item_lines(items: list[Mapping[str, Any]], *, limit: int) -> list[str]:
+    omitted = max(0, len(items) - limit)
+    if not omitted:
+        return []
+    return [
+        f"omitted_items={omitted}",
+        "fetch_more: rerun this graph read with a larger --limit or narrow --scope/--query",
+    ]
 
 
 def _parent_item_for_event(
@@ -548,3 +612,32 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [v for v in value if isinstance(v, str) and v]
     return []
+
+
+def _protocol_lines(item: Mapping[str, Any], ctx: ReadPresentationContext) -> list[str]:
+    """A protocol message's layout, verbatim: values stay typed, order stays put.
+
+    Field values are rendered as JSON so integer ``2``, string ``"2"`` and
+    ``false`` stay distinguishable in text output, in field order.
+    """
+    if item.get("kind") != "protocol_message":
+        return []
+    lines = [
+        "  protocol coverage: "
+        + json.dumps(item.get("coverage", {}), ensure_ascii=False)
+    ]
+    lines.append(
+        "  read details: " + json.dumps(item.get("retrieval", {}), ensure_ascii=False)
+    )
+    if ctx.detail == "full":
+        lines.append(
+            "  protocol: " + json.dumps(item.get("protocol", {}), ensure_ascii=False)
+        )
+        lines.append(
+            "  message: " + json.dumps(item.get("message", {}), ensure_ascii=False)
+        )
+        for field in item.get("fields", ()):
+            lines.append("  field: " + json.dumps(field, ensure_ascii=False))
+        for claim in item.get("claims", ()):
+            lines.append("  evidence: " + json.dumps(claim, ensure_ascii=False))
+    return lines

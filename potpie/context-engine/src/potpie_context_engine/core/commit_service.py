@@ -34,6 +34,29 @@ from potpie_context_engine.core.ports.graph.preview_store import (
 )
 
 
+#: Access levels the commit service asks a host's ``authorize`` callback for.
+COMMIT_ACCESS_LEVELS = frozenset({"read", "write", "admin"})
+
+#: Recorded on restore receipts and previews when a host names no actor. It is
+#: deliberately anonymous: an account or machine name does not belong in history.
+UNNAMED_COMMIT_ACTOR = "unnamed"
+
+
+class CommitAccessDenied(PermissionError):
+    """The host's authorization refused a commit-history or rollback request."""
+
+
+async def deny_commit_access(pot_id: str, access: str) -> None:
+    """Default authorization: refuse. A host must state who may roll back."""
+
+    if access not in COMMIT_ACCESS_LEVELS:
+        raise ValueError("unknown commit access")
+    raise CommitAccessDenied(
+        f"commit {access} access for pot {pot_id!r} needs a host-supplied "
+        "authorization; none was composed"
+    )
+
+
 def failure(code: str, message: str) -> dict[str, Any]:
     return {
         "ok": False,

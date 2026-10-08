@@ -6,7 +6,9 @@ Supported imports live in two places:
   lifecycle, outcomes, and non-extensible default graph definition.
 - ``potpie_context_engine.api`` — stable contract DTOs and ports for
   consumers composing their own runtime (``GraphBackend``,
-  ``GraphPlanStorePort``, ``GraphInboxStorePort``, ``GraphService``).
+  ``GraphPlanStorePort``, ``GraphInboxStorePort``, ``GraphService``), and the
+  embedding-host builder ``build_graph_runtime`` with the ``GraphRuntime`` it
+  returns. ``GraphExtension`` (extension registration) is not public.
 
 Everything under ``potpie_context_engine.domain`` / ``.application`` /
 ``.adapters`` / ``.bootstrap`` / ``.host`` / ``.benchmarks`` is internal and

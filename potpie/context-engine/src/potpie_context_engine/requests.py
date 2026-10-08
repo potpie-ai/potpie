@@ -47,6 +47,8 @@ class SearchRequest(EngineRequest):
     mode: str = "fast"
     source_policy: str = "references_only"
     max_items: int = 12
+    intent: str | None = None
+    """Narrow the lookup to one intent's families; unset lets Potpie infer it."""
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -98,6 +100,7 @@ class ReadRequest(EngineRequest):
     detail: str = "compact"
     relations: str = "summary"
     query_threshold: float | None = None
+    """Explicit similarity floor; ``None`` leaves filtering to the view's default."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,12 +143,34 @@ class InspectRequest(NeighborhoodRequest):
 
 @dataclass(frozen=True, slots=True)
 class ExportSnapshotRequest(EngineRequest):
+    """Export one pot's graph (``version`` 1) or portable snapshot (``version`` 2).
+
+    Version 1, the default, writes the graph to ``destination`` on the
+    executing host's filesystem. Version 2 takes no ``destination``: the
+    result's ``payload`` carries the snapshot itself, with the pot's document
+    resources unless ``include_resources`` is false, and the caller writes the
+    files. Version 2 means the same in-process, behind the loopback daemon and
+    behind any future remote transport, because the executing host never opens
+    a caller's path.
+    """
+
     destination: str = ""
+    version: int = 1
+    include_resources: bool = True
 
 
 @dataclass(frozen=True, slots=True)
 class ImportSnapshotRequest(EngineRequest):
+    """Merge a snapshot into one pot.
+
+    Version 1, the default, reads the file at ``source`` on the executing host.
+    Version 2 takes no ``source``: ``payload`` is the snapshot itself, and its
+    ``resources`` part, when present, restores document text with the graph.
+    """
+
     source: str = ""
+    version: int = 1
+    payload: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +187,8 @@ class ResetContextRequest(EngineRequest):
 class ProposeRequest(EngineRequest):
     mutation: Mapping[str, Any] = field(default_factory=dict)
     ttl_seconds: int | None = None
+    approved_by: str | None = None
+    """User ref that pre-approves a review-required plan at propose time."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +196,9 @@ class CommitRequest(EngineRequest):
     plan_id: str = ""
     approved_by: str | None = None
     verify: bool = False
+    # Return the durable receipt before the slow readback; the caller verifies
+    # it separately so a failed check cannot hide a write that landed.
+    defer_verification: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +211,7 @@ class HistoryRequest(EngineRequest):
     since: datetime | None = None
     until: datetime | None = None
     limit: int = 50
+    include_claims: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +334,137 @@ class NudgeRequest(EngineRequest):
     path: str | None = None
     query: str | None = None
     limit: int = 5
+
+
+# --- document resources -----------------------------------------------------
+# Document payloads (the bytes the graph only points at) and the retrieval
+# index over them. See ``docs/context-graph/resources.md``.
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceImportRequest(EngineRequest):
+    """Absorb one chunk directory as document ``doc``; re-import replaces it.
+
+    ``files`` is the directory's *contents*, keyed by POSIX-relative path, read
+    by the caller (``core.ports.resource_store.read_import_files``). There is
+    deliberately no server-side path field: the operation never reads the
+    executing host's filesystem on a caller's behalf, so it means the same thing
+    in-process, behind the loopback daemon, and behind any future remote
+    transport. A host that composes ``ResourceFacade`` itself may still pass
+    ``source_dir`` to it for a job running beside the store; that path must
+    never be accepted from a remote caller.
+    """
+
+    doc: str = ""
+    files: Mapping[str, str] = field(default_factory=dict)
+    source_ref: str | None = None
+    source_kind: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceGetRequest(EngineRequest):
+    resource_ids: tuple[str, ...] = ()
+    with_neighbors: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceListRequest(EngineRequest):
+    doc: str = ""
+    section: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceRmRequest(EngineRequest):
+    doc: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceStatusRequest(EngineRequest):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceIndexStatusRequest(EngineRequest):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceIndexBuildRequest(EngineRequest):
+    """Embed pending windows now; ``doc`` first re-derives that document's rows."""
+
+    doc: str | None = None
+    wait: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceIndexRebuildRequest(EngineRequest):
+    """Drop and re-derive the index from the stored files (one ``doc`` or all)."""
+
+    doc: str | None = None
+
+
+# -- graph commit history, journal and rollback -------------------------------
+#
+# Only identifiers cross this boundary. Restore plans, inverse records and
+# preview bodies are rebuilt and checked server-side; no request carries them.
+
+
+@dataclass(frozen=True, slots=True)
+class CommitStatusRequest(EngineRequest):
+    plan_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class VerifyCommitRequest(EngineRequest):
+    plan_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JournalStatusRequest(EngineRequest):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class CommitsRequest(EngineRequest):
+    cursor: str | None = None
+    limit: int = 50
+    actor: str | None = None
+    origin: str | None = None
+    logical_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CommitShowRequest(EngineRequest):
+    commit_id: str = ""
+    offset: int = 0
+    limit: int = 100
+
+
+@dataclass(frozen=True, slots=True)
+class RevertPreviewRequest(EngineRequest):
+    commit_id: str = ""
+    expected_head: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RollbackPreviewRequest(EngineRequest):
+    target_commit_id: str = ""
+    expected_head: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyPreviewRequest(EngineRequest):
+    preview_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class DisableRollbackRequest(EngineRequest):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class RebuildCommitsRequest(EngineRequest):
+    pass
 
 
 def request_from_payload(

@@ -161,7 +161,9 @@ jobs:
           version: "0.10.7"
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # --all-extras: the root's base install leaves out embeddings, ingestion,
+        # telemetry and UI extras that these suites exercise.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
 
       - name: Run root Potpie tests
         env:
@@ -198,6 +200,31 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
+      # Disposable graph servers for the server-backed suites (protocol
+      # backends, record capture, temporal and answer acceptance, atomic
+      # Neo4j writes, graph journal conformance). Tests reach them only
+      # through the PROTOCOL_TEST_* / POTPIE_JOURNAL_FALKOR_PORT variables
+      # below and use their own graph names.
+      protocol-falkordb:
+        image: falkordb/falkordb:v4.16.0
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      protocol-neo4j:
+        image: neo4j:5.26-community
+        env:
+          NEO4J_AUTH: neo4j/protocol-test
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p protocol-test 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 20
 
     steps:
       - name: Checkout
@@ -214,13 +241,35 @@ jobs:
           version: "0.10.7"
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # --all-extras: the root's base install leaves out embeddings, ingestion,
+        # telemetry and UI extras that these suites exercise.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
+
+      # Graph journal conformance shares the protocol FalkorDB service above.
+      # The crash test kills and restarts a disposable AOF-enabled server by
+      # container name, which a service container cannot offer.
+      - name: Start graph journal crash fixture
+        run: |
+          docker run -d --name pie-journal-crash-ci -p 127.0.0.1:6381:6379 -e BROWSER=0 -e 'REDIS_ARGS=--appendonly yes --appendfsync always' falkordb/falkordb:v4.16.0
+          for _ in $(seq 1 30); do
+            if docker exec pie-journal-crash-ci redis-cli ping | grep -q PONG; then exit 0; fi
+            sleep 1
+          done
+          docker logs pie-journal-crash-ci
+          exit 1
 
       - name: Run context-engine package tests
         working-directory: potpie/context-engine
         env:
           POSTGRES_SERVER: "postgresql://postgres:postgres@localhost:5432/postgres"
           ENV: "development"
+          PROTOCOL_TEST_FALKORDB_URL: redis://127.0.0.1:6380
+          POTPIE_JOURNAL_FALKOR_PORT: "6380"
+          POTPIE_JOURNAL_CRASH_CONTAINER: pie-journal-crash-ci
+          POTPIE_JOURNAL_CRASH_PORT: "6381"
+          PROTOCOL_TEST_NEO4J_URI: bolt://127.0.0.1:7687
+          PROTOCOL_TEST_NEO4J_USERNAME: neo4j
+          PROTOCOL_TEST_NEO4J_PASSWORD: protocol-test
         run: uv run --project . pytest tests -m "not premerge_journey"
 
   potpie-windows-unit:
@@ -244,7 +293,8 @@ jobs:
           version: "0.10.7"
 
       - name: Install dependencies
-        run: uv sync --frozen --no-cache
+        # The extras the VS Code extension installs on Windows.
+        run: uv sync --frozen --no-cache --extra daemon --extra auth --extra telemetry
 
       - name: Run Windows-relevant unit tests
         run: >-
@@ -286,12 +336,139 @@ jobs:
           toolchain: stable
 
       - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
+        # --all-extras: the root's base install leaves out embeddings, ingestion,
+        # telemetry and UI extras that these suites exercise.
+        run: uv sync --frozen --all-packages --all-extras --no-cache
 
       - name: Run pre-merge CLI journey test
         env:
           PREMERGE_JOURNEY_REQUIRED: "1"
         run: uv run pytest tests/integration/test_premerge_cli_journey.py -v
+
+  thin-install:
+    # The base install leaves out embeddings (and torch), ingestion clients,
+    # telemetry and the CLI logo. Every other job installs all extras, so a
+    # top-level import of an extra's package, or a build-target edit that ships
+    # tests or UI sources, only shows up here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22", "24"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.10.7"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Build the graph-explorer UI
+        # The wheel checks below need the built dist/ and the node_modules
+        # tree that a real release build leaves next to it.
+        run: make ui-build-ci
+
+      - name: Build the distributions
+        run: |
+          uv build --project potpie/context-engine --wheel --out-dir dist/context-engine
+          uv build --wheel --sdist --out-dir dist/root .
+
+      - name: Check what the distributions ship
+        run: |
+          python - <<'PY'
+          import pathlib
+          import tarfile
+          import zipfile
+
+          root = next(pathlib.Path("dist/root").glob("potpie-*.whl"))
+          engine = next(pathlib.Path("dist/context-engine").glob("*.whl"))
+          for wheel in (root, engine):
+              names = zipfile.ZipFile(wheel).namelist()
+              shipped = [n for n in names if "/tests/" in n or "node_modules" in n]
+              assert not shipped, f"{wheel.name} ships {shipped[:5]}"
+              size = wheel.stat().st_size / 1e6
+              print(f"{wheel.name}: {len(names)} entries, {size:.2f} MB")
+
+          names = zipfile.ZipFile(root).namelist()
+          ui = "potpie/daemon/http/ui/frontend/"
+          assert f"{ui}dist/index.html" in names, "built UI missing from the wheel"
+          inputs = [n for n in names if n.startswith(ui) and not n.startswith(f"{ui}dist/")]
+          assert not inputs, f"UI build inputs in the wheel: {inputs[:5]}"
+          assert not any(n.startswith("potpie/context-engine/") for n in names)
+
+          sdist = next(pathlib.Path("dist/root").glob("potpie-*.tar.gz"))
+          members = tarfile.open(sdist).getnames()
+          assert not any("node_modules" in n for n in members), "node_modules in sdist"
+          PY
+
+      - name: Install the base distribution with no extras
+        run: |
+          uv venv --python 3.12 .venv-thin
+          uv pip install --python .venv-thin/bin/python --only-binary :all: \
+            dist/context-engine/*.whl dist/root/*.whl
+
+      - name: Check the base install has the local product and no ML stack
+        run: |
+          .venv-thin/bin/python - <<'PY'
+          import importlib.util as util
+
+          for absent in ("torch", "sentence_transformers", "transformers"):
+              assert util.find_spec(absent) is None, f"{absent} reached a base install"
+          for present in (
+              "potpie",
+              "potpie_context_engine",
+              "aiohttp",
+              "fastapi",
+              "uvicorn",
+              "falkordb",
+              "redislite",
+          ):
+              assert util.find_spec(present) is not None, f"{present} is missing"
+          PY
+
+      - name: Run the CLI on a base install
+        env:
+          CONTEXT_ENGINE_HOME: ${{ runner.temp }}/thin-home
+          XDG_CONFIG_HOME: ${{ runner.temp }}/thin-config
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv-thin/bin:$PATH"
+          potpie --version
+
+          repo="$RUNNER_TEMP/thin-repo"
+          git init -q "$repo"
+          git -C "$repo" -c user.email=ci@potpie.ai -c user.name="Potpie CI" \
+            -c commit.gpgsign=false commit -q --allow-empty -m "Initial commit"
+          cd "$repo"
+
+          # The release workflow's smoke.
+          CONTEXT_ENGINE_HOST_MODE=in_process \
+            potpie setup --repo . --pot thin --agent claude --dry-run --yes
+
+          # A real local pot on FalkorDB Lite with the bundled hashing embedder,
+          # then a record and a search through the daemon.
+          CONTEXT_ENGINE_HOST_MODE=in_process \
+            potpie --json setup --repo . --pot thin --agent claude --yes
+          potpie --json daemon start
+          potpie --json record --type fix \
+            --summary "QMX exchange uploads retry three times with exponential backoff" \
+            --scope service:qmx-exchange
+          potpie --json search "upload retry backoff" --include prior_bugs \
+            | python -c 'import json, sys; assert json.load(sys.stdin)["items"], "recorded fix not found"'
+          # The daemon is left running; the runner reaps it with the job.
 
   potpie-sandbox:
     runs-on: ubuntu-latest
@@ -324,3 +501,23 @@ jobs:
       - name: Run sandbox local integration tests
         working-directory: potpie/sandbox
         run: uv run --project . --extra daytona pytest tests/integration/test_docker_runtime.py tests/e2e/test_local_subprocess_e2e.py
+
+  graph-commits-ui:
+    # The explorer's commit diffs, presentation and mutation context are pure
+    # TypeScript; run every frontend test, then type-check and build.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Test and build the graph explorer
+        working-directory: potpie/daemon/http/ui/frontend
+        run: |
+          npm ci
+          npm test
+          npm run build

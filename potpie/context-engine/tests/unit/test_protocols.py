@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 
 import pytest
+from potpie_context_engine.core.agent_envelope import DEFAULT_OUTPUT_BUDGET_BYTES
 from potpie_context_engine.core.ports.agent_context import ResolveRequest
 from potpie_context_engine.core.ports.graph_service import (
     GraphCatalogRequest,
@@ -22,6 +23,19 @@ from potpie_context_engine.api import protocols_definition
 @pytest.fixture
 def runtime(tmp_path):
     return seeded_runtime(tmp_path, InMemoryGraphBackend())
+
+
+def test_committed_fixture_matches_its_generator():
+    """``fixture.json`` is generated output: edit the sources or the generator."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).parents[1] / "fixtures" / "protocols" / "generate_fixture.py"
+    spec = importlib.util.spec_from_file_location("protocol_fixture_generator", path)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    assert generator.FIXTURE_PATH.read_text(encoding="utf-8") == generator.render()
+    assert generator.build_fixture() == FIXTURE
 
 
 def test_full_read_keeps_order_types_evidence_and_compact_followup(runtime):
@@ -205,9 +219,45 @@ def test_large_message_has_visible_bounds_and_exact_field_refinement(runtime):
     assert len(item["fields"]) <= 128
     assert [f["ordinal"] for f in item["fields"]] == list(range(len(item["fields"])))
     assert result["coverage"][0]["metadata"]["truncated"]
-    assert len(json.dumps(result).encode()) < 196608
+    assert len(json.dumps(result).encode()) <= DEFAULT_OUTPUT_BUDGET_BYTES
     refined = read(runtime, "large", scope={"field_path": "field.299"})
     assert refined.items[0]["fields"][0]["byte_offset"] == 299
+
+
+def test_full_layout_fits_the_cli_read_budget_without_generic_clipping(runtime):
+    """The reader drops whole fields itself, so the shared bound clips nothing.
+
+    The CLI bounds every graph read body to the shared output budget less a
+    2 KiB envelope reserve, by cutting lists and strings. A protocol read that
+    reached that bound would lose typed allowed values; staying inside the
+    budget here keeps every returned field whole and the truncation explicit.
+    """
+    from potpie_context_engine.core.ports.graph_service import (
+        bound_graph_read_result,
+    )
+
+    proposal = runtime.workbench.propose(
+        {"operations": large_operations()}, pot_id="protocol-test"
+    )
+    assert proposal.ok, proposal.to_dict()
+    assert runtime.workbench.commit(proposal.plan_id, pot_id="protocol-test").ok
+    for anchor in ("large", "request", "service:demo", "protocol"):
+        result = read(runtime, anchor)
+        bounded = bound_graph_read_result(
+            result,
+            pot_id="protocol-test",
+            max_bytes=DEFAULT_OUTPUT_BUDGET_BYTES - 2048,
+        )
+        assert not bounded.output_budget, (anchor, bounded.output_budget)
+        items = result.to_dict()["items"]
+        assert [item["fields"] for item in bounded.to_dict()["items"]] == [
+            item["fields"] for item in items
+        ]
+        for item in items:
+            assert item["coverage"]["returned_fields"] == len(item["fields"])
+    large = read(runtime, "large").to_dict()["items"][0]
+    assert large["fields"] and large["coverage"]["truncated"]
+    assert large["coverage"]["status"] == "partial"
 
 
 def test_modbus_03_request_and_response_are_distinct(runtime):

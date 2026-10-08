@@ -50,7 +50,9 @@ from potpie_context_engine.api import (
     GraphBackend,
     GraphInboxStorePort,
     GraphPlanStorePort,
+    GraphRuntime,
     GraphService,
+    build_graph_runtime,
 )
 
 print(json.dumps(sorted({module.split(".")[0] for module in sys.modules})))
@@ -94,11 +96,51 @@ def test_api_reexports_are_the_internal_contracts() -> None:
         "GraphService",
     } <= set(api.__all__)
     assert {"DEFAULT_GRAPH_DEFINITION", "GraphDefinition"} <= set(api.__all__)
+
+
+def test_api_exports_the_embedding_host_runtime_builder() -> None:
+    from potpie_context_engine import api
+    from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
+
+    assert api.build_graph_runtime is build_graph_runtime
+    assert api.GraphRuntime is GraphRuntime
     assert {
-        "GraphExtension",
+        "GraphObserver",
         "GraphRuntime",
+        "NoOpGraphObserver",
+        "RuntimeCompositionError",
         "build_graph_runtime",
-    }.isdisjoint(api.__all__)
+    } <= set(api.__all__)
+
+
+def test_api_exports_the_opt_in_protocols_definition_and_identity_helpers() -> None:
+    from potpie_context_engine import api
+    from potpie_context_engine.core.protocols import (
+        protocol_entity,
+        protocol_entity_key,
+    )
+
+    assert {
+        "protocols_definition",
+        "protocol_entity",
+        "protocol_entity_key",
+    } <= set(api.__all__)
+    assert api.protocol_entity is protocol_entity
+    assert api.protocol_entity_key is protocol_entity_key
+    definition = api.protocols_definition()
+    assert isinstance(definition, api.GraphDefinition)
+    assert definition.extensions == {"protocols": "1"}
+    assert "protocols" in definition.readers
+    # The factory returns a new value; the default definition stays base-only.
+    assert api.DEFAULT_GRAPH_DEFINITION.extensions == {}
+    assert "protocols" not in api.DEFAULT_GRAPH_DEFINITION.readers
+
+
+def test_api_does_not_publish_graph_extension_registration() -> None:
+    from potpie_context_engine import api
+
+    assert "GraphExtension" not in api.__all__
+    assert not hasattr(api, "GraphExtension")
 
 
 def test_package_root_exports_the_context_engine_surface() -> None:

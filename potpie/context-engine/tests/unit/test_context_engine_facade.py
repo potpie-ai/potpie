@@ -319,8 +319,74 @@ def test_public_facade_has_the_accepted_flat_method_catalog() -> None:
         "submit_artifact",
         "processing_status",
         "nudge",
+        "commit_status",
+        "verify_commit",
+        "journal_status",
+        "commits",
+        "commit_show",
+        "revert_preview",
+        "rollback_preview",
+        "apply_preview",
+        "disable_rollback",
+        "rebuild_commits",
     }
 
     assert expected <= set(ContextEngine.__dict__)
     assert "execute" not in ContextEngine.__dict__
     assert "call" not in ContextEngine.__dict__
+
+
+async def test_resource_operations_need_a_composed_document_store() -> None:
+    from potpie_context_engine.requests import ResourceListRequest
+
+    engine, _ = await _engine()
+
+    outcome = await engine.resource_list(ResourceListRequest(doc="handbook"))
+
+    assert isinstance(outcome, Failure)
+    assert outcome.error.code == "not_implemented"
+    assert outcome.error.details == {"operation": "resource_list"}
+
+
+async def test_resource_operations_delegate_with_the_bound_context() -> None:
+    from potpie_context_engine.requests import ResourceGetRequest
+
+    class _Documents:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, ContextIdentity, Mapping[str, object]]] = []
+
+        async def resource_get(self, context, request):
+            self.calls.append(("resource_get", context, request.to_payload()))
+            return {"chunks": ()}
+
+    operations = _Operations()
+    documents = _Documents()
+    created = await create_engine(
+        context=ContextIdentity("context-123"),
+        config=EngineConfig(),
+        dependencies=EngineDependencies(
+            context=operations,
+            graph=operations,
+            workbench=operations,
+            ingestion=operations,
+            nudge=operations,
+            documents=documents,
+        ),
+    )
+    assert isinstance(created, Success)
+
+    outcome = await created.value.resource_get(
+        ResourceGetRequest(resource_ids=("potpie://res/handbook/body/0000",))
+    )
+
+    assert outcome == Success({"chunks": ()})
+    assert documents.calls == [
+        (
+            "resource_get",
+            ContextIdentity("context-123"),
+            {
+                "resource_ids": ("potpie://res/handbook/body/0000",),
+                "with_neighbors": False,
+            },
+        )
+    ]

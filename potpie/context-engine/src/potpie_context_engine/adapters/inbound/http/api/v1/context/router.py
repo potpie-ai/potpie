@@ -565,6 +565,7 @@ def create_context_router(
             body.pot_id,
             ledger=ledger,
             reconciliation_ledger=reconciliation_ledger,
+            resources=container.resource_store,
         )
         if not out.get("ok"):
             _audit_operator_action(

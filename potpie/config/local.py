@@ -11,14 +11,24 @@ downstream step. The real config layer may add schema/validation behind the same
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from potpie.config.local_paths import default_home
 from potpie.config.local_state import local_json_transaction
+from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
+    embedding_cache_override,
+)
 from potpie_context_engine.core.lifecycle import SetupPlan
+from potpie_context_engine.domain.embedding_modes import (
+    EMBEDDING_MODEL_PREP_SKIPPED_ALIASES,
+    normalize_embedding_mode,
+)
 
 KNOWN_CONFIG_KEYS: tuple[str, ...] = (
     "profile",
@@ -30,6 +40,52 @@ KNOWN_CONFIG_KEYS: tuple[str, ...] = (
     "ledger.binding",
     "ledger.org",
     "ledger.url",
+    # Retrieval index over stored document chunks; read by
+    # ``default_resource_index_profile`` after ``CONTEXT_ENGINE_RESOURCE_INDEX``.
+    "resource_index",
+    # Opt-in protocol ontology (``on``/``off``, default off); read once when the
+    # local runtime is composed, see ``LocalConfigService.graph_protocols_enabled``.
+    "graph.protocols",
+)
+
+#: The config key that switches on the protocol ontology extension.
+GRAPH_PROTOCOLS_KEY = "graph.protocols"
+
+_SWITCH_ON: frozenset[str] = frozenset({"on", "true", "yes", "1"})
+_SWITCH_OFF: frozenset[str] = frozenset({"off", "false", "no", "0"})
+SWITCH_VALUES: tuple[str, ...] = ("on", "off")
+
+
+def normalize_switch(value: object) -> str | None:
+    """``"on"`` or ``"off"`` for a recognised on/off spelling, else ``None``.
+
+    ``config set`` stores the canonical spelling; a hand-edited ``true``/``1``
+    still reads as on, and anything unrecognised is reported as ``None`` so the
+    caller decides (the reader treats it as off).
+    """
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if not isinstance(value, str):
+        return None
+    token = value.strip().lower()
+    if token in _SWITCH_ON:
+        return "on"
+    if token in _SWITCH_OFF:
+        return "off"
+    return None
+
+
+# Keys the runtime still honours but never advertises. ``configured_embedder_choice``
+# / ``configured_embedding_model`` (the engine's local embedder) fall back to these
+# older spellings after the catalog names, so a writer that only accepted
+# ``KNOWN_CONFIG_KEYS`` would refuse a key the reader demonstrably obeys. They stay
+# out of the advertised catalog because ``config list``'s ``known_keys`` and the
+# sub-app help are how a user learns the *current* names; drop an entry here only
+# once nothing reads it.
+_ACCEPTED_ALIAS_KEYS: tuple[str, ...] = (
+    "embedding_provider",
+    "embedding_backend",
+    "sentence_transformer_model",
 )
 
 _SECRET_KEY_MARKERS: tuple[str, ...] = (
@@ -87,12 +143,40 @@ def is_secret_config_key(key: str) -> bool:
     return any(compound in joined for compound in _COMPOUND_SECRET_MARKERS)
 
 
+def is_known_config_key(key: str) -> bool:
+    """Is this a key some part of the system actually reads?
+
+    ``config set`` gates on this, so a typo (``emebdder``) is refused instead of
+    persisted as a setting nothing will ever look at, and ``config.json`` is not
+    pressed into service as an arbitrary secret store.
+    """
+    return key in KNOWN_CONFIG_KEYS or key in _ACCEPTED_ALIAS_KEYS
+
+
+def _without_url_userinfo(value: str) -> str:
+    """Blank the ``user:password@`` an operator may have typed inside a URL.
+
+    :func:`is_secret_config_key` classifies by key name, which cannot see a
+    credential that arrived in the value: ``ledger.url`` is not a secret-shaped
+    key, so ``https://user:tok@host`` would otherwise be echoed back verbatim.
+    """
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        # Not parseable as a URL: changing the value would be guessing.
+        return value
+    if not parts.scheme or "@" not in parts.netloc:
+        return value
+    host = parts.netloc.rsplit("@", 1)[1]
+    return urlunsplit(parts._replace(netloc=f"{_REDACTED}@{host}"))
+
+
 def public_config_value(key: str, value: Any) -> str | None:
     if value is None:
         return None
     if is_secret_config_key(key):
         return _REDACTED
-    return str(value)
+    return _without_url_userinfo(str(value))
 
 
 @dataclass(slots=True)
@@ -118,15 +202,24 @@ class LocalConfigService:
             data.setdefault("home", str(self.home))
             data.setdefault("embedder", plan.embeddings)
             data.setdefault("embedding_model", plan.embedding_model)
-            data.setdefault(
-                "embedding_cache",
-                str(self.home / "models" / "sentence-transformers"),
-            )
+            cache = _embedding_cache_location(plan, home=self.home)
+            if cache is not None:
+                data.setdefault("embedding_cache", cache)
+        _owner_only(self._path)
         return self._path
 
     def get(self, key: str) -> str | None:
         value = self._load().get(key)
         return None if value is None else str(value)
+
+    def graph_protocols_enabled(self) -> bool:
+        """Is the protocol ontology switched on? Off unless ``graph.protocols`` is on.
+
+        Absent, blank and unrecognised values all read as off, so a typo never
+        widens the graph contract. The local runtime reads this once at
+        composition: a running daemon keeps the value it started with.
+        """
+        return normalize_switch(self._load().get(GRAPH_PROTOCOLS_KEY)) == "on"
 
     def list_public(self) -> dict[str, str | None]:
         """Return all config entries with secret-like keys redacted."""
@@ -138,6 +231,24 @@ class LocalConfigService:
     def set(self, key: str, value: str) -> None:
         with local_json_transaction(self._path, default_factory=dict) as data:
             data[key] = value
+        _owner_only(self._path)
+
+    def unset(self, key: str) -> bool:
+        """Drop ``key`` from the file; report whether it was there.
+
+        Unlike :meth:`set`, this accepts keys outside the catalog on purpose:
+        the write gate strands every key ``set`` used to accept (credentials
+        among them), and removal is the only repair left for those.
+        """
+        if key not in self._load():
+            return False
+        removed = False
+        with local_json_transaction(self._path, default_factory=dict) as data:
+            if key in data:
+                del data[key]
+                removed = True
+        _owner_only(self._path)
+        return removed
 
     def probe(self) -> dict[str, Any]:
         return {"home": str(self.home), "config_exists": self._path.exists()}
@@ -151,9 +262,43 @@ class LocalConfigService:
             return {}
 
 
+def _owner_only(path: Path) -> None:
+    """Keep ``config.json`` readable by its owner only (0600).
+
+    The transactional writer already replaces the file with an owner-only
+    temporary; this also tightens a file an older release left at the umask,
+    since ``config set`` once accepted any key, credentials included.
+    """
+    if os.name == "nt":
+        return
+    try:
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    except FileNotFoundError:
+        return
+
+
+def _embedding_cache_location(plan: SetupPlan, *, home: Path) -> str | None:
+    """Where this plan's model weights will actually land, or ``None``.
+
+    ``None`` for the modes that cache nothing (no embedder, or the bundled
+    hashing embedder). Otherwise the environment override wins, because that is
+    what the runtime reads ahead of this file.
+    """
+    if (
+        normalize_embedding_mode(plan.embeddings)
+        in EMBEDDING_MODEL_PREP_SKIPPED_ALIASES
+    ):
+        return None
+    return embedding_cache_override() or str(home / "models" / "sentence-transformers")
+
+
 __all__ = [
+    "GRAPH_PROTOCOLS_KEY",
     "KNOWN_CONFIG_KEYS",
     "LocalConfigService",
+    "SWITCH_VALUES",
+    "is_known_config_key",
     "is_secret_config_key",
+    "normalize_switch",
     "public_config_value",
 ]

@@ -20,14 +20,17 @@ from potpie.runtime.composition import build_local_runtime
 from potpie.skills.catalog import RECOMMENDED_SKILL_IDS
 
 EXPECTED_CATALOG = {
-    "potpie-change-timeline": "2",
-    "potpie-cli": "3",
-    "potpie-debug-memory": "2",
-    "potpie-graph": "6",
-    "potpie-infra-architecture": "2",
-    "potpie-project-preferences": "2",
-    "potpie-repo-baseline": "2",
-    "potpie-source-ingestion": "2",
+    "potpie-change-timeline": "3",
+    "potpie-cli": "6",
+    "potpie-debug-memory": "5",
+    "potpie-graph": "9",
+    "potpie-infra-architecture": "5",
+    "potpie-project-preferences": "3",
+    "potpie-repo-baseline": "3",
+    "potpie-resource-markdown": "1",
+    "potpie-resource-pdf": "1",
+    "potpie-resource-spreadsheet": "1",
+    "potpie-source-ingestion": "5",
 }
 
 

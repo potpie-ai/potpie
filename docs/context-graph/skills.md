@@ -46,10 +46,11 @@ of `SKILL.md` files under
 `catalog_by_id()` and `RECOMMENDED_SKILL_IDS` (every recommended bundled skill).
 Adding or editing a skill means editing the bundled markdown — nothing else.
 
-There are **8 skills in the agent bundle**, and it is the only copy: every
-harness installs its skills from it, remapped to the harness's own layout. The
-compact instruction block merged into `AGENTS.md` / `CLAUDE.md` likewise has one
-source, `templates/routing/POTPIE.md`.
+There are **11 skills in the agent bundle** (the 8 core skills in §3 plus three
+per-format resource skills), and it is the only copy: every harness installs its
+skills from it, remapped to the harness's own layout. The compact instruction
+block merged into `AGENTS.md` / `CLAUDE.md` likewise has one source,
+`templates/routing/POTPIE.md`.
 
 ## 2. Installation, targets & drift (`DefaultSkillManager`)
 
@@ -138,9 +139,9 @@ depend on the user's repo.)
 ```bash
 potpie skills list   [--agent claude|codex|cursor|opencode] [--scope global|project] [--path]
 potpie skills install [<id>] [--agent …] [--scope …] [--path]
-potpie skills update  [<id>|--all] [--agent …]
-potpie skills status  [--agent …]     # installed, missing, outdated, drifted, disabled
-potpie skills remove  [<id>|--all] [--agent …]
+potpie skills update  [<id>|--all] [--agent …] [--scope …] [--path]
+potpie skills status  [--agent …] [--scope …] [--path]     # installed, missing, outdated, drifted, disabled
+potpie skills remove  [<id>|--all] [--agent …] [--scope …] [--path]
 potpie skills add     <source>        # TODO stub
 ```
 
@@ -159,14 +160,20 @@ run. **There is no top-level `potpie install`** — skills install only via
 
 | Skill | Ver | Role |
 |---|---|---|
-| `potpie-cli` | v3 | The `potpie` command itself: pot-scope resolution order, harness-led boundaries. |
-| **`potpie-graph`** | **v6** | **THE contract skill** — one shared discovery pass, the read → resolve → record or propose/commit → inbox → quality loop, ontology selection, truth classes, retrieval-grade descriptions, reporting the commands behind an answer, and "Responding To Nudges". Teaches `potpie record` for one fix or note and **propose/commit** for everything else (never the legacy `graph mutate`). |
-| `potpie-repo-baseline` | v2 | Deep repo-baseline mode: source priority, evidence matrix, canonical entity families with `PROVIDES` / `IMPLEMENTED_IN`. |
-| `potpie-source-ingestion` | v2 | Todo-driven, phased (0–8) ingestion of a repo/PR/ticket/doc; parallel read-only subagents; GitHub/Linear/Jira hydrated via the agent's **own** integration tools (explicitly *not* Potpie connector queueing) → evidence matrix → identity resolution → propose/commit `--verify` → quality gate. |
-| `potpie-project-preferences` | v2 | Use-case read+record skill (preferences). |
-| `potpie-infra-architecture` | v2 | Use-case read+record skill (infra/topology). |
-| `potpie-change-timeline` | v2 | Use-case read+record skill (recent changes). |
-| `potpie-debug-memory` | v2 | Use-case read+record skill (prior bugs/fixes). |
+| `potpie-cli` | v6 | The `potpie` command itself: pot-scope resolution order, harness-led boundaries. |
+| **`potpie-graph`** | **v9** | **THE contract skill** — one shared discovery pass, the read → resolve → record or propose/commit → inbox → quality loop, ontology selection, truth classes, retrieval-grade descriptions, reporting the commands behind an answer, and "Responding To Nudges". Teaches `potpie record` for one fix or note and **propose/commit** for everything else (never the legacy `graph mutate`). |
+| `potpie-repo-baseline` | v3 | Deep repo-baseline mode: source priority, evidence matrix, canonical entity families with `PROVIDES` / `IMPLEMENTED_IN`. |
+| `potpie-source-ingestion` | v5 | Todo-driven, phased (0–8) ingestion of a repo/PR/ticket/doc; parallel read-only subagents; GitHub/Linear/Jira hydrated via the agent's **own** integration tools (explicitly *not* Potpie connector queueing) → evidence matrix → identity resolution → propose/commit `--verify` → quality gate. |
+| `potpie-project-preferences` | v3 | Use-case read+record skill (preferences). |
+| `potpie-infra-architecture` | v5 | Use-case read+record skill (infra/topology). |
+| `potpie-change-timeline` | v3 | Use-case read+record skill (recent changes). |
+| `potpie-debug-memory` | v5 | Use-case read+record skill (prior bugs/fixes). |
+
+Three per-format skills handle document payloads: `potpie-resource-pdf`,
+`potpie-resource-spreadsheet` and `potpie-resource-markdown` (v1 each). Each
+teaches the agent to write an extraction script that emits a chunk directory,
+import it with `potpie resource import`, summarize its sections, and link the
+document to what it covers; see [`resources.md`](./resources.md).
 
 The four use-case skills share one shape: a **Fast Path** read, an **Apply
 Results** step, a **Report Back** step (the exact commands behind the answer,
@@ -175,14 +182,15 @@ CLI.
 
 ---
 
-## 4. `potpie-graph` v6 — the taught read/write loop
+## 4. `potpie-graph` v9 — the taught read/write loop
 
 This is the contract skill: it points the agent at the *live* catalog rather than
 baking the ontology into prose. The discipline it teaches (full read mechanics in
 [querying.md](./querying.md), full write mechanics in [writing.md](./writing.md)):
 
 1. **Discover once, in parallel.** One shared discovery pass across skills:
-   `potpie resolve` (with `--intent` — it is not inferred from the task text),
+   `potpie resolve` (the intent is inferred from the task text unless `--intent`
+   names one),
    scope-only `preferences_for_scope --repo current` for code work, and an
    untyped `graph search-entities` for a named entity with an unknown key.
    Before ingestion, `graph catalog --profile full` supplies the live ontology
@@ -213,6 +221,13 @@ baking the ontology into prose. The discipline it teaches (full read mechanics i
    | stale-facts | conflicting-claims | orphan-entities | low-confidence |
    projection-drift}`. Repair through propose/commit or park in the inbox; quality
    never writes.
+
+Protocol questions (message layouts, field values, decoders) take a separate
+route. The skill checks that the catalog advertises `protocols.message_context`,
+which needs the opt-in `graph.protocols` key. It then discovers messages with
+`resolve --include protocols` and follows its bundled
+`references/protocols.md`. The repo-baseline, source-ingestion,
+infra-architecture and debug-memory skills point at the same reference.
 
 > **The one rule the skill emphasizes most:** every entity and claim carries a
 > `description` written as a **retrieval card** — the symptoms, synonyms, and

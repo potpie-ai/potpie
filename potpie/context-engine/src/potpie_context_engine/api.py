@@ -6,7 +6,12 @@ from potpie_context_engine.core.api import *  # noqa: F403
 from potpie_context_engine.core.api import __all__ as _CORE_API
 from potpie_context_engine.application.readers._common import ReadResponse
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_engine.application.services.resource_facade import ResourceFacade
 from potpie_context_engine.composition import build_graph_service
+
+# Supported composition surface for embedding hosts that bring their own
+# backend and plan/inbox stores (see ``build_graph_runtime``).
+from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
 from potpie_context_engine.context_engine import (
     ContextEngine,
     ContextIdentity,
@@ -17,10 +22,16 @@ from potpie_context_engine.context_engine import (
     GraphOperations,
     IngestionOperations,
     NudgeOperations,
+    ResourceOperations,
     ResourceOwnership,
     WorkbenchOperations,
     create_engine,
 )
+
+# Opt-in protocol ontology: a definition factory to pass to the builder, plus
+# the identity helpers writers use to mint its entity keys. Not an extension
+# registration hook; ``GraphExtension`` stays internal.
+from potpie_context_engine.core.protocols import protocol_entity, protocol_entity_key
 from potpie_context_engine.protocols import protocols_definition
 from potpie_context_engine.domain.ranking import (
     Candidate,
@@ -45,12 +56,15 @@ __all__ = [
     "ContextIdentity",
     "ContextOperations",
     "DefaultGraphService",
+    "GraphRuntime",
     "EngineConfig",
     "EngineDependencies",
     "EngineResource",
     "GraphOperations",
     "IngestionOperations",
     "NudgeOperations",
+    "ResourceFacade",
+    "ResourceOperations",
     "ResourceOwnership",
     "WorkbenchOperations",
     "create_engine",
@@ -60,6 +74,9 @@ __all__ = [
     "ReadRequest",
     "ReadResponse",
     "TaskContext",
+    "build_graph_runtime",
     "build_graph_service",
+    "protocol_entity",
+    "protocol_entity_key",
     "protocols_definition",
 ]

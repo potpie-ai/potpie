@@ -3,7 +3,8 @@
 Every route resolves a pot (explicit ``?pot=`` or the active pot) and delegates
 to explicit root- and engine-owned services. Nothing here mutates the graph —
 the UI is a browse/select surface, in keeping with the "harness is the
-intelligence" model.
+intelligence" model. Commit history and rollback previews (``commits.py``) are
+typed operations; applying a preview is left to the CLI.
 
 Every route is behind ``require_ui_credential`` and ``require_same_origin``:
 it reads the same graph the typed daemon protocol does, so an anonymous caller
@@ -22,8 +23,14 @@ from potpie.daemon.http.ui.auth import (
     require_ui_credential,
     ui_auth,
 )
+from potpie.daemon.http.ui.commits import EngineClientFactory, build_commit_router
+from potpie.pots.resolution import archived_pot_message, is_archived, match_pot_ref
 
-from potpie_context_engine.core.errors import CapabilityNotImplemented, PotNotFound
+from potpie_context_engine.core.errors import (
+    CapabilityNotImplemented,
+    PotArchived,
+    PotNotFound,
+)
 from potpie_context_engine.core.graph_entity_summary import (
     normalize_entity_properties,
 )
@@ -65,9 +72,11 @@ _PREFIX_LABEL = {
 def _resolve_pot(pots: Any, pot: str | None) -> str:
     """Explicit ``pot`` ref → id, else the active pot. 400 if neither resolves."""
     if pot:
-        for p in pots.list_pots():
-            if pot in (p.pot_id, p.name):
-                return p.pot_id
+        live, archived = match_pot_ref(pots.list_pots(), pot)
+        if live is not None:
+            return live.pot_id
+        if archived is not None:
+            raise HTTPException(status_code=409, detail=archived_pot_message(archived))
         raise HTTPException(status_code=404, detail=f"no pot matching {pot!r}")
     active = pots.active_pot()
     if active is None:
@@ -138,9 +147,17 @@ def _slice_to_graph(sl: Any) -> dict[str, Any]:
         )
     edges = []
     for e in sl.edges:
+        props = dict(getattr(e, "properties", None) or {})
+        # Two claims can share endpoints and predicate; the explorer selects and
+        # diffs edges by id, so prefer the record identity when there is one.
+        edge_id = props.get("record_id") or props.get("uuid")
+        if not edge_id:
+            edge_id = f"{e.from_key}|{e.predicate}|{e.to_key}"
+            if props.get("claim_key"):
+                edge_id += f"|{props['claim_key']}"
         edges.append(
             {
-                "id": f"{e.from_key}|{e.predicate}|{e.to_key}",
+                "id": str(edge_id),
                 "source": e.from_key,
                 "target": e.to_key,
                 "predicate": e.predicate,
@@ -153,12 +170,21 @@ def _slice_to_graph(sl: Any) -> dict[str, Any]:
     }
 
 
-def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
+def build_ui_api_router(
+    *,
+    pots: Any,
+    graph: Any,
+    backend: Any,
+    engine_client: EngineClientFactory | None = None,
+) -> APIRouter:
     """Build the ``/ui/api`` router from explicit runtime services.
 
     The credential and origin checks are router-level dependencies rather than
     per-route ones, so a route added here later is authenticated by
     construction, not by whoever remembers to add the decorator.
+
+    ``engine_client`` builds the typed client for one resolved pot id; the
+    commit-history routes answer 503 without it.
     """
     router = APIRouter(
         dependencies=[Depends(require_ui_credential), Depends(require_same_origin)]
@@ -172,6 +198,8 @@ def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
             raise
         except CapabilityNotImplemented as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
+        except PotArchived as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PotNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -180,7 +208,8 @@ def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
     @router.get("/api/pots")
     def list_pots() -> dict[str, Any]:
         def go():
-            pot_records = pots.list_pots()
+            # Archived pots cannot be selected, so the picker does not offer them.
+            pot_records = [p for p in pots.list_pots() if not is_archived(p)]
             active = pots.active_pot()
             return {
                 "pots": [
@@ -366,6 +395,11 @@ def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
             pass
         return {"ok": True}
 
+    router.include_router(
+        build_commit_router(
+            pots=pots, resolve_pot=_resolve_pot, engine_client=engine_client
+        )
+    )
     return router
 
 

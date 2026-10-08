@@ -23,7 +23,11 @@ from potpie_context_engine.core.graph_journal import (
     journal_hash,
 )
 from potpie_context_engine.core.journal_context import current_journal_context
-from potpie_context_engine.core.journal_inverse import plan_inverse, validate_state
+from potpie_context_engine.core.journal_inverse import (
+    plan_inverse,
+    protocols_enabled_for,
+    validate_state,
+)
 from potpie_context_engine.core.ports.claim_query import ClaimRow
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
@@ -352,6 +356,7 @@ class MemoryJournal:
                     records,
                     pot_id=pot_id,
                     definition=self.owner.definition,
+                    protocols_enabled=protocols_enabled_for(self.owner.definition),
                     resource_exists=(
                         lambda ref: self.owner.resource_exists(pot_id, ref)
                     )

@@ -5,8 +5,6 @@ description: "Why the Context Graph exists, claims not payloads, and product bou
 
 ## Overview
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
-
 The Context Graph is Potpie's **durable, shared project memory for AI agents** — a
 compact, sourced store of facts about a project (decisions, ownership, topology,
 prior bugs and fixes, conventions, features) so an agent does not rebuild context
@@ -59,7 +57,7 @@ flowchart LR
   cg_claims --> cg_analytics
 ```
 
-The full vocabulary — 24 entity types, 25 public predicates plus a `RELATED_TO`
+The full vocabulary — 25 entity types, 27 public predicates plus a `RELATED_TO`
 fallback, 7 truth classes — is owned by [ontology.md](./ontology.md). PRs, commits,
 issues, incidents, and deployments all collapse to a single timeline `Activity`
 entity; an entity exists only if an edge needs it as an endpoint.
@@ -188,11 +186,11 @@ So "v2" survives solely as the envelope version on workbench responses. What shi
   harness can call from its own hooks — all
   with no mandatory Docker, Neo4j, Postgres, or cloud service.
 
-The canonical local first-run is one command (note `--scan` is **opt-in**, off by
-default — `setup` does not scan the working tree unless asked):
+The canonical local first-run is one command (`setup` registers the repo as a
+source; it never scans the working tree — the harness fills the graph):
 
 ```bash
-potpie setup --repo . --agent claude   # add --scan to ingest the working tree
+potpie setup --repo . --agent claude
 potpie status
 ```
 

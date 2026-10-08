@@ -37,6 +37,13 @@ from potpie.cli.telemetry.onboarding_events import (
 )
 from potpie.cli.telemetry.usage_events import capture_usage_command_succeeded
 from potpie.cli.repo_location import repo_identity_key, resolve_repo_location
+from potpie.cli.source_kinds import (
+    SourceKind,
+    known_tokens,
+    registrable_names,
+    resolve_kind,
+)
+from potpie.pots.resolution import is_archived, match_pot_ref
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.requests import ResetContextRequest
 
@@ -55,6 +62,11 @@ def pot_list(
     ),
     managed: bool = typer.Option(False, "--managed", help="Managed-origin pots only."),
     all_: bool = typer.Option(False, "--all", help="Local + managed pots."),
+    archived: bool = typer.Option(
+        False,
+        "--archived",
+        help="Include archived pots (hidden by default; they cannot be used).",
+    ),
 ) -> None:
     with contract():
         # Managed-origin listing needs login + managed routing (HU3). '--managed'
@@ -67,14 +79,33 @@ def pot_list(
                 recommended_next_action="run 'potpie login'; managed routing lands in HU3",
             )
         pots = get_pot_service().list_pots()
+        # Archived pots are hidden unless asked for: every pot command refuses
+        # them, so listing them unmarked offers targets nothing accepts.
+        listed = len(pots)
+        pots = [p for p in pots if archived or not is_archived(p)]
+        hidden = listed - len(pots)
         payload: dict[str, object] = {
             "pots": [
-                {"id": p.pot_id, "name": p.name, "active": p.active, "origin": "local"}
+                {
+                    "id": p.pot_id,
+                    "name": p.name,
+                    "active": p.active,
+                    "archived": is_archived(p),
+                    "origin": "local",
+                }
                 for p in pots
             ],
         }
-        pot_rows = [f"{'*' if p.active else ' '} {p.name} ({p.pot_id})" for p in pots]
+        pot_rows = [
+            f"{'~' if is_archived(p) else '*' if p.active else ' '} {p.name} "
+            f"({p.pot_id}){'  archived' if is_archived(p) else ''}"
+            for p in pots
+        ]
         human_lines = ["Local", *(pot_rows or ["(no pots)"])]
+        if hidden:
+            human_lines.append(
+                f"  ({hidden} archived — see 'potpie pot list --archived')"
+            )
         if all_:
             payload["managed_pending"] = True
             human_lines.append("  (managed pots require 'potpie login' — HU3)")
@@ -226,15 +257,19 @@ def pot_create(
     with contract():
         host = get_root_runtime()
         pot = get_pot_service(host).create_pot(name=name, use=use)
+        # ``create`` reuses a live pot of the same name so ``setup`` can re-run.
+        # Saying "created" for a pot that already holds a project's memory reads
+        # as a fresh empty pot. A service that does not report the field keeps
+        # the old wording rather than claiming a reuse it never mentioned.
+        created = getattr(pot, "created", None)
         payload: dict[str, object] = {
             "id": pot.pot_id,
             "name": pot.name,
             "active": pot.active,
+            "created": created,
         }
-        human = (
-            f"created pot '{pot.name}' ({pot.pot_id})"
-            f"{' [active]' if pot.active else ''}"
-        )
+        verb = "using existing pot" if created is False else "created pot"
+        human = f"{verb} '{pot.name}' ({pot.pot_id}){' [active]' if pot.active else ''}"
         guidance_repo: str | None = repo
         if repo is not None:
             source = register_repo_source(
@@ -439,7 +474,10 @@ def pot_reset(
         )
         confirmation = confirm_destructive_operation(
             confirmed_by_flag=confirm,
-            prompt=f"Reset all graph state for '{pot.name}' ({pot_id})?",
+            prompt=(
+                f"Reset all graph state and stored documents for '{pot.name}' "
+                f"({pot_id})?"
+            ),
             rerun_command=f"potpie pot reset {pot_id} --confirm",
         )
         result = run_engine_operation(
@@ -448,22 +486,173 @@ def pot_reset(
                 confirmation=confirmation,
             )
         )
+        purged = _resources_purged(result)
         emit(
-            {"id": result.context_id, "reset": result.reset},
-            human=f"reset graph state for '{pot.name}'",
+            {
+                "id": result.context_id,
+                "reset": result.reset,
+                "resources_purged": purged,
+            },
+            human=f"reset graph state for '{pot.name}'{_teardown_suffix(purged)}",
         )
 
 
+def _resources_purged(result: Any) -> bool | None:
+    """The resource store's own answer from a reset, never a literal.
+
+    ``None`` means no resource store was composed: neither a purge nor a failed
+    one, so it must not print the same sentence as ``False``.
+    """
+    return getattr(result, "resources_purged", None)
+
+
+def _teardown_suffix(purged: bool | None) -> str:
+    if purged:
+        return " and its stored documents"
+    if purged is False:
+        return " (no stored documents)"
+    return ""
+
+
+def _archive_target(host: Any, ref: str) -> tuple[Any, bool]:
+    """``(pot, already_archived)`` for ``pot archive <ref>``.
+
+    ``archive`` is the one command that accepts an archived pot: re-running it
+    clears whatever graph state the pot still holds (a pot archived before
+    archiving cleared anything keeps its data otherwise, with no command able
+    to reach it). A live pot always wins the ref. An id names its pot
+    exactly; a name can be shared by several archived pots, so it must then be
+    narrowed to an id.
+    """
+    pots = list(get_pot_service(host).list_pots())
+    live, archived = match_pot_ref(pots, ref)
+    if live is not None:
+        return live, False
+    if archived is None:
+        fail(
+            code="pot_not_found",
+            message=f"No pot matching '{ref}'.",
+            next_action="run 'potpie pot list --archived'",
+        )
+    if archived.pot_id != ref:
+        named = [p for p in pots if is_archived(p) and p.name == ref]
+        if len(named) > 1:
+            ids = ", ".join(p.pot_id for p in named)
+            fail(
+                code="ambiguous_pot",
+                message=f"'{ref}' names more than one archived pot: {ids}.",
+                next_action="pass the pot id: 'potpie pot archive <id> --confirm'",
+            )
+    return archived, True
+
+
 @pot_app.command("archive")
-def pot_archive(ref: str) -> None:
+def pot_archive(
+    ref: str,
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help=(
+            "Required: clears the pot's graph state and stored documents, then "
+            "retires the pot."
+        ),
+    ),
+) -> None:
+    """Clear a pot's graph state and documents and retire it; it cannot be used.
+
+    Re-running it on an archived pot clears its graph state and documents again
+    and leaves it archived.
+    """
     with contract():
-        pot = get_pot_service().archive_pot(ref=ref)
-        emit({"id": pot.pot_id, "archived": True}, human=f"archived '{pot.name}'")
+        host = get_root_runtime()
+        target, already_archived = _archive_target(host, ref)
+        pot_id = target.pot_id
+        label = f"'{target.name}' ({pot_id})"
+        prompt = (
+            f"{label} is already archived. Clear its graph state and stored "
+            "documents again?"
+            if already_archived
+            else (
+                f"Archive {label}? This clears its graph state and stored "
+                "documents, and the pot cannot be used again afterwards."
+            )
+        )
+        confirmation = confirm_destructive_operation(
+            confirmed_by_flag=confirm,
+            prompt=prompt,
+            rerun_command=f"potpie pot archive {pot_id} --confirm",
+        )
+        # Clear first, flag second. The flag hides the pot from every command,
+        # so flagging a pot whose graph state survived would leave data that
+        # nothing can read or clear; a failed reset stops here instead.
+        result = run_engine_operation(
+            get_engine_client(pot_id).reset_context(
+                ResetContextRequest(),
+                confirmation=confirmation,
+            )
+        )
+        purged = _resources_purged(result)
+        cleared = "graph state and stored documents" if purged else "graph state"
+        if already_archived:
+            pot = target
+            human = f"'{pot.name}' ({pot_id}) was already archived; {cleared} cleared"
+        else:
+            pot = get_pot_service(host).archive_pot(ref=pot_id)
+            human = f"archived '{pot.name}' ({cleared} cleared)"
+        emit(
+            {
+                "id": pot.pot_id,
+                "name": pot.name,
+                "archived": True,
+                "already_archived": already_archived,
+                "graph_reset": bool(result.reset),
+                "resources_purged": purged,
+            },
+            human=human,
+        )
+
+
+def _dispatch_source_kind(raw: str) -> SourceKind:
+    """Resolve a kind token to its handler, or fail with the contract error.
+
+    Both failure modes are caller mistakes (exit 1) that a retry can fix,
+    and they need different retries — one points at ``resource import``,
+    the other at the accepted vocabulary — so they carry distinct codes.
+    """
+    resolved = resolve_kind(raw)
+    if resolved is None:
+        fail(
+            code="unknown_source_kind",
+            message=f"'{raw}' is not a source kind Potpie registers.",
+            detail={
+                "kinds": list(registrable_names()),
+                "accepted": list(known_tokens()),
+            },
+            next_action=("re-run with one of: " + ", ".join(registrable_names())),
+        )
+    if resolved.disposition == "resource":
+        fail(
+            code="source_kind_is_a_document",
+            message=(
+                f"'{raw}' names a document payload, which is stored in the "
+                "resource store, not the source registry."
+            ),
+            detail={"kind": resolved.name},
+            next_action=(
+                "split the document with the matching potpie-resource-* skill, "
+                "then run 'potpie resource import <dir> --doc <slug>'"
+            ),
+        )
+    return resolved
 
 
 @source_app.command("add")
 def source_add(
-    kind: str = typer.Argument(..., help="repo | github | document | ..."),
+    kind: str = typer.Argument(
+        ...,
+        help="repo | linear | jira | confluence | notion | url "
+        "(github/gitlab/gitbucket register as repo).",
+    ),
     location: str = typer.Argument(
         ...,
         help="Path, owner/repo, URL, or integration location to register. For "
@@ -472,17 +661,28 @@ def source_add(
     ),
     name: str = typer.Option(None, "--name", help="Optional display/source name."),
     pot: str = typer.Option(None, "--pot", help="Pot id/name (default: resolved pot)."),
-    make_default: bool = typer.Option(
-        True,
+    make_default: bool | None = typer.Option(
+        None,
         "--default/--no-default",
-        help="For repo sources, set this pot as the local default for this repo.",
+        help="Repo sources only: set this pot as the local default for this repo "
+        "(on by default). Passing --default for a non-repo kind is an error.",
     ),
 ) -> None:
     """Register source metadata only; no ingestion or repository scan is started."""
     with contract():
         host = get_root_runtime()
-        source_kind = kind.strip()
-        is_repo = source_kind.lower() == "repo"
+        source_kind = _dispatch_source_kind(kind)
+        is_repo = source_kind.disposition == "repo"
+        if not is_repo and make_default is True:
+            fail(
+                code="repo_default_not_applicable",
+                message=(
+                    f"--default only applies to repo sources; '{source_kind.name}' "
+                    "does not carry a repo identity."
+                ),
+                detail={"kind": source_kind.name},
+                next_action="drop --default, or bind the pot with 'potpie pot default set'",
+            )
         # Registration establishes the repo→pot mapping, so the target is the
         # explicit/active pot — never inferred from existing registrations.
         pot_id = resolve_pot_id(host, pot, infer_from_repo=False)
@@ -490,7 +690,7 @@ def source_add(
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_started",
             entrypoint="direct_command",
-            properties={"source_kind": source_kind},
+            properties={"source_kind": source_kind.name},
         )
         try:
             if is_repo:
@@ -499,12 +699,12 @@ def source_add(
                     pot_id=pot_id,
                     location=location,
                     name=name,
-                    make_default=make_default,
+                    make_default=make_default is not False,
                 )
             else:
                 src = get_pot_service(host).add_source(
                     pot_id=pot_id,
-                    kind=source_kind,
+                    kind=source_kind.name,
                     location=location,
                     name=name,
                 )
@@ -522,17 +722,22 @@ def source_add(
                 "cli_onboarding_repo_source_add_failed",
                 entrypoint="direct_command",
                 properties={
-                    "source_kind": kind,
+                    "source_kind": source_kind.name,
                     "failure_kind": sanitized_failure_kind(exc),
                     "duration_ms": elapsed_ms(started_ms),
                 },
             )
             raise
+        # An alias canonicalized (github → repo) is reported, never silent:
+        # the stored kind is what `source list` and repo-default matching see.
+        requested = kind.strip().lower()
+        if requested != source_kind.name:
+            payload["requested_kind"] = requested
         capture_project_binding_event(
             "cli_onboarding_repo_source_add_completed",
             entrypoint="direct_command",
             properties={
-                "source_kind": payload.get("kind", source_kind),
+                "source_kind": payload.get("kind", source_kind.name),
                 "step_state": "done",
                 "duration_ms": elapsed_ms(started_ms),
             },
@@ -550,6 +755,11 @@ def source_add(
             human=(
                 f"registered source {payload['kind']}:{payload['name']} "
                 f"({payload['source_id']}) at {resolved_location} in pot {pot_id}\n"
+                + (
+                    f"kind '{requested}' registered as '{source_kind.name}'\n"
+                    if requested != source_kind.name
+                    else ""
+                )
                 + (f"set repo default -> {pot_id}\n" if repo_default_set else "")
                 + "no ingestion or scan started"
             ),

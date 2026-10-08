@@ -65,6 +65,21 @@ from potpie_context_engine.core.semantic_mutations import (
 
 from .resource_journal import journal_resource_workflow, reject_journal_admin
 
+
+def _protocols_enabled(graph: Any) -> bool:
+    """Whether the composed graph definition carries the protocol extension.
+
+    Protocol source protection belongs to that opt-in extension: without it
+    there are no protocol claims to protect, so a facade composed without a
+    protocol-bearing graph never runs those checks.
+    """
+    from potpie_context_engine.core.definition import GraphDefinition
+    from potpie_context_engine.core.journal_inverse import protocols_enabled_for
+
+    definition = getattr(graph, "definition", None)
+    return isinstance(definition, GraphDefinition) and protocols_enabled_for(definition)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -99,6 +114,37 @@ class ResourceFacade:
     snapshot: GraphSnapshotPort | None = None
     journal: Any = None
 
+    @classmethod
+    def from_runtime(
+        cls,
+        runtime: Any,
+        *,
+        store: ResourceStorePort,
+        index: ResourceIndexPort | None = None,
+        drain: Any = None,
+    ) -> ResourceFacade:
+        """Compose the facade over an already-built ``GraphRuntime``.
+
+        The graph service, claim query, snapshot port and journal all come from
+        the runtime, so an embedding host never patches them onto the facade
+        afterwards. ``store`` and ``index`` must be the instances given to
+        ``build_graph_runtime(resource_store=..., resource_index=...)``: the
+        read trunk answers the ``resources`` family from that index, and one
+        instance is what makes an import visible to the very next search.
+        ``drain`` is the host's ``ResourceIndexDrain`` (or ``None``), which the
+        facade only signals; starting and stopping it stays with the host.
+        """
+        backend = runtime.backend
+        return cls(
+            store=store,
+            graph=runtime.graph,
+            claims=backend.claim_query,
+            index=index,
+            drain=drain,
+            snapshot=backend.snapshot,
+            journal=getattr(backend, "journal", None),
+        )
+
     def export_snapshot(self, *, pot_id: str) -> dict[str, Any]:
         """Export graph and document revisions as one portable bundle."""
         from .snapshot_archive import export_archive
@@ -130,22 +176,23 @@ class ResourceFacade:
         Bytes first, deliberately: there is no transaction across the stores,
         and a failed graph write leaves orphan files the next import
         overwrites, whereas the reverse order would leave live claims citing
-        chunks that do not exist. The index comes last for the same reason one
-        step further — it is the only one of the three that can be recomputed
-        from the others.
+        chunks that do not exist. The index is written right after the bytes,
+        before the graph: it is the only one of the three that can be
+        recomputed from the others, so a failure there never fails the import.
         """
         from .protocol_resources import protect_protocol_source
 
         prior = self._current_manifest(pot_id=pot_id, slug=slug)
 
-        protect_protocol_source(
-            self.store,
-            self.claims,
-            pot_id=pot_id,
-            slug=slug,
-            files=files,
-            source_dir=source_dir,
-        )
+        if _protocols_enabled(self.graph):
+            protect_protocol_source(
+                self.store,
+                self.claims,
+                pot_id=pot_id,
+                slug=slug,
+                files=files,
+                source_dir=source_dir,
+            )
         manifest = self.store.import_dir(
             pot_id=pot_id,
             slug=slug,
@@ -623,7 +670,8 @@ class ResourceFacade:
             raise
         from .protocol_resources import protect_protocol_source
 
-        protect_protocol_source(self.store, self.claims, pot_id=pot_id, slug=slug)
+        if _protocols_enabled(self.graph):
+            protect_protocol_source(self.store, self.claims, pot_id=pot_id, slug=slug)
         manifest = self.store.current_manifest(pot_id=pot_id, slug=slug)
         evidence_refs = tuple(
             ref

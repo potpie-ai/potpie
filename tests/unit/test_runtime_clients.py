@@ -39,6 +39,7 @@ from potpie_context_engine import (
     Success,
 )
 from potpie_context_engine.requests import (
+    ApplyPreviewRequest,
     DescribeRequest,
     RecordRequest,
     RepairRequest,
@@ -75,6 +76,10 @@ class _RecordingEngine:
     async def reset_context(self, request: ResetContextRequest):
         self.calls.append(("reset_context", request.to_payload()))
         return Success({"context_id": self.context.value, "reset": True})
+
+    async def apply_preview(self, request: ApplyPreviewRequest):
+        self.calls.append(("apply_preview", request.to_payload()))
+        return Success({"ok": True, "status": "committed"})
 
 
 class _Lease:
@@ -480,3 +485,82 @@ async def test_response_correlation_mismatch_is_typed_protocol_failure() -> None
     assert isinstance(outcome, Failure)
     assert isinstance(outcome.error, ProtocolError)
     assert outcome.error.code == "response_request_id_mismatch"
+
+
+_COMMIT_READS = {
+    EngineOperation.COMMIT_STATUS,
+    EngineOperation.VERIFY_COMMIT,
+    EngineOperation.JOURNAL_STATUS,
+    EngineOperation.COMMITS,
+    EngineOperation.COMMIT_SHOW,
+}
+_COMMIT_WRITES = {
+    EngineOperation.REVERT_PREVIEW,
+    EngineOperation.ROLLBACK_PREVIEW,
+    EngineOperation.APPLY_PREVIEW,
+    EngineOperation.DISABLE_ROLLBACK,
+    EngineOperation.REBUILD_COMMITS,
+}
+
+
+def test_commit_history_reads_are_shared_and_only_applying_is_destructive() -> None:
+    for operation in _COMMIT_READS:
+        spec = ENGINE_OPERATION_CATALOG[operation]
+        assert spec.safety is SafetyClass.SHARED_CONTEXT_READ, operation
+        assert not spec.destructive, operation
+    for operation in _COMMIT_WRITES:
+        spec = ENGINE_OPERATION_CATALOG[operation]
+        assert spec.safety is SafetyClass.EXCLUSIVE_CONTEXT_MUTATION, operation
+    # A preview changes nothing; the change happens when it is applied.
+    assert {
+        operation
+        for operation in _COMMIT_WRITES
+        if ENGINE_OPERATION_CATALOG[operation].destructive
+    } == {EngineOperation.APPLY_PREVIEW}
+
+
+@pytest.mark.anyio
+async def test_local_client_binds_apply_preview_confirmation_to_exact_request() -> None:
+    engine = _RecordingEngine()
+    manager = _ResourceManager(engine)
+    selector = ContextSelector(kind="explicit", value="context-a")
+    client = LocalEngineClient(
+        selector=selector,
+        authentication="credential",
+        resource_manager=cast(ContextResourceManager, manager),
+        coordinator=OperationCoordinator(),
+        request_id_factory=_request_ids("apply-request"),
+    )
+
+    outcome = await client.apply_preview(
+        ApplyPreviewRequest(preview_id="rollback-preview:1"),
+        confirmation=DestructiveConfirmation(confirmed=True),
+    )
+
+    assert isinstance(outcome, Success)
+    acquisition = manager.requests[0]
+    assert acquisition.operation == "apply_preview"
+    assert acquisition.destructive is True
+    assert acquisition.destructive_intent is not None
+    assert acquisition.destructive_intent.operation == "apply_preview"
+    assert acquisition.destructive_intent.selector == selector
+    assert acquisition.destructive_intent.request_id == "apply-request"
+    assert engine.calls == [("apply_preview", {"preview_id": "rollback-preview:1"})]
+
+
+def test_resource_writes_hold_the_context_exclusively() -> None:
+    """Imports and removals write bytes, graph claims and journal receipts in
+    one workflow, fenced by the journal's resource guard; they must not
+    interleave with graph commits, rollback previews or applies on the same
+    context. Index rebuilds touch only derived rows and read the context."""
+    for operation in (EngineOperation.RESOURCE_IMPORT, EngineOperation.RESOURCE_RM):
+        spec = ENGINE_OPERATION_CATALOG[operation]
+        assert spec.safety is SafetyClass.EXCLUSIVE_CONTEXT_MUTATION, operation
+    for operation in (
+        EngineOperation.RESOURCE_INDEX_BUILD,
+        EngineOperation.RESOURCE_INDEX_REBUILD,
+    ):
+        spec = ENGINE_OPERATION_CATALOG[operation]
+        assert (
+            spec.safety is SafetyClass.SHARED_CONTEXT_READ_EXCLUSIVE_RESOURCE_WRITE
+        ), operation

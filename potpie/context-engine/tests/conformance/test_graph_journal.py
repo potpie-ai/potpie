@@ -997,3 +997,99 @@ def test_restore_validation_keeps_system_edges_scoped_and_unknown_edges_closed()
     unknown = replace(claim, fields={**claim.fields, "predicate": "UNKNOWN_INTERNAL"})
     with pytest.raises(JournalError, match="unknown edge type"):
         validate_state({**records, "system": unknown}, pot_id="p")
+
+
+def test_protocol_restore_checks_run_only_with_the_protocol_extension(monkeypatch):
+    from potpie_context_engine.core import protocols as protocol_module
+    from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION
+    from potpie_context_engine.core.journal_inverse import protocols_enabled_for
+    from potpie_context_engine.protocols import protocols_definition
+
+    definition = protocols_definition()
+    assert protocols_enabled_for(definition) is True
+    assert protocols_enabled_for(DEFAULT_GRAPH_DEFINITION) is False
+
+    record = JournalRecord(
+        "protocol:x",
+        "p",
+        "protocol:not-its-identity",
+        "entity",
+        {"labels": ("Protocol",), "properties": {"namespace": "acme"}},
+    )
+    calls = []
+    original = protocol_module.protocol_entity_key
+
+    def recording(label, properties):
+        calls.append(label)
+        return original(label, properties)
+
+    monkeypatch.setattr(protocol_module, "protocol_entity_key", recording)
+    with pytest.raises(JournalError):
+        validate_state({"protocol:x": record}, pot_id="p")
+    # Off by default: the refusal came from the ordinary definition, and no
+    # protocol identity check ran.
+    assert calls == []
+    with pytest.raises(JournalError, match="protocol"):
+        validate_state(
+            {"protocol:x": record},
+            pot_id="p",
+            definition=definition,
+            protocols_enabled=True,
+        )
+    assert calls == ["Protocol"]
+
+
+def test_restore_through_the_runtime_verifies_document_references(backend, tmp_path):
+    """A runtime composed with a resource store checks every restored citation
+    of a stored chunk; once the bytes are gone the restore is refused."""
+    from potpie_context_engine.core.runtime import build_graph_runtime
+
+    from potpie_context_engine.adapters.outbound.resources.local_resource_store import (
+        LocalResourceStore,
+    )
+    from potpie_context_engine.application.services.resource_facade import (
+        ResourceFacade,
+    )
+    from potpie_context_engine.testing import InMemoryGraphPlanStore
+
+    store = LocalResourceStore(home=tmp_path / "resources")
+    runtime = build_graph_runtime(
+        backend=backend, plan_store=InMemoryGraphPlanStore(), resource_store=store
+    )
+    facade = ResourceFacade.from_runtime(runtime, store=store)
+    assert facade.journal is not None
+    imported = facade.import_dir(
+        pot_id="p",
+        slug="test",
+        files={
+            "meta.json": json.dumps(
+                {
+                    "source_ref": "synthetic:test",
+                    "sections": [
+                        {
+                            "slug": "body",
+                            "title": "Body",
+                            "summary": "Source text",
+                            "ordinal": 0,
+                            "chunks": [{"seq": 0, "label": "Body"}],
+                        }
+                    ],
+                }
+            ),
+            "body/0000.txt": "Evidence",
+        },
+    )
+    assert imported.graph.ok, imported.graph
+    journal = runtime.backend.journal
+    write(backend, "after-import", summary="graph only")
+
+    plan = journal.plan_restore(
+        pot_id="p", target_commit_id="after-import", expected_head="after-import"
+    )
+    assert plan.target_commit_ids == ("after-import",)
+
+    store.delete(pot_id="p", slug="test")
+    with pytest.raises(JournalError, match="resource reference cannot be verified"):
+        journal.plan_restore(
+            pot_id="p", target_commit_id="after-import", expected_head="after-import"
+        )
