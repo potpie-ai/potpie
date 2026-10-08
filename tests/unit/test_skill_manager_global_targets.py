@@ -436,7 +436,7 @@ def test_an_unknown_agent_is_refused_at_project_scope_too(
 ) -> None:
     """Global scope refused a typo; project scope answered it.
 
-    ``ProjectAgentTarget`` was built for any string and fell through to the
+    The project target was built for any string and fell through to the
     default ``.agents/skills`` layout, so a mistyped harness produced a complete
     and entirely plausible listing — every catalog skill, all ``installed:
     false`` — for a harness that does not exist.

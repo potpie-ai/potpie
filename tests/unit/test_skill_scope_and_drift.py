@@ -32,7 +32,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 
 from potpie.runtime.composition import build_local_runtime
 from potpie.skills.harness_home import harness_home
-from potpie.skills.targets import ClaudeAgentTarget, ProjectAgentTarget
+from potpie.skills.targets import AgentTarget
 
 SKILL = "potpie-cli"
 
@@ -67,7 +67,8 @@ def test_harness_home_follows_its_own_variable(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setenv("POTPIE_HARNESS_HOME", str(tmp_path / "sandbox"))
 
     assert (
-        ClaudeAgentTarget().skills_root == tmp_path / "sandbox" / ".claude" / "skills"
+        AgentTarget(agent="claude").skills_root
+        == tmp_path / "sandbox" / ".claude" / "skills"
     )
 
 
@@ -119,7 +120,9 @@ def test_target_root_is_the_repo_root_not_the_path_passed_in(tmp_path: Path) -> 
     nested = repo / "packages" / "api"
     nested.mkdir(parents=True)
 
-    target = ProjectAgentTarget(agent="codex", path=nested, home=tmp_path / "potpie")
+    target = AgentTarget(
+        agent="codex", scope="project", path=nested, home=tmp_path / "potpie"
+    )
 
     # Installs have always resolved to the nearest git root, so reporting the
     # raw --path named a directory nothing was written to.

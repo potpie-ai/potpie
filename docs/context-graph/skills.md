@@ -58,34 +58,41 @@ per-harness install/drift logic and delegates *where/how* to a registered
 `AgentTargetPort` per harness. Operations: `list / install / update / remove /
 status / nudge / add` (`add` is a TODO stub).
 
-Targets are implemented in `potpie/skills/targets.py` and wired in
-`potpie/runtime/composition.py`; each
-`FileBackedAgentTarget` installs into a harness-specific **global** skills root,
-and a `--scope project` install routes through `ProjectAgentTarget` instead:
+One table, `HARNESS_LAYOUTS` in `potpie/skills/harnesses.py`, says where each
+harness reads Potpie's files at each scope. One target class,
+`AgentTarget` in `potpie/skills/targets.py`, reads it for a harness at
+`global` or `project` scope; `potpie/runtime/composition.py` registers one
+global target per row, and a `--scope project` call builds a project target for
+a registered harness.
 
-| Harness (`--agent`) | Target | Global skills root |
-|---|---|---|
-| `claude` | `ClaudeAgentTarget` | `~/.claude/skills` (instructions in `~/.claude`) |
-| `codex` | `CodexAgentTarget` | `~/.agents/skills` |
-| `cursor` | `CursorAgentTarget` | `~/.cursor/skills` |
-| `opencode` | `OpenCodeAgentTarget` | `~/.config/opencode/skills` |
+| Harness (`--agent`) | Global skills | Global instructions | Project skills | Project instructions |
+|---|---|---|---|---|
+| `claude` | `~/.claude/skills` | `~/.claude/CLAUDE.md` | `.claude/skills` | `CLAUDE.md` |
+| `codex` | `~/.agents/skills` | `~/.codex/AGENTS.md` | `.agents/skills` | `AGENTS.md` |
+| `cursor` | `~/.cursor/skills` | — | `.cursor/skills` | `AGENTS.md` |
+| `opencode` | `~/.config/opencode/skills` | — | `.opencode/skills` | — |
+
+`default` is an alias of `codex` for the repository bundle an embedding host
+installs with `install_agent_bundle()`; it is not a harness the skills CLI
+manages, and `potpie setup --agent default` skips the skills step.
 
 Global roots hang off `POTPIE_HARNESS_HOME` when it is set (the test suite pins
 it), otherwise the real home directory; `CONTEXT_ENGINE_HOME` deliberately does
 not move them.
 
-Install mechanics (`potpie/skills/installer.py`):
+Install mechanics (`potpie/skills/installer.py`, one `install_bundle` and one
+`uninstall_bundle`; both read the bundle through `potpie/skills/bundle.py`):
 
-- Templates are copied/remapped per harness layout: `claude → .claude/skills`,
-  `cursor → .cursor/skills`, `opencode → .opencode/skills`.
+- Every harness installs the same skill files, placed under its skills
+  directory from the table.
 - `AGENTS.md` / `CLAUDE.md` are **merged**, not overwritten — managed content
   lives between `<!-- potpie-start -->` / `<!-- potpie-end -->` markers
   (`_merge_managed_markdown`), preserving the user's own instructions.
-- **Support files belong to the sweep.** The instruction block is written only
-  by a bundle install or update (no skill id) and named in the result's
-  `metadata.support_files`; naming one skill id installs that skill alone.
-  `skills remove --all` takes the same block back out — the managed section
-  only, so a user's own `CLAUDE.md` text survives.
+- **The routing block belongs to the sweep.** It is written only by a bundle
+  install or update (no skill id), and the instruction file it went into is
+  named in the result's `metadata.support_files`; naming one skill id installs
+  that skill alone. `skills remove --all` takes the same block back out — the
+  managed section only, so a user's own `CLAUDE.md` text survives.
 - **Retired Claude files.** Earlier releases also wrote two slash commands into
   a repository's `.claude/commands/` and offered a Claude Code plugin directory
   under `.claude/`; neither ships now. A project-scope Claude sweep (install or
@@ -112,12 +119,15 @@ Install mechanics (`potpie/skills/installer.py`):
 
 ### The correctness gate (this is real, not aspirational)
 
-Before **every** install/update, `validate_packaged_skill_command_snippets`
-extracts every `potpie …` line from the skill's ```` ```bash ```` fences and
-validates each command + option against the **live Typer specs introspected from
-`potpie.cli.main.app`**. A skill physically cannot ship a `potpie`
-command or flag that does not exist — the install raises `ValueError` first.
-(Only `potpie` lines are checked; other shell commands depend on the user's repo.)
+`validate_packaged_skill_command_snippets` (`potpie/skills/snippets.py`)
+extracts every `potpie …` command a packaged template teaches — lines in
+```` ```bash ```` fences and inline `` `potpie …` `` spans — and validates each
+command + option against a command table. `tests/unit/test_agent_skill_templates.py`
+runs it at build time with the **live Typer specs introspected from
+`potpie.cli.main.app`**, so a skill cannot ship a `potpie` command or flag that
+does not exist; installs no longer import the CLI to re-check the bundle the
+build already checked. (Only `potpie` commands are checked; other shell commands
+depend on the user's repo.)
 
 ### CLI surface
 

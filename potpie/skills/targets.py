@@ -1,35 +1,29 @@
-"""Agent harness install targets for Potpie's packaged skills."""
+"""The install target for Potpie's packaged skills: one harness at one scope."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import re
-import shutil
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Mapping
+from pathlib import Path, PurePosixPath
+from typing import Mapping
 
 from potpie.config.local_paths import default_home
-from potpie.skills.catalog import (
-    RECOMMENDED_SKILL_IDS,
-)
+from potpie.skills.bundle import bundle_skill_ids
+from potpie.skills.catalog import RECOMMENDED_SKILL_IDS
 from potpie.skills.harness_home import harness_home
+from potpie.skills.harnesses import HarnessLayout, harness_layout
 from potpie.skills.installer import (
     InstallResult,
     UninstallResult,
-    available_skill_ids,
-    install_agent_bundle,
-    install_global_agent_instructions,
-    install_skill_bundle,
-    project_skill_path,
-    prune_empty_dirs,
+    install_bundle,
     resolve_install_root,
-    uninstall_agent_bundle,
-    uninstall_global_agent_instructions,
+    uninstall_bundle,
 )
 
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+_SCOPES = ("global", "project")
 
 
 def _read_version_manifest(path: Path) -> dict[str, str]:
@@ -79,55 +73,123 @@ def _project_manifest_slug(root: Path) -> str:
 
 
 @dataclass(slots=True)
-class FileBackedAgentTarget:
-    """Install packaged Potpie skills into one harness-specific skills root."""
+class AgentTarget:
+    """Install packaged Potpie skills for one harness, globally or in one repo.
+
+    Where files land comes from the harness's row in
+    :data:`~potpie.skills.harnesses.HARNESS_LAYOUTS`: under the harness home at
+    ``global`` scope, under the repository containing ``path`` at ``project``
+    scope. What was installed — versions, content hashes, disabled skills — is
+    recorded under ``home``.
+    """
 
     agent: str
-    skills_root: Path
-    instructions_root: Path | None = None
-    instructions_agent: str | None = None
-    home: Path = field(default_factory=default_home)
     scope: str = "global"
+    path: Path = Path(".")
+    home: Path = field(default_factory=default_home)
+    _layout: HarnessLayout = field(init=False, repr=False)
+    _harness_home: Path = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.scope not in _SCOPES:
+            raise ValueError("scope must be 'global' or 'project'")
+        self._layout = harness_layout(self.agent)
+        self._harness_home = harness_home()
+
+    # --- where files land -----------------------------------------------------
 
     @property
     def target_root(self) -> Path:
-        return self.skills_root.expanduser()
+        """Where files actually land: the skills root, or the repo root.
+
+        At project scope this is the repo root, not the path passed in:
+        ``install`` has always resolved to the nearest git root, so reporting
+        the raw ``--path`` named a directory nothing was written to whenever
+        the caller pointed at a subdirectory.
+        """
+        if self.scope == "global":
+            return self.skills_root
+        return resolve_install_root(self.path)
+
+    @property
+    def skills_root(self) -> Path:
+        """The directory holding one subdirectory per installed skill."""
+        if self.scope == "global":
+            return self._harness_home / self._layout.global_skills
+        return self.target_root / self._layout.project_skills
+
+    def _placement(self, path: str | None) -> tuple[Path, PurePosixPath]:
+        """``(root, skills directory under it)`` for an operation on ``path``.
+
+        ``path`` overrides the default the way it always has: a skills root at
+        global scope, a directory inside the repository at project scope.
+        """
+        if self.scope == "global":
+            root = Path(path).expanduser() if path else self.skills_root
+            return root, PurePosixPath(".")
+        repo = resolve_install_root(Path(path) if path else self.path)
+        return repo, self._layout.project_skills
+
+    def _instructions(self, path: str | None) -> tuple[Path, PurePosixPath] | None:
+        """``(root, instruction file under it)``, or ``None`` if the harness has none."""
+        if self.scope == "global":
+            rel = self._layout.global_instructions
+            if rel is None:
+                return None
+            # Rooted at the file's own directory, so results name `CLAUDE.md`.
+            return self._harness_home / rel.parent, PurePosixPath(rel.name)
+        rel = self._layout.project_instructions
+        if rel is None:
+            return None
+        return resolve_install_root(Path(path) if path else self.path), rel
+
+    @property
+    def _sweeps_retired_claude_files(self) -> bool:
+        # Only repositories ever received the retired slash commands and plugin.
+        return self.scope == "project" and self._layout.sweeps_retired_claude_files
+
+    def _skill_file(self, skill_id: str, *, path: str | None = None) -> Path:
+        root, skills_dir = self._placement(path)
+        return root / skills_dir / skill_id / "SKILL.md"
+
+    # --- install records ------------------------------------------------------
 
     @property
     def _path(self) -> Path:
-        return self.home / f"skills_{self.agent}_{self.scope}.json"
-
-    def _load(self) -> dict[str, str]:
-        return _read_version_manifest(self._path)
+        name = f"skills_{self.agent}_{self.scope}"
+        if self.scope == "project":
+            name = f"{name}_{_project_manifest_slug(self.target_root)}"
+        return self.home / f"{name}.json"
 
     @property
     def _hash_path(self) -> Path:
-        name = self._path.name.replace("skills_", "skill_hashes_", 1)
-        return self._path.with_name(name)
+        return self._path.with_name(
+            self._path.name.replace("skills_", "skill_hashes_", 1)
+        )
 
     @property
     def _disabled_path(self) -> Path:
-        name = self._path.name.replace("skills_", "skill_disabled_", 1)
-        return self._path.with_name(name)
+        return self._path.with_name(
+            self._path.name.replace("skills_", "skill_disabled_", 1)
+        )
 
-    def _save(self, data: Mapping[str, str]) -> None:
+    def _save_to(self, path: Path, data: Mapping[str, str]) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
-        with open(self._path, "w", encoding="utf-8") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(dict(data), fh, indent=2)
 
-    def _skill_file(self, skill_id: str) -> Path:
-        return self.skills_root.expanduser() / skill_id / "SKILL.md"
+    # --- AgentTargetPort ------------------------------------------------------
 
     def installed(self) -> Mapping[str, str]:
-        manifest = self._load()
-        installed: dict[str, str] = {}
-        for sid in RECOMMENDED_SKILL_IDS:
-            if self._skill_file(sid).exists():
-                installed[sid] = manifest.get(sid, "unknown")
-        return installed
+        manifest = _read_version_manifest(self._path)
+        return {
+            sid: manifest.get(sid, "unknown")
+            for sid in RECOMMENDED_SKILL_IDS
+            if self._skill_file(sid).exists()
+        }
 
     def available(self) -> frozenset[str]:
-        return available_skill_ids(agent=self.agent)
+        return bundle_skill_ids()
 
     def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
         """Is what is on disk byte-identical to what :meth:`install` would write?
@@ -138,9 +200,13 @@ class FileBackedAgentTarget:
         went on loading a broken skill with no way to repair it short of
         deleting the directory by hand.
         """
-        root = Path(path).expanduser() if path else self.skills_root
-        result = install_skill_bundle(
-            root, skill_ids=(skill_id,), force=True, dry_run=True
+        root, skills_dir = self._placement(path)
+        result = install_bundle(
+            root,
+            skills_dir=skills_dir,
+            skill_ids=(skill_id,),
+            force=True,
+            dry_run=True,
         )
         return not (result.created or result.updated)
 
@@ -160,243 +226,54 @@ class FileBackedAgentTarget:
             state.pop(skill_id, None)
         self._save_to(self._disabled_path, state)
 
-    def _save_to(self, path: Path, data: Mapping[str, str]) -> None:
-        self.home.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(dict(data), fh, indent=2)
-
     def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
-        root = Path(path).expanduser() if path else self.skills_root
-        install_skill_bundle(root, skill_ids=(skill_id,), force=True)
-        data = self._load()
-        if (root.expanduser() / skill_id / "SKILL.md").exists():
-            data[skill_id] = version
-        self._save(data)
-        hashes = _read_version_manifest(self._hash_path)
-        digest = _file_digest(root.expanduser() / skill_id / "SKILL.md")
+        # The instruction file is the caller's *other* request (see
+        # ``install_instructions``): bundling it in here is what made
+        # ``skills install potpie-cli`` also edit CLAUDE.md without naming it.
+        root, skills_dir = self._placement(path)
+        install_bundle(root, skills_dir=skills_dir, skill_ids=(skill_id,), force=True)
+        skill_md = self._skill_file(skill_id, path=path)
+        versions = _read_version_manifest(self._path)
+        if skill_md.exists():
+            versions[skill_id] = version
+        self._save_to(self._path, versions)
+        digest = _file_digest(skill_md)
         if digest:
+            hashes = _read_version_manifest(self._hash_path)
             hashes[skill_id] = digest
             self._save_to(self._hash_path, hashes)
 
-    def install_support_files(self, *, path: str | None = None) -> InstallResult | None:
-        del path
-        if self.instructions_root is None:
+    def install_instructions(self, *, path: str | None = None) -> InstallResult | None:
+        placement = self._instructions(path)
+        if placement is None:
             return None
-        return install_global_agent_instructions(
-            self.instructions_root,
-            agent=self.instructions_agent or self.agent,
+        root, rel = placement
+        return install_bundle(
+            root,
+            skill_ids=(),
+            instructions=rel,
+            sweep_retired_claude_files=self._sweeps_retired_claude_files,
             force=True,
         )
 
-    def remove_support_files(
-        self, *, path: str | None = None
-    ) -> UninstallResult | None:
-        """The mirror of :meth:`install_support_files`; see it for what these are."""
-        del path
-        if self.instructions_root is None:
+    def remove_instructions(self, *, path: str | None = None) -> UninstallResult | None:
+        """The mirror of :meth:`install_instructions`."""
+        placement = self._instructions(path)
+        if placement is None:
             return None
-        return uninstall_global_agent_instructions(
-            self.instructions_root,
-            agent=self.instructions_agent or self.agent,
+        root, rel = placement
+        return uninstall_bundle(
+            root,
+            instructions=rel,
+            sweep_retired_claude_files=self._sweeps_retired_claude_files,
         )
 
     def remove(self, *, skill_id: str) -> None:
-        shutil.rmtree(self.skills_root.expanduser() / skill_id, ignore_errors=True)
-        data = self._load()
-        data.pop(skill_id, None)
-        self._save(data)
+        root, skills_dir = self._placement(None)
+        uninstall_bundle(root, skills_dir=skills_dir, skill_ids=(skill_id,))
+        versions = _read_version_manifest(self._path)
+        versions.pop(skill_id, None)
+        self._save_to(self._path, versions)
 
 
-@dataclass(slots=True)
-class ProjectAgentTarget:
-    """Install packaged Potpie skills into a repository-local harness path."""
-
-    agent: str = "claude"
-    path: Path = Path(".")
-    home: Path = field(default_factory=default_home)
-    scope: str = "project"
-
-    @property
-    def target_root(self) -> Path:
-        """Where files actually land — the repo root, not the path passed in.
-
-        ``install`` has always resolved to the nearest git root, so reporting
-        the raw ``--path`` as ``metadata.target_root`` named a directory nothing
-        was written to whenever the caller pointed at a subdirectory.
-        """
-        return resolve_install_root(self.path)
-
-    @property
-    def _path(self) -> Path:
-        return (
-            self.home
-            / f"skills_{self.agent}_{self.scope}_{_project_manifest_slug(self.target_root)}.json"
-        )
-
-    def _load(self) -> dict[str, str]:
-        return _read_version_manifest(self._path)
-
-    @property
-    def _hash_path(self) -> Path:
-        name = self._path.name.replace("skills_", "skill_hashes_", 1)
-        return self._path.with_name(name)
-
-    @property
-    def _disabled_path(self) -> Path:
-        name = self._path.name.replace("skills_", "skill_disabled_", 1)
-        return self._path.with_name(name)
-
-    def _save(self, data: Mapping[str, str]) -> None:
-        self.home.mkdir(parents=True, exist_ok=True)
-        with open(self._path, "w", encoding="utf-8") as fh:
-            json.dump(dict(data), fh, indent=2)
-
-    def _save_to(self, path: Path, data: Mapping[str, str]) -> None:
-        self.home.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(dict(data), fh, indent=2)
-
-    def installed(self) -> Mapping[str, str]:
-        manifest = self._load()
-        installed: dict[str, str] = {}
-        for sid in RECOMMENDED_SKILL_IDS:
-            if project_skill_path(self.path, agent=self.agent, skill_id=sid).exists():
-                installed[sid] = manifest.get(sid, "unknown")
-        return installed
-
-    def available(self) -> frozenset[str]:
-        return available_skill_ids(agent=self.agent)
-
-    def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
-        """See :meth:`FileBackedAgentTarget.matches_bundle`."""
-        root = Path(path) if path else self.path
-        result = install_agent_bundle(
-            root,
-            agent=self.agent,
-            skill_ids=(skill_id,),
-            force=True,
-            support_files=False,
-            dry_run=True,
-        )
-        return not (result.created or result.updated)
-
-    def locally_modified(self, *, skill_id: str) -> bool:
-        expected = _read_version_manifest(self._hash_path).get(skill_id)
-        current = _file_digest(
-            project_skill_path(self.path, agent=self.agent, skill_id=skill_id)
-        )
-        return expected is not None and current is not None and current != expected
-
-    def disabled(self) -> frozenset[str]:
-        return frozenset(_read_version_manifest(self._disabled_path))
-
-    def set_disabled(self, *, skill_id: str, disabled: bool) -> None:
-        state = _read_version_manifest(self._disabled_path)
-        if disabled:
-            state[skill_id] = "disabled"
-        else:
-            state.pop(skill_id, None)
-        self._save_to(self._disabled_path, state)
-
-    def install(self, *, skill_id: str, version: str, path: str | None = None) -> None:
-        root = Path(path) if path else self.path
-        # Support files are the caller's *other* request; see
-        # ``install_support_files``. Bundling them in here is what made
-        # ``skills install potpie-cli`` also write CLAUDE.md and other files,
-        # none of them named in ``changed``.
-        install_agent_bundle(
-            root,
-            agent=self.agent,
-            skill_ids=(skill_id,),
-            force=True,
-            support_files=False,
-        )
-        data = self._load()
-        if project_skill_path(root, agent=self.agent, skill_id=skill_id).exists():
-            data[skill_id] = version
-        self._save(data)
-        hashes = _read_version_manifest(self._hash_path)
-        digest = _file_digest(
-            project_skill_path(root, agent=self.agent, skill_id=skill_id)
-        )
-        if digest:
-            hashes[skill_id] = digest
-            self._save_to(self._hash_path, hashes)
-
-    def install_support_files(self, *, path: str | None = None) -> InstallResult:
-        root = Path(path) if path else self.path
-        return install_agent_bundle(
-            root, agent=self.agent, skill_ids=(), force=True, support_files=True
-        )
-
-    def remove_support_files(self, *, path: str | None = None) -> UninstallResult:
-        """The mirror of :meth:`install_support_files`; see it for what these are."""
-        root = Path(path) if path else self.path
-        return uninstall_agent_bundle(root, agent=self.agent)
-
-    def remove(self, *, skill_id: str) -> None:
-        skill_dir = project_skill_path(
-            self.path, agent=self.agent, skill_id=skill_id
-        ).parent
-        shutil.rmtree(skill_dir, ignore_errors=True)
-        # The harness's skills directory is Potpie's own; once the last skill
-        # leaves it, an empty `.claude/skills/` still reads as an install to
-        # anyone opening the repo.
-        prune_empty_dirs(skill_dir.parent, stop_at=self.target_root)
-        data = self._load()
-        data.pop(skill_id, None)
-        self._save(data)
-
-
-class CursorAgentTarget(FileBackedAgentTarget):
-    def __init__(self, *, home: Path | None = None) -> None:
-        kwargs: dict[str, Any] = {"home": home} if home is not None else {}
-        super().__init__(
-            agent="cursor",
-            skills_root=harness_home() / ".cursor" / "skills",
-            **kwargs,
-        )
-
-
-class ClaudeAgentTarget(FileBackedAgentTarget):
-    def __init__(self, *, home: Path | None = None) -> None:
-        kwargs: dict[str, Any] = {"home": home} if home is not None else {}
-        super().__init__(
-            agent="claude",
-            skills_root=harness_home() / ".claude" / "skills",
-            instructions_root=harness_home() / ".claude",
-            instructions_agent="claude",
-            **kwargs,
-        )
-
-
-class OpenCodeAgentTarget(FileBackedAgentTarget):
-    def __init__(self, *, home: Path | None = None) -> None:
-        kwargs: dict[str, Any] = {"home": home} if home is not None else {}
-        super().__init__(
-            agent="opencode",
-            skills_root=harness_home() / ".config" / "opencode" / "skills",
-            **kwargs,
-        )
-
-
-class CodexAgentTarget(FileBackedAgentTarget):
-    def __init__(self, *, home: Path | None = None) -> None:
-        kwargs: dict[str, Any] = {"home": home} if home is not None else {}
-        super().__init__(
-            agent="codex",
-            skills_root=harness_home() / ".agents" / "skills",
-            instructions_root=harness_home() / ".codex",
-            instructions_agent="codex",
-            **kwargs,
-        )
-
-
-__all__ = [
-    "ClaudeAgentTarget",
-    "CodexAgentTarget",
-    "CursorAgentTarget",
-    "FileBackedAgentTarget",
-    "OpenCodeAgentTarget",
-    "ProjectAgentTarget",
-]
+__all__ = ["AgentTarget"]

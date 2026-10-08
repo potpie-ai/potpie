@@ -130,7 +130,7 @@ def skills_install(
                 verb="installed",
                 agent=res.agent,
                 changed=res.changed,
-                support_files=res.metadata.get("support_files"),
+                instruction_files=res.metadata.get("support_files"),
                 unavailable=res.metadata.get("unavailable"),
             )
             + _format_retired_files(res.metadata),
@@ -184,7 +184,7 @@ def skills_update(
                 verb="updated",
                 agent=res.agent,
                 changed=res.changed,
-                support_files=res.metadata.get("support_files"),
+                instruction_files=res.metadata.get("support_files"),
                 unavailable=res.metadata.get("unavailable"),
             )
             + _format_retired_files(res.metadata),
@@ -228,7 +228,7 @@ def skills_remove(
             human=_format_skill_remove(
                 agent=res.agent,
                 removed=res.changed,
-                support_files=res.metadata.get("support_files"),
+                instruction_files=res.metadata.get("support_files"),
                 not_installed=res.metadata.get("not_installed"),
             )
             + _format_retired_files(res.metadata),
@@ -300,7 +300,7 @@ def _format_skill_operation(
     verb: str,
     agent: str,
     changed: tuple[str, ...],
-    support_files: list[str] | None = None,
+    instruction_files: list[str] | None = None,
     unavailable: list[str] | None = None,
 ) -> str:
     if changed:
@@ -310,9 +310,9 @@ def _format_skill_operation(
     else:
         line = f"Potpie skills for {agent} are already up to date"
     # Named, because these are files the command wrote that the caller did not
-    # list — the harness instruction file.
-    if support_files:
-        line = f"{line}\n{verb} support files: {', '.join(support_files)}"
+    # list — the harness instruction file the routing block lives in.
+    if instruction_files:
+        line = f"{line}\n{verb} support files: {', '.join(instruction_files)}"
     # And the mirror image: a sweep that covered less than the catalog says so,
     # rather than letting "installed N skills" read as "installed everything".
     if unavailable:
@@ -340,21 +340,22 @@ def _format_skill_remove(
     *,
     agent: str,
     removed: tuple[str, ...],
-    support_files: list[str] | None = None,
+    instruction_files: list[str] | None = None,
     not_installed: list[str] | None = None,
 ) -> str:
     """Say what was actually removed, including the files nobody named.
 
     ``removed: []`` on its own is the same answer this command gives after it
     has just removed the last skill, so an id that was never installed is named.
-    The support files are named for the mirror-image reason ``install`` names
-    them: they are files the command touched that no id in ``removed`` covers.
+    The instruction files are named for the mirror-image reason ``install``
+    names them: they are files the command touched that no id in ``removed``
+    covers.
     """
     lines: list[str] = []
     if removed:
         lines.append(f"removed Potpie skills for {agent}: {', '.join(removed)}")
-    if support_files:
-        lines.append(f"removed support files: {', '.join(support_files)}")
+    if instruction_files:
+        lines.append(f"removed support files: {', '.join(instruction_files)}")
     if not_installed:
         lines.append(
             f"not installed for {agent}, nothing to remove: {', '.join(not_installed)}"

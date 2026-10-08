@@ -113,20 +113,20 @@ class AgentTargetPort(Protocol):
 
     def remove(self, *, skill_id: str) -> None: ...
 
-    def install_support_files(self, *, path: str | None = None) -> Any:
-        """Write the harness's own files — its instruction file.
+    def install_instructions(self, *, path: str | None = None) -> Any:
+        """Merge the routing block into the harness's instruction file.
 
-        Optional, and separate from ``install`` because they belong to the
-        bundle rather than to any one skill id: only a sweep writes them, and
-        the result names them so a command cannot edit a user-authored
+        Optional, and separate from ``install`` because the block belongs to
+        the bundle rather than to any one skill id: only a sweep writes it, and
+        the result names the file so a command cannot edit a user-authored
         ``CLAUDE.md`` without saying so. The result may also carry ``removed``
         and ``leftovers``: files an earlier release installed that the sweep
         deleted, or left in place with a next action.
         """
         ...
 
-    def remove_support_files(self, *, path: str | None = None) -> Any:
-        """Take those same files back out; the mirror of the method above.
+    def remove_instructions(self, *, path: str | None = None) -> Any:
+        """Strip that block back out; the mirror of the method above.
 
         Also optional — but a target that implements one and not the other is
         a target whose ``remove --all`` leaves the harness loading Potpie's

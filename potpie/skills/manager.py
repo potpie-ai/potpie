@@ -1,8 +1,7 @@
 """``DefaultSkillManager`` — catalog + per-harness install drift.
 
 Owns the catalog/drift logic; delegates the where/how of installation to a
-registered :class:`AgentTargetPort` per harness. Built over the static builtin
-catalog and the (POC) Claude target.
+registered :class:`AgentTargetPort` per harness.
 """
 
 from __future__ import annotations
@@ -26,12 +25,7 @@ from potpie.skills.contracts import (
     SkillStatus,
 )
 from potpie.skills.errors import UnknownAgentTargetError
-from potpie.skills.installer import (
-    validate_packaged_skill_command_snippets,
-)
-from potpie.skills.targets import (
-    ProjectAgentTarget,
-)
+from potpie.skills.targets import AgentTarget
 
 #: URL schemes a catalog add could plausibly fetch a skill from. Anything else
 #: is a typo wearing a colon.
@@ -82,22 +76,23 @@ def validate_skill_source(source: str) -> None:
         )
 
 
-def _support_metadata(
+def _instructions_metadata(
     *,
-    support_files: tuple[str, ...],
+    instruction_files: tuple[str, ...],
     retired_removed: tuple[str, ...] = (),
     leftovers: tuple[Mapping[str, str], ...] = (),
 ) -> dict[str, Any]:
-    """The result metadata for a support-file sweep, naming only what happened.
+    """The result metadata for a routing-block sweep, naming only what happened.
 
-    ``retired_files_removed`` and ``leftovers`` describe files an earlier
-    release installed that this one no longer ships: the ones the sweep could
-    prove were untouched and deleted, and the ones left for the user with the
-    step that clears them.
+    The instruction files it wrote or cleaned go under ``support_files`` (the
+    key the JSON contract has always used). ``retired_files_removed`` and
+    ``leftovers`` describe files an earlier release installed that this one no
+    longer ships: the ones the sweep could prove were untouched and deleted,
+    and the ones left for the user with the step that clears them.
     """
     metadata: dict[str, Any] = {}
-    if support_files:
-        metadata["support_files"] = list(support_files)
+    if instruction_files:
+        metadata["support_files"] = list(instruction_files)
     if retired_removed:
         metadata["retired_files_removed"] = list(retired_removed)
     if leftovers:
@@ -132,7 +127,7 @@ class DefaultSkillManager:
             # answer a typo with a complete, plausible listing of every skill,
             # all ``installed: false``, for a harness that does not exist.
             self._target(agent)
-            return ProjectAgentTarget(agent=agent, path=Path(path or "."))
+            return AgentTarget(agent=agent, scope="project", path=Path(path or "."))
         raise ValueError("scope must be 'global' or 'project'")
 
     @staticmethod
@@ -299,7 +294,7 @@ class DefaultSkillManager:
         )
 
     @staticmethod
-    def _install_support_files(
+    def _install_instructions(
         target: AgentTargetPort, *, path: str | None = None
     ) -> dict[str, Any]:
         """Write the harness's instruction file; say what the sweep touched.
@@ -310,35 +305,35 @@ class DefaultSkillManager:
         command asked for one skill and silently edited the user's
         ``CLAUDE.md``.
         """
-        installer = getattr(target, "install_support_files", None)
+        installer = getattr(target, "install_instructions", None)
         if not callable(installer):
             return {}
         result = installer(path=path)
         created = tuple(getattr(result, "created", ()) or ())
         updated = tuple(getattr(result, "updated", ()) or ())
-        return _support_metadata(
-            support_files=created + updated,
+        return _instructions_metadata(
+            instruction_files=created + updated,
             retired_removed=tuple(getattr(result, "removed", ()) or ()),
             leftovers=tuple(getattr(result, "leftovers", ()) or ()),
         )
 
     @staticmethod
-    def _remove_support_files(
+    def _remove_instructions(
         target: AgentTargetPort, *, path: str | None = None
     ) -> dict[str, Any]:
         """Take the harness's instruction file back out.
 
-        Symmetric with :meth:`_install_support_files`, and only reached by the
+        Symmetric with :meth:`_install_instructions`, and only reached by the
         sweep for the same reason: these files belong to the bundle as a whole,
         not to any one id. Without it ``skills remove --all`` deleted every
         skill directory and left ``CLAUDE.md`` routing to skills that were gone.
         """
-        remover = getattr(target, "remove_support_files", None)
+        remover = getattr(target, "remove_instructions", None)
         if not callable(remover):
             return {}
         result = remover(path=path)
-        return _support_metadata(
-            support_files=tuple(getattr(result, "removed", ()) or ()),
+        return _instructions_metadata(
+            instruction_files=tuple(getattr(result, "removed", ()) or ()),
             leftovers=tuple(getattr(result, "leftovers", ()) or ()),
         )
 
@@ -425,7 +420,6 @@ class DefaultSkillManager:
             ):
                 preserved.append(sid)
                 continue
-            validate_packaged_skill_command_snippets(skill_ids=(sid,))
             target.install(skill_id=sid, version=info.version, path=path)
             self._set_disabled(target, skill_id=sid, disabled=False)
             changed.append(sid)
@@ -433,7 +427,7 @@ class DefaultSkillManager:
         # id is a request for that skill, and honouring it by also rewriting
         # CLAUDE.md — a file the user wrote — is a bigger edit than the one they
         # asked for, made without saying so.
-        support = {} if requested else self._install_support_files(target, path=path)
+        routing = {} if requested else self._install_instructions(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="install",
@@ -444,7 +438,7 @@ class DefaultSkillManager:
                     scope=scope,
                     unavailable=tuple(unavailable),
                 ),
-                **support,
+                **routing,
                 **({"preserved_user_edits": preserved} if preserved else {}),
             },
         )
@@ -505,19 +499,18 @@ class DefaultSkillManager:
             if self._locally_modified(target, sid):
                 preserved.append(sid)
                 continue
-            validate_packaged_skill_command_snippets(skill_ids=(sid,))
             # ``path=`` was dropped here while ``install`` passed it, so the two
             # commands could resolve the same ``--path`` to different roots.
             target.install(skill_id=sid, version=info.version, path=path)
             changed.append(sid)
-        support = {} if requested else self._install_support_files(target, path=path)
+        routing = {} if requested else self._install_instructions(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="update",
             changed=tuple(changed),
             metadata={
                 **self._metadata(target, scope=scope),
-                **support,
+                **routing,
                 **({"preserved_user_edits": preserved} if preserved else {}),
             },
         )
@@ -565,10 +558,10 @@ class DefaultSkillManager:
             changed.append(sid)
         # Only the sweep owns the harness's own files — the mirror of the rule
         # `install` follows. It runs whether or not any skill was removed:
-        # support files outlive the skill directories (a hand-deleted
-        # `.claude/skills` leaves them orphaned), so gating on `changed` would
+        # the instruction file outlives the skill directories (a hand-deleted
+        # `.claude/skills` leaves it orphaned), so gating on `changed` would
         # make the second `remove --all` the one that finally cannot clean up.
-        support = self._remove_support_files(target, path=path) if all_ else {}
+        routing = self._remove_instructions(target, path=path) if all_ else {}
         return SkillOperationResult(
             agent=agent,
             operation="remove",
@@ -579,7 +572,7 @@ class DefaultSkillManager:
                     scope=scope,
                     not_installed=tuple(not_installed),
                 ),
-                **support,
+                **routing,
             },
         )
 

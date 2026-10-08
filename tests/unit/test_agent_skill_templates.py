@@ -9,14 +9,20 @@ instructions that humans and agents actually read.
 
 from __future__ import annotations
 
+import inspect
 import re
 import shlex
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 
 import potpie.cli as _clipkg
-from potpie.skills.installer import _validate_potpie_command_tokens
+from potpie.skills.snippets import (
+    CommandTable,
+    snippet_errors,
+    validate_packaged_skill_command_snippets,
+)
 from potpie_context_engine.core.agent_context_port import CONTEXT_RECORD_TYPES
 
 pytestmark = pytest.mark.unit
@@ -567,23 +573,88 @@ def test_every_skill_has_one_canonical_source() -> None:
         assert "agent_bundle/.agents/skills" in path.as_posix(), path
 
 
-def test_inline_potpie_commands_exist_on_this_cli() -> None:
-    """Prose cites commands too, and an agent runs what the prose names.
+# --- every taught potpie command exists on this CLI ---------------------------
+#
+# An agent runs what a template tells it to, in a ``bash`` fence or an inline
+# `` `potpie …` `` span, so a template cannot teach a command group or flag this
+# CLI does not have. Checked here, at build time, against the live Typer app.
 
-    The installer validates commands inside ``bash`` fences; this applies the
-    same check to every inline `` `potpie …` `` span, so a skill cannot teach a
-    command group or flag this CLI does not have.
-    """
-    span = re.compile(r"`(potpie [^`]+)`")
-    errors: list[str] = []
-    for path in MD_FILES:
-        rel = path.relative_to(TEMPLATES).as_posix()
-        flat = " ".join(path.read_text(encoding="utf-8").split())
-        for command in span.findall(flat):
-            error = _validate_potpie_command_tokens(shlex.split(command))
-            if error:
-                errors.append(f"{rel}: {error}")
-    assert errors == []
+
+@lru_cache(maxsize=1)
+def _cli_commands() -> tuple[CommandTable, frozenset[str]]:
+    """``(command path -> options, root options)`` introspected from the CLI."""
+    from typer.models import OptionInfo
+
+    from potpie.cli.main import app
+
+    def options(callback) -> frozenset[str]:
+        found: set[str] = set()
+        for parameter in inspect.signature(callback).parameters.values():
+            if isinstance(parameter.default, OptionInfo):
+                for decl in parameter.default.param_decls:
+                    found.update(
+                        part for part in str(decl).split("/") if part.startswith("-")
+                    )
+        return frozenset(found)
+
+    table: dict[tuple[str, ...], frozenset[str]] = {}
+
+    def collect(typer_app, path: tuple[str, ...]) -> None:
+        for command in typer_app.registered_commands:
+            if command.callback is not None:
+                name = command.name or command.callback.__name__.replace("_", "-")
+                table[(*path, str(name))] = options(command.callback)
+        for group in typer_app.registered_groups:
+            collect(group.typer_instance, (*path, group.name))
+
+    collect(app, ())
+    root = app.registered_callback
+    root_options = (
+        options(root.callback) if root is not None and root.callback else frozenset()
+    )
+    return table, root_options
+
+
+def _snippet_errors(markdown: str) -> list[str]:
+    commands, root_options = _cli_commands()
+    return snippet_errors(markdown, commands=commands, root_options=root_options)
+
+
+def test_every_taught_potpie_command_exists_on_this_cli() -> None:
+    commands, root_options = _cli_commands()
+    assert ("graph", "read") in commands
+    validate_packaged_skill_command_snippets(
+        commands=commands, root_options=root_options
+    )
+
+
+@pytest.mark.parametrize(
+    ("markdown", "expected"),
+    [
+        (
+            '```bash\npotpie search "query" --node-labels PullRequest\n```',
+            "unsupported option --node-labels for potpie search",
+        ),
+        (
+            "```bash\n$ potpie --json graph read \\\n  --no-such-flag\n```",
+            "unsupported option --no-such-flag for potpie graph read",
+        ),
+        ("```bash\npotpie --nope status\n```", "unsupported root option --nope"),
+        ("Run `potpie grpah read` first.", "unknown potpie command 'grpah read'"),
+        ("Then `potpie status --verbose-ish`.", "unsupported option --verbose-ish"),
+    ],
+)
+def test_a_command_this_cli_lacks_is_reported(markdown: str, expected: str) -> None:
+    errors = _snippet_errors(markdown)
+    assert len(errors) == 1 and expected in errors[0], errors
+
+
+def test_other_shell_commands_and_comments_are_left_alone() -> None:
+    markdown = (
+        "```bash\n# potpie nope\nrg --files | head\n"
+        "potpie status  # --not-an-option\n```"
+    )
+    assert _snippet_errors(markdown) == []
 
 
 def test_templates_do_not_prescribe_a_threshold_the_views_ignore() -> None:
