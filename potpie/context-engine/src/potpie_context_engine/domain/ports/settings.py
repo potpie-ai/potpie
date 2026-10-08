@@ -37,5 +37,41 @@ class ContextEngineSettingsPort(Protocol):
         """Filesystem path for the embedded FalkorDBLite database (lite mode)."""
         return ".potpie/context_graph/falkordb.db"
 
+    def ladybug_path(self) -> str:
+        """Filesystem path for the embedded Ladybug database."""
+        return ".potpie/context_graph/ladybug.lbdb"
+
+    def ladybug_vector_efs(self) -> int:
+        """HNSW search depth (``efs``) for ``QUERY_VECTOR_INDEX``."""
+        return 200
+
+    def ladybug_vector_efc(self) -> int:
+        """HNSW construction effort (``efc``) for ``CREATE_VECTOR_INDEX``."""
+        return 200
+
+    def ladybug_vector_mu(self) -> int:
+        """HNSW upper-layer max degree (``mu``)."""
+        return 30
+
+    def ladybug_vector_ml(self) -> int:
+        """HNSW lower-layer max degree (``ml``)."""
+        return 60
+
+    def ladybug_vector_pu(self) -> float:
+        """HNSW upper-layer sampling fraction (``pu``)."""
+        return 0.05
+
+    def ladybug_vector_metric(self) -> str:
+        """Vector distance metric: ``cosine``, ``l2``, ``l2sq``, ``dotproduct``."""
+        return "cosine"
+
+    def ladybug_vector_cache_embeddings(self) -> bool:
+        """Cache embedding column in RAM during index build."""
+        return True
+
+    def ladybug_vector_normalize_embeddings(self) -> bool:
+        """L2-normalize embeddings at write/query time (recommended for cosine)."""
+        return True
+
     def backfill_max_prs_per_run(self) -> int:
         """Max merged PRs to ingest per backfill run (deterministic cap)."""

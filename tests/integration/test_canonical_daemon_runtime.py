@@ -370,7 +370,9 @@ async def test_malformed_and_unknown_requests_return_safe_correlated_envelopes(
 
 
 @pytest.mark.anyio
-async def test_internal_handler_failure_is_redacted(tmp_path: Path) -> None:
+async def test_internal_handler_failure_is_redacted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     handler = _Handler()
     handler.raise_defect = True
     async with _running_runtime("tcp", tmp_path, handler) as (
@@ -394,6 +396,8 @@ async def test_internal_handler_failure_is_redacted(tmp_path: Path) -> None:
         assert outcome.error.code == "daemon_internal_failure"
         assert "sensitive" not in outcome.error.message
         assert "traceback" not in str(outcome.error.details).lower()
+        assert "daemon operation failed" in caplog.text
+        assert "sensitive traceback detail" in caplog.text
         await transport.close()
 
 
