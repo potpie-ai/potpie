@@ -400,8 +400,8 @@ default. A Potpie local runtime composes it when the `graph.protocols` config
 key is `on` (`potpie config set graph.protocols on`, then `potpie daemon
 restart` for a running daemon). An embedding host passes
 `potpie_context_engine.api.protocols_definition()` to `build_graph_runtime`
-itself. Making that factory and its identity helpers a supported API is
-proposed in `SPEC-CHANGE-0014`; no extension-registration hook is published.
+itself. That factory and its identity helpers are not yet a supported API, and
+no extension-registration hook is published.
 
 With it on, the catalog reports `extensions: {"protocols": "1"}` and adds:
 
