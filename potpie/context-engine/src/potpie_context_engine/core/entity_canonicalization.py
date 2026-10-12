@@ -19,8 +19,8 @@ When two upserts resolve to the same canonical key:
       planners typically emit the richest record first (repo → PR → commit …).
     * Edge endpoints and invalidation targets are rewritten to the canonical
       key; edges that become self-loops after rewrite are dropped.
-    * Edge upserts are deduped on ``(edge_type, from, to)`` so the merge cannot
-      multiply parallel edges.
+    * Edge upserts preserve distinct claims, environments, and evidence sources
+      when their normalized endpoints coincide.
 
 Plan warnings record how many merges ran so operators can spot an extractor
 regression from the ledger without digging into the diff.
@@ -245,7 +245,7 @@ def _merge_pair(
 def _rewrite_edges(
     edges: list[EdgeUpsert], rewrite: dict[str, str]
 ) -> list[EdgeUpsert]:
-    out: dict[tuple[str, str, str], EdgeUpsert] = {}
+    out: dict[tuple[str, ...], EdgeUpsert] = {}
     for edge in edges:
         src = _canonical(rewrite, edge.from_entity_key)
         dst = _canonical(rewrite, edge.to_entity_key)
@@ -253,7 +253,13 @@ def _rewrite_edges(
             continue
         edge.from_entity_key = src
         edge.to_entity_key = dst
-        out[(edge.edge_type, src, dst)] = edge
+        props = edge.properties
+        identity = (
+            str(props.get("claim_key") or ""),
+            str(props.get("environment") or "").strip().lower(),
+            str(props.get("source_ref") or ""),
+        )
+        out[(edge.edge_type, src, dst, *identity)] = edge
     return list(out.values())
 
 

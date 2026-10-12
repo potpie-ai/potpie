@@ -5,6 +5,15 @@ class ContextEngineError(Exception):
     """Base for all context-engine domain errors."""
 
 
+class GraphMutationVersionConflict(ContextEngineError):
+    """Atomic compare-and-apply observed a newer canonical graph revision."""
+
+    def __init__(self, *, expected: int, current: int):
+        super().__init__(f"graph version moved from {expected} to {current}")
+        self.expected = expected
+        self.current = current
+
+
 class ContextEngineDisabled(ContextEngineError):
     """Feature flag off or graph clients unavailable."""
 
@@ -18,6 +27,24 @@ class GraphSubstrateUnavailable(ContextEngineDisabled):
     instead of opening the store, and carries the operator's recovery step so
     the CLI's error contract can print something actionable rather than a
     generic unavailability message.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
+class PotTeardownFailed(ContextEngineDisabled):
+    """A pot's graph wipe did not happen, so the rest of the teardown must not.
+
+    Tearing a pot down destroys two stores, and only one order is safe: the
+    resource tree may go once the claims citing its chunks are gone. Mutation
+    adapters report an unreachable store by *returning* ``{"ok": False,
+    "error": ...}`` rather than raising, so a caller that ignores the return
+    purges the chunk files anyway and leaves the pot worse than it found it —
+    live claims whose evidence no longer exists — while reporting success.
+    Raised instead of continuing, carrying the adapter's own error text so the
+    CLI's unavailability contract prints what actually failed.
     """
 
     def __init__(self, message: str, *, recommended_next_action: str | None = None):
@@ -39,6 +66,63 @@ class BridgeError(ContextEngineError):
 
 class PotNotFound(ContextEngineError):
     """Host could not resolve pot_id."""
+
+
+class SourceNotFound(PotNotFound):
+    """The pot resolved; the source id it was asked about is not in it.
+
+    The wrong noun is the whole defect. ``source status src-typo`` raised
+    ``PotNotFound``, so the CLI reported ``pot_not_found`` and told the operator
+    to run ``pot list`` — a repair that cannot succeed, because no pot is
+    missing. The registration is usually alive in the pot they did not pass, and
+    the listing that would show them is ``source list``.
+
+    Subclassing :class:`PotNotFound` is deliberate: an inbound boundary that has
+    not learned this type yet still renders a sensible refusal carrying
+    ``recommended_next_action`` rather than collapsing it into "unexpected
+    internal error". Boundaries that have learned it report ``source_not_found``.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
+class PotArchived(ContextEngineError):
+    """The pot exists, but archiving it was the end of its life.
+
+    Distinct from :class:`PotNotFound` because the two need different repairs:
+    a ref nobody recognises is a typo, while this one resolved — the pot is
+    listed under ``pot list --archived`` and its graph and resource tree were
+    torn down when it was archived. Selecting it, writing to it, or routing a
+    repo into it can only produce an empty answer from a pot the operator
+    believes still holds their project's memory.
+
+    The flag used to be write-only: nothing in the product read it, so archived
+    pots kept appearing in ``pot list``, kept being selectable, kept accepting
+    claims, and a repo default pointing at one kept routing every scoped read
+    and write into it.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
+
+
+class PotNameConflict(ContextEngineError):
+    """A pot name (or a name shadowing a pot id) is already taken.
+
+    Pot names are the refs humans type, and ``rename`` enforced nothing: two
+    pots could end up sharing one, after which every bare-ref resolution picked
+    an arbitrary one of them — including ``pot reset <name> --confirm``, which
+    then destroyed whichever it happened to find first. A name equal to another
+    pot's *id* is the same defect wearing a different hat, since refs resolve
+    against both.
+    """
+
+    def __init__(self, message: str, *, recommended_next_action: str | None = None):
+        super().__init__(message)
+        self.recommended_next_action = recommended_next_action
 
 
 class MutationBatchValidationError(ContextEngineError):

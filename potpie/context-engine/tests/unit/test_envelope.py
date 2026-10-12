@@ -19,6 +19,7 @@ from potpie_context_engine.core.agent_context_port import (
     DEFAULT_INTENT_INCLUDES,
 )
 from potpie_context_engine.core.agent_envelope import (
+    AgentEnvelope,
     CoverageReport,
     derive_overall_confidence,
 )
@@ -65,6 +66,64 @@ class TestDeriveOverallConfidence:
     def test_empty_input_returns_unknown(self) -> None:
         assert derive_overall_confidence(coverage=[]) == "unknown"
 
+    def test_unmeasured_relevance_leaves_coverage_verdict_alone(self) -> None:
+        """A family that cannot measure relevance is judged exactly as before."""
+        coverage = [CoverageReport(include="owners", status="complete")]
+        assert derive_overall_confidence(coverage=coverage) == "high"
+
+    def test_weak_evidence_downgrades_a_complete_page(self) -> None:
+        """The regression this exists for: a full page of irrelevant hits.
+
+        ``complete`` only says the family filled its page. Before relevance was
+        carried, an unanswerable query against a working index reported "high".
+        """
+        coverage = [
+            CoverageReport(include="resources", status="complete", best_relevance=0.21)
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "low"
+
+    def test_middling_evidence_reports_medium(self) -> None:
+        coverage = [
+            CoverageReport(include="resources", status="complete", best_relevance=0.40)
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "medium"
+
+    def test_strong_evidence_keeps_high(self) -> None:
+        coverage = [
+            CoverageReport(include="resources", status="complete", best_relevance=0.62)
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "high"
+
+    def test_relevance_never_upgrades_a_weak_coverage_verdict(self) -> None:
+        """The two signals cap each other; neither promotes."""
+        coverage = [
+            CoverageReport(include="resources", status="sparse", best_relevance=0.95)
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "low"
+
+    def test_best_relevance_wins_across_families(self) -> None:
+        """One family finding a strong answer is not dragged down by another's
+        weak one — the relevance channel takes the best measured, while status
+        still takes the worst."""
+        coverage = [
+            CoverageReport(include="resources", status="complete", best_relevance=0.62),
+            CoverageReport(include="docs", status="complete", best_relevance=0.10),
+        ]
+        assert derive_overall_confidence(coverage=coverage) == "high"
+
+    def test_best_relevance_is_serialised(self) -> None:
+        envelope = AgentEnvelope(
+            pot_id="pot_1",
+            intent="unknown",
+            items=(),
+            coverage=(
+                CoverageReport(
+                    include="resources", status="complete", best_relevance=0.42
+                ),
+            ),
+        )
+        assert envelope.to_dict()["coverage"][0]["best_relevance"] == 0.42
+
 
 class TestEnvelopeBuilder:
     def test_cross_include_ranking(self) -> None:
@@ -91,6 +150,45 @@ class TestEnvelopeBuilder:
         # Cross-leg sort: bug (0.9) ahead of preference (0.4)
         assert envelope.items[0].candidate_key == "bug-a"
         assert envelope.items[1].candidate_key == "pref-a"
+
+    def test_docs_include_is_demoted_against_equal_prior_bugs(self) -> None:
+        # P9: equal raw scores must still surface project memory ahead of
+        # section claims when both includes are requested together.
+        builder = EnvelopeBuilder()
+        envelope = builder.build(
+            pot_id="pot-1",
+            intent="unknown",
+            results=[
+                IncludeResult(
+                    include="docs",
+                    response=_resp(
+                        family="docs",
+                        items=[
+                            _ranked_item(
+                                key="section-a",
+                                score=0.9,
+                                payload={"src": "section"},
+                            )
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+                IncludeResult(
+                    include="prior_bugs",
+                    response=_resp(
+                        family="prior_bugs",
+                        items=[
+                            _ranked_item(key="bug-a", score=0.9, payload={"src": "bug"})
+                        ],
+                        coverage_status="complete",
+                    ),
+                ),
+            ],
+            requested_includes=["docs", "prior_bugs"],
+        )
+        assert envelope.items[0].candidate_key == "bug-a"
+        assert envelope.items[1].candidate_key == "section-a"
+        assert envelope.items[0].score > envelope.items[1].score
 
     def test_default_includes_when_none_requested(self) -> None:
         builder = EnvelopeBuilder()
@@ -203,3 +301,49 @@ class TestAgentContractGenerator:
         emit(buf_a)
         emit(buf_b)
         assert buf_a.getvalue() == buf_b.getvalue()
+
+
+def test_exact_passage_survives_cross_family_demotion_without_promoting_weak_hits():
+    builder = EnvelopeBuilder()
+    resources = _resp(
+        family="resources",
+        coverage_status="partial",
+        items=[
+            _ranked_item(
+                key="exact-token",
+                score=0.55,
+                payload={"retrieval": {"lexical_rank": 1, "term_coverage": 1.0}},
+            ),
+            _ranked_item(
+                key="one-word-overlap",
+                score=0.7,
+                payload={"retrieval": {"lexical_rank": 2, "term_coverage": 0.2}},
+            ),
+            _ranked_item(
+                key="no-lexical-match",
+                score=0.65,
+                payload={"retrieval": {"lexical_rank": None, "term_coverage": 0.0}},
+            ),
+        ],
+    )
+    timeline = _resp(
+        family="timeline",
+        coverage_status="complete",
+        items=[_ranked_item(key="recent-but-unrelated", score=0.8, payload={})],
+    )
+    env = builder.build(
+        pot_id="p",
+        intent="unknown",
+        requested_includes=["resources", "timeline"],
+        results=[
+            IncludeResult("resources", resources),
+            IncludeResult("timeline", timeline),
+        ],
+    )
+    assert [item.candidate_key for item in env.items] == [
+        "exact-token",
+        "recent-but-unrelated",
+        "one-word-overlap",
+        "no-lexical-match",
+    ]
+    assert env.items[0].breakdown["lexical_coverage_floor"] == 1.0

@@ -37,7 +37,7 @@ reading the canonical store directly (no reader indirection):
 ## Query — real LLM (`test_e2e_pipeline.py`)
 - `goal=ANSWER` — the real `PydanticAIAnswerSynthesizer` answers a query over deterministically-seeded topology (`query_async`). Skips without an LLM key.
 - `goal=INVESTIGATE` (agentic loop) — available via the same wiring; not asserted here to keep runtime/cost bounded.
-- The Neo4j-backed `ClaimQueryPort` (`Neo4jClaimQueryStore`) is now wired into the `ReadOrchestrator`, so the P9 readers (`infra_topology`/`coding_preferences`/`timeline`/`prior_bugs`) can read live; their routing/ranking is unit-tested by `test_read_orchestrator.py` + `test_p9_readers.py` against the in-memory store.
+- The Neo4j-backed `ClaimQueryPort` (`Neo4jClaimQueryStore`) is now wired into the `ReadOrchestrator`, so the P9 readers (`infra_topology`/`coding_preferences`/`timeline`/`prior_bugs`) can read live; their routing/ranking is unit-tested by `test_read_orchestrator.py` + `test_use_case_readers.py` against the in-memory store.
 
 ## Teardown
 Each test resets its pot via `context_graph.reset_pot(pot_id)` (DETACH DELETE of the `group_id` partition), keeping the live DB clean and tests isolated.

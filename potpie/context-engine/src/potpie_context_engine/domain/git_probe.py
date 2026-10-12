@@ -20,6 +20,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
+from potpie_context_engine.domain.repo_identity import normalize_repo_ref
+
 #: ``subprocess.CREATE_NO_WINDOW`` by value; the name exists only on Windows.
 _WINDOWS_CREATE_NO_WINDOW: Final[int] = 0x08000000
 
@@ -60,6 +62,15 @@ def run_git_probe(
         return None
 
 
+def current_git_remote(cwd: Path | str, *, timeout: float = 2.0) -> str | None:
+    """The origin remote of the repository at cwd, normalized to the
+    host/owner/repo key the pot store uses, or None."""
+    raw = run_git_probe(["remote", "get-url", "origin"], cwd=cwd, timeout=timeout)
+    if not raw:
+        return None
+    return normalize_repo_ref(raw)
+
+
 def _no_window_kwargs() -> dict[str, int]:
     if _windows():
         return {"creationflags": _WINDOWS_CREATE_NO_WINDOW}
@@ -72,4 +83,4 @@ def _windows() -> bool:
     return os.name == "nt"
 
 
-__all__ = ["run_git_probe"]
+__all__ = ["current_git_remote", "run_git_probe"]

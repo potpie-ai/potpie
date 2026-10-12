@@ -42,12 +42,14 @@ from potpie_context_engine.core.identity import (
 
 # --- Context records: the typed durable-memory vocabulary.
 from potpie_context_engine.core.context_records import (
+    REQUIRED_DETAIL_KEYS,
     BugPatternRecord,
     ContextRecordValidationError,
     DecisionRecord,
     FixRecord,
     FreeFormRecord,
     PreferenceRecord,
+    required_detail_keys,
 )
 
 # --- Semantic mutations: how records become graph writes.
@@ -164,6 +166,7 @@ from potpie_context_engine.core.ports.claim_query import (
 )
 from potpie_context_engine.core.ports.graph.analytics import (
     GraphAnalyticsPort,
+    RepairFinding,
     RepairReport,
 )
 from potpie_context_engine.core.ports.graph.backend import (
@@ -207,6 +210,51 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphReadResult,
     GraphService,
 )
+from potpie_context_engine.core.ports.resource_index import (
+    MATCH_MODE_DISABLED,
+    MATCH_MODE_HYBRID,
+    MATCH_MODE_LEXICAL,
+    MATCH_MODE_SEMANTIC,
+    MATCH_MODES,
+    ChunkHit,
+    DrainReport,
+    IndexCapabilities,
+    IndexReport,
+    IndexSearchResult,
+    ResourceIndexError,
+    ResourceIndexPort,
+    ResourceIndexStatus,
+)
+from potpie_context_engine.core.ports.resource_store import (
+    DEFAULT_SECTION_SLUG,
+    RECOMMENDED_MAX_SECTION_CHUNKS,
+    RESOURCE_CHUNK_MAX_CHARS,
+    RESOURCE_CHUNK_TARGET_CHARS,
+    RESOURCE_IMPORT_MAX_BYTES,
+    RESOURCE_SEQ_WIDTH,
+    RESOURCE_URI_PREFIX,
+    Chunk,
+    ChunkRef,
+    DocumentManifest,
+    ImportFiles,
+    ResourceId,
+    ResourceBatchResult,
+    ResourceReadOutcome,
+    ResourceStoreError,
+    ResourceStorePort,
+    ResourceStoreStatus,
+    SectionManifest,
+    format_resource_id,
+    import_source,
+    parse_resource_id,
+    read_import_files,
+    require_resource_slug,
+)
+from potpie_context_engine.core.resource_to_semantic import (
+    ResourceImportResult,
+    resource_delete_to_semantic_request,
+    resource_import_to_semantic_request,
+)
 
 __all__ = [
     # ontology
@@ -228,6 +276,7 @@ __all__ = [
     "IdentityError",
     "IdentitySpec",
     "mint_entity_key",
+    "required_detail_keys",
     "validate_entity_key",
     # records
     "BugPatternRecord",
@@ -236,6 +285,7 @@ __all__ = [
     "FixRecord",
     "FreeFormRecord",
     "PreferenceRecord",
+    "REQUIRED_DETAIL_KEYS",
     # mutations + transforms
     "SemanticMutation",
     "MutationBatch",
@@ -315,6 +365,7 @@ __all__ = [
     "AsyncGraphPlanStorePort",
     "GraphPlanStorePort",
     "GraphAnalyticsPort",
+    "RepairFinding",
     "RepairReport",
     "GraphInspectionPort",
     "GraphNode",
@@ -333,6 +384,45 @@ __all__ = [
     "GraphEntitySearchResult",
     "GraphReadRequest",
     "GraphReadResult",
+    "ResourceBatchResult",
+    "ResourceReadOutcome",
+    "ResourceStorePort",
+    "ResourceStoreError",
+    "ResourceStoreStatus",
+    "ResourceImportResult",
+    "resource_delete_to_semantic_request",
+    "resource_import_to_semantic_request",
+    "ResourceId",
+    "Chunk",
+    "ChunkRef",
+    "SectionManifest",
+    "DocumentManifest",
+    "RESOURCE_URI_PREFIX",
+    "RESOURCE_CHUNK_TARGET_CHARS",
+    "RESOURCE_CHUNK_MAX_CHARS",
+    "RESOURCE_SEQ_WIDTH",
+    "DEFAULT_SECTION_SLUG",
+    "RECOMMENDED_MAX_SECTION_CHUNKS",
+    "ImportFiles",
+    "RESOURCE_IMPORT_MAX_BYTES",
+    "format_resource_id",
+    "import_source",
+    "parse_resource_id",
+    "read_import_files",
+    "require_resource_slug",
+    "ResourceIndexPort",
+    "ResourceIndexError",
+    "ResourceIndexStatus",
+    "IndexCapabilities",
+    "IndexSearchResult",
+    "IndexReport",
+    "DrainReport",
+    "ChunkHit",
+    "MATCH_MODES",
+    "MATCH_MODE_LEXICAL",
+    "MATCH_MODE_SEMANTIC",
+    "MATCH_MODE_HYBRID",
+    "MATCH_MODE_DISABLED",
     "RecordReceipt",
     "RecordRequest",
     "ResolveRequest",

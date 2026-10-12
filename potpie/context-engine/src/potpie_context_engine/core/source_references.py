@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 SOURCE_POLICIES = frozenset(
     {"references_only", "summary", "verify", "snippets", "full_if_needed"}
@@ -41,6 +41,43 @@ SOURCE_SYNC_STATES = frozenset(
         "unknown",
     }
 )
+
+
+def evidence_review_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Carry an explicit source-change marker through compact read projections."""
+    properties = payload.get("properties")
+    source = payload if payload.get("evidence_review_required") else properties
+    if not isinstance(source, Mapping) or not source.get("evidence_review_required"):
+        return {}
+    return {
+        "evidence_review_required": True,
+        "evidence_review_reason": source.get("evidence_review_reason"),
+        "evidence_review_refs": list(source.get("evidence_review_refs") or ()),
+    }
+
+
+def evidence_review_warnings(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    """Explain marked claims in either a claim payload or an entity's relations."""
+    warnings: dict[str, None] = {}
+    for row in (payload, *(payload.get("relations") or ())):
+        if not isinstance(row, Mapping):
+            continue
+        review = evidence_review_fields(row)
+        if not review:
+            continue
+        claim = row.get("claim") or {}
+        key = (
+            row.get("claim_key") or claim.get("claim_key") or claim.get("candidate_key")
+        )
+        key = (
+            key
+            or payload.get("entity_key")
+            or payload.get("subject_key")
+            or "this claim"
+        )
+        reason = review.get("evidence_review_reason") or "source changed or disappeared"
+        warnings[f"Evidence for {key} needs review: {reason}."] = None
+    return tuple(warnings)
 
 
 @dataclass(slots=True)

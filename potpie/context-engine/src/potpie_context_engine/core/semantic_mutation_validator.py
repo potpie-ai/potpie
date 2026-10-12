@@ -37,11 +37,13 @@ from potpie_context_engine.core.graph_contract import (
     entity_key_prefix,
     is_known_op,
     is_source_authority,
+    accepted_contract_versions,
     is_supported_contract_version,
     is_truth_class,
     normalize_entity_key,
 )
 from potpie_context_engine.core.ontology import EdgeTypeSpec, EntityTypeSpec
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 from potpie_context_engine.core.semantic_mutations import (
     GraphEntityRef,
     LoweredOperation,
@@ -92,6 +94,7 @@ def validate_semantic_request(
     request: SemanticMutationRequest,
     *,
     definition: GraphDefinition | None = None,
+    claim_query=None,
 ) -> SemanticMutationPlan:
     """Validate + risk-classify a parsed semantic mutation request.
 
@@ -101,9 +104,108 @@ def validate_semantic_request(
     """
     token = _CURRENT_DEFINITION.set(definition or DEFAULT_GRAPH_DEFINITION)
     try:
-        return _validate_semantic_request(request)
+        plan = _validate_semantic_request(request)
+        from potpie_context_engine.core.correction_targets import (
+            resolve_correction_targets,
+        )
+
+        resolve_correction_targets(request, plan, claim_query)
+        _validate_preservation_guards(request, plan, claim_query)
+        if "protocols" in _CURRENT_DEFINITION.get().extensions:
+            from potpie_context_engine.core.protocol_validation import protocol_issues
+
+            extra_issues = protocol_issues(request, claim_query)
+            if extra_issues:
+                plan.issues = (*plan.issues, *extra_issues)
+                plan.decision = "rejected"
+                plan.ok = False
+        return plan
     finally:
         _CURRENT_DEFINITION.reset(token)
+
+
+def _validate_preservation_guards(request, plan, claim_query) -> None:
+    guarded = [
+        op
+        for op in request.operations
+        if isinstance(op.extra.get("_expected_claim_snapshot"), Mapping)
+    ]
+    if not guarded:
+        return
+    issues = []
+    if claim_query is None:
+        issues.append(
+            SemanticMutationValidationIssue(
+                code="claim_preservation_unavailable",
+                message="exact claim preservation requires a claim query store",
+            )
+        )
+    for op in guarded:
+        expected = dict(op.extra["_expected_claim_snapshot"])
+        claim_key = str(expected.get("claim_key") or "")
+        preserve_key = str(op.extra.get("_preserve_claim_key") or "")
+        operation_matches = (
+            preserve_key == claim_key
+            and (op.predicate or "").strip().upper() == expected.get("predicate")
+            and op.subject is not None
+            and op.subject.key == expected.get("subject_key")
+            and op.object is not None
+            and op.object.key == expected.get("object_key")
+        )
+        rows = (
+            claim_query.find_claims(
+                ClaimQueryFilter(
+                    pot_id=request.pot_id,
+                    claim_key_in=(claim_key,),
+                    include_invalidated=True,
+                )
+            )
+            if claim_query is not None and claim_key
+            else []
+        )
+        if (
+            not operation_matches
+            or len(rows) != 1
+            or _claim_snapshot(rows[0]) != expected
+        ):
+            issues.append(
+                SemanticMutationValidationIssue(
+                    code="claim_preservation_conflict",
+                    message=(
+                        f"claim {claim_key!r} changed before evidence review metadata "
+                        "could be applied; read the current claim and retry"
+                    ),
+                )
+            )
+    if issues:
+        plan.issues = (*plan.issues, *issues)
+        plan.ok = False
+        plan.decision = "rejected"
+
+
+def _claim_snapshot(row) -> dict:
+    def timestamp(value):
+        return value.isoformat() if value is not None else None
+
+    return {
+        "claim_key": row.claim_key,
+        "predicate": row.predicate,
+        "subject_key": row.subject_key,
+        "object_key": row.object_key,
+        "fact": row.fact,
+        "description": row.description,
+        "source_system": row.source_system,
+        "source_refs": list(row.source_refs),
+        "evidence": [dict(item) for item in row.evidence],
+        "properties": dict(row.properties),
+        "valid_at": timestamp(row.valid_at),
+        "invalid_at": timestamp(row.invalid_at),
+        "valid_until": timestamp(row.valid_until),
+        "observed_at": timestamp(row.observed_at),
+        "truth": row.truth,
+        "confidence": row.confidence,
+        "environment": row.environment,
+    }
 
 
 def _validate_semantic_request(
@@ -117,7 +219,8 @@ def _validate_semantic_request(
                 code="unsupported_contract_version",
                 message=(
                     f"graph_contract_version {request.graph_contract_version!r} "
-                    f"is not supported by this build"
+                    "is not supported by this build; accepted: "
+                    f"{', '.join(accepted_contract_versions())}, or omit the field"
                 ),
             )
         )
@@ -160,8 +263,9 @@ def _validate_semantic_request(
             SemanticMutationValidationIssue(
                 code="approval_required",
                 message=(
-                    "batch contains medium- or high-risk operations; re-submit with "
-                    "--allow-review-required --approved-by <user-ref> to apply"
+                    "batch contains medium- or high-risk operations; commit it with "
+                    "`potpie graph commit <plan_id> --approved-by <user-ref> --verify`, "
+                    "or re-run propose with `--approved-by <user-ref>` to pre-approve"
                 ),
                 severity="warning",
             )
@@ -425,8 +529,18 @@ def _validate_event_op(op, *, err, warn) -> None:
         err("missing_verb", "append_event requires a 'verb' (verb_class)")
     if op.occurred_at and not _parses_iso(op.occurred_at):
         err("bad_timestamp", f"occurred_at {op.occurred_at!r} is not valid ISO 8601")
-    # An event with no target / actor / mention is allowed (it can still anchor
-    # a timeline entry), but description aids recall.
+    # An event is its edges: the lowerer emits one claim per actor / target /
+    # mention and nothing else, and the timeline reads those claims. An event
+    # carrying none used to be accepted as a bare "anchor" — it lowered to zero
+    # claims, committed clean, verified ok, and never appeared in any read. That
+    # is a silently dropped write, so it is rejected at the door instead.
+    if op.actor is None and not op.targets and not op.mentions:
+        err(
+            "empty_event",
+            "append_event requires at least one of 'actor', 'targets', or "
+            "'mentions'; an event with none writes no claim and would never "
+            "appear on the timeline",
+        )
     if not (op.description and op.description.strip()):
         warn(
             "missing_description",
@@ -852,8 +966,11 @@ _CATEGORY_SUBGRAPH = {
     "ownership": "code_topology",
     "people": "code_topology",
     "timeline": "recent_changes",
+    "knowledge": "knowledge",
     "generic": "admin",
 }
+# An unmapped category falls back to "memory" silently, so entity types whose
+# category is broader than their slice are pinned here explicitly.
 _ENTITY_TYPE_SUBGRAPH = {
     "Preference": "decisions",
     "Policy": "decisions",
@@ -861,6 +978,8 @@ _ENTITY_TYPE_SUBGRAPH = {
     "BugPattern": "debugging",
     "Fix": "debugging",
     "Activity": "recent_changes",
+    "Document": "knowledge",
+    "DocumentSection": "knowledge",
 }
 
 
@@ -874,6 +993,9 @@ def subgraph_for_predicate(
         finally:
             _CURRENT_DEFINITION.reset(token)
     pred = (predicate or "").strip().upper()
+    mapped = _CURRENT_DEFINITION.get().predicate_subgraphs.get(pred)
+    if mapped is not None:
+        return mapped
     if pred in _MEMORY_PREDICATE_SUBGRAPH:
         return _MEMORY_PREDICATE_SUBGRAPH[pred]
     spec = _edge_spec(pred)

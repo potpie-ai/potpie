@@ -5,11 +5,12 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
-from datetime import datetime
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
+from typing import Any
 
 from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
-from potpie_context_engine.core.ports.claim_query import ClaimRow
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
 
 # Edge properties that are part of the canonical V1.5 contract or backend system
 # frame. These are hydrated into first-class ``ClaimRow`` fields or intentionally
@@ -40,6 +41,10 @@ CONTRACT_EDGE_KEYS = frozenset(
         "object_key",
         "observed_at",
         "ontology_version",
+        "record_id",
+        "retired",
+        "__potpie_snapshot_properties_v2",
+        "__potpie_snapshot_claim_fields_v2",
         "source_ref",
         "source_refs",
         "source_system",
@@ -53,6 +58,46 @@ CONTRACT_EDGE_KEYS = frozenset(
     }
 )
 RESERVED_EDGE_KEYS = CONTRACT_EDGE_KEYS
+
+
+def claim_is_applicable(row: ClaimRow, *, as_of: datetime | None = None) -> bool:
+    """Return whether a claim applies in the half-open valid-time interval."""
+    point = _as_utc(as_of or datetime.now(timezone.utc))
+    start = _as_utc(row.valid_at) if row.valid_at is not None else None
+    valid_until = _as_utc(row.valid_until) if row.valid_until is not None else None
+    invalid_at = _as_utc(row.invalid_at) if row.invalid_at is not None else None
+    if start is not None and start > point:
+        return False
+    if valid_until is not None and point >= valid_until:
+        return False
+    if invalid_at is not None and point >= invalid_at:
+        return False
+    return True
+
+
+def claim_matches_time_filter(
+    row: ClaimRow, filter_: ClaimQueryFilter, *, query_time: datetime
+) -> bool:
+    """Compare instants rather than the lexical order of stored ISO offsets."""
+    if not filter_.include_invalidated and not claim_is_applicable(
+        row, as_of=query_time
+    ):
+        return False
+    if filter_.valid_at_after is not None and (
+        row.valid_at is None or _as_utc(row.valid_at) < _as_utc(filter_.valid_at_after)
+    ):
+        return False
+    return (
+        filter_.valid_at_before is None
+        or row.valid_at is None
+        or _as_utc(row.valid_at) <= _as_utc(filter_.valid_at_before)
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def parse_dt(value: Any) -> datetime | None:
@@ -77,7 +122,7 @@ def parse_dt(value: Any) -> datetime | None:
 
 
 def iso(value: datetime | None) -> str | None:
-    return value.isoformat() if value is not None else None
+    return _as_utc(value).isoformat() if value is not None else None
 
 
 def vector_property(value: Any) -> tuple[float, ...] | None:
@@ -159,7 +204,7 @@ def row_from_record(rec: Mapping[str, Any]) -> ClaimRow:
         predicate=str(props.get("name") or ""),
         subject_key=str(props.get("subject_key") or ""),
         object_key=str(props.get("object_key") or ""),
-        valid_at=parse_dt(props.get("valid_at")),
+        valid_at=parse_dt(props.get("valid_from") or props.get("valid_at")),
         invalid_at=parse_dt(props.get("invalid_at")),
         evidence_strength=evidence_strength_for_truth(truth),
         source_system=_coerce_str(props.get("source_system")),
@@ -180,6 +225,8 @@ def row_from_record(rec: Mapping[str, Any]) -> ClaimRow:
         evidence=_evidence_tuple(props.get("evidence")),
         graph_contract_version=_coerce_str(props.get("graph_contract_version")),
         ontology_version=_coerce_str(props.get("ontology_version")),
+        record_id=str(props.get("record_id") or ""),
+        retired=bool(props.get("retired", False)),
     )
 
 
@@ -217,21 +264,39 @@ def stamp_scored_rows(scored: Iterable[tuple[float, ClaimRow]]) -> list[ClaimRow
     return out
 
 
+# Concatenating with [] preserves native arrays and wraps legacy scalar
+# source_refs as one element before any() (coalesce alone does not coerce types).
+# Keep the vector query predicates consistent with this scan predicate.
+#
 # ``fact_embedding: NULL`` overrides the ``.*`` projection: embeddings are a
 # write/index-side concern, and shipping a full vector per row dominates the
 # reply size (and, on redis backends, RESP parse time) of every claim scan.
 FIND_CLAIMS_CYPHER = """
 MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
-WHERE ($preds IS NULL OR r.name IN $preds)
+WHERE ($include_retired OR (coalesce(r.retired,false)=false AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false))
+  AND ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
+  AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
-  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN coalesce(r.source_refs, []) WHERE ref IN $source_refs))
+  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
-  AND ($include_invalid OR r.invalid_at IS NULL)
-  AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)
+  AND ($exact_text IS NULL OR any(needle IN $exact_text WHERE
+    toLower(coalesce(r.subject_key, '') + ' ' + coalesce(r.object_key, '') + ' ' +
+      coalesce(r.claim_key, '') + ' ' + coalesce(r.fact, '') + ' ' +
+      coalesce(r.description, '') + ' ' + coalesce(r.source_ref, '') + ' ' +
+      reduce(text = '', ref IN [] + coalesce(r.source_refs, []) | text + ' ' + ref))
+    CONTAINS needle))
+  AND ($environments IS NULL OR toLower(coalesce(r.environment, '')) IN $environments)
+  AND ($truths IS NULL OR toLower(coalesce(r.truth, '')) IN $truths)
+  AND ($endpoint_label IS NULL OR $endpoint_label IN labels(a) OR $endpoint_label IN labels(b))
+  AND ($include_invalid OR (
+    (coalesce(r.valid_from, r.valid_at) IS NULL OR coalesce(r.valid_from, r.valid_at) <= $query_time)
+    AND (r.valid_until IS NULL OR $query_time < r.valid_until)
+    AND (r.invalid_at IS NULL OR $query_time < r.invalid_at)
+  ))
   AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
   AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
   AND ($subject_label IS NULL OR $subject_label IN labels(a))
@@ -240,23 +305,47 @@ RETURN r{.*, fact_embedding: NULL} AS props
 """
 
 
+# ANN returns top-k by distance, then WHERE filters predicates/subgraphs. A
+# selective filter (predicate allowlist or subgraph exclusion) needs a larger
+# candidate pool so a dense neighborhood of out-of-family claims cannot empty
+# the post-filter result (resources P9 — section corpus crowding).
+_VECTOR_K_BASE_MULTIPLIER = 5
+_VECTOR_K_BASE_FLOOR = 50
+_VECTOR_K_SELECTIVE_MULTIPLIER = 25
+_VECTOR_K_SELECTIVE_FLOOR = 250
+
+
+def vector_candidate_k(limit: int, *, selective: bool) -> int:
+    """How many ANN neighbors to pull before applying claim filters."""
+    bound = max(1, int(limit))
+    if selective:
+        return max(bound * _VECTOR_K_SELECTIVE_MULTIPLIER, _VECTOR_K_SELECTIVE_FLOOR)
+    return max(bound * _VECTOR_K_BASE_MULTIPLIER, _VECTOR_K_BASE_FLOOR)
+
+
+def vector_filter_is_selective(filter_: ClaimQueryFilter) -> bool:
+    return bool(filter_.predicate_in or filter_.subgraph_not_in)
+
+
 ENTITY_LABELS_CYPHER = """
 MATCH (e:Entity {group_id: $gid})
-WHERE e.entity_key IN $keys
+WHERE e.entity_key IN $keys AND coalesce(e.retired,false)=false
 RETURN e.entity_key AS key, labels(e) AS labels
 """
 
 
 __all__ = [
+    "CONTRACT_EDGE_KEYS",
     "ENTITY_LABELS_CYPHER",
     "FIND_CLAIMS_CYPHER",
-    "CONTRACT_EDGE_KEYS",
     "RESERVED_EDGE_KEYS",
     "embedding_score",
     "iso",
     "parse_dt",
     "row_from_record",
-    "stamp_similarity",
     "stamp_scored_rows",
+    "stamp_similarity",
+    "vector_candidate_k",
+    "vector_filter_is_selective",
     "vector_property",
 ]

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from potpie_context_engine.application.readers._common import (
+    EXCLUDE_KNOWLEDGE_SUBGRAPH,
     ReadRequest,
     ReadResponse,
     claim_candidate_key,
@@ -46,7 +47,7 @@ class FeaturesReader:
             prefixes=("service", "repo"),
             include_anchor_entity_key=True,
         )
-        rows = self._rows(req, anchor_keys=anchor_keys)
+        rows, budget_reached = self._rows(req, anchor_keys=anchor_keys)
 
         candidates: list[Candidate] = []
         for row in rows:
@@ -72,21 +73,48 @@ class FeaturesReader:
             coverage_status=coverage_status_from_count(
                 found=len(ranked), requested=req.max_items
             ),
-            meta={"anchor_keys": list(anchor_keys), "candidate_pool": len(rows)},
+            meta={
+                "anchor_keys": list(anchor_keys),
+                "scope": "anchors" if anchor_keys else "selected_pot",
+                "bounded_overview": True,
+                "result_limit": req.max_items,
+                "candidate_pool": len(rows),
+                "candidate_pool_unit": "claims",
+                "candidate_budget_reached": budget_reached,
+                "ranking_omitted": max(0, len(candidates) - len(ranked)),
+                "completeness": (
+                    "truncated"
+                    if len(candidates) > len(ranked)
+                    else "unknown"
+                    if budget_reached or req.query
+                    else "complete"
+                ),
+            },
         )
 
-    def _rows(self, req: ReadRequest, *, anchor_keys: Iterable[str]) -> list[ClaimRow]:
+    def _rows(
+        self, req: ReadRequest, *, anchor_keys: Iterable[str]
+    ) -> tuple[list[ClaimRow], bool]:
         anchors = tuple(anchor_keys)
+        budget_reached = False
+
+        def find(filter_: ClaimQueryFilter) -> list[ClaimRow]:
+            nonlocal budget_reached
+            found = list(self.claim_query.find_claims(filter_))
+            budget_reached |= len(found) >= filter_.limit
+            return found
+
         base = {
             "pot_id": req.pot_id,
             "include_invalidated": req.include_invalidated,
             "as_of": req.as_of,
             "source_ref_in": req.source_refs,
+            "subgraph_not_in": EXCLUDE_KNOWLEDGE_SUBGRAPH,
             "limit": max(req.max_items * 6, 48),
         }
         if not anchors:
-            return dedupe_claim_rows(
-                self.claim_query.find_claims(
+            rows = dedupe_claim_rows(
+                find(
                     ClaimQueryFilter(
                         **base,
                         predicate_in=_FEATURE_PREDICATES,
@@ -95,9 +123,11 @@ class FeaturesReader:
                 )
             )
 
+            return rows, budget_reached
+
         rows: list[ClaimRow] = []
         rows.extend(
-            self.claim_query.find_claims(
+            find(
                 ClaimQueryFilter(
                     **base,
                     predicate_in=("PROVIDES",),
@@ -107,7 +137,7 @@ class FeaturesReader:
             )
         )
         rows.extend(
-            self.claim_query.find_claims(
+            find(
                 ClaimQueryFilter(
                     **base,
                     predicate_in=("IMPLEMENTED_IN",),
@@ -120,7 +150,7 @@ class FeaturesReader:
         feature_keys = _feature_keys(rows)
         if feature_keys:
             rows.extend(
-                self.claim_query.find_claims(
+                find(
                     ClaimQueryFilter(
                         **base,
                         predicate_in=("PROVIDES",),
@@ -129,7 +159,7 @@ class FeaturesReader:
                 )
             )
             rows.extend(
-                self.claim_query.find_claims(
+                find(
                     ClaimQueryFilter(
                         **base,
                         predicate_in=("IMPLEMENTED_IN",),
@@ -137,7 +167,7 @@ class FeaturesReader:
                     )
                 )
             )
-        return dedupe_claim_rows(rows)
+        return dedupe_claim_rows(rows), budget_reached
 
 
 def _feature_keys(rows: Iterable[ClaimRow]) -> list[str]:

@@ -14,9 +14,10 @@ computed read annotations.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,8 @@ class ClaimRow:
     evidence: tuple[Mapping[str, Any], ...] = ()
     graph_contract_version: str | None = None
     ontology_version: str | None = None
+    record_id: str = ""
+    retired: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +74,7 @@ class ClaimQueryFilter:
     object_key_in: tuple[str, ...] = ()
     claim_key_in: tuple[str, ...] = ()
     subgraph_in: tuple[str, ...] = ()
+    subgraph_not_in: tuple[str, ...] = ()
     mutation_id_in: tuple[str, ...] = ()
     source_ref_in: tuple[str, ...] = ()
     subject_label: str | None = None  # filter by Entity label
@@ -78,6 +82,7 @@ class ClaimQueryFilter:
     valid_at_after: datetime | None = None
     valid_at_before: datetime | None = None
     include_invalidated: bool = False
+    include_retired: bool = False
     as_of: datetime | None = None
     source_system_in: tuple[str, ...] = ()
     limit: int | None = None
@@ -85,6 +90,14 @@ class ClaimQueryFilter:
     # candidates ordered by similarity. Cosine distance scores are
     # stamped onto ``ClaimRow.properties["semantic_similarity"]``.
     fact_query: str | None = None
+    # Deterministic identity substrings applied before ``limit``. These are
+    # canonical variants such as ``pr-1074`` and ``/pull/1074``; callers still
+    # verify boundary-aware identity matching after hydration.
+    exact_text_in: tuple[str, ...] = ()
+    exact_text_pattern: str | None = None
+    environment_in: tuple[str, ...] = ()
+    truth_in: tuple[str, ...] = ()
+    endpoint_label: str | None = None
 
 
 @runtime_checkable

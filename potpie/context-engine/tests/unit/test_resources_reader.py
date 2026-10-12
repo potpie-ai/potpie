@@ -1,0 +1,476 @@
+"""ResourcesReader: the include family that does not read the claim store."""
+
+from __future__ import annotations
+
+import pytest
+
+from potpie_context_engine.core.ports.graph_service import GraphReadRequest
+from potpie_context_engine.core.agent_context_port import (
+    DEFAULT_INTENT_INCLUDES,
+    READER_BACKED_INCLUDES,
+)
+from potpie_context_engine.core.ports.resource_index import (
+    LEXICAL_RANK_DECAY,
+    MATCH_MODE_DISABLED,
+    MATCH_MODE_HYBRID,
+    MATCH_MODE_LEXICAL,
+    ChunkHit,
+    IndexCapabilities,
+    IndexSearchResult,
+    ResourceIndexError,
+)
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.application.readers._common import ReadRequest
+from potpie_context_engine.application.readers.resources import ResourcesReader
+from potpie_context_engine.application.services.envelope_builder import (
+    INCLUDE_RANK_WEIGHT,
+)
+from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_engine.domain.ranking import RankingService
+
+
+def hit(
+    seq,
+    *,
+    similarity=None,
+    lexical_rank=None,
+    semantic_rank=None,
+    rank=1,
+    term_coverage=None,
+):
+    return ChunkHit(
+        resource_id=f"potpie://res/q3-review/liability/{seq:04d}",
+        doc="q3-review",
+        section="liability",
+        seq=seq,
+        document_key="document:q3-review",
+        section_key="docsection:q3-review:liability",
+        section_title="12. Limitation of Liability",
+        label="cap on damages",
+        snippet="…liability shall not exceed the fees paid…",
+        chars=3980,
+        revision=3,
+        score=0.5,
+        rank=rank,
+        match_mode=MATCH_MODE_HYBRID,
+        source_ref="file:///q3.pdf",
+        lexical_rank=lexical_rank,
+        semantic_rank=semantic_rank,
+        term_coverage=term_coverage,
+        similarity=similarity,
+    )
+
+
+class FakeIndex:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def capabilities(self):
+        return IndexCapabilities(profile="fake", lexical=True, snippets=True)
+
+    def search(self, *, pot_id, query, limit=12, doc=None):
+        self.calls.append(
+            {"pot_id": pot_id, "query": query, "limit": limit, "doc": doc}
+        )
+        return self.result
+
+
+def reader(result):
+    index = FakeIndex(result)
+    return ResourcesReader(index=index, ranker=RankingService()), index
+
+
+def test_payload_carries_the_graph_keys_and_the_fetch_command():
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            hits=(hit(2, similarity=0.6, lexical_rank=2, semantic_rank=1),),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="liability cap"))
+    assert len(response.items) == 1
+    payload = response.items[0].candidate.payload
+    assert payload["kind"] == "resource_chunk"
+    # Derived locally from the id — the whole reason the graph tie is free.
+    assert payload["document_key"] == "document:q3-review"
+    assert payload["section_key"] == "docsection:q3-review:liability"
+    # The fetch command keeps the pot the hit came from, so it still reads
+    # the right project when replayed from another checkout or active pot.
+    assert payload["fetch"] == (
+        "potpie resource get potpie://res/q3-review/liability/0002 --pot p"
+    )
+    assert payload["retrieval"]["match_mode"] == MATCH_MODE_HYBRID
+    assert payload["retrieval"]["lexical_rank"] == 2
+    assert payload["retrieval"]["semantic_rank"] == 1
+    # A snippet, never a body: the two-call search→get path depends on it.
+    assert "snippet" in payload and "text" not in payload
+
+
+def test_a_disabled_index_is_reported_not_raised():
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="none", match_mode=MATCH_MODE_DISABLED, detail="index is disabled"
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="anything"))
+    assert response.items == ()
+    assert response.coverage_status == "empty"
+    # The caller can tell "no matches" from "no index" without a second call.
+    assert response.meta["match_mode"] == MATCH_MODE_DISABLED
+    assert response.meta["detail"] == "index is disabled"
+
+
+def test_a_read_with_no_query_returns_nothing_rather_than_filler():
+    rdr, index = reader(IndexSearchResult(profile="sqlite_fts"))
+    response = rdr.read(ReadRequest(pot_id="p", query="   "))
+    assert response.items == () and response.coverage_status == "empty"
+    # And it does not even ask: a corpus has no standing order.
+    assert index.calls == []
+
+
+def test_a_term_match_is_scored_by_its_lexical_rank_not_its_cosine():
+    """The reader's vote to the ranker must be the fusion's *result*.
+
+    This assertion used to read the other way — a lexical hit passed its raw
+    cosine through, or ``None`` when it had none. End-to-end that inverted the
+    ranking: ``CRDTs`` occurs in exactly one chunk, the lexical arm ranked it
+    first, and its 0.11 cosine put it fourth in the envelope behind three
+    chunks that merely drifted near the query in vector space. A hit both arms
+    agreed on scored *worse* than a hit only one arm found.
+
+    The measured number stays visible in the payload, so the diagnostic is not
+    lost — only the vote changes.
+    """
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_fts",
+            match_mode=MATCH_MODE_LEXICAL,
+            hits=(hit(0, lexical_rank=1),),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="ERR_QUOTA_EXCEEDED"))
+    assert response.items[0].candidate.semantic_similarity == 1.0
+    # The cosine the semantic arm did not measure is still reported as absent.
+    assert response.items[0].candidate.payload["retrieval"]["similarity"] is None
+
+
+def test_a_thin_term_match_is_discounted_rather_than_scored_as_certain():
+    """Rank 1 of a bad pool must not read like rank 1 of a good one.
+
+    Measured end-to-end: with rank as the only lexical signal, every query the
+    corpus could not answer returned one identical, confident score, because on
+    any query *somebody* ranks first.
+    """
+    full, thin = (
+        reader(
+            IndexSearchResult(
+                profile="sqlite_fts",
+                match_mode=MATCH_MODE_LEXICAL,
+                hits=(hit(0, lexical_rank=1, term_coverage=coverage),),
+            )
+        )[0]
+        .read(ReadRequest(pot_id="p", query="anything"))
+        .items[0]
+        .candidate.semantic_similarity
+        for coverage in (1.0, 1 / 3)
+    )
+    assert full == 1.0
+    assert thin == pytest.approx(1 / 3)
+
+
+def test_a_low_cosine_term_match_outranks_a_high_cosine_drifter():
+    """The exact end-to-end inversion, pinned as a unit test."""
+    hits = (
+        # The only chunk containing the query term, and a poor embedding match.
+        hit(0, lexical_rank=1, similarity=0.11, semantic_rank=4, rank=1),
+        # Nearer in vector space, no term match at all.
+        hit(1, similarity=0.17, semantic_rank=1, rank=2),
+    )
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid", match_mode=MATCH_MODE_HYBRID, hits=hits
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="CRDTs"))
+    assert response.items[0].candidate.payload["seq"] == 0
+
+
+def test_the_relevance_floor_cuts_the_semantic_tail_and_spares_term_hits():
+    hits = (
+        hit(0, similarity=0.60, semantic_rank=1, rank=1),
+        hit(1, similarity=0.05, semantic_rank=2, rank=2),  # far below the floor
+        hit(2, similarity=0.02, lexical_rank=3, rank=3),  # exact term: survives
+    )
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid", match_mode=MATCH_MODE_HYBRID, hits=hits
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="liability"))
+    kept = {item.candidate.payload["seq"] for item in response.items}
+    assert kept == {0, 2}, "the unscored tail must go and the term hit must stay"
+
+
+def test_scope_doc_narrows_to_one_document():
+    rdr, index = reader(IndexSearchResult(profile="sqlite_fts"))
+    rdr.read(ReadRequest(pot_id="p", query="x", scope={"doc": " q3-review "}))
+    assert index.calls[0]["doc"] == "q3-review"
+
+
+def test_scope_service_is_ignored_rather_than_silently_honoured():
+    rdr, index = reader(IndexSearchResult(profile="sqlite_fts"))
+    rdr.read(ReadRequest(pot_id="p", query="x", scope={"service": "billing"}))
+    assert index.calls[0]["doc"] is None
+
+
+def _relevance_of(*, similarity, lexical_rank, term_coverage, calibrated):
+    """The relevance the reader votes with, read back off the ranked item."""
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            hits=(
+                hit(
+                    0,
+                    similarity=similarity,
+                    lexical_rank=lexical_rank,
+                    semantic_rank=1,
+                    term_coverage=term_coverage,
+                ),
+            ),
+            similarity_calibrated=calibrated,
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="liability cap"))
+    return response.items[0].breakdown["semantic_similarity"]
+
+
+def test_a_calibrated_cosine_is_blended_into_relevance():
+    """Rank alone is ordinal: rank 1 scores 1.0 whether or not it answers."""
+    ordinal = _relevance_of(
+        similarity=0.40, lexical_rank=1, term_coverage=1.0, calibrated=False
+    )
+    blended = _relevance_of(
+        similarity=0.40, lexical_rank=1, term_coverage=1.0, calibrated=True
+    )
+    assert ordinal == pytest.approx(1.0)
+    # 0.25 * 1.0 + 0.75 * 0.40
+    assert blended == pytest.approx(0.55)
+
+
+def test_an_uncalibrated_index_keeps_the_ordinal_score():
+    """Protects the OSS default, which ships the hashing embedder.
+
+    Blending that embedder's cosine is measurably *worse* than ignoring it
+    (top-1 0.705 -> 0.658 over 190 questions), so the improvement that a real
+    sentence encoder buys must not be applied where the number is noise. A
+    profile that does not declare calibration gets the pre-blend behaviour.
+    """
+    assert IndexSearchResult(profile="sqlite_fts").similarity_calibrated is False
+    # rank 2 -> 10 / (10 - 1 + 2), times the coverage discount, and the cosine
+    # makes no difference to it at any value.
+    expected = (LEXICAL_RANK_DECAY / (LEXICAL_RANK_DECAY - 1.0 + 2)) * 0.5
+    for similarity in (0.05, 0.4, 0.95):
+        assert _relevance_of(
+            similarity=similarity,
+            lexical_rank=2,
+            term_coverage=0.5,
+            calibrated=False,
+        ) == pytest.approx(expected)
+
+
+def test_a_lexical_only_hit_is_never_blended_even_when_calibrated():
+    """No cosine was measured for it; a stand-in would be an invented signal."""
+    assert _relevance_of(
+        similarity=None, lexical_rank=1, term_coverage=1.0, calibrated=True
+    ) == pytest.approx(1.0)
+
+
+def test_resources_is_advertised_backed_and_demoted():
+    assert "resources" in READER_BACKED_INCLUDES
+    # Bare ``potpie search`` must reach document text, or a phrase that appears
+    # in a document and in no summary reads as "not found".
+    assert "resources" in DEFAULT_INTENT_INCLUDES["unknown"]
+    assert "resources" in DEFAULT_INTENT_INCLUDES["docs"]
+    # Below ``docs``, so a corpus cannot crowd project memory out of a mixed
+    # envelope.
+    assert INCLUDE_RANK_WEIGHT["resources"] < INCLUDE_RANK_WEIGHT["docs"]
+    assert INCLUDE_RANK_WEIGHT["resources"] < INCLUDE_RANK_WEIGHT["decisions"]
+
+
+def test_best_relevance_reports_the_pools_strongest_measured_similarity():
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=True,
+            hits=(
+                hit(2, similarity=0.31, lexical_rank=1, semantic_rank=2),
+                hit(3, similarity=0.58, lexical_rank=2, semantic_rank=1),
+            ),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="liability cap"))
+    assert response.meta["best_relevance"] == 0.58
+
+
+def test_best_relevance_is_none_when_the_index_is_uncalibrated():
+    """The hashing embedder's cosines are not on the sentence-encoder scale, so
+    reporting one would have the envelope band it against thresholds tuned for
+    a different distribution."""
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=False,
+            hits=(hit(2, similarity=0.58, lexical_rank=1, semantic_rank=1),),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="liability cap"))
+    assert response.meta["best_relevance"] is None
+
+
+def test_best_relevance_is_none_when_nothing_was_scored_semantically():
+    """Unknown is not the same claim as bad: a lexical-only pool has no measured
+    similarity, and a zero here would read as 'the corpus has no answer'."""
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_fts",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=True,
+            hits=(hit(2, similarity=None, lexical_rank=1),),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="ERR_QUOTA_EXCEEDED"))
+    assert response.meta["best_relevance"] is None
+
+
+@pytest.mark.parametrize(
+    "threshold, expected",
+    [(None, {0, 1, 2, 3}), (0.0, {0, 1, 2}), (0.7, {0, 1}), (0.99, set())],
+)
+def test_explicit_threshold_filters_measured_similarity_without_lexical_bypass(
+    threshold, expected
+):
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=True,
+            hits=(
+                hit(0, similarity=0.9, semantic_rank=1),
+                hit(1, similarity=0.7, semantic_rank=2),
+                hit(2, similarity=0.1, lexical_rank=1, term_coverage=0.25),
+                hit(3, lexical_rank=2, term_coverage=1.0),
+            ),
+        )
+    )
+    response = rdr.read(
+        ReadRequest(pot_id="p", query="QME full form", query_threshold=threshold)
+    )
+    assert {item.candidate.payload["seq"] for item in response.items} == expected
+    assert response.meta["query_threshold"] == threshold
+    if not expected:
+        assert "No passages meet" in response.meta["warnings"][0]
+    if threshold == 0.7:
+        assert response.meta["warnings"] == []
+
+
+@pytest.mark.parametrize(
+    "mode", [MATCH_MODE_LEXICAL, MATCH_MODE_HYBRID, MATCH_MODE_DISABLED]
+)
+def test_explicit_threshold_refuses_an_index_without_calibrated_similarity(mode):
+    rdr, _ = reader(IndexSearchResult(profile="fake", match_mode=mode))
+    with pytest.raises(ResourceIndexError, match="cannot apply a calibrated") as exc:
+        rdr.read(ReadRequest(pot_id="p", query="QME", query_threshold=0.5))
+    assert "Omit --query-threshold" in exc.value.recommended_next_action
+
+
+@pytest.mark.parametrize("threshold", [-0.1, 1.1, float("nan"), float("inf")])
+def test_invalid_threshold_fails_before_search(threshold):
+    rdr, index = reader(IndexSearchResult(profile="fake"))
+    with pytest.raises(ResourceIndexError, match="between 0.0 and 1.0"):
+        rdr.read(ReadRequest(pot_id="p", query="QME", query_threshold=threshold))
+    assert index.calls == []
+
+
+@pytest.mark.parametrize("calibrated", [True, False])
+def test_a_full_page_of_weak_hits_carries_a_warning(calibrated):
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="fake",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=calibrated,
+            hits=tuple(
+                hit(i, similarity=0.1, lexical_rank=i + 1, term_coverage=0.25)
+                for i in range(5)
+            ),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="QME full form", max_items=5))
+    assert response.coverage_status == "complete"
+    assert len(response.items) == 5
+    warning = response.meta["warnings"][0]
+    assert ("Weak passage matches" if calibrated else "uncalibrated") in warning
+
+
+def test_lexical_only_evidence_is_reported_as_unmeasured():
+    rdr, _ = reader(
+        IndexSearchResult(
+            profile="fake",
+            match_mode=MATCH_MODE_LEXICAL,
+            similarity_calibrated=True,
+            hits=(hit(0, lexical_rank=1, term_coverage=1.0),),
+        )
+    )
+    response = rdr.read(ReadRequest(pot_id="p", query="QME"))
+    assert "no measured semantic similarity" in response.meta["warnings"][0]
+
+
+@pytest.mark.parametrize("threshold, count", [(None, 1), (0.7, 0)])
+def test_passage_view_preserves_threshold_and_evidence_diagnostics(threshold, count):
+    index = FakeIndex(
+        IndexSearchResult(
+            profile="fake",
+            match_mode=MATCH_MODE_HYBRID,
+            similarity_calibrated=True,
+            hits=(hit(0, similarity=0.1, lexical_rank=1, term_coverage=0.25),),
+        )
+    )
+    service = DefaultGraphService(backend=InMemoryGraphBackend(), resource_index=index)
+    result = service.read(
+        GraphReadRequest(
+            pot_id="p",
+            subgraph="knowledge",
+            view="document_passages",
+            query="QME full form",
+            query_threshold=threshold,
+            limit=1,
+        )
+    )
+    body = result.to_dict()
+    assert body["ok"] is True
+    assert len(body["items"]) == count
+    assert body["match_mode"] == MATCH_MODE_HYBRID
+    assert body["coverage"][0]["metadata"]["query_threshold"] == threshold
+    assert body["coverage"][0]["metadata"]["similarity_calibrated"] is True
+    assert body["coverage"][0]["best_relevance"] == 0.1
+    assert body["warnings"]
+
+
+def test_passage_limit_reports_known_omissions_in_passage_units():
+    rdr, index = reader(
+        IndexSearchResult(
+            profile="sqlite_hybrid",
+            match_mode=MATCH_MODE_HYBRID,
+            hits=tuple(hit(i, similarity=0.9, lexical_rank=i + 1) for i in range(3)),
+        )
+    )
+    result = rdr.read(ReadRequest(pot_id="p", query="liability cap", max_items=1))
+    assert len(result.items) == 1 and len(index.calls) == 1
+    assert result.meta["candidate_pool_unit"] == "passages"
+    assert result.meta["ranking_omitted"] == 2

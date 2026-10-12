@@ -97,7 +97,7 @@ class ReadRequest(EngineRequest):
     source_refs: tuple[str, ...] = ()
     detail: str = "compact"
     relations: str = "summary"
-    query_threshold: float = 0.70
+    query_threshold: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

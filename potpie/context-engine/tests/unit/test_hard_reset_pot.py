@@ -85,3 +85,37 @@ def test_hard_reset_with_reconciliation_ledger() -> None:
     i_led = parent.mock_calls.index(call.ledger.delete_all_for_pot("pot-1"))
     i_reset = parent.mock_calls.index(call.context_graph.reset_pot("pot-1"))
     assert i_reco < i_led < i_reset
+
+
+def test_hard_reset_purges_resources_after_successful_graph_reset():
+    parent = MagicMock()
+    context_graph = MagicMock()
+    context_graph.reset_pot.return_value = {"pot_id": "pot-1", "ok": True}
+    parent.attach_mock(context_graph, "context_graph")
+    resources = MagicMock()
+    resources.purge_pot.return_value = True
+    parent.attach_mock(resources, "resources")
+
+    out = hard_reset_pot(context_graph, "pot-1", resources=resources)
+
+    assert out["ok"] is True
+    assert out["resources_purged"] is True
+    assert parent.mock_calls.index(
+        call.context_graph.reset_pot("pot-1")
+    ) < parent.mock_calls.index(call.resources.purge_pot("pot-1"))
+
+
+def test_hard_reset_skips_resource_purge_when_graph_reset_fails():
+    context_graph = MagicMock()
+    context_graph.reset_pot.return_value = {
+        "pot_id": "pot-1",
+        "ok": False,
+        "error": "bad",
+    }
+    resources = MagicMock()
+
+    out = hard_reset_pot(context_graph, "pot-1", resources=resources)
+
+    assert out["ok"] is False
+    resources.purge_pot.assert_not_called()
+    assert "resources_purged" not in out
