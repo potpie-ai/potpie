@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import platform
 import sys
+from collections.abc import Sequence
 
 import click
 import typer
@@ -237,6 +238,48 @@ def _is_click_exception(exc: Exception) -> bool:
     ) and callable(getattr(exc, "show", None))
 
 
+#: Root options a caller may also type after the command. Click raises
+#: ``NoSuchOption`` only for a command that declares no option of that name, so
+#: a command that owns its own ``--host`` (``gitbucket login --host <url>``)
+#: keeps it.
+_TRAILING_ROOT_OPTIONS: frozenset[str] = frozenset({"--host"})
+
+
+def _misplaced_root_option(exc: Exception) -> str | None:
+    """The root option typed after a command that does not declare it."""
+    if type(exc).__name__ != "NoSuchOption":
+        return None
+    name = str(getattr(exc, "option_name", "") or "")
+    return name if name in _TRAILING_ROOT_OPTIONS else None
+
+
+def _hoist_root_option(option: str, args: Sequence[str]) -> list[str] | None:
+    """``args`` with ``option`` and its value moved in front of the command.
+
+    Only the tokens before a ``--`` separator are the caller's options. ``None``
+    when there is nothing safe to move: the option is typed more than once, or
+    it has no value after it.
+    """
+    rest = list(args)
+    end = rest.index("--") if "--" in rest else len(rest)
+    hits = [
+        index
+        for index in range(end)
+        if rest[index] == option or rest[index].startswith(f"{option}=")
+    ]
+    if len(hits) != 1:
+        return None
+    index = hits[0]
+    if rest[index] != option:
+        token = rest.pop(index)
+        return [token, *rest]
+    if index + 1 >= end or rest[index + 1].startswith("-"):
+        return None
+    value = rest[index + 1]
+    del rest[index : index + 2]
+    return [option, value, *rest]
+
+
 def run_cli(argv: list[str] | None = None) -> None:
     """Invoke the Typer app with the documented parse-error contract."""
     from potpie.cli.ui.output import (
@@ -254,12 +297,36 @@ def run_cli(argv: list[str] | None = None) -> None:
     configure_cli_logging(is_verbose())
 
     try:
-        exit_code = app(args, standalone_mode=False)
+        try:
+            exit_code = app(args, standalone_mode=False)
+        except Exception as exc:
+            option = _misplaced_root_option(exc)
+            hoisted = _hoist_root_option(option, args) if option else None
+            if hoisted is None:
+                raise
+            # Click refuses while parsing the command's options, before its
+            # body runs or anything is emitted, so `status --host managed` is
+            # re-run as `--host managed status`: the same command line, spelled
+            # the one way the parser accepts.
+            exit_code = app(hoisted, standalone_mode=False)
     except (typer.Abort, click.Abort):
         raise typer.Exit(code=1) from None
     except Exception as exc:
         if not _is_click_exception(exc):
             raise
+        option = _misplaced_root_option(exc)
+        if option is not None:
+            # Click's "No such option: --host" hides that the option exists one
+            # position to the left.
+            fail(
+                code="usage_error",
+                message=(
+                    f"'{option}' is a global option and takes one value: "
+                    f"potpie {option} <local|managed> <command> ..."
+                ),
+                next_action=f"put '{option} <local|managed>' before the command",
+                exit_code=EXIT_VALIDATION,
+            )
         if is_json():
             fail(
                 code="usage_error",

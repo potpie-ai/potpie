@@ -7,6 +7,7 @@ from typing import Any
 import typer
 
 from potpie.cli.commands._common import (
+    EXIT_UNAVAILABLE,
     confirm_destructive_operation,
     contract,
     current_repo_identity_for_cli,
@@ -15,8 +16,9 @@ from potpie.cli.commands._common import (
     empty_pot_warnings,
     fail,
     get_engine_client,
+    current_origin,
     get_root_runtime,
-    get_pot_service,
+    pot_directory,
     pot_graph_counts,
     pot_scope_info,
     pot_scope_resolution_human,
@@ -25,7 +27,9 @@ from potpie.cli.commands._common import (
     repo_effective_pot_info,
     repo_pot_candidates,
     resolve_pot_id,
+    resolve_pot_ref,
     resolve_pot_scope,
+    route_ref,
     run_engine_operation,
     use_pot_selection,
 )
@@ -43,6 +47,7 @@ from potpie.cli.source_kinds import (
     registrable_names,
     resolve_kind,
 )
+from potpie.pots.directory import is_remote_repo_key
 from potpie.pots.resolution import is_archived, match_pot_ref
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.requests import ResetContextRequest
@@ -55,60 +60,150 @@ source_app = typer.Typer(
 pot_app.add_typer(default_app, name="default")
 
 
+def _unlistable_host_repair(origins: tuple[str, ...]) -> str:
+    """Next action for a ``pot list`` in which no host answered at all.
+
+    Names the host that is actually down: ``potpie doctor`` checks the local
+    daemon, so it is a repair that cannot succeed for an unreachable managed
+    service.
+    """
+    from potpie.config import host_registry
+
+    local = "check backend/daemon readiness with 'potpie doctor'"
+    managed = (
+        "check the managed host with 'potpie host list', "
+        "or re-point it with 'potpie host set <url> --token -'"
+    )
+    if host_registry.MANAGED not in origins:
+        return local
+    if host_registry.LOCAL not in origins:
+        return managed
+    return f"{local}; for the managed host, {managed}"
+
+
+def _listed_pots(origin: str) -> tuple[list[Any], str | None]:
+    """``(pots, active_pot_id)`` of one origin; raises when it cannot answer."""
+    directory = pot_directory(origin)
+    pots = list(directory.list_pots())
+    active = directory.active_pot()
+    return pots, getattr(active, "pot_id", None) if active is not None else None
+
+
 @pot_app.command("list")
 def pot_list(
-    local: bool = typer.Option(
-        False, "--local", help="Local-origin pots only (default)."
-    ),
+    local: bool = typer.Option(False, "--local", help="Local-origin pots only."),
     managed: bool = typer.Option(False, "--managed", help="Managed-origin pots only."),
-    all_: bool = typer.Option(False, "--all", help="Local + managed pots."),
+    all_: bool = typer.Option(
+        False,
+        "--all",
+        help="Local + managed pots, stating a managed host that is missing or down.",
+    ),
     archived: bool = typer.Option(
         False,
         "--archived",
         help="Include archived pots (hidden by default; they cannot be used).",
     ),
 ) -> None:
+    """List pots on every configured host (narrow with --local / --managed)."""
     with contract():
-        # Managed-origin listing needs login + managed routing (HU3). '--managed'
-        # alone is the structured not-implemented contract; '--all' shows locals
-        # and flags managed as pending so it never crashes.
-        if managed and not all_:
-            raise CapabilityNotImplemented(
-                "host.pots.list_managed",
-                detail="managed pot listing is not implemented",
-                recommended_next_action="run 'potpie login'; managed routing lands in HU3",
+        from potpie.config import host_registry
+
+        # Default: every configured origin. The flags narrow it; naming both
+        # origins (or --all) lists both, so a managed host that is missing or
+        # down is stated rather than merely absent.
+        wants_local = local or all_
+        wants_managed = managed or all_
+        if wants_local and wants_managed:
+            origins: tuple[str, ...] = host_registry.ORIGINS
+        elif wants_managed:
+            if host_registry.managed_endpoint() is None:
+                message, _ = host_registry.managed_unconfigured_refusal()
+                raise CapabilityNotImplemented(
+                    "host.pots.list_managed",
+                    detail=message.rstrip("."),
+                    recommended_next_action=(
+                        "run 'potpie host set <url> --token -' (key on stdin)"
+                    ),
+                )
+            origins = (host_registry.MANAGED,)
+        elif wants_local:
+            origins = (host_registry.LOCAL,)
+        else:
+            origins = host_registry.configured_origins()
+
+        current = current_origin()
+        rows: list[dict[str, object]] = []
+        unavailable: dict[str, str] = {}
+        human_lines: list[str] = []
+        for origin in origins:
+            if human_lines:
+                human_lines.append("")
+            human_lines.append(host_registry.origin_label(origin))
+            try:
+                pots, active_id = _listed_pots(origin)
+            except Exception as exc:  # noqa: BLE001 - enumeration degrades per host
+                unavailable[origin] = str(exc) or type(exc).__name__
+                human_lines.append(f"  ({unavailable[origin]})")
+                continue
+            shown = [p for p in pots if archived or not is_archived(p)]
+            hidden = len(pots) - len(shown)
+            if not shown:
+                human_lines.append("  (no pots)")
+            for pot in shown:
+                retired = is_archived(pot)
+                active = bool(pot.active) or (
+                    active_id is not None and pot.pot_id == active_id
+                )
+                # '*' is the pot commands act on; '·' is the other host's own
+                # pointer, which is real but not current.
+                marker = " "
+                if retired:
+                    marker = "~"
+                elif active:
+                    marker = "*" if origin == current else "·"
+                rows.append(
+                    {
+                        "id": pot.pot_id,
+                        "name": pot.name,
+                        "active": active,
+                        "archived": retired,
+                        "current": bool(active and origin == current),
+                        "origin": origin,
+                    }
+                )
+                suffix = "  archived" if retired else ""
+                human_lines.append(f"{marker} {pot.name} ({pot.pot_id}){suffix}")
+            if hidden:
+                human_lines.append(
+                    f"  ({hidden} archived — see 'potpie pot list --archived')"
+                )
+
+        if unavailable and len(unavailable) == len(origins):
+            # Degrading is only honest while some other host answered; with
+            # nothing left, `pots: []` would read as "you have no pots".
+            fail(
+                code="unavailable",
+                message=(
+                    "No host answered the listing: "
+                    + "; ".join(
+                        f"{host_registry.origin_label(origin)}: {unavailable[origin]}"
+                        for origin in origins
+                    )
+                ),
+                detail={"unavailable": unavailable},
+                next_action=_unlistable_host_repair(origins),
+                exit_code=EXIT_UNAVAILABLE,
             )
-        pots = get_pot_service().list_pots()
-        # Archived pots are hidden unless asked for: every pot command refuses
-        # them, so listing them unmarked offers targets nothing accepts.
-        listed = len(pots)
-        pots = [p for p in pots if archived or not is_archived(p)]
-        hidden = listed - len(pots)
-        payload: dict[str, object] = {
-            "pots": [
-                {
-                    "id": p.pot_id,
-                    "name": p.name,
-                    "active": p.active,
-                    "archived": is_archived(p),
-                    "origin": "local",
-                }
-                for p in pots
-            ],
-        }
-        pot_rows = [
-            f"{'~' if is_archived(p) else '*' if p.active else ' '} {p.name} "
-            f"({p.pot_id}){'  archived' if is_archived(p) else ''}"
-            for p in pots
-        ]
-        human_lines = ["Local", *(pot_rows or ["(no pots)"])]
-        if hidden:
+
+        payload: dict[str, object] = {"pots": rows, "active_origin": current}
+        if unavailable:
+            payload["unavailable"] = unavailable
+        if len(origins) > 1:
+            human_lines.append("")
             human_lines.append(
-                f"  ({hidden} archived — see 'potpie pot list --archived')"
+                f"* active pot ({current}) · other host's active pot"
+                "   — target one with '--pot <host>:<name>'"
             )
-        if all_:
-            payload["managed_pending"] = True
-            human_lines.append("  (managed pots require 'potpie login' — HU3)")
         emit(payload, human="\n".join(human_lines))
 
 
@@ -116,7 +211,7 @@ def pot_list(
 def pot_info() -> None:
     with contract():
         host = get_root_runtime()
-        active = get_pot_service(host).active_pot()
+        active = pot_directory(runtime=host).active_pot()
         routing = repo_effective_pot_info(host)
         active_payload = (
             {"id": active.pot_id, "name": active.name} if active is not None else None
@@ -153,7 +248,7 @@ def _matching_repo_source(
     resolved_location: str,
     repo_key: str | None,
 ) -> Any | None:
-    list_sources = getattr(get_pot_service(host), "list_sources", None)
+    list_sources = getattr(pot_directory(runtime=host), "list_sources", None)
     if not callable(list_sources):
         return None
     try:
@@ -192,10 +287,24 @@ def register_repo_source(
     """
     resolved_location = resolve_repo_location(location)
     repo_key = repo_identity_key(resolved_location)
+    if current_origin() == "managed" and not is_remote_repo_key(repo_key):
+        # A local path means nothing on a managed host, and storing it there
+        # would publish this machine's layout to everyone the pot is shared with.
+        fail(
+            code="validation_error",
+            message=(
+                f"'{resolved_location}' is a local path; a managed host registers "
+                "repositories by their git remote."
+            ),
+            next_action=(
+                "run it inside a clone with an 'origin' remote, or pass the "
+                "remote, e.g. 'potpie source add repo github.com/<owner>/<repo>'"
+            ),
+        )
     repo_default_set = False
     repo_default_setter = None
     if make_default:
-        pot_service = get_pot_service(host)
+        pot_service = pot_directory(runtime=host)
         if not pot_service.supports_repo_defaults:
             fail(
                 code="repo_default_unavailable",
@@ -212,7 +321,7 @@ def register_repo_source(
     if existing is not None:
         src = existing
     else:
-        src = get_pot_service(host).add_source(
+        src = pot_directory(runtime=host).add_source(
             pot_id=pot_id,
             kind="repo",
             location=resolved_location,
@@ -256,7 +365,7 @@ def pot_create(
 ) -> None:
     with contract():
         host = get_root_runtime()
-        pot = get_pot_service(host).create_pot(name=name, use=use)
+        pot = pot_directory(runtime=host).create_pot(name=name, use=use)
         # ``create`` reuses a live pot of the same name so ``setup`` can re-run.
         # Saying "created" for a pot that already holds a project's memory reads
         # as a fresh empty pot. A service that does not report the field keeps
@@ -430,7 +539,7 @@ def pot_default_set(ref: str, repo: str = typer.Option("current", "--repo")) -> 
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, ref, infer_from_repo=False)
         repo_key = _repo_key_from_option(repo)
-        get_pot_service(host).set_repo_default(repo=repo_key, pot_id=pot_id)
+        pot_directory(runtime=host).set_repo_default(repo=repo_key, pot_id=pot_id)
         info = pot_scope_info(host, pot_id)
         emit(
             {"repo": repo_key, "default_pot": info},
@@ -443,7 +552,7 @@ def pot_default_clear(repo: str = typer.Option("current", "--repo")) -> None:
     with contract():
         host = get_root_runtime()
         repo_key = _repo_key_from_option(repo)
-        cleared = get_pot_service(host).clear_repo_default(repo=repo_key)
+        cleared = pot_directory(runtime=host).clear_repo_default(repo=repo_key)
         emit(
             {"repo": repo_key, "cleared": cleared},
             human=(
@@ -457,7 +566,8 @@ def pot_default_clear(repo: str = typer.Option("current", "--repo")) -> None:
 @pot_app.command("rename")
 def pot_rename(ref: str, new_name: str) -> None:
     with contract():
-        pot = get_pot_service().rename_pot(ref=ref, new_name=new_name)
+        ref = route_ref(ref) or ref
+        pot = pot_directory().rename_pot(ref=ref, new_name=new_name)
         emit({"id": pot.pot_id, "name": pot.name}, human=f"renamed → {pot.name}")
 
 
@@ -470,7 +580,9 @@ def pot_reset(
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, ref)
         pot = next(
-            item for item in get_pot_service(host).list_pots() if item.pot_id == pot_id
+            item
+            for item in pot_directory(runtime=host).list_pots()
+            if item.pot_id == pot_id
         )
         confirmation = confirm_destructive_operation(
             confirmed_by_flag=confirm,
@@ -524,7 +636,13 @@ def _archive_target(host: Any, ref: str) -> tuple[Any, bool]:
     exactly; a name can be shared by several archived pots, so it must then be
     narrowed to an id.
     """
-    pots = list(get_pot_service(host).list_pots())
+    ref = route_ref(ref) or ref
+    directory = pot_directory(runtime=host)
+    if getattr(directory, "origin", None) == "managed":
+        # Archiving clears the graph first; refusing after that would leave a
+        # cleared pot that is still live, so the refusal comes before anything.
+        directory.archive_pot(ref=ref)
+    pots = list(directory.list_pots())
     live, archived = match_pot_ref(pots, ref)
     if live is not None:
         return live, False
@@ -597,7 +715,7 @@ def pot_archive(
             pot = target
             human = f"'{pot.name}' ({pot_id}) was already archived; {cleared} cleared"
         else:
-            pot = get_pot_service(host).archive_pot(ref=pot_id)
+            pot = pot_directory(runtime=host).archive_pot(ref=pot_id)
             human = f"archived '{pot.name}' ({cleared} cleared)"
         emit(
             {
@@ -702,7 +820,7 @@ def source_add(
                     make_default=make_default is not False,
                 )
             else:
-                src = get_pot_service(host).add_source(
+                src = pot_directory(runtime=host).add_source(
                     pot_id=pot_id,
                     kind=source_kind.name,
                     location=location,
@@ -773,7 +891,7 @@ def source_list(pot: str = typer.Option(None, "--pot")) -> None:
     with contract():
         host = get_root_runtime()
         pot_id, resolved_via = resolve_pot_scope(host, pot)
-        sources = get_pot_service(host).list_sources(pot_id=pot_id)
+        sources = pot_directory(runtime=host).list_sources(pot_id=pot_id)
         pot_info = pot_scope_info(host, pot_id)
         repo = (
             current_repo_identity_for_cli()
@@ -863,7 +981,7 @@ def source_status(
 
         if source_id is None:
             # Per-pot summary: all sources with enriched fields
-            sources = get_pot_service(host).list_sources(pot_id=pot_id)
+            sources = pot_directory(runtime=host).list_sources(pot_id=pot_id)
             pot_info = pot_scope_info(host, pot_id)
             counts = pot_graph_counts(host, pot_id)
             claim_count = counts.get("claims", 0)
@@ -927,7 +1045,7 @@ def source_status(
             )
         else:
             # Single-source mode: same enriched shape
-            src = get_pot_service(host).source_status(
+            src = pot_directory(runtime=host).source_status(
                 pot_id=pot_id, source_id=source_id
             )
             row = _enrich_source(host, src, pot_id)
@@ -946,8 +1064,89 @@ def source_remove(source_id: str, pot: str = typer.Option(None, "--pot")) -> Non
     with contract():
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
-        get_pot_service(host).remove_source(pot_id=pot_id, source_id=source_id)
+        pot_directory(runtime=host).remove_source(pot_id=pot_id, source_id=source_id)
         emit({"removed": source_id}, human=f"removed source {source_id}")
+
+
+# --- grants ----------------------------------------------------------------
+#
+# Sharing is a managed-host concept. The local daemon is single-user by
+# construction (one implicit actor), so there is nobody to grant to, and these
+# refuse there rather than pretend.
+
+
+def _managed_grant_target(verb: str, ref: str) -> tuple[Any, Any]:
+    """``(directory, pot)`` for a grant verb, refusing anywhere but managed."""
+    host = get_root_runtime()
+    resolved_ref = route_ref(ref) or ref
+    if current_origin() != "managed":
+        fail(
+            code="unsupported",
+            message=(
+                f"'pot {verb}' needs a managed host: the local daemon is "
+                "single-user, so a pot there has no one to share with"
+            ),
+            next_action="point this CLI at a service with 'potpie host set <url> --token -'",
+        )
+    pot = resolve_pot_ref(host, resolved_ref)
+    return pot_directory(runtime=host), pot
+
+
+def _grant_row(grant: Any) -> dict[str, str]:
+    return {
+        "pot_id": str(getattr(grant, "pot_id", "")),
+        "actor_id": str(getattr(grant, "actor_id", "")),
+        "role": str(getattr(grant, "role", "")),
+    }
+
+
+@pot_app.command("grant")
+def pot_grant(
+    ref: str,
+    actor_id: str = typer.Argument(..., help="Actor to give access to."),
+    role: str = typer.Option("writer", "--role", help="reader | writer | admin."),
+) -> None:
+    """Give another actor access to a pot on a managed host. Requires admin."""
+    with contract():
+        directory, pot = _managed_grant_target("grant", ref)
+        granted = _grant_row(
+            directory.grant(pot_id=pot.pot_id, actor_id=actor_id, role=role)
+        )
+        emit(granted, human=f"{granted['actor_id']} → {granted['role']} on '{ref}'")
+
+
+@pot_app.command("revoke")
+def pot_revoke(
+    ref: str,
+    actor_id: str = typer.Argument(..., help="Actor to remove access from."),
+) -> None:
+    """Take away an actor's access to a pot on a managed host. Requires admin."""
+    with contract():
+        directory, pot = _managed_grant_target("revoke", ref)
+        revoked = bool(directory.revoke(pot_id=pot.pot_id, actor_id=actor_id))
+        emit(
+            {"pot": ref, "actor_id": actor_id, "revoked": revoked},
+            # Not "revoked" when nothing was: that is how someone concludes an
+            # actor was removed when it never had access under that name.
+            human=(
+                f"revoked {actor_id} from '{ref}'"
+                if revoked
+                else f"{actor_id} had no grant on '{ref}'"
+            ),
+        )
+
+
+@pot_app.command("grants")
+def pot_grants(ref: str) -> None:
+    """List who can reach a pot on a managed host, and as what. Requires admin."""
+    with contract():
+        directory, pot = _managed_grant_target("grants", ref)
+        grants = [_grant_row(g) for g in directory.list_grants(pot_id=pot.pot_id)]
+        emit(
+            {"pot": ref, "grants": grants},
+            human="\n".join(f"{g['actor_id']:<20} {g['role']}" for g in grants)
+            or f"no grants on '{ref}'",
+        )
 
 
 __all__ = ["pot_app", "source_app"]
