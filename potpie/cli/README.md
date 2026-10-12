@@ -68,7 +68,8 @@ potpie host use local            # back to this machine
 - A host older than this client answers `not_implemented` (exit `2`) for what
   it lacks; everything else keeps working.
 - Python callers use `potpie.runtime.connect()`: `HostConnection.engine(selector)`,
-  `.pots` (synchronous, any thread) and `.extension(name, request, result_type)`.
+  `.pots` (synchronous, any thread) and `.extension(name, request, result_type)`;
+  synchronous code runs them with `.run(awaitable)`.
 
 The full contract is in
 [`docs/context-graph/cli-flow.md`](../../docs/context-graph/cli-flow.md#hosts-commandshostpy).

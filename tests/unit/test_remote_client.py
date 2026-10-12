@@ -10,8 +10,10 @@ client does not know. Unchanged calls keep working in every direction.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -35,14 +37,18 @@ from potpie.runtime.remote import (
     RemoteHostClient,
     RemoteHostError,
     connect,
+    from_agent_request,
     without_fields,
 )
 from potpie_context_engine import Failure, Success
 from potpie_context_engine.core.agent_envelope import AgentEnvelope
+from potpie_context_engine.core.ports import agent_context as door
 from potpie_context_engine.requests import (
     GraphSliceRequest,
     HistoryRequest,
+    RecordRequest,
     ResolveRequest,
+    SearchRequest,
     SubmitEventRequest,
 )
 from tests.support.reference_host import (
@@ -476,3 +482,197 @@ def test_connect_without_a_url_reads_the_registry_hook(monkeypatch) -> None:
     assert first is again
     assert first.endpoint.base_url == BASE
     assert first.endpoint.token == "registry-key"
+
+
+# --- long-lived threaded embedders ----------------------------------------------------
+
+
+class _ClosingMock(httpx.MockTransport):
+    """A mock host that records the event loop each pooled client is closed on."""
+
+    def __init__(self, handler: Any) -> None:
+        super().__init__(handler)
+        self.closed_on: list[asyncio.AbstractEventLoop] = []
+
+    async def aclose(self) -> None:
+        self.closed_on.append(asyncio.get_running_loop())
+
+
+def test_a_transport_used_from_several_loops_closes_every_client(
+    tmp_path: Path,
+) -> None:
+    host = ReferenceHost.build(tmp_path)
+    mock = _ClosingMock(host.httpx_transport().handler)
+    transport = _transport(mock, ALICE_KEY)
+    client = RemoteHostClient(transport)
+    server_loop = asyncio.new_event_loop()
+    server = threading.Thread(target=server_loop.run_forever, daemon=True)
+    server.start()
+
+    def on_server_loop(awaitable: Any) -> Any:
+        return asyncio.run_coroutine_threadsafe(awaitable, server_loop).result(30)
+
+    try:
+        # A long-lived loop on another thread, then two short-lived loops.
+        assert isinstance(on_server_loop(client.whoami()), Success)
+        assert isinstance(asyncio.run(client.whoami()), Success)
+        assert mock.closed_on == []
+        assert isinstance(asyncio.run(client.whoami()), Success)
+        # The second short-lived loop closed the first one's client; the
+        # long-lived loop's client is still its own and still serving.
+        assert len(mock.closed_on) == 1
+        assert isinstance(on_server_loop(client.whoami()), Success)
+        assert len(mock.closed_on) == 1
+
+        asyncio.run(transport.aclose())
+
+        # Every client the three loops opened is closed, the live loop's on
+        # that loop.
+        assert len(mock.closed_on) == 3
+        assert mock.closed_on.count(server_loop) == 1
+        assert not transport.is_open
+    finally:
+        server_loop.call_soon_threadsafe(server_loop.stop)
+        server.join(timeout=30)
+        server_loop.close()
+        asyncio.run(host.close())
+
+
+def test_run_serves_engine_host_and_extension_calls_from_plain_threads(
+    tmp_path: Path,
+) -> None:
+    host = ReferenceHost.build(tmp_path)
+    connection = connect(
+        url=BASE, token=ALICE_KEY, http_transport=host.httpx_transport()
+    )
+    answers: list[tuple[bool, str, EchoResult]] = []
+    errors: list[BaseException] = []
+
+    def servicer(index: int) -> None:
+        try:
+            resolved = connection.run(
+                connection.engine(SHOP).resolve(ResolveRequest(task="ship"))
+            )
+            who = connection.run(connection.host.whoami(), timeout_s=30)
+            echo = connection.run(
+                connection.extension(
+                    "ext.reference.echo", _EchoV1(text=str(index)), EchoResult
+                )
+            )
+            answers.append(
+                (isinstance(resolved, Success), who.value.subject, echo.value)
+            )
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=servicer, args=(i,)) for i in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert errors == []
+    assert sorted(answers, key=lambda row: row[2].text) == [
+        (True, "alice", EchoResult(text=str(i), by="alice")) for i in range(6)
+    ]
+    connection.close()
+    assert not connection.transport.is_open
+    assert not connection.pots.client.transport.is_open
+    remote._background.run(host.close())
+
+
+def test_run_cancels_a_call_that_outlives_its_timeout() -> None:
+    connection = connect(
+        url=BASE,
+        token="key",
+        http_transport=httpx.MockTransport(lambda request: httpx.Response(404)),
+    )
+    finished = threading.Event()
+
+    async def slow() -> None:
+        try:
+            await asyncio.sleep(30)
+        finally:
+            finished.set()
+
+    with pytest.raises(TimeoutError):
+        connection.run(slow(), timeout_s=0.05)
+
+    assert finished.wait(timeout=5)
+
+
+def test_run_refuses_to_block_its_own_loop() -> None:
+    connection = connect(
+        url=BASE,
+        token="key",
+        http_transport=httpx.MockTransport(lambda request: httpx.Response(404)),
+    )
+
+    async def nested() -> None:
+        connection.run(asyncio.sleep(0))
+
+    with pytest.raises(RuntimeError, match="its own event loop"):
+        connection.run(nested())
+
+
+@pytest.mark.parametrize(
+    ("door_request", "engine_request"),
+    [
+        (
+            door.ResolveRequest(
+                pot_id="pot_shop", task="ship", include=("decisions",), max_items=3
+            ),
+            ResolveRequest(task="ship", include=("decisions",), max_items=3),
+        ),
+        (
+            door.SearchRequest(pot_id="pot_shop", query="billing", mode="deep"),
+            SearchRequest(query="billing", mode="deep"),
+        ),
+        (
+            door.RecordRequest(
+                pot_id="pot_shop",
+                record_type="decision",
+                summary="Use one pooled client",
+                idempotency_key="k1",
+            ),
+            RecordRequest(
+                record_type="decision",
+                summary="Use one pooled client",
+                idempotency_key="k1",
+            ),
+        ),
+    ],
+)
+def test_an_agent_door_request_becomes_a_selector_and_an_engine_request(
+    door_request: Any, engine_request: Any
+) -> None:
+    assert from_agent_request(door_request) == (SHOP, engine_request)
+    # Every door field but the pot has an engine field, so nothing is dropped.
+    assert {item.name for item in fields(door_request)} - {"pot_id"} == {
+        item.name for item in fields(engine_request)
+    }
+
+
+def test_the_agent_door_adapter_refuses_what_it_cannot_carry() -> None:
+    with pytest.raises(TypeError, match="StatusRequest"):
+        from_agent_request(door.StatusRequest(pot_id="pot_shop"))  # type: ignore[call-overload]
+    with pytest.raises(ValueError, match="non-empty"):
+        from_agent_request(door.SearchRequest(pot_id=" ", query="billing"))
+
+
+@pytest.mark.anyio
+async def test_an_agent_door_request_round_trips_to_the_host(tmp_path: Path) -> None:
+    host = ReferenceHost.build(tmp_path)
+    connection = connect(
+        url=BASE, token=ALICE_KEY, http_transport=host.httpx_transport()
+    )
+
+    selector, request = from_agent_request(
+        door.ResolveRequest(pot_id="pot_shop", task="ship")
+    )
+    outcome = await connection.engine(selector).resolve(request)
+
+    assert isinstance(outcome, Success)
+    assert isinstance(outcome.value, AgentEnvelope)
+    await connection.aclose()
+    await host.close()
