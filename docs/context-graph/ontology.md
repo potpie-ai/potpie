@@ -85,7 +85,7 @@ it as an endpoint.**
 | People | `Team`, `Person` | |
 | Timeline | `Activity` (`is_activity=True`), `Period` | |
 | Memory tier | `Preference`, `Policy`, `BugPattern`, `Fix`, `Decision` | |
-| Reference material | `Document`, `DocumentSection` | structure only — chunk payloads live in the resource store, see [`resources.md`](./resources.md) |
+| Reference material | `Document`, `DocumentSection` | structure only — chunk payloads live in the resource store, see [`architecture.md`](./architecture.md) |
 | Generic fail-open fallbacks (`public=False`) | `Observation`, `QualityIssue` | not advertised to agents; downgrade targets |
 
 **`Activity` is the single timeline collapse point.** PRs, commits, issues,
@@ -149,7 +149,7 @@ reader_include`.
 
 `Document` is also the anchor for ingested reference material, which
 `potpie resource import` mints directly rather than through a free-form
-record — see [`resources.md`](./resources.md).
+record — see the resource store in [`architecture.md`](./architecture.md).
 
 `STRUCTURAL_INCLUDES = {features, infra_topology, timeline, owners, raw_graph}`
 are reader-backed includes that have **no** record-type anchor — they are
@@ -434,7 +434,7 @@ quality layer derives a source-ref TTL from the fact family
 (`fact_family_for_source_type`) to flag stale facts. `Document` /
 `DocumentSection` use `fact_family=documents` (distinct from soft-fail
 `evidence`) so a doc corpus does not inherit Observation freshness or ranking
-policy — see [`resources.md`](./resources.md). Quality findings are purely
+policy. Quality findings are purely
 diagnostic and never write directly — they propose `propose`/`commit` corrections
 or inbox items (full quality flow in [`writing.md`](./writing.md)).
 
@@ -460,8 +460,8 @@ or inbox items (full quality flow in [`writing.md`](./writing.md)).
 }
 ```
 
-Note `ontology_version` is `2026-06-graph` and `subgraph_versions` is the coarse
-`{"_global": <total pot claim count>}` token — there are **no** real
+Note `ontology_version` is `2026-06-graph` and `subgraph_versions` is the
+pot-wide `{"_global": <pot revision>}` token — there are **no** real
 per-subgraph versions (the concurrency model is owned by
 [`writing.md`](./writing.md)).
 

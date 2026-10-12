@@ -3,7 +3,8 @@
 Document payloads are the bytes the graph only points at. An agent writes an
 extraction script, the script emits a chunk directory, and ``resource import``
 absorbs it; ``resource get`` resolves a chunk id straight to its text with no
-graph query on the path. See ``docs/context-graph/resources.md``.
+graph query on the path. See "Resource store" in
+``docs/context-graph/architecture.md``.
 
 Every command is one typed operation (``resource_import``, ``resource_get``,
 ``resource_list``, ``resource_rm``, ``resource_index_*``) dispatched through
@@ -717,7 +718,7 @@ def _import_next_action(result: ResourceImportResult, pending: Sequence[str]) ->
     import has no way to guess what the document is *about*. It fires only at
     zero live scope claims — recommending a link on a document that already has
     one made the signal unusable for telling linked from unlinked, which is the
-    whole reason ``resources.md`` asks for it.
+    whole point of the nudge.
 
     ``scope_claim_count is None`` means nobody could look. Nudging then is the
     honest default: an unlinked document is the common case on a fresh import,

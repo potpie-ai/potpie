@@ -242,7 +242,8 @@ and raises `CapabilityNotImplemented`.
   legacy writer that has no atomic mutation surface.
 - `snapshot` (export/import) is implemented on `in_memory`, `embedded`,
   `falkordb_lite`, `falkordb`, and `neo4j`; FalkorDB and Neo4j apply an import
-  atomically against the pot's revision (see [snapshots.md](./snapshots.md)).
+  atomically against the pot's revision (see `graph export`/`graph import` in
+  [cli-flow.md](./cli-flow.md)).
 - `inspection` is real on `in_memory`/`embedded`/`falkordb` but **not** Neo4j.
 - Net effect: **FalkorDB is more complete than Neo4j** (6 vs 5 ports), and the
   OSS default `falkordb_lite` is a first-class backend, not a stub.
@@ -298,10 +299,10 @@ Two corrections to the previous version of this doc:
 - There **is** a server-created `plan_id` and a real `propose|commit` contract —
   the prior claim that none existed was wrong.
 
-Optimistic concurrency on this path is **coarse**: the only version tracked is
-`{"_global": <total pot claim count>}` — there are no per-subgraph versions. A
-conflict fires only if the pot's total claim count changed between propose and
-commit. `GraphMutationDiff.to_dict()` emits `entity_upserts`, `edge_upserts`,
+Optimistic concurrency on this path is per pot: a plan records the pot's
+monotonic revision (`{"_global": <revision>}`) and commit compares it while
+applying — there are no per-subgraph versions (writing.md §5.2 has the
+per-backend guarantees). `GraphMutationDiff.to_dict()` emits `entity_upserts`, `edge_upserts`,
 `edge_deletes`, `invalidations`, `claims_asserted`, `claims_retracted`,
 `claim_keys`. The full tiered stack — semantic DSL (flat ops), validation/risk,
 lowering, the 4-verb idempotent apply, inbox, and quality — is owned by
@@ -324,6 +325,59 @@ Relevant settings (`domain/ports/settings.py`): `graph_db_backend()='neo4j'`,
 `falkordb_mode()='lite'`, `falkordb_graph_name()='context_graph'`,
 `falkordb_lite_path()='.potpie/context_graph/falkordb.db'`, plus the Neo4j URI/
 credentials.
+
+## Resource store
+
+The graph holds claims and pointers, never payloads. A document's content lives
+in the **resource store** instead, split in two:
+
+- **Bytes** become chunk files on disk, pot-scoped, behind `ResourceStorePort`
+  (`core/ports/resource_store.py`) so another backend can replace local disk.
+- **Structure** goes into the graph: a `Document` (`document:<slug>`) owns one
+  `DocumentSection` (`docsection:<doc>:<section>`) per real division of the
+  source through `SECTION_OF`, and each section's summary is a claim normal
+  retrieval finds. Chunks are files, not nodes, so a 500-page PDF becomes tens
+  of nodes, not hundreds.
+
+Potpie does not parse documents. The agent writes an extraction script that
+emits a chunk directory (`meta.json` plus `<section>/<seq>.txt`) and
+`potpie resource import` absorbs it, so chunk text never passes through the
+agent's output tokens. The `potpie-resource-*` skills teach that flow
+([skills.md](./skills.md)); the commands are in [cli-flow.md](./cli-flow.md).
+
+```text
+evidence id   potpie://res/<doc>/<section>/<seq>@rev<N>   immutable; seq zero-padded to 4 digits
+chunk file    <home>/resources/<pot_dir>/<doc>/<section>/<seq>.txt
+prior revs    <home>/resources/<pot_dir>/<doc>/.versions/<N>/
+pot_dir       <sanitized pot id>-<sha256(pot id)[:16]>     injective; never escapes the root
+chunk size    target 4,000 chars, hard cap 8,000           rejected at import, never clamped at read
+limits        import 64 MiB of UTF-8 per call; get at most 128 ids per call
+```
+
+- **Import ships data, never a path.** The CLI reads the directory and sends its
+  files, so the in-process runtime and the daemon behave the same. The order is
+  bytes, then index, then graph: there is no cross-store transaction, and bytes
+  first fails to harmless orphan files instead of claims citing missing chunks.
+  An index failure is a warning that `resource index rebuild` recovers.
+- **Revisions are retained.** A re-import that changes sections, bytes or
+  citation-visible metadata publishes a new revision and keeps the prior bytes,
+  so a versioned citation keeps opening the text it cited. A missing revision is
+  `resource_not_found`; an unversioned id on a multi-revision document is
+  `resource_revision_ambiguous`; neither falls back to the current text. Claims
+  citing a changed or removed section are flagged `evidence_review_required`,
+  not rewritten; fixing them is an ordinary propose/commit correction. Retention
+  is unbounded until `resource rm`.
+- **Retrieval index.** `sqlite_hybrid` (default: BM25 plus vectors, fused by
+  reciprocal rank, reporting itself lexical with a reason when vectors are
+  unavailable), `sqlite_fts`, or `none`, chosen by
+  `CONTEXT_ENGINE_RESOURCE_INDEX`, then the `resource_index` config key. Import
+  writes lexical rows inline; vectors drain in the background in the daemon or
+  an in-process engine host. Similarity bands are calibrated for
+  `all-MiniLM-L6-v2` only: other embedders get rank-and-coverage relevance and
+  refuse an explicit passage `--query-threshold`.
+- **Teardown.** `pot reset` and `pot archive` purge the pot's documents and index
+  rows after the graph reset succeeds and report `resources_purged`.
+  `source remove` never touches documents.
 
 ## Backend selection precedence
 

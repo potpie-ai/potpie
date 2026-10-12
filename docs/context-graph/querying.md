@@ -117,6 +117,35 @@ per-claim probability. Per-claim trust is carried on each item as the ranker `sc
 `breakdown`, `truth`, and `evidence_strength`. (When surfaced through `graph read`,
 `overall_confidence` reappears as `quality.confidence`.)
 
+### What an item carries
+
+- **Bounded details.** Items carry authored, kind-specific details: a fix's root
+  cause, remedy and check outcomes; a decision's rationale and rejected
+  alternatives; `EXPOSES` API links in infra neighbourhoods. They survive compact
+  and full reads, JSON and human output. Detail text is capped at 2,000
+  characters and lists at 12 entries, with omission metadata and a quoted,
+  pot-preserving follow-up command that opens the full entity or source text.
+- **Verification outcomes.** Only explicit successful checks add corroboration;
+  failed, partial, unknown and numeric statuses do not. Older `VERIFIED` claims
+  with no outcome are labelled `legacy_verified`.
+- **Identity lookup** distinguishes exact matches, ambiguity across repositories,
+  missing identifiers and approximate candidates. Keep repo scope for a bare PR
+  or issue number.
+- **Time.** A claim is current from its start (inclusive) to its end (exclusive),
+  so an end scheduled for next week leaves it current today; `as_of` evaluates
+  the same interval at another time. An `Activity`'s `occurred_at` is when it
+  happened and `observed_at` when Potpie learned of it, so linking it later does
+  not move it in the timeline. New writes normalize timestamps to UTC; older
+  native records with other offsets need an explicit repair.
+- **Citations are revision-pinned** (`potpie://res/<doc>/<section>/<seq>@rev<N>`)
+  and always open that revision's text. Claims whose evidence changed carry an
+  evidence-review marker in named reads, `resolve`/`search` and
+  `graph quality stale-facts`; the marker says the evidence needs review, not
+  that the conclusion is false.
+
+An empty or sparse result does not prove the source has no relevant fact; read
+`coverage` before concluding.
+
 ---
 
 ## 4. Reader pattern and the 10 readers
@@ -141,8 +170,8 @@ The 10 readers map one-to-one onto the 10 named views (§8):
 | `prior_bugs` | `RESOLVED`, `ATTEMPTED_FIX_FAILED`, `VERIFIED`, `REPRODUCES` | expands the bug/fix neighborhood, folds `VERIFIED` into fix corroboration, labels failed attempts, hides narrower-scope bugs from broader queries |
 | `decisions` | `DECIDED`, `AFFECTS` | active/superseded decisions for a scope |
 | `owners` | `OWNED_BY`, `MEMBER_OF` | ownership by scope/path |
-| `docs` | `Document\|DocumentSection DOCUMENTS scope` (plus legacy `Document RELATED_TO scope`), expanded one hop over `SECTION_OF` | scoped reference material — see [resources.md](./resources.md) |
-| `resources` | none — reads the resource index, not the claim store | passages from ingested documents, each with the chunk id `potpie resource get` takes — see [resources.md](./resources.md) |
+| `docs` | `Document\|DocumentSection DOCUMENTS scope` (plus legacy `Document RELATED_TO scope`), expanded one hop over `SECTION_OF` | scoped reference material — see the resource store in [architecture.md](./architecture.md) |
+| `resources` | none — reads the resource index, not the claim store | passages from ingested documents, each with the chunk id `potpie resource get` takes — see the resource store in [architecture.md](./architecture.md) |
 | `raw_graph` | every live `:RELATES_TO` edge (incl. generic `RELATED_TO`) | unscoped, for the explorer UI — **not** an agent retrieval family |
 
 > The `service_neighborhood` view spec (`domain/graph_views.py` `inline_relations`)
@@ -388,9 +417,8 @@ predicate); normalized relations use `valid_at`/`valid_until`; PRs/commits/issue
 deployments collapse to a single `Activity` entity (key prefix `activity`);
 `coverage` rows are keyed by the requested **view** (`view`, not `include` — a read
 routes exactly one include family, which stays internal to the trunk); and
-optimistic-concurrency versioning is coarse — `subgraph_versions` is only
-`{"_global": <total pot claim count>}`, not per-subgraph counters (see
-[`writing.md`](./writing.md)).
+`subgraph_versions` is only `{"_global": <pot revision>}`, not per-subgraph
+counters (see [`writing.md`](./writing.md) §5.2).
 
 ---
 
@@ -435,7 +463,7 @@ a live read knob.
 ## See also
 
 - [`ontology.md`](./ontology.md) — entities, predicates, subgraphs/views, truth classes, identity & the environment qualifier.
-- [`writing.md`](./writing.md) — the write stack, propose→commit, coarse `_global` concurrency, the read-back verify path that reuses these readers.
+- [`writing.md`](./writing.md) — the write stack, propose→commit, revision-based concurrency and receipts, the read-back verify path that reuses these readers.
 - [`cli-flow.md`](./cli-flow.md) — full command and flag reference.
 - [`architecture.md`](./architecture.md) — the read trunk's place in the hexagonal layering and composition roots.
 - [`ingestion-nudge.md`](./ingestion-nudge.md) — the zero-token nudge model, which composes this read trunk over named views.

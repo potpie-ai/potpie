@@ -58,7 +58,7 @@ REGISTRABLE_KINDS: tuple[SourceKind, ...] = (
 #: Kinds naming a document payload. These are not registrable: the bytes
 #: belong in the resource store, and the graph gets the document's
 #: structure from ``resource import`` — a source row would record the file
-#: and index nothing. See docs/context-graph/resources.md.
+#: and index nothing. See "Resource store" in docs/context-graph/architecture.md.
 RESOURCE_KINDS: tuple[SourceKind, ...] = (
     SourceKind(
         "document",

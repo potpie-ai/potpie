@@ -418,9 +418,8 @@ def test_import_stops_nudging_once_the_document_is_linked(tmp_path):
     """P1-4: the scope nudge has to be a check, not a constant.
 
     It fired on every import regardless of how many ``DOCUMENTS`` claims the
-    document already had, which made it useless for the one thing
-    ``resources.md`` asks it for — telling a linked document from an unlinked
-    one.
+    document already had, which made it useless for the one thing it is
+    for — telling a linked document from an unlinked one.
     """
     host = _seed(tmp_path)
     _link(host, f"document:{DOC}")

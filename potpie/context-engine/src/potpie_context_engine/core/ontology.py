@@ -627,8 +627,8 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
     ),
     # --- Ingested reference material ----------------------------------------
     # A document is split in half: its structure lives here, its payload bytes
-    # live in the resource store as chunk files (see
-    # ``docs/context-graph/resources.md``). Sections are the searchable grain —
+    # live in the resource store as chunk files (see "Resource store" in
+    # ``docs/context-graph/architecture.md``). Sections are the searchable grain —
     # each carries an agent-authored summary that becomes an ordinary claim, so
     # the existing embedding path is the index and no chunk ever enters a node.
     "Document": _e(

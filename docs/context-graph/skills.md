@@ -173,7 +173,8 @@ Three per-format skills handle document payloads: `potpie-resource-pdf`,
 `potpie-resource-spreadsheet` and `potpie-resource-markdown` (v1 each). Each
 teaches the agent to write an extraction script that emits a chunk directory,
 import it with `potpie resource import`, summarize its sections, and link the
-document to what it covers; see [`resources.md`](./resources.md).
+document to what it covers; see the resource store in
+[`architecture.md`](./architecture.md).
 
 The four use-case skills share one shape: a **Fast Path** read, an **Apply
 Results** step, a **Report Back** step (the exact commands behind the answer,

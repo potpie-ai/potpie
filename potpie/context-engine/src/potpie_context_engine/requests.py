@@ -338,7 +338,7 @@ class NudgeRequest(EngineRequest):
 
 # --- document resources -----------------------------------------------------
 # Document payloads (the bytes the graph only points at) and the retrieval
-# index over them. See ``docs/context-graph/resources.md``.
+# index over them. See "Resource store" in ``docs/context-graph/architecture.md``.
 
 
 @dataclass(frozen=True, slots=True)

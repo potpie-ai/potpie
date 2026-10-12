@@ -254,7 +254,7 @@ potpie source remove <id> [--pot <ref>]
   not open or reset graph backends. Once the graph reset succeeds, the pot's
   stored documents are purged too, and `resources_purged` reports the resource
   store's answer (`null` when no store is composed); see
-  [resources.md](./resources.md).
+  the resource store in [architecture.md](./architecture.md).
 - **`pot archive`** clears the pot's graph state with the same confirmed
   `ResetContextRequest` as `pot reset`, then retires the pot. The reset comes
   first, so a failed reset leaves the pot live rather than hiding data nothing
@@ -296,7 +296,7 @@ potpie source remove <id> [--pot <ref>]
   key on — and the canonicalization is reported as `requested_kind`; document
   kinds (`pdf`/`spreadsheet`/`markdown`/…) exit 1 with
   `source_kind_is_a_document` pointing at `resource import`
-  ([resources.md](./resources.md)); anything else exits 1 with
+  (see *Resources* below); anything else exits 1 with
   `unknown_source_kind`. `--default` is repo-only: passing it with another kind
   fails with `repo_default_not_applicable`.
 - **`source remove`** drops the registration only — it does not purge documents or
@@ -389,8 +389,8 @@ potpie resource index  rebuild [--doc <slug>] [--confirm] [--pot <ref>]
 
 Document payloads: the bytes the graph only points at. Each command is one typed
 engine operation, so the in-process runtime and the local daemon answer
-identically; [resources.md](./resources.md) owns the data model, the retrieval
-index and the lifecycle.
+identically; the resource store in [architecture.md](./architecture.md) owns the data model, the
+retrieval index and the lifecycle.
 
 - **`import`** reads the chunk directory an extraction script produced
   (`<section>/<seq>.txt` plus `meta.json`) on the caller's side and ships its
@@ -750,11 +750,26 @@ potpie graph repair [--semantic-index] [--entity-summaries] [--entity-labels] [-
   the backend that executes the operation. The CLI does not preflight snapshot
   support against its own local backend profile. Per-profile coverage is in
   [architecture.md](./architecture.md).
-- **`graph export`/`graph import`** move a pot's entities, claims and document
-  text as a readable folder (or one `.json` file). The CLI writes and reads the
-  files; the engine exchanges the snapshot as data. Import merges, refuses
-  conflicting content, and needs `--yes` outside a terminal. See
-  [snapshots.md](./snapshots.md).
+- **`graph export`/`graph import`** move a pot's entities, claims and, by
+  default, document text as a readable folder (`manifest.json`, `entities.json`,
+  `claims.json`, `resources/`, `README.md`) or as one `.json` file. The CLI
+  writes and reads the files; the engine exchanges the snapshot as data through
+  version 2 of `export_snapshot`/`import_snapshot` and never opens a caller's
+  path (version 1, the default when a request names no version, still takes
+  engine-side paths; a request mixing the two is refused). Export stages next to
+  the destination and refuses an existing one without `--overwrite`.
+  - Import validates the whole snapshot first and needs `--yes` outside a
+    terminal. It merges into the target pot, skips identical records and fails
+    on conflicting content instead of overwriting, so use a new pot for a clean
+    restore. Pot-scoped claim keys are rewritten for the target; document
+    revision numbers are kept, so `@rev<N>` citations still resolve. Import is
+    refused while commit-history capture is active on the target.
+  - `--graph-only` leaves document text out on either side. Version-1 JSON
+    snapshots still import, without the properties and text they never held.
+  - A snapshot excludes credentials, source registrations, plans, inbox items,
+    commit history and config. Document text is capped at 64 MiB and the whole
+    snapshot is held in memory. Graph and documents don't share a transaction,
+    so pause writers for a consistent backup.
 
 Snapshots (`graph export`/`import`) are supported on `in_memory`, `embedded`,
 `falkordb_lite`, `falkordb`, and `neo4j`. `graph inspect`/`neighborhood` remains
@@ -882,6 +897,4 @@ potpie graph commit <plan_id> --verify
 - [writing.md](./writing.md) — the semantic DSL, propose→commit, risk/validation, inbox, quality.
 - [ingestion-nudge.md](./ingestion-nudge.md) — event stores, connectors, and the nudge trigger model.
 - [skills.md](./skills.md) — the skill catalog, install/drift, and the harness loop.
-- [resources.md](./resources.md) — where document payloads live and how `resource` ingests them.
-- [graph-workbench.md](./graph-workbench.md) — source evidence → durable memory → agent context, end to end.
 - [observability.md](./observability.md) — span names, logs, metrics, readiness.

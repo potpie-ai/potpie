@@ -252,7 +252,7 @@ of `validated | invalid | conflict | review_required`. Returns a `GraphMutationP
 
 **`commit(plan_id, pot_id, approved_by, verify)`** — load by id; reject if not found / terminal /
 expired; **re-check the version conflict**; enforce approval (medium/high risk needs
-`--approved-by`); then call `backend.mutation.apply(record.lowered_batch, …)`. The agent does
+`--approved-by`, on either `propose` or `commit`); then call `backend.mutation.apply(record.lowered_batch, …)`. The agent does
 **not** resend the mutations — commit replays the server-persisted plan. On success it persists
 status `committed` with the `mutation_id` and final versions and emits a `history_pointer` +
 `audit_ref`.
@@ -260,7 +260,9 @@ status `committed` with the `mutation_id` and final versions and emits a `histor
 `--verify` runs `_verify_ingestion_commit`: it reads the committed `claim_keys` back through
 `claim_query.find_claims` (flagging `missing_claim_keys`), takes before/after quality snapshots,
 and **downgrades** the result to `degraded` / `partial` / `watch` on missing readback, an
-unavailable backend, or a quality regression. Skills always commit with `--verify`.
+unavailable backend, or a quality regression. A missing committed claim exits 1; a quality
+regression only lands in `verification.status` and warnings, so read both the exit code and the
+receipt. Skills always commit with `--verify`.
 
 ### 5.1 Plan states
 
@@ -270,15 +272,36 @@ unavailable backend, or a quality regression. Skills always commit with `--verif
 `adapters/outbound/graph/plan_stores/local_json.py` (`~/.potpie/graph_plans.json`, atomic
 tmp-replace, keyed pot → plan_id).
 
-### 5.2 Optimistic concurrency is COARSE
+### 5.2 Optimistic concurrency and receipts
 
-`_subgraph_versions()` returns **`{"_global": <total pot claim count>}` only** — there are **no
-per-subgraph versions** (despite old `affected_subgraphs.{features,bugs,…}` examples). A conflict
-fires only if the pot's *total* claim count changed between propose and commit. The conflict
-result carries `expected_version` / `actual_version` and a "reread and re-propose" recommendation.
+A proposal records the pot's monotonic **revision** (`{"_global": <revision>}`); commit compares
+it while applying and returns `conflict`, without applying the stale plan, if another canonical
+write landed first. Every successful canonical mutation advances the revision, including
+entity-only updates, invalidation, reset and snapshot import. There are no per-subgraph versions,
+so unrelated writes to the same pot still conflict. The conflict result carries
+`expected_version` / `actual_version` and a "reread and re-propose" recommendation.
 
-> **Roadmap (not yet wired):** true per-subgraph version tracking. Today concurrency is a single
-> global counter, so unrelated concurrent writes to the same pot can spuriously conflict.
+| Backend | Compare-and-apply boundary |
+|---|---|
+| `in_memory` | one per-backend lock over revision check, mutation, receipt and increment; process-local by design |
+| `embedded` | a process plus interprocess file lock over reload, check, mutation and atomic `graph.json` replace; revisions and receipts persist there |
+| `neo4j` | one transaction owns the revision, the batch and a durable receipt |
+| `falkordb`, `falkordb_lite` | Redis `WATCH`, then one `GRAPH.QUERY` inside `MULTI`/`EXEC` applies batch, revision and receipt |
+
+- A completed mutation **receipt** is checked before the expected revision, so retrying a
+  known-successful mutation returns its original result even after later writes. A receipt proves
+  the write applied once, not that its values are still current; run `--verify` when that matters.
+- An injected writer without `atomic_mutations_supported` falls back to a claim-content token and
+  a process-local guard. That is not a cross-process or crash-atomic promise.
+- An `idempotency_key` is bound to its request fingerprint: the same request returns the existing
+  plan, different content is rejected.
+- Corrections freeze their exact targets at propose (`retracted_claim_keys`), so apply never
+  re-discovers claims by environment or other identity fields.
+- Reset advances the revision and keeps receipts: retrying an old mutation after reset returns its
+  historical receipt without recreating data. Use a new mutation id to restore on purpose.
+- The CLI never resubmits a commit whose result is uncertain (for example a timeout). Commit
+  recovery (`cli/commit_recovery.py`) polls the plan's durable receipt until it settles.
+- Direct database edits that bypass the mutation port are outside this contract.
 
 ### 5.3 The diff shape
 

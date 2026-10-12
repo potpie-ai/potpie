@@ -11,7 +11,7 @@ live in the engine core because they cross the daemon boundary as typed values,
 so every field here must survive a ``cls(**decoded_fields)`` round trip: no
 ``init=False`` fields, and tuples rather than sets for sequences.
 
-See ``docs/context-graph/resources.md``.
+See "Resource store" in ``docs/context-graph/architecture.md``.
 """
 
 from __future__ import annotations

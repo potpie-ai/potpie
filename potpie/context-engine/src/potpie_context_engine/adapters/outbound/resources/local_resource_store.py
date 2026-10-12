@@ -1,6 +1,6 @@
 """Local filesystem resource store — chunk bytes under the Potpie home.
 
-Layout, per ``docs/context-graph/resources.md``::
+Layout, per "Resource store" in ``docs/context-graph/architecture.md``::
 
     <home>/resources/<pot_dir>/<doc>/<section>/<seq>.txt
     <home>/resources/<pot_dir>/<doc>/meta.json
