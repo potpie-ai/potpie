@@ -145,8 +145,13 @@ from potpie_context_engine.results import (
 
 
 @dataclass(frozen=True, slots=True)
-class LocalEngineServices:
-    """Concrete engine-owned services used by the local typed boundary."""
+class EngineServices:
+    """Concrete engine-owned services behind the typed engine boundary.
+
+    The local runtime composes them in-process; an embedding host composes its
+    own from one graph runtime. ``pots`` is the local pot service and may be
+    ``None`` for a host that resolves pots through its own catalog.
+    """
 
     pots: Any
     agent_context: Any
@@ -270,8 +275,12 @@ class LocalCliAuthorizer:
         )
 
 
-class LocalEngineOperations:
-    """Finite engine-owned operations backed by explicit local services."""
+class ServiceEngineOperations:
+    """Finite engine-owned operations backed by explicit engine services.
+
+    The one implementation of every engine operation, for the local runtime
+    and for embedding hosts alike.
+    """
 
     def __init__(self, services: Any) -> None:
         self._services = services
@@ -1374,11 +1383,11 @@ class LocalEngineOperations:
             )
 
 
-class LocalGraphMetadataOperationHandler:
-    """Shared context-free graph metadata execution for every local transport."""
+class GraphMetadataOperationHandler:
+    """Shared context-free graph metadata execution (``describe``)."""
 
-    def __init__(self, services: LocalEngineServices) -> None:
-        self._operations = LocalEngineOperations(services)
+    def __init__(self, services: EngineServices) -> None:
+        self._operations = ServiceEngineOperations(services)
 
     async def handle(
         self, operation: EngineOperation, request: EngineRequest
@@ -1395,7 +1404,14 @@ class LocalGraphMetadataOperationHandler:
         )
 
 
-class LocalContextResourceComposer:
+class ServiceResourceComposer:
+    """Compose one context-bound engine over shared engine services.
+
+    Each cached engine is a thin wrapper: every context shares the same
+    services, so composition is cheap and an evicted engine costs nothing to
+    rebuild.
+    """
+
     def __init__(self, services: Any) -> None:
         self._services = services
 
@@ -1407,7 +1423,7 @@ class LocalContextResourceComposer:
     async def compose(
         self, context: ContextIdentity, fingerprint: CompositionFingerprint
     ):
-        operations = LocalEngineOperations(self._services)
+        operations = ServiceEngineOperations(self._services)
         return Success(
             ResourceComposition(
                 fingerprint=fingerprint,
@@ -1424,12 +1440,19 @@ class LocalContextResourceComposer:
         )
 
 
+#: The local names, kept for existing callers.
+LocalEngineServices = EngineServices
+LocalEngineOperations = ServiceEngineOperations
+LocalContextResourceComposer = ServiceResourceComposer
+LocalGraphMetadataOperationHandler = GraphMetadataOperationHandler
+
+
 def build_local_resource_manager(services: Any) -> ContextResourceManager:
     return ContextResourceManager(
         resolver=LocalContextSelectorResolver(services),
         authenticator=LocalCliAuthenticator(),
         authorizer=LocalCliAuthorizer(services),
-        composer=LocalContextResourceComposer(services),
+        composer=ServiceResourceComposer(services),
     )
 
 
@@ -1458,12 +1481,17 @@ def _snapshot_document_count(resources: Mapping[str, Any]) -> int:
 
 __all__ = [
     "LOCAL_ACTOR",
+    "EngineServices",
+    "GraphMetadataOperationHandler",
     "LocalActorPotCatalog",
-    "LocalEngineServices",
+    "LocalCliAuthenticator",
+    "LocalCliAuthorizer",
     "LocalContextResourceComposer",
     "LocalContextSelectorResolver",
     "LocalEngineOperations",
-    "LocalCliAuthenticator",
-    "LocalCliAuthorizer",
+    "LocalEngineServices",
+    "LocalGraphMetadataOperationHandler",
+    "ServiceEngineOperations",
+    "ServiceResourceComposer",
     "build_local_resource_manager",
 ]

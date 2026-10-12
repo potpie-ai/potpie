@@ -1,59 +1,56 @@
-"""Canonical authenticated foreground daemon runtime foundation."""
+"""Canonical authenticated foreground daemon runtime foundation.
+
+The local daemon is aiohttp wiring around the transport-neutral
+:class:`~potpie.runtime.endpoint.OperationEndpoint`: a per-boot bearer
+credential, per-boot compatibility tickets (catalog lock-step), a UDS or
+loopback TCP listener and an explicit request size limit.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import hmac
 import os
 import secrets
 import signal
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Protocol
 from uuid import uuid4
 
 from aiohttp import web
 
 from potpie.runtime.clients import ClientOutcome
-from potpie.runtime.codec import decode_request, encode_response
 from potpie.runtime.coordinator import OperationCoordinator
-from potpie.runtime.operations import (
-    operation_capabilities,
-    operation_catalog_fingerprint,
+from potpie.runtime.endpoint import (
+    DEFAULT_MAX_REQUEST_BYTES,
+    BearerTokenAuthenticator,
+    HostIdentity,
+    OperationEndpoint,
+    PerBootTicketCompatibility,
 )
+from potpie.runtime.operations import operation_catalog_fingerprint
 from potpie.runtime.ownership import RuntimeOwnershipLock
-from potpie.runtime.protocol import (
-    PROTOCOL_MAX_VERSION,
-    PROTOCOL_MIN_VERSION,
-    PROTOCOL_VERSION,
-    DaemonBuild,
-    DaemonInternalError,
-    DaemonStatusRequest,
-    DaemonStatusResult,
-    EngineOperationRequest,
-    FailureResponse,
-    HandshakeRequest,
-    HandshakeResult,
-    ProtocolError,
-    ProtocolRequest,
-    ProtocolResponse,
-    ProtocolTransportError,
-    RuntimeBoundaryError,
-    ShutdownRequest,
-    ShutdownResult,
-    SuccessResponse,
-)
-from potpie.runtime.resource_manager import AuthenticationError
+from potpie.runtime.protocol import DaemonBuild, EngineOperationRequest
+from potpie.runtime.resource_manager import AuthenticatedActor
 from potpie.runtime.transport import RuntimeEndpoint
-from potpie_context_engine import Failure, Success
+from potpie_context_engine import Failure
 
 
 @dataclass(frozen=True, slots=True)
 class AuthenticatedDaemonCaller:
     actor_id: str = "local-daemon-owner"
     authentication_scheme: str = "local_bearer"
+
+
+#: The actor every request with the daemon's per-boot credential acts as.
+LOCAL_DAEMON_ACTOR = AuthenticatedActor(
+    actor_id=AuthenticatedDaemonCaller.actor_id,
+    attributes={
+        "authentication_scheme": AuthenticatedDaemonCaller.authentication_scheme
+    },
+)
 
 
 class EngineOperationHandler(Protocol):
@@ -70,8 +67,10 @@ AfterOwnershipAcquired = Callable[[RuntimeOwnershipLock], None]
 BeforeOwnershipRelease = Callable[[RuntimeOwnershipLock], None]
 
 
-_TicketScope = Literal["full", "control"]
-_TICKET_SCOPES: frozenset[str] = frozenset({"full", "control"})
+def _catalog_fingerprint() -> str:
+    """This build's catalog fingerprint, looked up when it is needed."""
+
+    return operation_catalog_fingerprint()
 
 
 def generate_bearer_token() -> str:
@@ -99,54 +98,74 @@ class CanonicalDaemonRuntime:
         ui_url: str = "http://127.0.0.1",
         version: str | None = None,
         build: DaemonBuild | None = None,
+        max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES,
     ) -> None:
         if len(bearer_token.encode()) < 32:
             raise ValueError("daemon bearer token must contain at least 256 bits")
         self.endpoint = endpoint
         self.instance_id = instance_id or str(uuid4())
-        self._bearer_token = bearer_token
-        self._operation_handler = operation_handler
         self._ownership = RuntimeOwnershipLock(ownership_lock_path)
         self._shutdown_resources = shutdown_resources
         self._after_ownership_acquired = after_ownership_acquired
         self._before_ownership_release = before_ownership_release
-        self._coordinator = coordinator
-        self._backend_profile = backend_profile
-        self._ui_url = ui_url
-        self._version = version
-        self._build = build
-        self._state = "starting"
+        self._max_request_bytes = max_request_bytes
+        self._operations = OperationEndpoint(
+            authenticator=BearerTokenAuthenticator(
+                bearer_token,
+                actor=LOCAL_DAEMON_ACTOR,
+                failure_code="daemon_authentication_failed",
+            ),
+            compatibility=PerBootTicketCompatibility(
+                instance_id=self.instance_id,
+                catalog_fingerprint=_catalog_fingerprint,
+            ),
+            engine_handler=operation_handler,
+            identity=HostIdentity(
+                host_id=self.instance_id,
+                version=version,
+                build=build,
+                backend_profile=backend_profile,
+                ui_url=ui_url,
+            ),
+            max_request_bytes=max_request_bytes,
+            coordinator=coordinator,
+            on_shutdown=self.request_shutdown,
+            lifecycle_state="starting",
+            catalog_fingerprint=_catalog_fingerprint,
+        )
         self._runner: web.AppRunner | None = None
         self._shutdown_requested = asyncio.Event()
-        self._state_condition = asyncio.Condition()
-        self._active_operations = 0
-        self._accepting_operations = False
-        self._compatibility_secret = secrets.token_bytes(32)
         self._stop_lock = asyncio.Lock()
 
     @property
+    def operation_endpoint(self) -> OperationEndpoint:
+        return self._operations
+
+    @property
     def lifecycle_state(self) -> str:
-        return self._state
+        return self._operations.lifecycle_state
 
     @property
     def pid(self) -> int:
         return os.getpid()
 
     async def start(self) -> None:
-        if self._runner is not None or self._state != "starting":
+        if self._runner is not None or self.lifecycle_state != "starting":
             raise RuntimeError("canonical daemon runtime can start only once")
         ownership = self._ownership.acquire()
         if isinstance(ownership, Failure):
-            self._state = "failed"
+            self._operations.set_lifecycle_state("failed")
             raise RuntimeError(ownership.error.code)
         try:
             if self._after_ownership_acquired is not None:
                 self._after_ownership_acquired(self._ownership)
         except Exception:
-            self._state = "failed"
+            self._operations.set_lifecycle_state("failed")
             self._ownership.release()
             raise
-        app = web.Application()
+        # An explicit limit: aiohttp's own default (1 MiB) refused large
+        # resource imports as malformed envelopes.
+        app = web.Application(client_max_size=self._max_request_bytes)
         app.router.add_post("/v1/operations", self._handle_http)
         runner = web.AppRunner(app, access_log=None)
         self._runner = runner
@@ -172,12 +191,9 @@ class CanonicalDaemonRuntime:
             await site.start()
             if self.endpoint.kind == "uds":
                 Path(self.endpoint.address).chmod(0o600)
-            async with self._state_condition:
-                self._state = "ready"
-                self._accepting_operations = True
-                self._state_condition.notify_all()
+            await self._operations.mark_ready()
         except Exception:
-            self._state = "failed"
+            self._operations.set_lifecycle_state("failed")
             await runner.cleanup()
             if self.endpoint.kind == "uds" and socket_was_absent:
                 with contextlib.suppress(FileNotFoundError):
@@ -193,33 +209,26 @@ class CanonicalDaemonRuntime:
         await self.stop()
 
     async def request_shutdown(self) -> None:
-        async with self._state_condition:
-            if self._state in {"stopped", "failed"}:
-                return
-            self._state = "draining"
-            self._accepting_operations = False
-            self._state_condition.notify_all()
+        if not await self._operations.begin_drain():
+            return
         self._shutdown_requested.set()
 
     async def stop(self) -> None:
         async with self._stop_lock:
-            if self._state == "stopped":
+            if self.lifecycle_state == "stopped":
                 return
             await self.request_shutdown()
             runner, self._runner = self._runner, None
             if runner is not None:
                 await runner.cleanup()
-            async with self._state_condition:
-                await self._state_condition.wait_for(
-                    lambda: self._active_operations == 0
-                )
+            await self._operations.wait_idle()
             cleanup_failed = False
             if self._shutdown_resources is not None:
                 try:
                     cleanup = await self._shutdown_resources()
                     cleanup_failed = isinstance(cleanup, Failure)
                 except Exception:
-                    self._state = "failed"
+                    self._operations.set_lifecycle_state("failed")
                     cleanup_failed = True
             if self.endpoint.kind == "uds":
                 socket_path = Path(self.endpoint.address)
@@ -229,299 +238,31 @@ class CanonicalDaemonRuntime:
                 try:
                     self._before_ownership_release(self._ownership)
                 except Exception:
-                    self._state = "failed"
+                    self._operations.set_lifecycle_state("failed")
                     cleanup_failed = True
             self._ownership.release()
-            self._state = "stopped"
+            self._operations.set_lifecycle_state("stopped")
             if cleanup_failed:
                 raise RuntimeError("daemon resource shutdown failed")
 
     async def _handle_http(self, request: web.Request) -> web.Response:
-        try:
-            document = await request.json()
-        except Exception:
-            document = None
-        protocol_version, request_id = _correlation_identity(document)
-        if not self._authenticated(request.headers):
-            return _json_response(
-                FailureResponse(
-                    protocol_version=protocol_version,
-                    request_id=request_id,
-                    outcome=Failure(
-                        AuthenticationError(
-                            code="daemon_authentication_failed",
-                            message="daemon authentication failed",
-                        )
-                    ),
-                ),
-                status=401,
-            )
-        decoded = decode_request(document)
-        if isinstance(decoded, Failure):
-            return _json_response(
-                FailureResponse(
-                    protocol_version=protocol_version,
-                    request_id=request_id,
-                    outcome=decoded,
-                ),
-                status=400,
-            )
-        typed_request = decoded.value
         if (
-            not PROTOCOL_MIN_VERSION
-            <= typed_request.protocol_version
-            <= PROTOCOL_MAX_VERSION
+            request.content_length is not None
+            and request.content_length > self._max_request_bytes
         ):
-            return _json_response(
-                _failure_response(
-                    typed_request,
-                    ProtocolError(
-                        code="protocol_version_incompatible",
-                        message="request protocol version is incompatible",
-                        details={
-                            "supported_min": PROTOCOL_MIN_VERSION,
-                            "supported_max": PROTOCOL_MAX_VERSION,
-                        },
-                        recommended_next_action="install compatible Potpie versions",
-                    ),
-                ),
-                status=409,
-            )
-        try:
-            response, status = await self._execute(typed_request)
-        except Exception:
-            response = _failure_response(
-                typed_request,
-                DaemonInternalError(
-                    code="daemon_internal_failure",
-                    message="the daemon failed to process the request",
-                    details={"request_id": typed_request.request_id},
-                    recommended_next_action="inspect daemon logs",
-                ),
-            )
-            status = 500
-        try:
-            return _json_response(response, status=status)
-        except Exception:
-            return _json_response(
-                _failure_response(
-                    typed_request,
-                    DaemonInternalError(
-                        code="daemon_response_encoding_failed",
-                        message="the daemon could not encode the operation response",
-                        details={"request_id": typed_request.request_id},
-                        recommended_next_action="inspect daemon logs",
-                    ),
-                ),
-                status=500,
-            )
-
-    async def _execute(self, request: ProtocolRequest) -> tuple[ProtocolResponse, int]:
-        if isinstance(request, HandshakeRequest):
-            return self._handshake(request)
-        scope = self._compatibility_ticket_scope(request.compatibility_ticket)
-        if scope is None:
-            return (
-                _failure_response(
-                    request,
-                    ProtocolError(
-                        code="compatibility_ticket_invalid",
-                        message=(
-                            "a ticket from a compatible handshake is required before "
-                            "this operation"
-                        ),
-                        recommended_next_action="perform an authenticated handshake",
-                        retry_posture="safe",
-                    ),
-                ),
-                409,
-            )
-        if isinstance(request, ShutdownRequest):
-            async with self._coordinator.lifecycle_control():
-                await self.request_shutdown()
-                return (
-                    SuccessResponse(
-                        protocol_version=request.protocol_version,
-                        request_id=request.request_id,
-                        outcome=Success(ShutdownResult(accepted=True)),
-                    ),
-                    200,
-                )
-        if isinstance(request, DaemonStatusRequest):
-            async with self._coordinator.lifecycle_control():
-                return (
-                    SuccessResponse(
-                        protocol_version=request.protocol_version,
-                        request_id=request.request_id,
-                        outcome=Success(
-                            DaemonStatusResult(
-                                instance_id=self.instance_id,
-                                pid=self.pid,
-                                lifecycle_state=self._state,  # type: ignore[arg-type]
-                                backend_profile=self._backend_profile,
-                                ui_url=self._ui_url,
-                                version=self._version,
-                                build=self._build,
-                            )
-                        ),
-                    ),
-                    200,
-                )
-        if scope != "full":
-            # A control-scoped ticket comes from a handshake whose operation
-            # catalog differs from this daemon's; only status and shutdown
-            # share wire semantics across that difference.
-            return (
-                _failure_response(
-                    request,
-                    ProtocolError(
-                        code="operation_catalog_mismatch",
-                        message=(
-                            "this daemon serves a different operation catalog; "
-                            "its ticket allows only daemon status and shutdown"
-                        ),
-                        details={"operation": request.operation.value},
-                        recommended_next_action=(
-                            "restart the daemon with 'potpie daemon restart'"
-                        ),
-                    ),
-                ),
-                409,
-            )
-        async with self._state_condition:
-            if not self._accepting_operations:
-                return (
-                    _failure_response(
-                        request,
-                        ProtocolTransportError(
-                            code="daemon_draining",
-                            message="daemon is not accepting new operations",
-                            retry_posture="safe",
-                        ),
-                    ),
-                    503,
-                )
-            self._active_operations += 1
-        try:
-            outcome = await self._operation_handler.handle(
-                request,
-                authentication=AuthenticatedDaemonCaller(),
-            )
-        finally:
-            async with self._state_condition:
-                self._active_operations -= 1
-                self._state_condition.notify_all()
-        if isinstance(outcome, Success):
-            return (
-                SuccessResponse(
-                    protocol_version=request.protocol_version,
-                    request_id=request.request_id,
-                    outcome=outcome,
-                ),
-                200,
-            )
-        return _failure_response(request, outcome.error), _status_for(outcome.error)
-
-    def _handshake(self, request: HandshakeRequest) -> tuple[ProtocolResponse, int]:
-        payload = request.payload
-        if not (
-            payload.client_protocol_min <= PROTOCOL_MAX_VERSION
-            and PROTOCOL_MIN_VERSION <= payload.client_protocol_max
-        ):
-            return (
-                _failure_response(
-                    request,
-                    ProtocolError(
-                        code="protocol_version_incompatible",
-                        message="client and daemon protocol ranges do not overlap",
-                        recommended_next_action="install compatible Potpie versions",
-                    ),
-                ),
-                409,
-            )
-        if (
-            payload.expected_instance_id is not None
-            and payload.expected_instance_id != self.instance_id
-        ):
-            return (
-                _failure_response(
-                    request,
-                    ProtocolError(
-                        code="daemon_instance_mismatch",
-                        message="daemon instance identity does not match the request",
-                        recommended_next_action="refresh discovery and reconnect",
-                    ),
-                ),
-                409,
-            )
-        catalog_fingerprint = operation_catalog_fingerprint()
-        # A client from another build still gets an answer, so it can see and
-        # stop this daemon: its ticket is scoped to daemon control, and the
-        # differing fingerprint in the result tells it so.
-        scope: _TicketScope = (
-            "full"
-            if payload.client_operation_catalog_fingerprint == catalog_fingerprint
-            else "control"
+            response = self._operations.refuse_oversized()
+        else:
+            try:
+                body = await request.read()
+            except web.HTTPRequestEntityTooLarge:
+                response = self._operations.refuse_oversized()
+            else:
+                response = await self._operations.handle(body, request.headers)
+        return web.Response(
+            status=response.status,
+            body=response.body,
+            headers=dict(response.headers),
         )
-        return (
-            SuccessResponse(
-                protocol_version=request.protocol_version,
-                request_id=request.request_id,
-                outcome=Success(
-                    HandshakeResult(
-                        protocol_min=PROTOCOL_MIN_VERSION,
-                        protocol_max=PROTOCOL_MAX_VERSION,
-                        instance_id=self.instance_id,
-                        lifecycle_state=self._state,  # type: ignore[arg-type]
-                        capabilities=operation_capabilities(),
-                        operation_catalog_fingerprint=catalog_fingerprint,
-                        compatibility_ticket=self._issue_compatibility_ticket(scope),
-                    )
-                ),
-            ),
-            200,
-        )
-
-    def _issue_compatibility_ticket(self, scope: _TicketScope) -> str:
-        nonce = secrets.token_urlsafe(24)
-        signature = hmac.new(
-            self._compatibility_secret,
-            self._compatibility_ticket_message(scope, nonce),
-            "sha256",
-        ).hexdigest()
-        return f"{scope}.{nonce}.{signature}"
-
-    def _compatibility_ticket_scope(self, ticket: str | None) -> _TicketScope | None:
-        """The scope a ticket this boot issued grants, or ``None`` if invalid."""
-
-        if not ticket:
-            return None
-        try:
-            claimed_scope, nonce, supplied_signature = ticket.split(".", 2)
-        except ValueError:
-            return None
-        if claimed_scope not in _TICKET_SCOPES:
-            return None
-        scope = cast(_TicketScope, claimed_scope)
-        expected_signature = hmac.new(
-            self._compatibility_secret,
-            self._compatibility_ticket_message(scope, nonce),
-            "sha256",
-        ).hexdigest()
-        if not hmac.compare_digest(supplied_signature, expected_signature):
-            return None
-        return scope
-
-    def _compatibility_ticket_message(self, scope: _TicketScope, nonce: str) -> bytes:
-        return (
-            f"{self.instance_id}:{PROTOCOL_VERSION}:"
-            f"{operation_catalog_fingerprint()}:{scope}:{nonce}"
-        ).encode()
-
-    def _authenticated(self, headers: Mapping[str, str]) -> bool:
-        supplied = headers.get("Authorization", "")
-        expected = f"Bearer {self._bearer_token}"
-        return hmac.compare_digest(supplied.encode(), expected.encode())
 
 
 async def run_foreground(runtime: CanonicalDaemonRuntime) -> None:
@@ -540,43 +281,8 @@ async def run_foreground(runtime: CanonicalDaemonRuntime) -> None:
         await runtime.stop()
 
 
-def _correlation_identity(document: object) -> tuple[int, str]:
-    if not isinstance(document, Mapping):
-        return PROTOCOL_VERSION, str(uuid4())
-    protocol_version = document.get("protocol_version")
-    if not isinstance(protocol_version, int) or isinstance(protocol_version, bool):
-        protocol_version = PROTOCOL_VERSION
-    request_id = document.get("request_id")
-    if not isinstance(request_id, str) or not request_id.strip():
-        request_id = str(uuid4())
-    return protocol_version, request_id
-
-
-def _failure_response(
-    request: ProtocolRequest, error: RuntimeBoundaryError
-) -> FailureResponse:
-    return FailureResponse(
-        protocol_version=request.protocol_version,
-        request_id=request.request_id,
-        outcome=Failure(error),
-    )
-
-
-def _json_response(response: ProtocolResponse, *, status: int) -> web.Response:
-    return web.json_response(encode_response(response), status=status)
-
-
-def _status_for(error: RuntimeBoundaryError) -> int:
-    return {
-        "authentication": 401,
-        "authorization": 403,
-        "protocol": 400,
-        "protocol_transport": 503,
-        "daemon_internal": 500,
-    }.get(error.category, 200)
-
-
 __all__ = [
+    "LOCAL_DAEMON_ACTOR",
     "AuthenticatedDaemonCaller",
     "CanonicalDaemonRuntime",
     "EngineOperationHandler",
