@@ -26,6 +26,7 @@
     "postcss": ">=8.5.23",
     "baseline-browser-mapping": ">=2.11.0",
     "browserslist": ">=4.28.7",
-    "nanoid": ">=3.3.18 <4.0.0"
+    "nanoid": ">=3.3.18 <4.0.0",
+    "source-map-js": ">=1.2.2"
   }
 }

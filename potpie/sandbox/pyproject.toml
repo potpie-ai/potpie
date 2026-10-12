@@ -52,4 +52,5 @@ constraint-dependencies = [
     "urllib3>=2.8.0",
     # CVE-2026-63374 / GHSA-82r6-8w77-94w6: floor at 4.14.2 (vulnerable: <=4.14.1).
     "anyio>=4.14.2",
+    "multidict>=6.9.1",
 ]
