@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 import platform
 import sys
+from types import SimpleNamespace
 from typing import Union
 from unittest.mock import MagicMock
 
@@ -318,7 +319,13 @@ def test_status_uses_canonical_activation_outcome(
     assert captured == [{"command": "status", "result_kind": "status_result"}]
 
 
-def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_status_host_flag_remains_compatible(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``status --host managed`` is the global option typed after the command."""
+    from potpie.config import host_registry
+    from tests.support.pot_directories import two_hosts
+
     report = StatusReport(
         pot_id="foo-pot",
         profile="local",
@@ -328,17 +335,44 @@ def test_status_host_flag_remains_compatible(monkeypatch: pytest.MonkeyPatch) ->
     )
     mock_host = MagicMock()
     _configure_status_host(mock_host, report)
-
     _common.set_runtime(mock_host)
+    monkeypatch.setattr(bootstrap, "resolve_pot_id", lambda _host, pot: pot or "pot_m2")
+    two_hosts(monkeypatch)
+    # The managed host's engine answers from the same in-process double; the
+    # selector it is asked for is what proves the command went there.
+    engine = _common.get_engine_client(runtime=mock_host)
+    selectors: list[object] = []
+
+    def _engine(selector: object) -> object:
+        selectors.append(selector)
+        return engine
+
     monkeypatch.setattr(
-        bootstrap, "resolve_pot_id", lambda _host, pot: pot or "foo-pot"
+        _common, "_managed_connection", lambda: SimpleNamespace(engine=_engine)
     )
 
-    result = runner.invoke(cli_main.app, ["status", "--host"])
+    cli_main.run_cli(["--json", "status", "--host", "managed"])
 
-    assert result.exit_code == 0, result.stdout
-    assert "profile=local" in result.stdout
-    mock_host.graph.data_plane_status.assert_called_once_with("foo-pot")
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["profile"] == "managed"
+    assert payload["active_pot"] == "api"
+    assert len(selectors) == 1
+    # One invocation only: the active host stays local.
+    assert host_registry.persisted_origin() == "local"
+
+
+def test_status_host_flag_without_a_value_names_the_global_option(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import typer
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli_main.run_cli(["--json", "status", "--host"])
+
+    assert exc_info.value.exit_code == _common.EXIT_VALIDATION
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["code"] == "usage_error"
+    assert "global option" in payload["message"]
 
 
 def test_status_non_default_pot_triggers_host_path(

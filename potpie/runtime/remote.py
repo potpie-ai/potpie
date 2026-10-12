@@ -23,7 +23,8 @@ http to a non-loopback host prints a one-line warning on stderr.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+import threading
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass, replace
 from typing import Any, TypeVar
 from urllib.parse import urlsplit
@@ -32,6 +33,13 @@ from uuid import uuid4
 import httpx
 
 from potpie.config import host_registry
+from potpie.pots.contracts import (
+    PotAggregateStatus,
+    PotInfo,
+    PotRepoSource,
+    SourceInfo,
+)
+from potpie.pots.directory import is_remote_repo_key
 from potpie.runtime.clients import (
     ClientOutcome,
     DaemonTransport,
@@ -49,6 +57,7 @@ from potpie.runtime.host_operations import (
     GrantListRequest,
     HostOperation,
     PotCreateRequest,
+    PotGrantInfo,
     PotListRequest,
     PotListResult,
     PotStatusRequest,
@@ -58,6 +67,7 @@ from potpie.runtime.host_operations import (
     SourceAddRequest,
     SourceListRequest,
     WhoamiRequest,
+    WhoamiResult,
 )
 from potpie.runtime.operations import EngineOperation, SafetyClass
 from potpie.runtime.protocol import (
@@ -79,6 +89,7 @@ from potpie.runtime.protocol import (
 )
 from potpie.runtime.resource_manager import ContextSelector, DestructiveIntent
 from potpie_context_engine import Failure, Success
+from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.requests import EngineRequest
 from potpie_context_engine.results import result_from_payload
 
@@ -251,6 +262,11 @@ class HttpsHostTransport:
                 raise TransportFailure(code="host_route_not_found", dispatched=False)
             raise TransportFailure(code=decoded.error.code, dispatched=True)
         return decoded.value
+
+    @property
+    def is_open(self) -> bool:
+        """Whether a pooled client exists (nothing to close otherwise)."""
+        return self._client is not None
 
     async def aclose(self) -> None:
         client, self._client = self._client, None
@@ -559,6 +575,11 @@ class RemoteHostClient:
     def transport(self) -> DaemonTransport:
         return self._transport
 
+    @property
+    def label(self) -> str:
+        """``Managed (host[:port]/prefix)``, the name used in messages."""
+        return self._caller.host
+
     async def handshake(
         self,
     ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
@@ -725,16 +746,340 @@ class HostNotConfigured(RuntimeError):
     """``connect()`` found no managed host to connect to."""
 
 
+# --- the pot directory of a managed host ------------------------------------------
+
+
+Runner = Callable[[Awaitable[Any]], Any]
+
+
+class _LoopThread:
+    """One event loop on a daemon thread, for synchronous callers.
+
+    A synchronous caller (a gRPC servicer thread, a script) cannot await, and
+    ``asyncio.run`` per call would throw the pooled HTTPS client away each
+    time. Calls are submitted to this loop instead, from any thread.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _ensure(self) -> asyncio.AbstractEventLoop:
+        with self._lock:
+            if self._loop is None or self._loop.is_closed():
+                loop = asyncio.new_event_loop()
+                thread = threading.Thread(
+                    target=loop.run_forever,
+                    name="potpie-managed-host",
+                    daemon=True,
+                )
+                thread.start()
+                self._loop = loop
+            return self._loop
+
+    def run(self, awaitable: Awaitable[Any]) -> Any:
+        loop = self._ensure()
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            raise RuntimeError(
+                "a synchronous managed-host call cannot run on its own event loop"
+            )
+
+        async def _await() -> Any:
+            return await awaitable
+
+        return asyncio.run_coroutine_threadsafe(_await(), loop).result()
+
+
+_background = _LoopThread()
+
+
+class ManagedPotDirectory:
+    """A managed host's pots, as :class:`potpie.pots.directory.PotDirectory`.
+
+    Every method is one or two ``host.*`` calls for the caller's actor. The
+    listing (pots, the active pot and, per repo, the repo default) comes back
+    from one ``host.pot_list`` and is kept until this directory changes
+    something, so a command that reads the active pot, then the repo default,
+    then the pot's name pays for one round trip, not three.
+
+    Failures raise :class:`RemoteHostError` carrying the host's typed error.
+    Repo identities derived from a local path are never sent (they would leak
+    local paths, and mean nothing on the host): reading a default for one
+    answers ``None`` and binding one is refused.
+
+    ``run`` executes one awaitable synchronously. The default runs it on a
+    private background event loop, so the directory is usable from any thread;
+    the CLI passes its own runner so the pooled client is shared with its
+    engine calls.
+    """
+
+    origin: str = "managed"
+    supports_repo_defaults: bool = True
+
+    def __init__(
+        self,
+        client: RemoteHostClient,
+        *,
+        run: Runner | None = None,
+        repo: str | None = None,
+    ) -> None:
+        self._client = client
+        self._run: Runner = run or _background.run
+        #: The caller's current repo identity, when it came from a git remote:
+        #: the first listing asks for its default too, so the answer the next
+        #: ``repo_default`` call needs is already there.
+        self._repo = repo if is_remote_repo_key(repo) else None
+        self._listings: dict[str | None, PotListResult] = {}
+        self._repo_sources: list[PotRepoSource] | None = None
+
+    @property
+    def client(self) -> RemoteHostClient:
+        return self._client
+
+    @property
+    def label(self) -> str:
+        return self._client.label
+
+    def invalidate(self) -> None:
+        """Forget what was listed; the next read asks the host again."""
+        self._listings.clear()
+        self._repo_sources = None
+
+    def close(self) -> None:
+        """Close the client's pooled connections, on the loop that opened them."""
+        transport = self._client.transport
+        closer = getattr(transport, "aclose", None)
+        if callable(closer) and getattr(transport, "is_open", True):
+            self._run(closer())
+
+    def _call(self, awaitable: Awaitable[Any]) -> Any:
+        outcome = self._run(awaitable)
+        if isinstance(outcome, Failure):
+            raise RemoteHostError(outcome.error)
+        return outcome.value
+
+    def _listing(self, repo: str | None = None) -> PotListResult:
+        if repo is None and self._listings:
+            # Pots and the active pot are the same in every listing.
+            return next(iter(self._listings.values()))
+        asked = repo if repo is not None else self._repo
+        if asked not in self._listings:
+            self._listings[asked] = self._call(
+                self._client.pot_list(PotListRequest(repo=asked, include_archived=True))
+            )
+        return self._listings[asked]
+
+    def listing(
+        self, *, repo: str | None = None, include_status: bool = False
+    ) -> PotListResult:
+        """The raw ``host.pot_list`` answer (``include_status`` is never cached)."""
+        if include_status:
+            return self._call(
+                self._client.pot_list(
+                    PotListRequest(
+                        repo=repo if is_remote_repo_key(repo) else None,
+                        include_archived=True,
+                        include_status=True,
+                    )
+                )
+            )
+        return self._listing(repo if is_remote_repo_key(repo) else None)
+
+    # --- pots ---------------------------------------------------------------------
+    def list_pots(self) -> list[PotInfo]:
+        return list(self._listing().pots)
+
+    def active_pot(self) -> PotInfo | None:
+        listing = self._listing()
+        if not listing.active_pot_id:
+            return None
+        for pot in listing.pots:
+            if pot.pot_id == listing.active_pot_id:
+                return pot if pot.active else replace(pot, active=True)
+        return None
+
+    def create_pot(
+        self, *, name: str, repo: str | None = None, use: bool = False
+    ) -> PotInfo:
+        request = PotCreateRequest(
+            name=name, repo=repo if is_remote_repo_key(repo) else None, use=use
+        )
+        try:
+            return self._call(self._client.pot_create(request))
+        finally:
+            self.invalidate()
+
+    def use_pot(self, *, ref: str) -> PotInfo:
+        try:
+            return self._call(
+                self._client.pot_use(ContextSelector(kind="explicit", value=ref))
+            )
+        finally:
+            self.invalidate()
+
+    # --- repo routing defaults ----------------------------------------------------
+    def repo_default(self, *, repo: str) -> str | None:
+        if not is_remote_repo_key(repo):
+            return None
+        return self._listing(repo).repo_default_pot_id
+
+    def set_repo_default(self, *, repo: str, pot_id: str) -> None:
+        _require_remote_key(repo)
+        try:
+            self._call(
+                self._client.repo_default_set(
+                    ContextSelector(kind="explicit", value=pot_id),
+                    RepoDefaultSetRequest(repo=repo),
+                )
+            )
+        finally:
+            self.invalidate()
+
+    def clear_repo_default(self, *, repo: str) -> bool:
+        _require_remote_key(repo)
+        try:
+            result = self._call(
+                self._client.repo_default_clear(RepoDefaultClearRequest(repo=repo))
+            )
+        finally:
+            self.invalidate()
+        return bool(getattr(result, "cleared", False))
+
+    # --- sources ------------------------------------------------------------------
+    def list_sources(self, *, pot_id: str) -> list[SourceInfo]:
+        result = self._call(
+            self._client.source_list(ContextSelector(kind="explicit", value=pot_id))
+        )
+        return list(result.sources)
+
+    def add_source(
+        self, *, pot_id: str, kind: str, location: str, name: str | None = None
+    ) -> SourceInfo:
+        try:
+            return self._call(
+                self._client.source_add(
+                    ContextSelector(kind="explicit", value=pot_id),
+                    SourceAddRequest(kind=kind, location=location, name=name),
+                )
+            )
+        finally:
+            self._repo_sources = None
+
+    def list_repo_sources(self) -> list[PotRepoSource]:
+        """The repo→pot index, one ``host.source_list`` per live pot.
+
+        Only routing reports need it (which pots a working tree is linked to);
+        command routing itself sends a ``repository`` selector and lets the
+        host match. Kept until this directory changes something.
+        """
+        if self._repo_sources is None:
+            rows: list[PotRepoSource] = []
+            for pot in self.list_pots():
+                if pot.archived:
+                    continue
+                rows.extend(
+                    PotRepoSource(
+                        pot_id=pot.pot_id,
+                        pot_name=pot.name,
+                        name=source.name,
+                        location=source.location,
+                    )
+                    for source in self.list_sources(pot_id=pot.pot_id)
+                    if source.kind == "repo"
+                )
+            self._repo_sources = rows
+        return list(self._repo_sources)
+
+    # --- status, identity and sharing ---------------------------------------------
+    def aggregate_status(self, *, pot_id: str | None = None) -> PotAggregateStatus:
+        selector = (
+            ContextSelector(kind="explicit", value=pot_id)
+            if pot_id
+            else ContextSelector(kind="active")
+        )
+        return self._call(self._client.pot_status(selector))
+
+    def whoami(self) -> WhoamiResult:
+        return self._call(self._client.whoami())
+
+    def list_grants(self, *, pot_id: str) -> list[PotGrantInfo]:
+        result = self._call(
+            self._client.grant_list(ContextSelector(kind="explicit", value=pot_id))
+        )
+        return list(result.grants)
+
+    def grant(self, *, pot_id: str, actor_id: str, role: str) -> PotGrantInfo:
+        return self._call(
+            self._client.grant_set(
+                ContextSelector(kind="explicit", value=pot_id),
+                GrantSetRequest(actor_id=actor_id, role=role),
+            )
+        )
+
+    def revoke(self, *, pot_id: str, actor_id: str) -> bool:
+        result = self._call(
+            self._client.grant_revoke(
+                ContextSelector(kind="explicit", value=pot_id),
+                GrantRevokeRequest(actor_id=actor_id),
+            )
+        )
+        return bool(getattr(result, "revoked", False))
+
+    # --- local-only lifecycle -----------------------------------------------------
+    def rename_pot(self, *, ref: str, new_name: str) -> PotInfo:
+        raise _local_only("pot rename")
+
+    def archive_pot(self, *, ref: str) -> PotInfo:
+        raise _local_only("pot archive")
+
+    def source_status(self, *, pot_id: str, source_id: str) -> SourceInfo:
+        raise _local_only("source status")
+
+    def remove_source(self, *, pot_id: str, source_id: str) -> None:
+        raise _local_only("source remove")
+
+    def list_repo_defaults(self) -> dict[str, str]:
+        raise _local_only("listing every repo default")
+
+
+def _require_remote_key(repo: str) -> None:
+    if not is_remote_repo_key(repo):
+        raise ValueError(
+            f"'{repo}' is a local path; a managed host binds repositories by their "
+            "git remote. Run this inside a clone that has an 'origin' remote, or "
+            "pass --repo <host>/<owner>/<repo>."
+        )
+
+
+def _local_only(command: str) -> CapabilityNotImplemented:
+    return CapabilityNotImplemented(
+        f"host.{command.replace(' ', '_')}",
+        detail=f"'{command}' is served by the local host only, not by a managed host",
+        recommended_next_action=(
+            "run it against the local host with '--host local', or ask the managed "
+            "host's operator"
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class HostConnection:
     """One managed host: engine clients per selector, host operations, extensions.
 
     Reuse it: its transport keeps one pooled, keep-alive HTTPS client.
+    ``pots`` is the host's :class:`ManagedPotDirectory` for synchronous
+    callers; it has its own pooled client on a private event loop, so it can
+    be used from any thread while ``engine()`` clients run on the caller's.
     """
 
     endpoint: ManagedHostEndpoint
     transport: HttpsHostTransport
     host: RemoteHostClient
+    pots: ManagedPotDirectory
 
     def engine(self, selector: ContextSelector) -> RemoteEngineClient:
         return RemoteEngineClient(
@@ -758,6 +1103,7 @@ class HostConnection:
 
     async def aclose(self) -> None:
         await self.transport.aclose()
+        await asyncio.to_thread(self.pots.close)
 
 
 @dataclass(frozen=True, slots=True)
@@ -831,10 +1177,14 @@ def connect(
     transport = HttpsHostTransport(
         endpoint, timeout_s=timeout_s, http_transport=http_transport
     )
+    pots_transport = HttpsHostTransport(
+        endpoint, timeout_s=timeout_s, http_transport=http_transport
+    )
     connection = HostConnection(
         endpoint=endpoint,
         transport=transport,
         host=RemoteHostClient(transport, host=endpoint.label),
+        pots=ManagedPotDirectory(RemoteHostClient(pots_transport, host=endpoint.label)),
     )
     if http_transport is None:
         _connections[key] = connection
@@ -887,6 +1237,7 @@ __all__ = [
     "HttpsHostTransport",
     "ManagedHostEndpoint",
     "ManagedHostProbe",
+    "ManagedPotDirectory",
     "ManagedHostSettings",
     "RemoteEngineClient",
     "RemoteHostClient",

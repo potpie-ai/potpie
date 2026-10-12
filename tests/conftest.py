@@ -115,6 +115,22 @@ def _isolated_config_home(
 
 
 @pytest.fixture(autouse=True)
+def _no_managed_host_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never let a developer's managed host reach a test.
+
+    ``POTPIE_MANAGED_URL`` outranks the scratch registry, so a value exported
+    in the shell would route every in-process CLI run at a real service with
+    a real key. Tests that need one set their own.
+    """
+    for name in (
+        "POTPIE_MANAGED_URL",
+        "POTPIE_MANAGED_TOKEN",
+        "POTPIE_ALLOW_INSECURE_HOST",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_telemetry_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Never let a developer's real telemetry keys reach a test.
 
@@ -160,6 +176,13 @@ def _reset_cli_state():
         _common._state["root_product_services_runtime"] = None
         _common._state["root_runtime"] = None
         _common._state["root_runtime_source"] = None
+        _common._state["pot_directory_factory"] = None
+        _common._state["managed_pots"] = None
+        from potpie.config import host_registry
+
+        # `--host`, a qualified ref and the insecure-transport warning memo
+        # are per process; one test's origin must not route the next.
+        host_registry.reset_for_tests()
     except Exception:
         logging.getLogger(__name__).debug(
             "failed to reset CLI test state", exc_info=True
