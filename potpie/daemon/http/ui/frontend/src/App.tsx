@@ -14,6 +14,14 @@ import GraphView from "./GraphView";
 import Timeline from "./Timeline";
 import CommitView from "./CommitView";
 import {
+  initialTarget,
+  isMixed,
+  parsePotKey,
+  potKey,
+  potLabel,
+  type PotTarget,
+} from "./hosts";
+import {
   CATEGORY_ORDER,
   KIND_ORDER,
   kindColor,
@@ -39,10 +47,10 @@ const TIMELINE_TYPES = typesInCategory("timeline");
 const SIDEBAR_W_KEY = "potpie-ui:sidebar-w";
 const SIDEBAR_W_DEFAULT = 320;
 const clampSidebarW = (w: number) => Math.min(640, Math.max(240, w));
-const requestedPot = () =>
+const requestedParam = (name: "pot" | "host") =>
   typeof location === "undefined"
     ? null
-    : new URLSearchParams(location.search).get("pot");
+    : new URLSearchParams(location.search).get(name);
 
 function endId(v: string | GraphNode): string {
   return typeof v === "string" ? v : v.id;
@@ -75,7 +83,10 @@ export default function App() {
     session.isRequired,
   );
   const [pots, setPots] = useState<PotRef[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // A pot is its host and its id: the same id may exist on both hosts.
+  const [active, setActive] = useState<PotTarget | null>(null);
+  const activeId = active?.id ?? null;
+  const activeHost = active?.origin;
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [data, setData] = useState<GraphData>(EMPTY);
   const [selected, setSelected] = useState<GraphNode | null>(null);
@@ -142,7 +153,7 @@ export default function App() {
     localStorage.setItem(SIDEBAR_W_KEY, String(SIDEBAR_W_DEFAULT));
   };
 
-  const loadPot = useCallback(async (potId: string): Promise<boolean> => {
+  const loadPot = useCallback(async (target: PotTarget): Promise<boolean> => {
     const requestId = ++loadRequestRef.current;
     const isCurrent = () => requestId === loadRequestRef.current;
     setBusy(true);
@@ -150,7 +161,10 @@ export default function App() {
     setSelected(null);
     setResults([]);
     try {
-      const [st, g] = await Promise.all([api.status(potId), api.graph(potId)]);
+      const [st, g] = await Promise.all([
+        api.status(target.id, target.origin),
+        api.graph(target.id, target.origin),
+      ]);
       if (!isCurrent()) return false;
       setStatus(st);
       setData({ nodes: g.nodes, edges: g.edges });
@@ -171,18 +185,20 @@ export default function App() {
       try {
         const p = await api.pots();
         setPots(p.pots);
-        const requested = requestedPot();
-        const requestedRef = requested
-          ? p.pots.find((x) => x.id === requested || x.name === requested)
-          : null;
-        const active =
-          requestedRef?.id || p.active?.id || p.pots.find((x) => x.active)?.id || null;
-        setActiveId(active);
-        if (active) {
-          const graphOk = await loadPot(active);
+        const target = initialTarget(
+          p,
+          requestedParam("pot"),
+          requestedParam("host"),
+        );
+        setActive(target);
+        if (target) {
+          const graphOk = await loadPot(target);
           if (graphOk) api.reportSession(true);
         } else {
           api.reportSession(false);
+          const down = Object.entries(p.unavailable ?? {});
+          if (down.length)
+            setError(down.map(([host, why]) => `${host}: ${why}`).join("; "));
         }
       } catch (e: any) {
         setError(e?.message || String(e));
@@ -190,15 +206,23 @@ export default function App() {
     })();
   }, [loadPot]);
 
-  const switchPot = async (potId: string) => {
-    const ref = pots.find((p) => p.id === potId);
-    if (!ref) return;
+  const switchPot = async (key: string) => {
+    const target = parsePotKey(key);
+    const ref = target
+      ? pots.find((p) => p.id === target.id && p.origin === target.origin)
+      : undefined;
+    if (!target || !ref) return;
     setBusy(true);
     try {
-      await api.usePot(ref.id);
-      setActiveId(potId);
-      setPots((ps) => ps.map((p) => ({ ...p, active: p.id === potId })));
-      await loadPot(potId);
+      await api.usePot(ref.id, ref.origin);
+      setActive(target);
+      // Each host keeps its own pointer: only this host's pots change.
+      setPots((ps) =>
+        ps.map((p) =>
+          p.origin === target.origin ? { ...p, active: p.id === target.id } : p,
+        ),
+      );
+      await loadPot(target);
     } catch (e: any) {
       setError(e?.message || String(e));
       setBusy(false);
@@ -209,20 +233,20 @@ export default function App() {
     async (node: GraphNode) => {
       if (!activeId) return;
       try {
-        const nb = await api.neighborhood(node.key, 1, activeId);
+        const nb = await api.neighborhood(node.key, 1, activeId, activeHost);
         setData((cur) => mergeGraph(cur, { nodes: nb.nodes, edges: nb.edges }));
       } catch (e: any) {
         setError(e?.message || String(e));
       }
     },
-    [activeId],
+    [activeId, activeHost],
   );
 
   const runSearch = async (e: FormEvent) => {
     e.preventDefault();
     if (!query.trim() || !activeId) return;
     try {
-      const r = await api.search(query.trim(), activeId);
+      const r = await api.search(query.trim(), activeId, activeHost);
       setResults(r.entities || []);
     } catch (err: any) {
       setError(err?.message || String(err));
@@ -234,7 +258,7 @@ export default function App() {
     if (inGraph) {
       setSelected(inGraph);
     } else {
-      api.neighborhood(key, 1, activeId || undefined).then((nb) => {
+      api.neighborhood(key, 1, activeId || undefined, activeHost).then((nb) => {
         setData((cur) => mergeGraph(cur, { nodes: nb.nodes, edges: nb.edges }));
         const found = nb.nodes.find((n) => n.id === key);
         if (found) setSelected(found);
@@ -384,13 +408,13 @@ export default function App() {
           <label htmlFor="pot-selector">Pot</label>
           <select
             id="pot-selector"
-            value={activeId || ""}
+            value={active ? potKey(active) : ""}
             onChange={(e) => switchPot(e.target.value)}
             disabled={busy}
           >
             {pots.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} - {p.counts?.claims ?? 0} claims
+              <option key={potKey(p)} value={potKey(p)}>
+                {potLabel(p, isMixed(pots))}
               </option>
             ))}
           </select>
@@ -555,12 +579,13 @@ export default function App() {
           </>}
 
           {view === "commits" ? (
-            activeId ? (
+            active ? (
               <CommitView
-                key={activeId}
-                pot={activeId}
+                key={potKey(active)}
+                pot={active.id}
+                host={active.origin}
                 onApplied={() => {
-                  void loadPot(activeId);
+                  void loadPot(active);
                 }}
               />
             ) : (

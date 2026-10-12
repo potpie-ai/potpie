@@ -149,4 +149,9 @@ test("the apply command names the preview and pot, quoting only when needed", ()
     applyPreviewCommand("prev_1", "team pot's"),
     "potpie graph apply-preview prev_1 --pot 'team pot'\\''s' --yes",
   );
+  // A host-qualified ref reaches the same host from any terminal.
+  assert.equal(
+    applyPreviewCommand("prev_1", "managed:pot_1"),
+    "potpie graph apply-preview prev_1 --pot managed:pot_1 --yes",
+  );
 });

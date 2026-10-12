@@ -14,19 +14,22 @@ import type {
   JournalStatus,
   PreviewResult,
 } from "./commitTypes";
-import type { GraphData } from "./types";
+import type { GraphData, Origin } from "./types";
+import { HOST_OUTDATED_NOTICE } from "./hosts";
 import { mergeContext } from "./mutationContext";
 import PlanHistory from "./PlanHistory";
 
 interface Props {
   pot: string;
+  /** The host the pot lives on; every call names it. */
+  host: Origin;
   /** Called after the history is refreshed so the explorer reloads the graph. */
   onApplied: () => void;
 }
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-export default function CommitView({ pot, onApplied }: Props) {
+export default function CommitView({ pot, host, onApplied }: Props) {
   const [page, setPage] = useState<CommitPage | null>(null);
   const [journal, setJournal] = useState<JournalStatus | null>(null);
   const [detail, setDetail] = useState<CommitDetail | null>(null);
@@ -39,6 +42,8 @@ export default function CommitView({ pot, onApplied }: Props) {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // A host older than commit history still has saved plans to show.
+  const [outdated, setOutdated] = useState(false);
   const [selectedCommit, setSelectedCommit] = useState<string | undefined>();
   const [selectedRecord, setSelectedRecord] = useState<string | null>(null);
   const alive = useRef(true);
@@ -48,18 +53,27 @@ export default function CommitView({ pot, onApplied }: Props) {
 
   const reload = useCallback(async () => {
     const token = ++historyRequest.current;
-    const [commits, status, graph] = await Promise.all([
-      api.commits(pot),
-      api.journal(pot),
-      api
-        .graph(pot)
-        .then((data) => ({ data, error: "" }))
-        .catch((error) => ({
-          data: { nodes: [], edges: [] },
-          error: errorText(error),
-        })),
-    ]);
+    let loaded;
+    try {
+      loaded = await Promise.all([
+        api.commits(pot, host),
+        api.journal(pot, host),
+        api
+          .graph(pot, host)
+          .then((data) => ({ data, error: "" }))
+          .catch((error) => ({
+            data: { nodes: [], edges: [] },
+            error: errorText(error),
+          })),
+      ]);
+    } catch (e) {
+      if (!(e instanceof CommitApiError) || e.code !== "host_outdated") throw e;
+      if (alive.current && historyRequest.current === token) setOutdated(true);
+      return null;
+    }
+    const [commits, status, graph] = loaded;
     if (alive.current && historyRequest.current === token) {
+      setOutdated(false);
       setPage(commits);
       setJournal(status);
       setContext(graph.data);
@@ -67,7 +81,7 @@ export default function CommitView({ pot, onApplied }: Props) {
       return commits;
     }
     return null;
-  }, [pot]);
+  }, [pot, host]);
   const inspect = useCallback(
     async (row: CommitHeader) => {
       const current = ++request.current;
@@ -79,13 +93,13 @@ export default function CommitView({ pot, onApplied }: Props) {
       setSelectedRecord(null);
       setDetail(null);
       try {
-        let next = await api.commit(row.commit_id, pot);
+        let next = await api.commit(row.commit_id, pot, host);
         // Receipts paginate effects separately from records. Load the complete
         // normal-sized receipt so audit pages cannot change the visual classification.
         for (let count = 1; next.next_offset !== null && count < 20; count++) {
           if (!alive.current || request.current !== current) return;
           const offset = next.next_offset;
-          const part = await api.commit(row.commit_id, pot, offset);
+          const part = await api.commit(row.commit_id, pot, host, offset);
           if (part.next_offset !== null && part.next_offset <= offset)
             throw new Error(
               "The commit returned an invalid continuation offset.",
@@ -104,7 +118,7 @@ export default function CommitView({ pot, onApplied }: Props) {
         if (alive.current && request.current === current) setBusy(false);
       }
     },
-    [pot],
+    [pot, host],
   );
 
   useEffect(() => {
@@ -147,7 +161,7 @@ export default function CommitView({ pot, onApplied }: Props) {
     setBusy(true);
     setError("");
     try {
-      const next = await api.commits(pot, cursor);
+      const next = await api.commits(pot, host, cursor);
       if (alive.current && historyRequest.current === token)
         setPage((previous) =>
           previous?.next_cursor === cursor
@@ -182,6 +196,7 @@ export default function CommitView({ pot, onApplied }: Props) {
       const next = await api.commit(
         detail.header.commit_id,
         pot,
+        host,
         detail.next_offset,
       );
       if (alive.current && request.current === token)
@@ -211,14 +226,20 @@ export default function CommitView({ pot, onApplied }: Props) {
     token: number,
   ) {
     try {
-      const next = await api.preview(target, mode, head, pot);
+      const next = await api.preview(target, mode, head, pot, host);
       if (alive.current && request.current === token) setPreview(next);
     } catch (e) {
       if (!(e instanceof CommitApiError) || e.code !== "preview_stale") throw e;
       const fresh = await reload();
       if (!alive.current || request.current !== token || !fresh?.coverage.head)
         return;
-      const next = await api.preview(target, mode, fresh.coverage.head, pot);
+      const next = await api.preview(
+        target,
+        mode,
+        fresh.coverage.head,
+        pot,
+        host,
+      );
       if (alive.current && request.current === token) {
         setPreview(next);
         setNotice(
@@ -285,13 +306,23 @@ export default function CommitView({ pot, onApplied }: Props) {
   const pending = page?.coverage.resource_operation_incomplete;
   async function expandContext(key: string) {
     const token = request.current;
-    const graph = await api.neighborhood(key, 1, pot);
+    const graph = await api.neighborhood(key, 1, pot, host);
     if (alive.current && token === request.current)
       setContext((previous) => mergeContext(previous, graph));
   }
   const enabled = Boolean(journal?.state?.rollback_enabled && !pending);
+  if (outdated) {
+    return (
+      <PlanHistory
+        key={`${host}:${pot}`}
+        pot={pot}
+        host={host}
+        notice={HOST_OUTDATED_NOTICE}
+      />
+    );
+  }
   if (page?.coverage.legacy_only && page.headers.length === 0) {
-    return <PlanHistory key={pot} pot={pot} />;
+    return <PlanHistory key={`${host}:${pot}`} pot={pot} host={host} />;
   }
   return (
     <section className="commits-view" aria-label="Mutation commits">
@@ -353,7 +384,9 @@ export default function CommitView({ pot, onApplied }: Props) {
               result={preview}
               mode={previewMode}
               sequence={detail.header.sequence}
-              pot={pot}
+              // Qualified, so the command runs against this pot's host
+              // whichever host the terminal currently points at.
+              pot={`${host}:${pot}`}
               busy={busy}
               onRefresh={refreshAfterPreview}
               onCancel={() => setPreview(null)}

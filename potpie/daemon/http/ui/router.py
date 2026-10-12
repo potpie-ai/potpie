@@ -1,18 +1,27 @@
-"""Read-only JSON API for the local graph-explorer UI.
+"""Read-only JSON API for the graph-explorer UI, for the local and a managed host.
 
-Every route resolves a pot (explicit ``?pot=`` or the active pot) and delegates
-to explicit root- and engine-owned services. Nothing here mutates the graph —
-the UI is a browse/select surface, in keeping with the "harness is the
-intelligence" model. Commit history and rollback previews (``commits.py``) are
-typed operations; applying a preview is left to the CLI.
+Every route resolves a *host* (``?host=local|managed``, default the CLI's
+active origin) and then a pot within it (explicit ``?pot=`` or that host's
+active pot), and reads through that host's :class:`ExplorerSource`. Nothing
+here mutates the graph -- the UI is a browse/select surface, in keeping with
+the "harness is the intelligence" model. Commit history and rollback previews
+(``commits.py``) are typed operations; applying a preview is left to the CLI.
+
+The daemon serves this API for both hosts rather than each host serving its
+own copy. The browser only ever talks to loopback, so a managed host's key
+stays on this machine (the daemon reads it from the host registry) instead of
+riding in a page or a URL the browser would keep in its history.
 
 Every route is behind ``require_ui_credential`` and ``require_same_origin``:
-it reads the same graph the typed daemon protocol does, so an anonymous caller
-or another site's page must get nothing. See ``auth.py``.
+it reads the same graphs the typed protocol does, and proxying a managed host
+means an anonymous caller would otherwise be spending the stored remote key.
+See ``auth.py``.
 """
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -23,22 +32,27 @@ from potpie.daemon.http.ui.auth import (
     require_ui_credential,
     ui_auth,
 )
-from potpie.daemon.http.ui.commits import EngineClientFactory, build_commit_router
+from potpie.daemon.http.ui.commits import (
+    EngineClientFactory,
+    boundary_http_error,
+    build_commit_router,
+)
+from potpie.daemon.http.ui.source import (
+    ExplorerSource,
+    ExplorerSourceError,
+    LocalExplorerSource,
+    ManagedExplorerSource,
+)
 from potpie.pots.resolution import archived_pot_message, is_archived, match_pot_ref
 
 from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
+    ContextEngineDisabled,
     PotArchived,
     PotNotFound,
 )
 from potpie_context_engine.core.graph_entity_summary import (
     normalize_entity_properties,
-)
-from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
-from potpie_context_engine.core.ports.graph_service import (
-    GraphCatalogRequest,
-    GraphEntitySearchRequest,
-    GraphReadRequest,
 )
 
 # Labels that carry no display meaning (every node has the base :Entity label).
@@ -68,9 +82,12 @@ _PREFIX_LABEL = {
     "document": "Document",
 }
 
+#: Builds the managed host's source per request; raises when none is usable.
+ManagedSourceFactory = Callable[[], ExplorerSource]
+
 
 def _resolve_pot(pots: Any, pot: str | None) -> str:
-    """Explicit ``pot`` ref → id, else the active pot. 400 if neither resolves."""
+    """Explicit ``pot`` ref → id, else the active pot. 4xx if neither resolves."""
     if pot:
         live, archived = match_pot_ref(pots.list_pots(), pot)
         if live is not None:
@@ -106,27 +123,6 @@ def _caption(key: str, props: dict[str, Any]) -> str:
     # else the most specific part of the canonical key
     tail = key.split(":")[-1] if ":" in key else key
     return tail or key
-
-
-def _counts(graph: Any, pot_id: str) -> dict[str, int]:
-    try:
-        dp = graph.data_plane_status(pot_id)
-    except Exception:  # noqa: BLE001
-        return {}
-    out: dict[str, int] = {}
-    for key, value in dict(getattr(dp, "counts", {}) or {}).items():
-        try:
-            out[str(key)] = int(value)
-        except (TypeError, ValueError):
-            continue
-    return out
-
-
-def _source_count(pots: Any, pot_id: str) -> int:
-    try:
-        return len(pots.list_sources(pot_id=pot_id))
-    except Exception:  # noqa: BLE001
-        return 0
 
 
 def _slice_to_graph(sl: Any) -> dict[str, Any]:
@@ -170,64 +166,143 @@ def _slice_to_graph(sl: Any) -> dict[str, Any]:
     }
 
 
+def _default_origin() -> str:
+    from potpie.config import host_registry
+
+    return host_registry.current_origin()
+
+
+def _listed_origins() -> tuple[str, ...]:
+    """Origins worth listing: local always, managed once one is configured."""
+    from potpie.config import host_registry
+
+    return host_registry.configured_origins()
+
+
 def build_ui_api_router(
     *,
     pots: Any,
     graph: Any,
     backend: Any,
     engine_client: EngineClientFactory | None = None,
+    managed_source: ManagedSourceFactory | None = None,
 ) -> APIRouter:
     """Build the ``/ui/api`` router from explicit runtime services.
+
+    ``pots``/``graph``/``backend``/``engine_client`` are this daemon's own
+    services (the local source); ``managed_source`` builds the managed host's
+    source per request and defaults to the host registry's managed host.
 
     The credential and origin checks are router-level dependencies rather than
     per-route ones, so a route added here later is authenticated by
     construction, not by whoever remembers to add the decorator.
-
-    ``engine_client`` builds the typed client for one resolved pot id; the
-    commit-history routes answer 503 without it.
     """
     router = APIRouter(
         dependencies=[Depends(require_ui_credential), Depends(require_same_origin)]
     )
+    local = LocalExplorerSource(
+        pots=pots, graph=graph, backend=backend, engine_client=engine_client
+    )
+    build_managed = managed_source or ManagedExplorerSource.from_registry
 
-    def _guarded(fn):
+    def source_for(origin: str | None) -> tuple[ExplorerSource, str]:
+        """``(source, origin)`` for a ``?host=`` value, defaulting to the active one."""
+        name = (origin or "").strip().lower() or _default_origin()
+        if name == "local":
+            return local, "local"
+        if name != "managed":
+            raise HTTPException(status_code=400, detail=f"unknown host {name!r}")
+        try:
+            return build_managed(), "managed"
+        except Exception as exc:  # noqa: BLE001 - unconfigured or unusable
+            raise HTTPException(status_code=503, detail=_detail(exc)) from exc
+
+    async def select(
+        origin: str | None, pot: str | None
+    ) -> tuple[ExplorerSource, str, str]:
+        """``(source, origin, pot_id)``: the pot resolved on the host that owns it."""
+        source, resolved = source_for(origin)
+        pot_id = await asyncio.to_thread(_resolve_pot, source.pots, pot)
+        return source, resolved, pot_id
+
+    async def guarded(fn: Callable[[], Awaitable[Any]]) -> Any:
         # Map domain errors to HTTP so the SPA gets a clean JSON error body.
         try:
-            return fn()
+            return await fn()
         except HTTPException:
             raise
+        except ExplorerSourceError as exc:
+            raise boundary_http_error(exc.error) from exc
         except CapabilityNotImplemented as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
         except PotArchived as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PotNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ContextEngineDisabled as exc:
+            # A managed host that stops answering mid-read: "that host is
+            # down", not "the explorer is broken".
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            remote_error = _remote_host_error(exc)
+            if remote_error is None:
+                raise
+            raise boundary_http_error(remote_error) from exc
 
     @router.get("/api/pots")
-    def list_pots() -> dict[str, Any]:
-        def go():
-            # Archived pots cannot be selected, so the picker does not offer them.
-            pot_records = [p for p in pots.list_pots() if not is_archived(p)]
-            active = pots.active_pot()
-            return {
-                "pots": [
-                    {
+    async def list_pots() -> dict[str, Any]:
+        async def go():
+            active_origin = _default_origin()
+            rows: list[dict[str, Any]] = []
+            unavailable: dict[str, str] = {}
+            counts_complete = True
+            active: dict[str, str] | None = None
+            for origin in _listed_origins():
+                try:
+                    scoped, _ = source_for(origin)
+                    listed, active_id = await asyncio.to_thread(_listing, scoped.pots)
+                except Exception as exc:  # noqa: BLE001
+                    # One unreachable host must not blank the selector: the
+                    # pots you can still open are the useful part of the answer.
+                    unavailable[origin] = _detail(exc)
+                    continue
+                # Archived pots cannot be selected, so the picker omits them.
+                live = [p for p in listed if not is_archived(p)]
+                try:
+                    counts = await scoped.pot_counts(live)
+                except Exception as exc:  # noqa: BLE001
+                    # Counts are a browsing aid; a pot without them is listed
+                    # without them, never shown as empty.
+                    counts = {}
+                    unavailable[f"{origin} counts"] = _detail(exc)
+                for p in live:
+                    is_active = bool(p.active) or p.pot_id == active_id
+                    row: dict[str, Any] = {
                         "id": p.pot_id,
                         "name": p.name,
-                        "active": bool(p.active),
-                        "source_count": _source_count(pots, p.pot_id),
-                        "counts": _counts(graph, p.pot_id),
+                        "origin": origin,
+                        "active": is_active,
                     }
-                    for p in pot_records
-                ],
-                "active": (
-                    {"id": active.pot_id, "name": active.name} if active else None
-                ),
+                    if p.pot_id in counts:
+                        row.update(counts[p.pot_id])
+                    else:
+                        counts_complete = False
+                    rows.append(row)
+                    # Each host keeps its own pointer; the one that counts as
+                    # "the" active pot belongs to the active host.
+                    if is_active and origin == active_origin:
+                        active = {"id": p.pot_id, "name": p.name, "origin": origin}
+            return {
+                "pots": rows,
+                "active": active,
+                "active_origin": active_origin,
+                "unavailable": unavailable,
+                "counts_complete": counts_complete,
             }
 
-        return _guarded(go)
+        return await guarded(go)
 
     @router.post("/api/handoff", dependencies=[Depends(require_bearer)])
     def handoff(request: Request) -> dict[str, Any]:
@@ -241,37 +316,64 @@ def build_ui_api_router(
         return {"code": code, "expires_in": expires_in}
 
     @router.post("/api/pots/use")
-    def use_pot(ref: str = Body(..., embed=True)) -> dict[str, Any]:
-        def go():
-            pot = pots.use_pot(ref=ref)
-            return {"id": pot.pot_id, "name": pot.name, "active": True}
+    async def use_pot(
+        ref: str = Body(..., embed=True),
+        origin: str | None = Body(None, embed=True, alias="host"),
+    ) -> dict[str, Any]:
+        async def go():
+            from potpie.config import host_registry
 
-        return _guarded(go)
+            # A qualified ``managed:api`` carries its own host.
+            qualified, bare = host_registry.split_ref(ref)
+            scoped, resolved = source_for(qualified or origin)
+            pot = await asyncio.to_thread(
+                scoped.pots.use_pot, ref=bare if qualified else ref
+            )
+            # Persisted only after the host accepted it, so a failed switch
+            # never strands the CLI on a host nobody chose. The same pointer
+            # `potpie pot use` writes: picking a pot here moves the terminal.
+            if host_registry.persisted_origin() != resolved:
+                host_registry.set_persisted_origin(resolved)
+            return {
+                "id": pot.pot_id,
+                "name": pot.name,
+                "origin": resolved,
+                "active": True,
+            }
+
+        return await guarded(go)
 
     @router.get("/api/catalog")
-    def catalog(pot: str | None = Query(None)) -> dict[str, Any]:
-        def go():
-            pot_id = _resolve_pot(pots, pot)
-            return graph.catalog(GraphCatalogRequest(pot_id=pot_id)).to_dict()
+    async def catalog(
+        pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
+    ) -> dict[str, Any]:
+        async def go():
+            source, _, pot_id = await select(origin, pot)
+            return (await source.catalog(pot_id)).to_dict()
 
-        return _guarded(go)
+        return await guarded(go)
 
     @router.get("/api/status")
-    def status(pot: str | None = Query(None)) -> dict[str, Any]:
-        def go():
-            pot_id = _resolve_pot(pots, pot)
-            dp = graph.data_plane_status(pot_id)
+    async def status(
+        pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
+    ) -> dict[str, Any]:
+        async def go():
+            source, resolved, pot_id = await select(origin, pot)
+            dp = await source.data_plane_status(pot_id)
             return {
                 "pot_id": pot_id,
+                "origin": resolved,
                 "backend_profile": dp.backend_profile,
                 "backend_ready": bool(dp.backend_ready),
                 "counts": dict(dp.counts),
             }
 
-        return _guarded(go)
+        return await guarded(go)
 
     @router.get("/api/search")
-    def search(
+    async def search(
         q: str = Query(...),
         entity_type: str | None = Query(None, alias="type"),
         predicate: str | None = Query(None),
@@ -282,62 +384,58 @@ def build_ui_api_router(
         external_id: str | None = Query(None),
         limit: int = Query(15, ge=1, le=100),
         pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
     ) -> dict[str, Any]:
-        def go():
-            pot_id = _resolve_pot(pots, pot)
-            result = graph.search_entities(
-                GraphEntitySearchRequest(
-                    pot_id=pot_id,
-                    query=q,
-                    type=entity_type,
-                    predicate=predicate,
-                    subgraph=subgraph,
-                    scope=_parse_scope(scope),
-                    truth=truth,
-                    environment=environment,
-                    external_id=external_id,
-                    limit=limit,
-                    supporting_claims=5,
-                )
+        async def go():
+            source, _, pot_id = await select(origin, pot)
+            result = await source.search_entities(
+                pot_id,
+                {
+                    "query": q,
+                    "type": entity_type,
+                    "predicate": predicate,
+                    "subgraph": subgraph,
+                    "scope": _parse_scope(scope),
+                    "truth": truth,
+                    "environment": environment,
+                    "external_id": external_id,
+                    "limit": limit,
+                    "supporting_claims": 5,
+                },
             )
             return result.to_dict()
 
-        return _guarded(go)
+        return await guarded(go)
 
     @router.get("/api/graph")
-    def whole_graph(
+    async def whole_graph(
         pot: str | None = Query(None),
         include_invalid: bool = Query(False),
+        origin: str | None = Query(None, alias="host"),
     ) -> dict[str, Any]:
-        def go():
-            pot_id = _resolve_pot(pots, pot)
-            sl = backend.inspection.slice(
-                pot_id=pot_id,
-                filter_=ClaimQueryFilter(
-                    pot_id=pot_id, include_invalidated=include_invalid
-                ),
-            )
+        async def go():
+            source, _, pot_id = await select(origin, pot)
+            sl = await source.graph_slice(pot_id, include_invalidated=include_invalid)
             return {"pot_id": pot_id, **_slice_to_graph(sl)}
 
-        return _guarded(go)
+        return await guarded(go)
 
     @router.get("/api/neighborhood")
-    def neighborhood(
+    async def neighborhood(
         key: str = Query(...),
         depth: int = Query(1, ge=1, le=4),
         pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
     ) -> dict[str, Any]:
-        def go():
-            pot_id = _resolve_pot(pots, pot)
-            sl = backend.inspection.neighborhood(
-                pot_id=pot_id, entity_key=key, depth=depth
-            )
+        async def go():
+            source, _, pot_id = await select(origin, pot)
+            sl = await source.neighborhood(pot_id, key=key, depth=depth)
             return {"pot_id": pot_id, **_slice_to_graph(sl)}
 
-        return _guarded(go)
+        return await guarded(go)
 
     @router.get("/api/read")
-    def read_view(
+    async def read_view(
         subgraph: str = Query(...),
         view: str = Query(...),
         query: str | None = Query(None),
@@ -347,27 +445,28 @@ def build_ui_api_router(
         direction: str | None = Query(None),
         limit: int = Query(12, ge=1, le=100),
         pot: str | None = Query(None),
+        origin: str | None = Query(None, alias="host"),
     ) -> dict[str, Any]:
-        def go():
-            pot_id = _resolve_pot(pots, pot)
-            env = graph.read(
-                GraphReadRequest(
-                    pot_id=pot_id,
-                    subgraph=subgraph,
-                    view=view,
-                    query=query,
-                    scope=_parse_scope(scope),
-                    environment=environment,
-                    depth=depth,
-                    direction=direction,
-                    limit=limit,
-                    detail="full",
-                    relations="full",
-                )
+        async def go():
+            source, _, pot_id = await select(origin, pot)
+            env = await source.read(
+                pot_id,
+                {
+                    "subgraph": subgraph,
+                    "view": view,
+                    "query": query,
+                    "scope": _parse_scope(scope),
+                    "environment": environment,
+                    "depth": depth,
+                    "direction": direction,
+                    "limit": limit,
+                    "detail": "full",
+                    "relations": "full",
+                },
             )
             return env.to_dict()
 
-        return _guarded(go)
+        return await guarded(go)
 
     @router.post("/api/telemetry/session")
     def ui_session(
@@ -395,15 +494,45 @@ def build_ui_api_router(
             pass
         return {"ok": True}
 
+    async def select_for_commits(
+        origin: str | None, pot: str | None
+    ) -> tuple[ExplorerSource, str]:
+        source, _, pot_id = await select(origin, pot)
+        return source, pot_id
+
     router.include_router(
-        build_commit_router(
-            pots=pots, resolve_pot=_resolve_pot, engine_client=engine_client
-        )
+        build_commit_router(select=select_for_commits, guarded=guarded)
     )
     return router
 
 
-def _parse_scope(scope: str | None) -> dict[str, str]:
+def _listing(pots: Any) -> tuple[list[Any], str | None]:
+    listed = list(pots.list_pots())
+    active = pots.active_pot()
+    return listed, getattr(active, "pot_id", None) if active is not None else None
+
+
+def _remote_host_error(exc: BaseException) -> object | None:
+    import sys
+
+    module = sys.modules.get("potpie.runtime.remote")
+    remote_error = getattr(module, "RemoteHostError", None) if module else None
+    if isinstance(remote_error, type) and isinstance(exc, remote_error):
+        return exc.error  # type: ignore[attr-defined]
+    return None
+
+
+def _detail(exc: BaseException) -> str:
+    """Readable reason for a host that could not be listed or built."""
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    remote_error = _remote_host_error(exc)
+    if remote_error is not None:
+        return str(getattr(remote_error, "message", exc))
+    return str(exc) or exc.__class__.__name__
+
+
+def _parse_scope(scope: str | None) -> Mapping[str, str]:
     if not scope:
         return {}
     out: dict[str, str] = {}
@@ -417,4 +546,4 @@ def _parse_scope(scope: str | None) -> dict[str, str]:
     return out
 
 
-__all__ = ["build_ui_api_router"]
+__all__ = ["ManagedSourceFactory", "build_ui_api_router"]

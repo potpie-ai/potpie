@@ -1,9 +1,15 @@
-"""``potpie ui`` → open the local graph-explorer served by the daemon.
+"""``potpie ui`` → open the graph explorer served by the local daemon.
 
 A read-only browser surface to select the active pot and explore the
 project-memory graph interactively. The page + its JSON API are served by the
 daemon at ``/ui`` (loopback only); this command makes sure the daemon is up,
 then points you (and your browser) at the right URL.
+
+The *serving* host is always the local daemon, even when the pot you open
+lives on a managed host: the daemon holds that host's key and makes the reads,
+so the key never reaches the browser and the browser never leaves loopback.
+Which graph you are looking at travels in ``?host=``, exactly as ``--host``
+carries it on the command line.
 
 The UI API needs a credential -- it is on loopback, which every other process
 on this machine is also on. This command is the one that can read the daemon
@@ -24,6 +30,7 @@ import typer
 
 from potpie.cli.commands._common import (
     contract,
+    current_origin,
     emit,
     fail,
     get_daemon_service,
@@ -42,12 +49,22 @@ def ui_command(
     pot: str = typer.Option(
         None,
         "--pot",
-        help="Open the explorer against a specific pot id/name.",
+        help=(
+            "Open the explorer against a specific pot ref, e.g. 'api' or 'managed:api'."
+        ),
     ),
 ) -> None:
-    """Launch the local graph-explorer UI (served by the daemon)."""
+    """Launch the graph-explorer UI (served by the local daemon)."""
     with contract():
+        from potpie.config import host_registry
+
         host = get_root_runtime()
+        # Resolve the pot before the daemon: a qualified ref like 'managed:api'
+        # moves the target origin, and the URL has to name the host the pot id
+        # was looked up on, or the explorer reads an id from one graph against
+        # the other.
+        pot_id = resolve_pot_id(host, pot) if pot else None
+        target = current_origin()
         daemon = get_daemon_service(host)
         # Bring the detached daemon up if needed (in-process host is a no-op).
         try:
@@ -63,8 +80,7 @@ def ui_command(
             )
             return
         base = str(daemon_status["url"]).rstrip("/")
-        pot_id = resolve_pot_id(host, pot) if pot else None
-        params: dict[str, str] = {}
+        params: dict[str, str] = {"host": target}
         if pot_id:
             params["pot"] = pot_id
         headers = _auth_headers(daemon)
@@ -77,18 +93,24 @@ def ui_command(
                 # history. Callers that open the URL themselves (``--no-open``)
                 # need it too, or their page would load onto a wall of 401s.
                 params[_HANDOFF_PARAM] = code
-        url = f"{base}/ui{'?' + urlencode(params) if params else ''}"
+        url = f"{base}/ui?{urlencode(params)}"
         if open_browser and warning is None:
             try:
                 webbrowser.open(url)
             except Exception:  # noqa: BLE001
                 pass
-        lines = [f"Potpie Graph Explorer → {url}"]
+        lines = [
+            f"Potpie Graph Explorer → {url}",
+            f"  host: {host_registry.origin_label(target)}",
+        ]
         if warning:
             lines.append(f"  ! {warning}")
         elif open_browser:
             lines.append("  (opening in your browser…)")
-        emit({"url": url, "pot_id": pot_id, "warning": warning}, human="\n".join(lines))
+        emit(
+            {"url": url, "pot_id": pot_id, "origin": target, "warning": warning},
+            human="\n".join(lines),
+        )
 
 
 def _auth_headers(daemon: Any) -> dict[str, str]:
@@ -110,7 +132,13 @@ def _auth_headers(daemon: Any) -> dict[str, str]:
 
 
 def _probe_ui(base: str, headers: dict[str, str]) -> str | None:
-    """Return a warning if the running daemon can't serve the explorer."""
+    """Return a warning if the running daemon can't serve the explorer.
+
+    The daemon is long-lived: after an upgrade the process still running may
+    be the one from before it. An older daemon answers ``/ui/api/pots`` with
+    its own pots only, so a managed graph would silently be missing rather
+    than reported; ``active_origin`` in the answer is how host routing shows.
+    """
     import httpx
 
     try:
@@ -125,6 +153,15 @@ def _probe_ui(base: str, headers: dict[str, str]) -> str | None:
         return (
             "the daemon rejected this machine's daemon credential — run "
             "'potpie daemon restart'."
+        )
+    try:
+        knows_hosts = "active_origin" in resp.json()
+    except Exception:  # noqa: BLE001 - an unreadable body is not this probe's to judge
+        return None
+    if not knows_hosts:
+        return (
+            "this daemon predates host routing, so the explorer will only show "
+            "local pots — run 'potpie daemon restart'."
         )
     return None
 
