@@ -1,9 +1,22 @@
-"""Explicit JSON codec for the version-one typed daemon protocol."""
+"""Explicit JSON codec for the typed operation protocol.
+
+Evolution rules the codec carries for every transport (local daemon and
+managed hosts alike):
+
+* Requests are compact: every field still at its default is left off the wire,
+  recursively, so a call that does not use a newer field sends exactly what an
+  older client would.
+* A host refuses a request field it does not declare with
+  ``request_fields_unsupported`` naming each field by its dotted path, and an
+  operation it does not serve with ``operation_unknown``.
+* Results decode leniently: a field this build does not know is ignored and a
+  missing one takes its default. Requests stay strict.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import fields, is_dataclass
+from dataclasses import MISSING, Field, fields, is_dataclass
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
@@ -55,6 +68,7 @@ from potpie_context_engine import (
 from potpie_context_engine.outcomes import RetryPosture
 from potpie_context_engine.requests import request_from_payload
 from potpie_context_engine.results import result_from_payload
+from potpie_context_engine.typed_serialization import unknown_field_paths
 
 
 DecodeRequestOutcome: TypeAlias = Success[ProtocolRequest] | Failure[ProtocolError]
@@ -67,6 +81,28 @@ _DAEMON_STATUS_FIELDS = frozenset(
 )
 _DAEMON_STATUS_BUILD_FIELDS = frozenset({"version", "build"})
 _DAEMON_BUILD_FIELDS = frozenset({"rev", "dirty", "built_at"})
+
+#: Every error category a decoder accepts. Closed on purpose: a category an
+#: older decoder does not know turns a typed refusal into a malformed
+#: response, so new failure kinds are new codes inside these categories.
+ERROR_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "selection",
+        "authentication",
+        "authorization",
+        "resource_lifecycle",
+        "domain",
+        "dependency",
+        "engine_lifecycle",
+        "protocol",
+        "protocol_transport",
+        "daemon_internal",
+    }
+)
+
+#: The refusal for request fields a host does not declare. Its details name
+#: the operation and every unknown field by dotted path.
+REQUEST_FIELDS_UNSUPPORTED = "request_fields_unsupported"
 
 
 def encode_request(request: ProtocolRequest) -> dict[str, object]:
@@ -82,7 +118,7 @@ def encode_request(request: ProtocolRequest) -> dict[str, object]:
                     "kind": request.selector.kind,
                     "value": request.selector.value,
                 },
-                "payload": _to_wire(request.payload.to_payload()),
+                "payload": compact_payload(request.payload),
                 "destructive_intent": (
                     _to_wire(request.destructive_intent)
                     if request.destructive_intent is not None
@@ -147,6 +183,11 @@ def decode_request(document: object) -> DecodeRequestOutcome:
         if isinstance(intent, Failure):
             return intent
         request_type = ENGINE_OPERATION_CATALOG[engine_operation].request_type
+        typed_payload = decode_request_payload(
+            engine_operation.value, request_type, payload
+        )
+        if isinstance(typed_payload, Failure):
+            return typed_payload
         try:
             return Success(
                 EngineOperationRequest(
@@ -154,7 +195,7 @@ def decode_request(document: object) -> DecodeRequestOutcome:
                     request_id=request_id,
                     operation=engine_operation,
                     selector=selector.value,
-                    payload=request_from_payload(request_type, dict(payload)),
+                    payload=typed_payload.value,
                     destructive_intent=intent.value,
                     compatibility_ticket=_optional_string(
                         document, "compatibility_ticket"
@@ -246,6 +287,51 @@ def decode_request(document: object) -> DecodeRequestOutcome:
             compatibility_ticket=_optional_string(document, "compatibility_ticket"),
         )
     )
+
+
+def compact_payload(payload: object) -> dict[str, object]:
+    """Wire form of one request payload with default-valued fields left off.
+
+    Recursive through nested dataclasses. A default factory's field is left
+    off when its value equals a fresh ``factory()``. When in doubt the field
+    is sent: an unsent field the receiver needed is a silent behaviour change,
+    an extra one is at worst a precise refusal.
+    """
+
+    if not is_dataclass(payload) or isinstance(payload, type):
+        raise TypeError("request payloads must be dataclass instances")
+    wire = _to_wire(payload, omit_defaults=True)
+    assert isinstance(wire, dict)
+    return wire
+
+
+def decode_request_payload(
+    operation: str, request_type: type, payload: Mapping[object, object]
+) -> Success[object] | Failure[ProtocolError]:
+    """Decode one operation payload strictly, naming any field the type lacks."""
+
+    document = {str(key): value for key, value in payload.items()}
+    try:
+        unknown = unknown_field_paths(request_type, document)
+    except (TypeError, ValueError):
+        unknown = ()
+    if unknown:
+        return _protocol_failure(
+            REQUEST_FIELDS_UNSUPPORTED,
+            "this host does not support request fields: " + ", ".join(unknown),
+            details={"operation": operation, "fields": unknown},
+            recommended_next_action=(
+                "update the host to a Potpie version that supports these fields, "
+                "or retry without them"
+            ),
+        )
+    try:
+        return Success(request_from_payload(request_type, document))
+    except (TypeError, ValueError):
+        return _protocol_failure(
+            "operation_payload_malformed",
+            "operation payload does not match the typed request",
+        )
 
 
 def encode_response(response: ProtocolResponse) -> dict[str, object]:
@@ -448,7 +534,7 @@ def _decode_error(
             "response_error_malformed", "response error fields are invalid"
         )
     category = value.get("category")
-    error_types = {
+    error_types: dict[str, type] = {
         "selection": SelectionError,
         "authentication": AuthenticationError,
         "authorization": AuthorizationError,
@@ -606,25 +692,43 @@ def _protocol_failure(
     message: str,
     *,
     details: Mapping[str, object] | None = None,
+    recommended_next_action: str | None = None,
 ) -> Failure[ProtocolError]:
-    return Failure(ProtocolError(code=code, message=message, details=details or {}))
+    return Failure(
+        ProtocolError(
+            code=code,
+            message=message,
+            details=details or {},
+            recommended_next_action=recommended_next_action,
+        )
+    )
 
 
-def _to_wire(value: object) -> object:
+def _to_wire(value: object, *, omit_defaults: bool = False) -> object:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if is_dataclass(value) and not isinstance(value, type):
-        return {
-            item.name: _to_wire(getattr(value, item.name)) for item in fields(value)
-        }
+        wire: dict[str, object] = {}
+        for item in fields(value):
+            field_value = getattr(value, item.name)
+            if omit_defaults and _is_default(item, field_value):
+                continue
+            wire[item.name] = _to_wire(field_value, omit_defaults=omit_defaults)
+        return wire
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("protocol mappings require string keys")
-        return {str(key): _to_wire(item) for key, item in value.items()}
+        return {
+            str(key): _to_wire(item, omit_defaults=omit_defaults)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [_to_wire(item) for item in value]
+        return [_to_wire(item, omit_defaults=omit_defaults) for item in value]
     if isinstance(value, (set, frozenset)):
-        return [_to_wire(item) for item in sorted(value, key=str)]
+        return [
+            _to_wire(item, omit_defaults=omit_defaults)
+            for item in sorted(value, key=str)
+        ]
     if isinstance(value, Enum):
         return _to_wire(value.value)
     if isinstance(value, (datetime, date, Path, UUID)):
@@ -633,6 +737,25 @@ def _to_wire(value: object) -> object:
     if callable(model_dump):
         return _to_wire(model_dump(mode="json"))
     raise TypeError(f"unsupported protocol value: {type(value).__name__}")
+
+
+def _is_default(item: Field[object], value: object) -> bool:
+    """Is ``value`` this field's default? Unsure means no, so the field is sent."""
+
+    if item.default is not MISSING:
+        default = item.default
+    elif item.default_factory is not MISSING:
+        try:
+            default = item.default_factory()
+        except Exception:  # noqa: BLE001 - an odd factory only costs the field
+            return False
+    else:
+        return False
+    try:
+        # The type check keeps ``0``/``0.0`` from passing for ``False``.
+        return type(value) is type(default) and bool(value == default)
+    except Exception:  # noqa: BLE001 - an odd __eq__ only costs sending the field
+        return False
 
 
 class _WireObject(dict[str, object]):
@@ -664,9 +787,13 @@ def _plain_wire(value: object) -> object:
 
 
 __all__ = [
+    "ERROR_CATEGORIES",
+    "REQUEST_FIELDS_UNSUPPORTED",
     "DecodeRequestOutcome",
     "DecodeResponseOutcome",
+    "compact_payload",
     "decode_request",
+    "decode_request_payload",
     "decode_response",
     "encode_request",
     "encode_response",

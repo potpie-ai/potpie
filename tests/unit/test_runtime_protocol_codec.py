@@ -331,20 +331,30 @@ def test_the_wire_type_walk_sees_a_nested_restore_plan() -> None:
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("payload", "code"),
     [
-        {"preview_id": "rollback-preview:1", "plan": {"records": []}},
-        {"preview_id": {"type": "RestorePlan", "value": {}}},
-        {
-            "preview_id": {
-                "__type__": "dataclass",
-                "class": "potpie_context_engine.core.graph_restore:RestorePlan",
-                "value": {},
-            }
-        },
+        # A field the request type does not declare is named, not dropped.
+        (
+            {"preview_id": "rollback-preview:1", "plan": {"records": []}},
+            "request_fields_unsupported",
+        ),
+        (
+            {"preview_id": {"type": "RestorePlan", "value": {}}},
+            "operation_payload_malformed",
+        ),
+        (
+            {
+                "preview_id": {
+                    "__type__": "dataclass",
+                    "class": "potpie_context_engine.core.graph_restore:RestorePlan",
+                    "value": {},
+                }
+            },
+            "operation_payload_malformed",
+        ),
     ],
 )
-def test_restore_payloads_are_refused_by_the_typed_codec(payload) -> None:
+def test_restore_payloads_are_refused_by_the_typed_codec(payload, code) -> None:
     from potpie_context_engine.requests import ApplyPreviewRequest
 
     document = encode_request(
@@ -361,4 +371,4 @@ def test_restore_payloads_are_refused_by_the_typed_codec(payload) -> None:
     decoded = decode_request(document)
 
     assert isinstance(decoded, Failure)
-    assert decoded.error.code == "operation_payload_malformed"
+    assert decoded.error.code == code
