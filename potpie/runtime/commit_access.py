@@ -1,4 +1,17 @@
-"""Who may read graph commit history and roll a pot back on a local install.
+"""Who may read graph commit history and roll a pot back.
+
+Two deployments share the rule "commit access comes from the typed boundary,
+never from ambient process state":
+
+* A managed host passes ``authorize_scoped_commit`` to the graph runtime. The
+  typed operation handler binds the authorization scope the Resource Manager
+  produced for the request (``authorization_scope``), and the scope's
+  ``commit_access`` attribute decides the levels: ``reader`` reads,
+  ``writer`` reads and writes, ``admin`` has every level. A scope without it
+  gets nothing.
+* A local install passes ``authorize_local_commit``, described below.
+
+On a local install:
 
 A local Potpie home has one principal: whoever runs the CLI in-process or holds
 the daemon's per-boot credential. Both reach the engine only through the typed
@@ -22,8 +35,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
+from potpie.runtime.resource_manager import AuthorizationScope
 from potpie_context_engine.core.commit_service import (
     COMMIT_ACCESS_LEVELS,
+    UNNAMED_COMMIT_ACTOR,
     CommitAccessDenied,
 )
 
@@ -62,6 +77,92 @@ def commit_grant(
         _GRANT.reset(token)
 
 
+#: Commit access levels per role named in ``AuthorizationScope.attributes``
+#: under ``commit_access``.
+COMMIT_ACCESS_BY_ROLE: dict[str, frozenset[str]] = {
+    "reader": frozenset({"read"}),
+    "writer": frozenset({"read", "write"}),
+    "admin": COMMIT_ACCESS_LEVELS,
+}
+
+_SCOPE: ContextVar[AuthorizationScope | None] = ContextVar(
+    "potpie_authorization_scope", default=None
+)
+
+
+@contextmanager
+def authorization_scope(scope: AuthorizationScope) -> Iterator[AuthorizationScope]:
+    """Bind the scope one typed operation was authorized under, for its duration."""
+
+    token = _SCOPE.set(scope)
+    try:
+        yield scope
+    finally:
+        _SCOPE.reset(token)
+
+
+def current_authorization_scope() -> AuthorizationScope | None:
+    """The scope of the typed operation running in this context, if any."""
+
+    return _SCOPE.get()
+
+
+def commit_access_for(scope: AuthorizationScope | None) -> frozenset[str]:
+    """Commit access levels a scope carries.
+
+    ``scope.attributes["commit_access"]`` is a role (``reader``, ``writer``,
+    ``admin``) or an explicit collection of levels. Anything else, a missing
+    attribute or no scope at all, grants nothing.
+    """
+
+    if scope is None:
+        return frozenset()
+    granted = scope.attributes.get("commit_access")
+    if isinstance(granted, str):
+        return COMMIT_ACCESS_BY_ROLE.get(granted, frozenset())
+    if isinstance(granted, (set, frozenset, list, tuple)):
+        levels = frozenset(str(level) for level in granted)
+        return levels & COMMIT_ACCESS_LEVELS
+    return frozenset()
+
+
+async def authorize_scoped_commit(pot_id: str, access: str) -> None:
+    """Allow ``access`` on ``pot_id`` only inside a matching authorized scope.
+
+    The ``commit_authorize`` callback for an embedding host's graph runtime:
+    the request must have been authorized for exactly this pot, and its scope
+    must carry the level.
+    """
+
+    if access not in COMMIT_ACCESS_LEVELS:
+        raise ValueError("unknown commit access")
+    scope = _SCOPE.get()
+    if scope is None:
+        raise CommitAccessDenied(
+            "commit history and rollback are served only through Potpie's "
+            "authenticated operations"
+        )
+    if scope.context.value != pot_id:
+        raise CommitAccessDenied(
+            f"this request was authorized for pot {scope.context.value!r}, "
+            f"not {pot_id!r}"
+        )
+    if access not in commit_access_for(scope):
+        raise CommitAccessDenied(f"commit {access} access was not granted")
+
+
+def current_commit_actor() -> str:
+    """The authorized actor of the running operation, for receipts and previews.
+
+    The ``commit_actor`` callback for an embedding host's graph runtime. Outside
+    an authorized operation it names nobody, so nothing can be attributed to an
+    ambient principal.
+    """
+
+    scope = _SCOPE.get()
+    return scope.actor_id if scope is not None else UNNAMED_COMMIT_ACTOR
+
+
 def local_commit_actor() -> str:
     return LOCAL_COMMIT_ACTOR
 
@@ -98,10 +199,16 @@ def local_commit_host(home: Path) -> str:
 
 
 __all__ = [
+    "COMMIT_ACCESS_BY_ROLE",
     "LOCAL_COMMIT_ACTOR",
     "CommitGrant",
+    "authorization_scope",
     "authorize_local_commit",
+    "authorize_scoped_commit",
+    "commit_access_for",
     "commit_grant",
+    "current_authorization_scope",
+    "current_commit_actor",
     "local_commit_actor",
     "local_commit_host",
 ]

@@ -45,8 +45,10 @@ class _Resolver:
     events: list[Event]
     failure: SelectionError | None = None
 
-    async def resolve(self, selector: ContextSelector):
-        self.events.append(("resolve", selector.kind, selector.value or ""))
+    async def resolve(self, selector: ContextSelector, *, actor: AuthenticatedActor):
+        self.events.append(
+            ("resolve", selector.kind, selector.value or "", actor.actor_id)
+        )
         if self.failure is not None:
             return Failure(self.failure)
         return Success(ContextIdentity(selector.value or "active-context"))
@@ -320,7 +322,7 @@ def _manager(
 
 
 @pytest.mark.anyio
-async def test_acquire_resolves_authenticates_authorizes_then_composes() -> None:
+async def test_acquire_authenticates_resolves_authorizes_then_composes() -> None:
     events: list[Event] = []
     manager, _, _ = _manager(events)
 
@@ -341,8 +343,8 @@ async def test_acquire_resolves_authenticates_authorizes_then_composes() -> None
         resource.name for resource in outcome.value.ownership.engine_resources
     ) == ("backend",)
     assert [event[0] for event in events] == [
-        "resolve",
         "authenticate",
+        "resolve",
         "authorize",
         "fingerprint",
         "compose",
