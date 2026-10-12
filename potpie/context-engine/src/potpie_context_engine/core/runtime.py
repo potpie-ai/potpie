@@ -4,7 +4,8 @@
 surface for an embedding host: a process that brings its own graph backend
 and plan/inbox stores and serves many pots from one runtime. Import them from
 ``potpie_context_engine.api``; this module path is an implementation detail.
-The bridges below are internal.
+The bridges below are internal; ``run_in_worker_thread`` is how a host that
+drives the sync operations from its event loop keeps async-only ports working.
 """
 
 from __future__ import annotations
@@ -79,7 +80,8 @@ class _SyncAsyncBridge:
         if loop is None or not loop.is_running():
             raise RuntimeCompositionError(
                 f"async-only port method {name!r} requires the GraphRuntime "
-                "async service path"
+                "async service path (an *_async operation, or a sync call made "
+                "through run_in_worker_thread)"
             )
         future = asyncio.run_coroutine_threadsafe(async_method(*args, **kwargs), loop)
         return future.result()
@@ -482,8 +484,12 @@ class GraphRuntime(GraphCommitSurface):
       ``apply_preview``, ``disable_rollback`` and ``rebuild_commits``.
 
     Every operation has an ``*_async`` twin; use the twin from inside a running
-    event loop. ``workbench``, ``commit_service``, ``commit_mirror`` and
-    underscore members are composition details with no stability promise.
+    event loop. A host that calls the sync operations, or the services built
+    over this runtime (``graph``, ``workbench``), from a coroutine runs them
+    through :func:`run_in_worker_thread`, never a bare ``asyncio.to_thread``,
+    so async-only ports still run on its loop. ``workbench``,
+    ``commit_service``, ``commit_mirror`` and underscore members are
+    composition details with no stability promise.
     """
 
     backend: GraphBackend
@@ -653,7 +659,7 @@ class GraphRuntime(GraphCommitSurface):
         return self.workbench.inbox_close(**kwargs)
 
     async def status_async(self, pot_id: str) -> dict[str, Any]:
-        return await _to_thread_with_bridge(self.status, pot_id)
+        return await run_in_worker_thread(self.status, pot_id)
 
     async def catalog_async(self, request):
         return await _async_call(self.graph, "catalog", request)
@@ -807,7 +813,23 @@ async def _async_call(target: Any, method: str, *args: Any, **kwargs: Any) -> An
         _BRIDGE_LOOP.reset(token)
 
 
-async def _to_thread_with_bridge(function: Any, *args: Any, **kwargs: Any) -> Any:
+async def run_in_worker_thread(
+    function: Callable[..., Any], /, *args: Any, **kwargs: Any
+) -> Any:
+    """Run one sync runtime call in a worker thread, bridged to this loop.
+
+    Use it instead of ``asyncio.to_thread`` for any sync call that reaches a
+    runtime's ports: the runtime's own sync operations and the services built
+    over it (the graph service, the workbench, an agent door over them). A
+    port that only implements ``*_async`` methods, such as a plan or inbox
+    store over an async database pool, then runs on the calling event loop
+    while the worker thread waits for it. A bare ``asyncio.to_thread`` call
+    reaching such a port raises :class:`RuntimeCompositionError`.
+
+    Must be awaited from a running event loop, which must stay free to run
+    those port calls while the worker waits.
+    """
+
     token = _BRIDGE_LOOP.set(asyncio.get_running_loop())
     try:
         return await asyncio.to_thread(function, *args, **kwargs)
@@ -1062,4 +1084,5 @@ __all__ = [
     "NoOpGraphObserver",
     "RuntimeCompositionError",
     "build_graph_runtime",
+    "run_in_worker_thread",
 ]

@@ -17,7 +17,13 @@ A managed host provides five things and gets the rest from this kit:
   :class:`HostExtension` operations of its own;
 * :class:`EngineServices` over one graph runtime built with
   ``commit_actor=current_commit_actor`` and
-  ``commit_authorize=authorize_scoped_commit``.
+  ``commit_authorize=authorize_scoped_commit``, its agent door being
+  ``AgentContextService.for_graph_runtime(runtime)``.
+
+Plan and inbox stores may be async only (an async database pool): the kit
+runs every sync engine call through :func:`run_in_worker_thread`, which keeps
+such stores on the endpoint's event loop. A host's own handlers that call
+sync engine services from a coroutine use it too.
 
 Then::
 
@@ -44,11 +50,13 @@ Then::
     response = await endpoint.handle(body, headers)  # from one POST route
 
 The route is ``POST <base>/v1/operations``; reply with ``response.status``,
-``response.body`` and ``response.headers``.
+``response.body`` and ``response.headers``. A host's contract tests build and
+read requests with :mod:`potpie.runtime.hosting_testing`.
 """
 
 from __future__ import annotations
 
+from potpie.agent_context import AgentContextService
 from potpie.runtime.clients import (
     ClientOutcome,
     ContextFreeOperationHandler,
@@ -112,6 +120,7 @@ from potpie.runtime.host_operations import (
     WhoamiResult,
 )
 from potpie.runtime.local_engine import (
+    ENGINE_OPERATION_FAILED,
     EngineServices,
     GraphMetadataOperationHandler,
     ServiceEngineOperations,
@@ -158,12 +167,14 @@ from potpie_context_engine import (
     Failure,
     Success,
 )
+from potpie_context_engine.core.api import run_in_worker_thread
 
 __all__ = [
     "COMMIT_ACCESS_BY_ROLE",
     "CALLER_ASSERTION_MISMATCH",
     "DEFAULT_MAX_REQUEST_BYTES",
     "ENGINE_OPERATION_CATALOG",
+    "ENGINE_OPERATION_FAILED",
     "EXTENSION_NAME",
     "HOST_CONTROL_REFUSED",
     "HOST_OPERATION_CATALOG",
@@ -172,6 +183,7 @@ __all__ = [
     "STATELESS_TICKET",
     "ActorAuthenticator",
     "ActorPotCatalog",
+    "AgentContextService",
     "AuthenticatedActor",
     "AuthenticationError",
     "AuthorizationError",
@@ -253,4 +265,5 @@ __all__ = [
     "current_authorization_scope",
     "current_commit_actor",
     "operation_spec",
+    "run_in_worker_thread",
 ]

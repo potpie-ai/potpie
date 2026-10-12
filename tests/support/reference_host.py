@@ -13,6 +13,7 @@ that way, so the kit's import surface is shown to be sufficient.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -24,6 +25,7 @@ import httpx
 from potpie.runtime.hosting import (
     DEFAULT_MAX_REQUEST_BYTES,
     ActorPotCatalog,
+    AgentContextService,
     AuthenticatedActor,
     AuthenticationError,
     AuthorizationError,
@@ -416,7 +418,45 @@ class _AgentContext:
         )
 
 
-def _graph_runtime(home: Path):
+class AsyncOnlyStore:
+    """A plan or inbox store that, like one over a database pool, is async only.
+
+    It has no sync methods at all and, like a pool, belongs to the event loop
+    that first used it: a call from any other loop (a fresh ``asyncio.run`` in
+    a worker thread, say) is refused.
+    """
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self.calls: list[str] = []
+
+    def _enter(self, method: str) -> None:
+        loop = asyncio.get_running_loop()
+        if self._loop is None:
+            self._loop = loop
+        elif loop is not self._loop:
+            raise RuntimeError("this store belongs to another event loop")
+        self.calls.append(method)
+
+    async def save_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._enter("save")
+        return self._store.save(*args, **kwargs)
+
+    async def get_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._enter("get")
+        return self._store.get(*args, **kwargs)
+
+    async def compare_and_set_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._enter("compare_and_set")
+        return self._store.compare_and_set(*args, **kwargs)
+
+    async def list_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._enter("list")
+        return self._store.list(*args, **kwargs)
+
+
+def _graph_runtime(home: Path, *, plan_store: Any, inbox_store: Any):
     from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
         EmbeddedGraphBackend,
     )
@@ -426,14 +466,12 @@ def _graph_runtime(home: Path):
     from potpie_context_engine.adapters.outbound.graph.local_rollback_previews import (
         LocalRollbackPreviews,
     )
-    from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
-        LocalJsonGraphPlanStore,
-    )
     from potpie_context_engine.api import build_graph_runtime
 
     return build_graph_runtime(
         EmbeddedGraphBackend(home=home),
-        LocalJsonGraphPlanStore(home=home),
+        plan_store,
+        inbox_store,
         commit_mirror=LocalCommitMirror(home / "graph_commits.sqlite"),
         preview_store=LocalRollbackPreviews(home / "rollback_previews.sqlite"),
         commit_host=f"host:{HOST_ID}",
@@ -448,7 +486,9 @@ class ReferenceHost:
     endpoint: OperationEndpoint
     manager: ContextResourceManager
     graph_runtime: Any
-    agent_context: _AgentContext
+    agent_context: Any
+    plan_store: Any
+    inbox_store: Any
 
     @classmethod
     def build(
@@ -461,10 +501,36 @@ class ReferenceHost:
         extensions: Iterable[HostExtension] = (ECHO,),
         max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES,
         max_idle_engines: int | None = 8,
+        async_stores: bool = False,
+        agent_door: bool = False,
     ) -> ReferenceHost:
+        """Build the host.
+
+        ``async_stores`` makes its plan and inbox stores async only, as a host
+        over a database pool has them. ``agent_door`` serves resolve, search
+        and record through the kit's real agent door over the graph runtime
+        instead of the echoing stand-in.
+        """
+
+        from potpie_context_engine.adapters.outbound.graph.inbox_stores.local_json import (
+            LocalJsonGraphInboxStore,
+        )
+        from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+            LocalJsonGraphPlanStore,
+        )
+
         state = ReferenceState()
-        runtime = _graph_runtime(home)
-        agent_context = _AgentContext()
+        plan_store: Any = LocalJsonGraphPlanStore(home=home)
+        inbox_store: Any = LocalJsonGraphInboxStore(home=home)
+        if async_stores:
+            plan_store = AsyncOnlyStore(plan_store)
+            inbox_store = AsyncOnlyStore(inbox_store)
+        runtime = _graph_runtime(home, plan_store=plan_store, inbox_store=inbox_store)
+        agent_context: Any = (
+            AgentContextService.for_graph_runtime(runtime)
+            if agent_door
+            else _AgentContext()
+        )
         services = EngineServices(
             pots=None,
             agent_context=agent_context,
@@ -507,6 +573,8 @@ class ReferenceHost:
             manager=manager,
             graph_runtime=runtime,
             agent_context=agent_context,
+            plan_store=plan_store,
+            inbox_store=inbox_store,
         )
 
     async def post(
@@ -556,6 +624,7 @@ class ReferenceHost:
 
 __all__ = [
     "ALICE_KEY",
+    "AsyncOnlyStore",
     "BOB_KEY",
     "CAROL_KEY",
     "ECHO",

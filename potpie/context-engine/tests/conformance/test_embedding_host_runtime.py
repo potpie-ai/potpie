@@ -34,6 +34,7 @@ from potpie_context_engine.api import (
     ReconciliationConfig,
     RuntimeCompositionError,
     build_graph_runtime,
+    run_in_worker_thread,
 )
 from potpie_context_engine.testing import InMemoryGraphBackend
 
@@ -322,6 +323,56 @@ def test_runtime_without_history_wiring_reports_it_unavailable() -> None:
 
         assert listing["ok"] is False and listing["status"] == "unavailable"
         assert preview["ok"] is False and preview["status"] == "unavailable"
+
+    asyncio.run(journey())
+
+
+_BILLING_DEPENDS_ON_LEDGER = {
+    "operations": [
+        {
+            "op": "assert_claim",
+            "subject": {"key": "service:billing", "type": "Service"},
+            "predicate": "DEPENDS_ON",
+            "object": {"key": "service:ledger", "type": "Service"},
+            "truth": "agent_claim",
+            "description": "Billing calls the ledger to post charges.",
+        }
+    ]
+}
+
+
+def test_sync_calls_reach_async_only_stores_through_the_worker_bridge() -> None:
+    """A host that runs the sync doors off its loop keeps its async stores.
+
+    The bridge is what makes that work: a bare ``asyncio.to_thread`` call
+    cannot reach an async-only store and is refused by name.
+    """
+
+    async def journey() -> None:
+        plans, inbox_store = _AsyncPlanStore(), _AsyncInboxStore()
+        runtime = _compose(
+            policy=_HostPolicy(grants={}), plans=plans, inbox=inbox_store
+        )
+
+        with pytest.raises(RuntimeCompositionError, match="run_in_worker_thread"):
+            await asyncio.to_thread(
+                runtime.propose, _BILLING_DEPENDS_ON_LEDGER, pot_id=POT
+            )
+        proposal = await run_in_worker_thread(
+            runtime.workbench.propose, _BILLING_DEPENDS_ON_LEDGER, pot_id=POT
+        )
+        commit = await run_in_worker_thread(
+            runtime.commit, proposal.plan_id, pot_id=POT
+        )
+        added = await run_in_worker_thread(
+            runtime.inbox_add, pot_id=POT, summary="Confirm the ledger owner."
+        )
+
+        assert commit.ok, commit.to_dict()
+        assert plans.records[(POT, proposal.plan_id)].mutation_id == (
+            commit.mutation_id
+        )
+        assert (POT, added.item.item_id) in inbox_store.items
 
     asyncio.run(journey())
 
