@@ -23,10 +23,12 @@ http to a non-loopback host prints a one-line warning on stderr.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import threading
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass, replace
-from typing import Any, TypeVar
+from typing import Any, TypeVar, overload
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -90,11 +92,28 @@ from potpie.runtime.protocol import (
 from potpie.runtime.resource_manager import ContextSelector, DestructiveIntent
 from potpie_context_engine import Failure, Success
 from potpie_context_engine.core.errors import CapabilityNotImplemented
-from potpie_context_engine.requests import EngineRequest
+from potpie_context_engine.core.ports.agent_context import (
+    RecordRequest as AgentRecordRequest,
+)
+from potpie_context_engine.core.ports.agent_context import (
+    ResolveRequest as AgentResolveRequest,
+)
+from potpie_context_engine.core.ports.agent_context import (
+    SearchRequest as AgentSearchRequest,
+)
+from potpie_context_engine.requests import (
+    EngineRequest,
+    RecordRequest,
+    ResolveRequest,
+    SearchRequest,
+)
 from potpie_context_engine.results import result_from_payload
 
 HOST_OUTDATED = "host_outdated"
 DEFAULT_TIMEOUT_S = 30.0
+#: How long :class:`ManagedPotDirectory` serves a pot listing from its cache.
+POT_LISTING_MAX_AGE_S = 5.0
+_CLOSE_ON_OWN_LOOP_S = 5.0
 _OPERATIONS_PATH = "v1/operations"
 _OUTDATED_SOURCES = frozenset({"operation_unknown", "request_fields_unsupported"})
 
@@ -186,12 +205,16 @@ def _default_user_agent() -> str:
 
 
 class HttpsHostTransport:
-    """Send typed requests to one managed host over one pooled HTTPS client.
+    """Send typed requests to one managed host over pooled HTTPS clients.
 
-    Satisfies ``DaemonTransport.send``. The ``httpx.AsyncClient`` keeps its
-    connections alive across calls and is rebuilt only when it is used from a
-    different event loop. Transport failures raise ``TransportFailure`` with
-    ``dispatched`` saying whether the host may have acted.
+    Satisfies ``DaemonTransport.send``. An ``httpx.AsyncClient``'s connections
+    belong to the event loop that opened them, so the transport keeps one
+    keep-alive client per event loop it is used from, and loops on different
+    threads never share or close each other's client. A client whose loop has
+    closed is closed the next time the transport is used, and :meth:`aclose`
+    closes every client, each on its own loop when that loop is still
+    running. Transport failures raise ``TransportFailure`` with ``dispatched``
+    saying whether the host may have acted.
     """
 
     def __init__(
@@ -211,11 +234,13 @@ class HttpsHostTransport:
         self._timeout = httpx.Timeout(timeout_s)
         self._user_agent = user_agent
         self._http_transport = http_transport
-        self._client: httpx.AsyncClient | None = None
-        self._client_loop: asyncio.AbstractEventLoop | None = None
+        self._lock = threading.Lock()
+        self._clients: dict[asyncio.AbstractEventLoop, httpx.AsyncClient] = {}
 
     async def send(self, request: ProtocolRequest) -> ProtocolResponse:
-        client = self._get_client()
+        client, retired = self._client_for_running_loop()
+        for loop, stale in retired:
+            await _close_client(stale, loop)
         headers = {
             "Content-Type": "application/json",
             "X-Request-ID": request.request_id,
@@ -266,26 +291,70 @@ class HttpsHostTransport:
     @property
     def is_open(self) -> bool:
         """Whether a pooled client exists (nothing to close otherwise)."""
-        return self._client is not None
+        with self._lock:
+            return bool(self._clients)
 
     async def aclose(self) -> None:
-        client, self._client = self._client, None
-        self._client_loop = None
-        if client is not None:
-            await client.aclose()
+        """Close every pooled client; the next call opens a new one."""
+        with self._lock:
+            clients, self._clients = list(self._clients.items()), {}
+        for loop, client in clients:
+            await _close_client(client, loop)
 
     close = aclose
 
-    def _get_client(self) -> httpx.AsyncClient:
+    def _client_for_running_loop(
+        self,
+    ) -> tuple[
+        httpx.AsyncClient,
+        list[tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]],
+    ]:
+        """This loop's client, and the clients of loops that have since closed."""
         loop = asyncio.get_running_loop()
-        if self._client is None or self._client_loop is not loop:
-            self._client = httpx.AsyncClient(
-                timeout=self._timeout,
-                transport=self._http_transport,
-                follow_redirects=False,
+        retired: list[tuple[asyncio.AbstractEventLoop, httpx.AsyncClient]] = []
+        with self._lock:
+            client = self._clients.get(loop)
+            if client is None:
+                retired = [
+                    (other, stale)
+                    for other, stale in self._clients.items()
+                    if other.is_closed()
+                ]
+                for other, _ in retired:
+                    del self._clients[other]
+                client = self._clients[loop] = httpx.AsyncClient(
+                    timeout=self._timeout,
+                    transport=self._http_transport,
+                    follow_redirects=False,
+                )
+        return client, retired
+
+
+async def _close_client(
+    client: httpx.AsyncClient, loop: asyncio.AbstractEventLoop
+) -> None:
+    """Close ``client`` on ``loop`` when that loop still runs elsewhere, else here.
+
+    A loop that has closed (or stops before it gets to the close) cannot
+    finish closing its sockets; closing the client here still shuts its
+    connections down and marks it closed, and the garbage collector releases
+    what the dead loop could not.
+    """
+    if client.is_closed:
+        return
+    if loop is not asyncio.get_running_loop() and loop.is_running():
+        try:
+            closing = asyncio.run_coroutine_threadsafe(client.aclose(), loop)
+            await asyncio.wait_for(
+                asyncio.wrap_future(closing), timeout=_CLOSE_ON_OWN_LOOP_S
             )
-            self._client_loop = loop
-        return self._client
+            return
+        except (RuntimeError, TimeoutError):
+            pass
+    try:
+        await client.aclose()
+    except RuntimeError:  # its loop has closed
+        pass
 
 
 def _unanswered_code(status: int) -> str:
@@ -537,6 +606,59 @@ class RemoteEngineClient(EngineClient):
         )
 
 
+_AGENT_DOOR_REQUESTS: dict[type, type[EngineRequest]] = {
+    AgentResolveRequest: ResolveRequest,
+    AgentSearchRequest: SearchRequest,
+    AgentRecordRequest: RecordRequest,
+}
+
+
+@overload
+def from_agent_request(
+    request: AgentResolveRequest,
+) -> tuple[ContextSelector, ResolveRequest]: ...
+
+
+@overload
+def from_agent_request(
+    request: AgentSearchRequest,
+) -> tuple[ContextSelector, SearchRequest]: ...
+
+
+@overload
+def from_agent_request(
+    request: AgentRecordRequest,
+) -> tuple[ContextSelector, RecordRequest]: ...
+
+
+def from_agent_request(
+    request: AgentResolveRequest | AgentSearchRequest | AgentRecordRequest,
+) -> tuple[ContextSelector, EngineRequest]:
+    """An agent-door request as the selector and engine request a host takes.
+
+    The agent door (``potpie_context_engine.core.ports.agent_context``) names
+    its pot in the request; the engine catalog names it in the selector. The
+    door's ``pot_id`` becomes an explicit selector and every other field is
+    carried over unchanged::
+
+        selector, engine_request = from_agent_request(door_request)
+        outcome = await connection.engine(selector).resolve(engine_request)
+
+    Raises ``TypeError`` for a request other than resolve, search or record,
+    and ``ValueError`` for an empty ``pot_id``.
+    """
+
+    engine_type = _AGENT_DOOR_REQUESTS.get(type(request))
+    if engine_type is None:
+        raise TypeError(
+            f"{type(request).__name__} is not an agent-door resolve, search or "
+            "record request"
+        )
+    carried = {item.name: getattr(request, item.name) for item in fields(engine_type)}
+    selector = ContextSelector(kind="explicit", value=request.pot_id)
+    return selector, engine_type(**carried)
+
+
 # --- host and extension operations ------------------------------------------------
 
 
@@ -777,13 +899,15 @@ class _LoopThread:
                 self._loop = loop
             return self._loop
 
-    def run(self, awaitable: Awaitable[Any]) -> Any:
+    def run(self, awaitable: Awaitable[Any], *, timeout_s: float | None = None) -> Any:
         loop = self._ensure()
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:
             running = None
         if running is loop:
+            if inspect.iscoroutine(awaitable):
+                awaitable.close()
             raise RuntimeError(
                 "a synchronous managed-host call cannot run on its own event loop"
             )
@@ -791,7 +915,13 @@ class _LoopThread:
         async def _await() -> Any:
             return await awaitable
 
-        return asyncio.run_coroutine_threadsafe(_await(), loop).result()
+        future = asyncio.run_coroutine_threadsafe(_await(), loop)
+        try:
+            return future.result(timeout=timeout_s)
+        except BaseException:
+            # A timeout or an interrupted caller: stop the call too.
+            future.cancel()
+            raise
 
 
 _background = _LoopThread()
@@ -802,9 +932,21 @@ class ManagedPotDirectory:
 
     Every method is one or two ``host.*`` calls for the caller's actor. The
     listing (pots, the active pot and, per repo, the repo default) comes back
-    from one ``host.pot_list`` and is kept until this directory changes
-    something, so a command that reads the active pot, then the repo default,
-    then the pot's name pays for one round trip, not three.
+    from one ``host.pot_list``, so a command that reads the active pot, then
+    the repo default, then the pot's name pays for one round trip, not three.
+
+    Freshness rule: a listing, and the repo→pot index built from listings, is
+    served from the cache for at most ``max_age_s`` seconds (5 by default) and
+    then asked for again, so a pot another client creates, selects or shares
+    shows up here within that window, however long the process lives. Every
+    change made through this directory drops the cache at once. To read past
+    it: ``max_age_s=0`` asks the host on every read, :meth:`invalidate` drops
+    the cache, and ``listing(fresh=True)`` skips it for one read. Sources,
+    grants, status and ``whoami`` are never cached.
+
+    Threads: one directory may be shared by any number of threads. The cache
+    is guarded by a lock that is never held across a host call, and a listing
+    that was already in flight when a change dropped the cache is not stored.
 
     Failures raise :class:`RemoteHostError` carrying the host's typed error.
     Repo identities derived from a local path are never sent (they would leak
@@ -826,15 +968,25 @@ class ManagedPotDirectory:
         *,
         run: Runner | None = None,
         repo: str | None = None,
+        max_age_s: float = POT_LISTING_MAX_AGE_S,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        if max_age_s < 0:
+            raise ValueError("max_age_s must not be negative")
         self._client = client
         self._run: Runner = run or _background.run
         #: The caller's current repo identity, when it came from a git remote:
         #: the first listing asks for its default too, so the answer the next
         #: ``repo_default`` call needs is already there.
         self._repo = repo if is_remote_repo_key(repo) else None
-        self._listings: dict[str | None, PotListResult] = {}
-        self._repo_sources: list[PotRepoSource] | None = None
+        self._max_age_s = max_age_s
+        self._clock = clock
+        self._lock = threading.Lock()
+        #: Bumped by every change; a read started under an older generation
+        #: does not store what it fetched.
+        self._generation = 0
+        self._listings: dict[str | None, tuple[float, PotListResult]] = {}
+        self._repo_sources: tuple[float, list[PotRepoSource]] | None = None
 
     @property
     def client(self) -> RemoteHostClient:
@@ -844,10 +996,44 @@ class ManagedPotDirectory:
     def label(self) -> str:
         return self._client.label
 
+    @property
+    def max_age_s(self) -> float:
+        """How long a listing is served from the cache (``0``: never)."""
+        return self._max_age_s
+
     def invalidate(self) -> None:
         """Forget what was listed; the next read asks the host again."""
-        self._listings.clear()
-        self._repo_sources = None
+        with self._lock:
+            self._generation += 1
+            self._listings.clear()
+            self._repo_sources = None
+
+    def _forget_repo_sources(self) -> None:
+        with self._lock:
+            self._generation += 1
+            self._repo_sources = None
+
+    def _is_fresh(self, fetched_at: float) -> bool:
+        return self._clock() - fetched_at < self._max_age_s
+
+    def _cached_listing(
+        self, repo: str | None, *, any_repo: bool
+    ) -> PotListResult | None:
+        """A young enough listing for ``repo``; the caller holds the lock."""
+        entry = self._listings.get(repo)
+        if entry is not None and self._is_fresh(entry[0]):
+            return entry[1]
+        if any_repo:
+            # Pots and the active pot are the same in every listing.
+            return next(
+                (
+                    listing
+                    for fetched_at, listing in self._listings.values()
+                    if self._is_fresh(fetched_at)
+                ),
+                None,
+            )
+        return None
 
     def close(self) -> None:
         """Close the client's pooled connections, on the loop that opened them."""
@@ -862,21 +1048,43 @@ class ManagedPotDirectory:
             raise RemoteHostError(outcome.error)
         return outcome.value
 
-    def _listing(self, repo: str | None = None) -> PotListResult:
-        if repo is None and self._listings:
-            # Pots and the active pot are the same in every listing.
-            return next(iter(self._listings.values()))
+    def _listing(
+        self, repo: str | None = None, *, fresh: bool = False
+    ) -> PotListResult:
         asked = repo if repo is not None else self._repo
-        if asked not in self._listings:
-            self._listings[asked] = self._call(
-                self._client.pot_list(PotListRequest(repo=asked, include_archived=True))
+        with self._lock:
+            cached = (
+                None if fresh else self._cached_listing(asked, any_repo=repo is None)
             )
-        return self._listings[asked]
+            if cached is not None:
+                return cached
+            generation = self._generation
+        fetched_at = self._clock()
+        listing = self._call(
+            self._client.pot_list(PotListRequest(repo=asked, include_archived=True))
+        )
+        with self._lock:
+            if generation == self._generation and self._max_age_s > 0:
+                self._listings = {
+                    key: entry
+                    for key, entry in self._listings.items()
+                    if self._is_fresh(entry[0])
+                }
+                self._listings[asked] = (fetched_at, listing)
+        return listing
 
     def listing(
-        self, *, repo: str | None = None, include_status: bool = False
+        self,
+        *,
+        repo: str | None = None,
+        include_status: bool = False,
+        fresh: bool = False,
     ) -> PotListResult:
-        """The raw ``host.pot_list`` answer (``include_status`` is never cached)."""
+        """The raw ``host.pot_list`` answer.
+
+        ``fresh`` asks the host even when a cached listing is young enough;
+        ``include_status`` always asks and is never cached.
+        """
         if include_status:
             return self._call(
                 self._client.pot_list(
@@ -887,7 +1095,7 @@ class ManagedPotDirectory:
                     )
                 )
             )
-        return self._listing(repo if is_remote_repo_key(repo) else None)
+        return self._listing(repo if is_remote_repo_key(repo) else None, fresh=fresh)
 
     # --- pots ---------------------------------------------------------------------
     def list_pots(self) -> list[PotInfo]:
@@ -967,32 +1175,39 @@ class ManagedPotDirectory:
                 )
             )
         finally:
-            self._repo_sources = None
+            self._forget_repo_sources()
 
     def list_repo_sources(self) -> list[PotRepoSource]:
         """The repo→pot index, one ``host.source_list`` per live pot.
 
         Only routing reports need it (which pots a working tree is linked to);
         command routing itself sends a ``repository`` selector and lets the
-        host match. Kept until this directory changes something.
+        host match. Cached like a listing (see the class docstring).
         """
-        if self._repo_sources is None:
-            rows: list[PotRepoSource] = []
-            for pot in self.list_pots():
-                if pot.archived:
-                    continue
-                rows.extend(
-                    PotRepoSource(
-                        pot_id=pot.pot_id,
-                        pot_name=pot.name,
-                        name=source.name,
-                        location=source.location,
-                    )
-                    for source in self.list_sources(pot_id=pot.pot_id)
-                    if source.kind == "repo"
+        with self._lock:
+            cached = self._repo_sources
+            if cached is not None and self._is_fresh(cached[0]):
+                return list(cached[1])
+            generation = self._generation
+        fetched_at = self._clock()
+        rows: list[PotRepoSource] = []
+        for pot in self.list_pots():
+            if pot.archived:
+                continue
+            rows.extend(
+                PotRepoSource(
+                    pot_id=pot.pot_id,
+                    pot_name=pot.name,
+                    name=source.name,
+                    location=source.location,
                 )
-            self._repo_sources = rows
-        return list(self._repo_sources)
+                for source in self.list_sources(pot_id=pot.pot_id)
+                if source.kind == "repo"
+            )
+        with self._lock:
+            if generation == self._generation and self._max_age_s > 0:
+                self._repo_sources = (fetched_at, rows)
+        return list(rows)
 
     # --- status, identity and sharing ---------------------------------------------
     def aggregate_status(self, *, pot_id: str | None = None) -> PotAggregateStatus:
@@ -1070,10 +1285,20 @@ def _local_only(command: str) -> CapabilityNotImplemented:
 class HostConnection:
     """One managed host: engine clients per selector, host operations, extensions.
 
-    Reuse it: its transport keeps one pooled, keep-alive HTTPS client.
-    ``pots`` is the host's :class:`ManagedPotDirectory` for synchronous
-    callers; it has its own pooled client on a private event loop, so it can
-    be used from any thread while ``engine()`` clients run on the caller's.
+    Reuse it: its transport keeps one pooled, keep-alive HTTPS client per
+    event loop. ``pots`` is the host's :class:`ManagedPotDirectory` for
+    synchronous callers; it runs on a private background event loop, so it
+    can be used from any thread while ``engine()`` clients run on the
+    caller's.
+
+    Synchronous code (an RPC servicer thread, a script) calls the async API
+    through :meth:`run`, which runs it on that same background loop::
+
+        connection = connect()
+        envelope = connection.run(connection.engine(selector).resolve(request))
+        answer = connection.run(connection.extension(name, request, result_type))
+        me = connection.run(connection.host.whoami())
+        connection.close()
     """
 
     endpoint: ManagedHostEndpoint
@@ -1101,9 +1326,28 @@ class HostConnection:
     ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
         return await self.host.handshake()
 
+    def run(
+        self, awaitable: Awaitable[ResultT], *, timeout_s: float | None = None
+    ) -> ResultT:
+        """Run one of this connection's calls from synchronous code.
+
+        The awaitable runs on the process's background managed-host event
+        loop, which every thread shares (and with it the pooled connections),
+        so any number of threads may call this at once; it blocks the calling
+        thread until the result is in. A call still running after
+        ``timeout_s`` seconds is cancelled and ``TimeoutError`` is raised.
+        Async code awaits the call directly instead; calling this from the
+        background loop itself raises ``RuntimeError``.
+        """
+        return _background.run(awaitable, timeout_s=timeout_s)
+
     async def aclose(self) -> None:
         await self.transport.aclose()
         await asyncio.to_thread(self.pots.close)
+
+    def close(self) -> None:
+        """:meth:`aclose` for synchronous code; later calls reconnect."""
+        self.run(self.aclose())
 
 
 @dataclass(frozen=True, slots=True)
@@ -1242,7 +1486,9 @@ __all__ = [
     "RemoteEngineClient",
     "RemoteHostClient",
     "RemoteHostError",
+    "POT_LISTING_MAX_AGE_S",
     "connect",
+    "from_agent_request",
     "host_outdated_error",
     "without_fields",
 ]

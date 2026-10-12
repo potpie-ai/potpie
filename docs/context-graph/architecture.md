@@ -128,7 +128,7 @@ flowchart LR
 - `potpie.runtime.remote` — `RemoteEngineClient` (the engine catalog for one
   selector), `RemoteHostClient` (`host.*` and extension operations),
   `ManagedPotDirectory`, and `connect()` → `HostConnection` with one pooled
-  keep-alive HTTPS client per host and process.
+  keep-alive HTTPS client per host and event loop.
 - `potpie.pots.directory.PotDirectory` — the pot control plane of one host:
   `LocalPotDirectory` over the in-process pot service, `ManagedPotDirectory`
   over `host.*`. CLI pot, source, grant, `whoami` and `status` commands use it.

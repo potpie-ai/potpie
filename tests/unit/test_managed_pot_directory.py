@@ -136,3 +136,103 @@ def test_the_directory_serves_callers_on_other_threads(reference) -> None:
         thread.join(timeout=30)
 
     assert answers == [["pot_shop", "pot_lab"]] * 4
+
+
+def _ids(pots) -> list[str]:
+    return [pot.pot_id for pot in pots]
+
+
+def test_a_listing_is_served_from_the_cache_only_while_it_is_young(reference) -> None:
+    now = [100.0]
+    seen: list = []
+    pots = remote.ManagedPotDirectory(
+        _connect(reference, seen=seen).pots.client, clock=lambda: now[0]
+    )
+    other = _connect(reference).pots
+
+    assert _ids(pots.list_pots()) == ["pot_shop", "pot_lab"]
+    other.create_pot(name="docs")
+    now[0] += remote.POT_LISTING_MAX_AGE_S - 0.1
+    assert "pot_docs" not in _ids(pots.list_pots())
+    assert len(seen) == 1
+
+    # Once the listing is older than the window it is asked for again.
+    now[0] += 0.1
+    assert "pot_docs" in _ids(pots.list_pots())
+    assert len(seen) == 2
+
+    # Skipping the cache for one read, or dropping it.
+    other.create_pot(name="notes")
+    assert "pot_notes" in _ids(pots.listing(fresh=True).pots)
+    other.create_pot(name="wiki")
+    pots.invalidate()
+    assert "pot_wiki" in _ids(pots.list_pots())
+    assert len(seen) == 4
+
+
+def test_a_zero_max_age_asks_the_host_on_every_read(reference) -> None:
+    seen: list = []
+    pots = remote.ManagedPotDirectory(
+        _connect(reference, seen=seen).pots.client, max_age_s=0
+    )
+
+    pots.list_pots()
+    pots.active_pot()
+
+    assert len(seen) == 2
+    with pytest.raises(ValueError, match="negative"):
+        remote.ManagedPotDirectory(pots.client, max_age_s=-1)
+
+
+def test_a_listing_in_flight_when_a_change_lands_is_not_kept(reference) -> None:
+    seen: list = []
+    connection = _connect(reference, seen=seen)
+    holder: dict = {}
+
+    def run_while_another_thread_changes_something(awaitable):
+        answer = connection.run(awaitable)
+        if len(seen) == 1:
+            holder["pots"].invalidate()
+        return answer
+
+    pots = holder["pots"] = remote.ManagedPotDirectory(
+        connection.pots.client, run=run_while_another_thread_changes_something
+    )
+
+    pots.list_pots()
+    pots.list_pots()
+
+    assert len(seen) == 2
+
+
+def test_threads_may_read_and_change_one_directory_at_once(reference) -> None:
+    pots = _connect(reference).pots
+    errors: list[BaseException] = []
+    answers: list[list[str]] = []
+
+    def _reader() -> None:
+        try:
+            for _ in range(10):
+                answers.append(_ids(pots.list_pots()))
+                pots.active_pot()
+                pots.repo_default(repo="github.com/acme/shop")
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    def _changer() -> None:
+        try:
+            for _ in range(10):
+                pots.use_pot(ref="shop")
+                pots.invalidate()
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_reader) for _ in range(6)]
+    threads += [threading.Thread(target=_changer) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert errors == []
+    assert answers == [["pot_shop", "pot_lab"]] * 60

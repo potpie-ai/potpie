@@ -483,6 +483,12 @@ leniently.
 the registry's managed host: `engine(selector)` (an async `EngineClient`),
 `pots` (a synchronous `PotDirectory`, usable from any thread) and
 `extension(name, request, result_type)` for host extension operations.
+Synchronous code runs any of these with `connection.run(awaitable)` on one
+shared background loop, and closes with `connection.close()`. `pots` serves a
+listing from its cache for at most five seconds (`max_age_s`; `invalidate()`
+or `listing(fresh=True)` read past it). `potpie.runtime.remote.from_agent_request`
+turns an agent-door resolve, search or record request into the selector and
+engine request `engine()` takes.
 
 ## Cloud (`commands/cloud.py`)
 
