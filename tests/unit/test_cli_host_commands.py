@@ -260,8 +260,9 @@ def test_any_probe_failure_is_unavailable_and_names_the_endpoint(
 def test_the_probe_handshakes_and_lists_pots_on_the_offered_endpoint(
     home, monkeypatch
 ) -> None:
-    """The hook expected from the remote client, pinned once both exist."""
-    remote = pytest.importorskip("potpie.runtime.remote")
+    """The probe builds the offered endpoint, handshakes, then lists pots."""
+    from potpie.runtime import remote
+
     calls: list[Any] = []
 
     class _Endpoint:
@@ -283,7 +284,7 @@ def test_the_probe_handshakes_and_lists_pots_on_the_offered_endpoint(
             return _Listing()
 
     monkeypatch.setattr(remote, "ManagedHostEndpoint", _Endpoint)
-    monkeypatch.setattr(remote, "RemoteHostClient", _Client)
+    monkeypatch.setattr(remote, "ManagedHostProbe", _Client)
 
     result = _run("--json", "host", "set", _URL, "--token", "-", stdin="tok\n")
 
@@ -298,3 +299,55 @@ def test_the_probe_handshakes_and_lists_pots_on_the_offered_endpoint(
         "handshake",
         "host.pot_list",
     ]
+
+
+# --- the real probe against a managed host ------------------------------------------
+
+
+def _reference_probe(monkeypatch, tmp_path):
+    """Point ``host set --check`` at the reference host through the real client."""
+    import asyncio
+    import functools
+
+    from potpie.runtime import remote
+    from tests.support.reference_host import ReferenceHost
+
+    reference = ReferenceHost.build(tmp_path / "reference-host")
+    monkeypatch.setattr(
+        remote,
+        "ManagedHostProbe",
+        functools.partial(
+            remote.ManagedHostProbe, http_transport=reference.httpx_transport()
+        ),
+    )
+    return reference, lambda: asyncio.run(reference.close())
+
+
+def test_host_set_check_probes_a_real_managed_host(home, monkeypatch, tmp_path) -> None:
+    from tests.support.reference_host import ALICE_KEY
+
+    _reference, close = _reference_probe(monkeypatch, tmp_path)
+
+    result = _run("--json", "host", "set", _URL, "--token", "-", stdin=f"{ALICE_KEY}\n")
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["checked"] is True
+    assert payload["pots"] == 2
+    assert hosts.managed_endpoint() == (_URL, ALICE_KEY)
+    close()
+
+
+def test_host_set_check_refused_by_the_host_stores_nothing(
+    home, monkeypatch, tmp_path
+) -> None:
+    _reference, close = _reference_probe(monkeypatch, tmp_path)
+
+    result = _run("--json", "host", "set", _URL, "--token", "-", stdin="wrong-key\n")
+
+    assert result.exit_code == _common.EXIT_UNAVAILABLE, result.output
+    error = json.loads(result.output)
+    assert error["code"] == "unavailable"
+    assert "API key was refused" in error["message"]
+    assert not (home / "cli_hosts.json").exists()
+    close()

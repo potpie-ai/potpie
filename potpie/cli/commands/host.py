@@ -368,7 +368,7 @@ def _probe_managed(
     )
 
     async def _probe() -> list[Any]:
-        client = remote.RemoteHostClient(endpoint)
+        client = remote.ManagedHostProbe(endpoint)
         try:
             await _settled(client.handshake())
             listing = await _settled(client.pot_list())

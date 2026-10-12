@@ -23,9 +23,6 @@ http to a non-loopback host prints a one-line warning on stderr.
 from __future__ import annotations
 
 import asyncio
-import importlib
-import ipaddress
-import sys
 from collections.abc import Iterable
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass, replace
 from typing import Any, TypeVar
@@ -34,6 +31,7 @@ from uuid import uuid4
 
 import httpx
 
+from potpie.config import host_registry
 from potpie.runtime.clients import (
     ClientOutcome,
     DaemonTransport,
@@ -96,88 +94,16 @@ RequestT = TypeVar("RequestT")
 # --- addresses ---------------------------------------------------------------------
 
 
-def _is_loopback(hostname: str | None) -> bool:
-    host = (hostname or "").strip().lower().strip("[]")
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-_REGISTRY_MODULE = "potpie.config.host_registry"
-
-
-def _host_registry() -> Any | None:
-    """The host registry module, or ``None`` in a build without it."""
-
-    try:
-        return importlib.import_module(_REGISTRY_MODULE)
-    except ModuleNotFoundError as exc:
-        if exc.name != _REGISTRY_MODULE:
-            raise
-        return None
-
-
 def _normalize_managed_url(url: str, allow_insecure_host: str | None) -> str:
     """The registry's URL rules, the single definition of what is acceptable."""
 
-    host_registry = _host_registry()
-    if host_registry is None:
-        return _fallback_normalize_managed_url(url, allow_insecure_host)
     return host_registry.normalize_managed_url(
         url, allow_insecure_host=allow_insecure_host
     )
 
 
-def _fallback_normalize_managed_url(url: str, allow_insecure_host: str | None) -> str:
-    # TEMPORARY: used only until potpie.config.host_registry is on this branch;
-    # delete it then, so the registry owns the one copy of these rules.
-    raw = (url or "").strip()
-    parts = urlsplit(raw)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ValueError(
-            f"Managed host URL {raw!r} needs an http(s) scheme and a host."
-        )
-    parts.port  # noqa: B018 - raises ValueError for an invalid port
-    if parts.scheme == "http" and not _is_loopback(parts.hostname):
-        host = parts.hostname.lower()
-        key = f"[{host}]" if ":" in host else host
-        key = f"{key}:{parts.port}" if parts.port is not None else key
-        if (allow_insecure_host or "").strip().lower() != key:
-            raise ValueError(
-                f"Managed host URL {raw!r} uses plain http:// for a non-loopback "
-                "host; use https://, or opt in exactly this host[:port]."
-            )
-    return raw.rstrip("/")
-
-
 def _warn_insecure_transport(base_url: str) -> None:
-    host_registry = _host_registry()
-    if host_registry is None:
-        _fallback_warn_insecure_transport(base_url)
-        return
     host_registry.warn_insecure_transport(base_url)
-
-
-_warned_insecure: set[str] = set()
-
-
-def _fallback_warn_insecure_transport(base_url: str) -> None:
-    # TEMPORARY: see _fallback_normalize_managed_url.
-    parts = urlsplit(base_url)
-    if parts.scheme != "http" or _is_loopback(parts.hostname):
-        return
-    if base_url in _warned_insecure:
-        return
-    _warned_insecure.add(base_url)
-    print(
-        f"warning: {base_url} is reached over plain http (insecure opt-in); "
-        "its API key is sent unencrypted",
-        file=sys.stderr,
-        flush=True,
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +125,9 @@ class ManagedHostEndpoint:
         object.__setattr__(self, "base_url", normalized)
         token = (self.token or "").strip() or None
         object.__setattr__(self, "token", token)
-        if token is None and not _is_loopback(urlsplit(normalized).hostname):
+        if token is None and not host_registry.is_loopback_host(
+            urlsplit(normalized).hostname
+        ):
             raise ValueError(
                 f"the managed host {normalized} has no token, and an empty token is "
                 "accepted only for a loopback host"
@@ -214,7 +142,9 @@ class ManagedHostEndpoint:
         """Plain http to a non-loopback host (the opted-in exception)."""
 
         parts = urlsplit(self.base_url)
-        return parts.scheme == "http" and not _is_loopback(parts.hostname)
+        return parts.scheme == "http" and not host_registry.is_loopback_host(
+            parts.hostname
+        )
 
     @property
     def label(self) -> str:
@@ -846,13 +776,9 @@ def _registered_managed_host() -> ManagedHostSettings | None:
     """The registry's usable managed host, or ``None`` (the registry hook).
 
     Reads ``potpie.config.host_registry.managed_host()``: its ``base_url``,
-    ``token`` and ``allow_insecure_host``. Without the registry module there is
-    no configured host.
+    ``token`` and ``allow_insecure_host``.
     """
 
-    host_registry = _host_registry()
-    if host_registry is None:
-        return None
     managed = host_registry.managed_host()
     if managed is None:
         return None
