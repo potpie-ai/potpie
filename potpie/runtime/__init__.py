@@ -83,6 +83,7 @@ from potpie.runtime.resource_manager import (
     ResourceLifecycleError,
     SelectionError,
 )
+from potpie.runtime.remote import HostConnection, connect
 from potpie.runtime.server import (
     AuthenticatedDaemonCaller,
     CanonicalDaemonRuntime,
@@ -138,6 +139,7 @@ __all__ = [
     "HandshakePayload",
     "HandshakeRequest",
     "HandshakeResult",
+    "HostConnection",
     "HostOperationRequest",
     "HostResource",
     "HttpDaemonTransport",
@@ -164,6 +166,7 @@ __all__ = [
     "TransportFailure",
     "TypedEngineOperationHandler",
     "TypedOperationHandler",
+    "connect",
     "decode_request",
     "decode_response",
     "encode_request",
