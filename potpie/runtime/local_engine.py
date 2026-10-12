@@ -70,6 +70,7 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.ports.resource_index import ResourceIndexError
 from potpie_context_engine.core.ports.resource_store import (
@@ -93,6 +94,7 @@ from potpie_context_engine.requests import (
     DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
+    GraphSliceRequest,
     HistoryRequest,
     ImportSnapshotRequest,
     InboxAddRequest,
@@ -448,6 +450,22 @@ class LocalEngineOperations:
     ) -> Outcome[object]:
         return await self._call(
             lambda: self._inspection_neighborhood(context=context, request=request)
+        )
+
+    async def slice(
+        self, context: ContextIdentity, request: GraphSliceRequest
+    ) -> Outcome[object]:
+        """The pot's whole graph, as the explorer draws it."""
+
+        return await self._call(
+            lambda: self._services.backend.inspection.slice(
+                pot_id=context.value,
+                filter_=ClaimQueryFilter(
+                    pot_id=context.value,
+                    include_invalidated=request.include_invalidated,
+                    limit=request.limit,
+                ),
+            )
         )
 
     async def export_snapshot(
@@ -1042,6 +1060,7 @@ class LocalEngineOperations:
             EngineOperation.MUTATE: self.mutate,
             EngineOperation.NEIGHBORHOOD: self.neighborhood,
             EngineOperation.INSPECT: self.inspect,
+            EngineOperation.GRAPH_SLICE: self.slice,
             EngineOperation.EXPORT_SNAPSHOT: self.export_snapshot,
             EngineOperation.IMPORT_SNAPSHOT: self.import_snapshot,
             EngineOperation.REPAIR: self.repair,

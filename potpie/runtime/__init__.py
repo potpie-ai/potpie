@@ -9,6 +9,7 @@ from potpie.runtime.clients import (
     EngineClient,
     LocalEngineClient,
     TypedEngineOperationHandler,
+    TypedOperationHandler,
 )
 from potpie.runtime.codec import (
     decode_request,
@@ -53,6 +54,7 @@ from potpie.runtime.protocol import (
     HandshakePayload,
     HandshakeRequest,
     HandshakeResult,
+    HostOperationRequest,
     ProtocolError,
     ProtocolRequest,
     ProtocolResponse,
@@ -136,6 +138,7 @@ __all__ = [
     "HandshakePayload",
     "HandshakeRequest",
     "HandshakeResult",
+    "HostOperationRequest",
     "HostResource",
     "HttpDaemonTransport",
     "LeaseOwnership",
@@ -160,6 +163,7 @@ __all__ = [
     "StopResult",
     "TransportFailure",
     "TypedEngineOperationHandler",
+    "TypedOperationHandler",
     "decode_request",
     "decode_response",
     "encode_request",

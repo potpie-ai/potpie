@@ -124,9 +124,7 @@ class OperationCoordinator:
                 context_key=context_key,
                 request=request,
             )
-        raise ValueError(
-            f"{spec.operation.value} is not a context or resource operation"
-        )
+        raise ValueError(f"{spec.name} is not a context or resource operation")
 
     @staticmethod
     def _context_and_resource_requirements(

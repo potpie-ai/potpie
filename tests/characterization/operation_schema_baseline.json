@@ -175,6 +175,22 @@
    },
    "safety": "shared_context_read_exclusive_resource_write"
   },
+  "graph_slice": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "GraphSliceRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphSlice"
+   },
+   "safety": "shared_context_read"
+  },
   "history": {
    "context_required": true,
    "destructive": false,
@@ -188,6 +204,210 @@
    "result": {
     "kind": "ref",
     "name": "GraphHistoryResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.grant_list": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "GrantListRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GrantListResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.grant_revoke": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "GrantRevokeRequest"
+   },
+   "resource_identity_fields": [
+    "actor_id"
+   ],
+   "resource_type": "pot_grant",
+   "result": {
+    "kind": "ref",
+    "name": "GrantRevokeResult"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.grant_set": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "GrantSetRequest"
+   },
+   "resource_identity_fields": [
+    "actor_id"
+   ],
+   "resource_type": "pot_grant",
+   "result": {
+    "kind": "ref",
+    "name": "PotGrantInfo"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.pot_create": {
+   "context_required": false,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "PotCreateRequest"
+   },
+   "resource_identity_fields": [
+    "name"
+   ],
+   "resource_type": "pot_name",
+   "result": {
+    "kind": "ref",
+    "name": "PotInfo"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.pot_list": {
+   "context_required": false,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "PotListRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "PotListResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.pot_status": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "PotStatusRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "PotAggregateStatus"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.pot_use": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "PotUseRequest"
+   },
+   "resource_identity_fields": [
+    "selector"
+   ],
+   "resource_type": "actor_pointer",
+   "result": {
+    "kind": "ref",
+    "name": "PotInfo"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.repo_default_clear": {
+   "context_required": false,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "RepoDefaultClearRequest"
+   },
+   "resource_identity_fields": [
+    "repo"
+   ],
+   "resource_type": "repo_binding",
+   "result": {
+    "kind": "ref",
+    "name": "RepoDefaultClearResult"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.repo_default_set": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "RepoDefaultSetRequest"
+   },
+   "resource_identity_fields": [
+    "repo"
+   ],
+   "resource_type": "repo_binding",
+   "result": {
+    "kind": "ref",
+    "name": "RepoDefaultResult"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.source_add": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "SourceAddRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "SourceInfo"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "host.source_list": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "SourceListRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "SourceListResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.whoami": {
+   "context_required": false,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "WhoamiRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "WhoamiResult"
    },
    "safety": "shared_context_read"
   },
@@ -1996,6 +2216,88 @@
    ],
    "kind": "object",
    "python": "potpie_context_engine.results.ExportSnapshotResult"
+  },
+  "GrantListRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantListRequest"
+  },
+  "GrantListResult": {
+   "fields": [
+    {
+     "default": [],
+     "name": "grants",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "PotGrantInfo"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantListResult"
+  },
+  "GrantRevokeRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "actor_id",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantRevokeRequest"
+  },
+  "GrantRevokeResult": {
+   "fields": [
+    {
+     "default": "",
+     "name": "pot_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "actor_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": false,
+     "name": "revoked",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantRevokeResult"
+  },
+  "GrantSetRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "actor_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "writer",
+     "name": "role",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantSetRequest"
   },
   "GraphCatalogResult": {
    "fields": [
@@ -4556,6 +4858,34 @@
    "kind": "object",
    "python": "potpie_context_engine.core.ports.graph.inspection.GraphSlice"
   },
+  "GraphSliceRequest": {
+   "fields": [
+    {
+     "default": false,
+     "name": "include_invalidated",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "limit",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.GraphSliceRequest"
+  },
   "HistoryRequest": {
    "fields": [
     {
@@ -5689,6 +6019,347 @@
    "kind": "object",
    "python": "potpie_context_engine.requests.NudgeRequest"
   },
+  "PotAggregateStatus": {
+   "fields": [
+    {
+     "name": "active_pot",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "PotInfo"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 0,
+     "name": "pot_count",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": [],
+     "name": "sources",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "SourceInfo"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": false,
+     "name": "backend_ready",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.pots.contracts.PotAggregateStatus"
+  },
+  "PotCounts": {
+   "fields": [
+    {
+     "default": null,
+     "name": "source_count",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "counts",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotCounts"
+  },
+  "PotCreateRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "name",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "repo",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "use",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotCreateRequest"
+  },
+  "PotGrantInfo": {
+   "fields": [
+    {
+     "default": "",
+     "name": "pot_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "actor_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "role",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotGrantInfo"
+  },
+  "PotInfo": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "name",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": false,
+     "name": "active",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": false,
+     "name": "archived",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "created",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "boolean"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.pots.contracts.PotInfo"
+  },
+  "PotListRequest": {
+   "fields": [
+    {
+     "default": null,
+     "name": "repo",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "include_archived",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": false,
+     "name": "include_status",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotListRequest"
+  },
+  "PotListResult": {
+   "fields": [
+    {
+     "default": [],
+     "name": "pots",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "PotInfo"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "active_pot_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "repo_default_pot_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "status",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "ref",
+       "name": "PotCounts"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotListResult"
+  },
+  "PotStatusRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotStatusRequest"
+  },
+  "PotUseRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotUseRequest"
+  },
   "ProcessingStatusRequest": {
    "fields": [
     {
@@ -6293,6 +6964,80 @@
    ],
    "kind": "object",
    "python": "potpie_context_engine.requests.RepairRequest"
+  },
+  "RepoDefaultClearRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "repo",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.RepoDefaultClearRequest"
+  },
+  "RepoDefaultClearResult": {
+   "fields": [
+    {
+     "default": "",
+     "name": "repo",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": false,
+     "name": "cleared",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.RepoDefaultClearResult"
+  },
+  "RepoDefaultResult": {
+   "fields": [
+    {
+     "default": "",
+     "name": "repo",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "pot_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.RepoDefaultResult"
+  },
+  "RepoDefaultSetRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "repo",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.RepoDefaultSetRequest"
   },
   "ResetContextRequest": {
    "fields": [],
@@ -7833,6 +8578,142 @@
    "kind": "object",
    "python": "potpie_context_engine.core.ports.graph.snapshot.SnapshotManifest"
   },
+  "SourceAddRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "kind",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "location",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "name",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.SourceAddRequest"
+  },
+  "SourceInfo": {
+   "fields": [
+    {
+     "name": "source_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "kind",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "name",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "location",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "last_sync_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "sync_mode",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "unknown",
+     "name": "status",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.pots.contracts.SourceInfo"
+  },
+  "SourceListRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.SourceListRequest"
+  },
+  "SourceListResult": {
+   "fields": [
+    {
+     "default": [],
+     "name": "sources",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "SourceInfo"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.SourceListResult"
+  },
   "SubmitArtifactRequest": {
    "fields": [
     {
@@ -8295,6 +9176,46 @@
    ],
    "kind": "object",
    "python": "potpie_context_engine.requests.VerifyCommitRequest"
+  },
+  "WhoamiRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.WhoamiRequest"
+  },
+  "WhoamiResult": {
+   "fields": [
+    {
+     "default": "",
+     "name": "subject",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "mode",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.WhoamiResult"
   }
  }
 }

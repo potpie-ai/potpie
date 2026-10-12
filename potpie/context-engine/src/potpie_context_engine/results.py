@@ -60,6 +60,7 @@ SearchEntitiesResult: TypeAlias = GraphEntitySearchResult
 MutateResult: TypeAlias = SemanticMutationResult
 NeighborhoodResult: TypeAlias = GraphSlice
 InspectResult: TypeAlias = GraphSlice
+GraphSliceResult: TypeAlias = GraphSlice
 ImportSnapshotResult: TypeAlias = SnapshotManifest
 RepairResult: TypeAlias = RepairReport
 ProposeResult: TypeAlias = GraphMutationProposal
@@ -236,6 +237,7 @@ __all__ = [
     "DisableRollbackResult",
     "ExportSnapshotResult",
     "GraphJournalResult",
+    "GraphSliceResult",
     "HistoryResult",
     "ImportSnapshotResult",
     "InboxAddResult",

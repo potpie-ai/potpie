@@ -25,6 +25,7 @@ from potpie_context_engine.results import (
     DescribeResult,
     DisableRollbackResult,
     ExportSnapshotResult,
+    GraphSliceResult,
     HistoryResult,
     ImportSnapshotResult,
     InboxAddResult,
@@ -76,6 +77,7 @@ from potpie_context_engine.requests import (
     DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
+    GraphSliceRequest,
     HistoryRequest,
     ImportSnapshotRequest,
     InboxAddRequest,
@@ -198,6 +200,10 @@ class GraphOperations(Protocol):
     async def inspect(
         self, context: ContextIdentity, request: InspectRequest
     ) -> InspectResult | Outcome[InspectResult]: ...
+
+    async def slice(
+        self, context: ContextIdentity, request: GraphSliceRequest
+    ) -> GraphSliceResult | Outcome[GraphSliceResult]: ...
 
     async def export_snapshot(
         self, context: ContextIdentity, request: ExportSnapshotRequest
@@ -544,6 +550,16 @@ class ContextEngine:
     async def inspect(self, request: InspectRequest) -> Outcome[InspectResult]:
         return await self._invoke("inspect", self._dependencies.graph.inspect, request)
 
+    async def slice(self, request: GraphSliceRequest) -> Outcome[GraphSliceResult]:
+        """The pot's whole graph, as the ``graph_slice`` operation."""
+
+        handler = getattr(self._dependencies.graph, "slice", None)
+        if handler is None:
+            return await self._invoke(
+                "graph_slice", _not_composed("graph_slice"), request
+            )
+        return await self._invoke("graph_slice", handler, request)
+
     async def export_snapshot(
         self, request: ExportSnapshotRequest
     ) -> Outcome[ExportSnapshotResult]:
@@ -790,6 +806,25 @@ class ContextEngine:
 
         handler = getattr(documents, operation) if documents is not None else uncomposed
         return await self._invoke(operation, handler, request)
+
+
+def _not_composed(operation: str) -> Operation:
+    """A handler for an operation the composed dependency does not provide."""
+
+    async def refuse(context: ContextIdentity, request: object) -> Outcome[object]:
+        del context, request
+        return Failure(
+            DependencyError(
+                code="not_implemented",
+                message=f"this engine's graph dependency does not serve {operation}",
+                details={"operation": operation},
+                recommended_next_action="compose the engine with a graph dependency "
+                "that implements it",
+                retry_posture="safe",
+            )
+        )
+
+    return refuse
 
 
 async def create_engine(

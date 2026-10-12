@@ -142,6 +142,19 @@ class InspectRequest(NeighborhoodRequest):
 
 
 @dataclass(frozen=True, slots=True)
+class GraphSliceRequest(EngineRequest):
+    """The whole graph of one pot as nodes and edges (the explorer's view).
+
+    ``include_invalidated`` keeps claims that were invalidated; ``limit``
+    caps the claims a backend returns, and ``None`` leaves the backend's own
+    bound in force. A truncated answer says so in ``truncated``.
+    """
+
+    include_invalidated: bool = False
+    limit: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ExportSnapshotRequest(EngineRequest):
     """Export one pot's graph (``version`` 1) or portable snapshot (``version`` 2).
 

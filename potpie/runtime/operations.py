@@ -35,6 +35,7 @@ from potpie_context_engine.requests import (
     DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
+    GraphSliceRequest,
     HistoryRequest,
     ImportSnapshotRequest,
     InboxAddRequest,
@@ -85,6 +86,7 @@ from potpie_context_engine.results import (
     DescribeResult,
     DisableRollbackResult,
     ExportSnapshotResult,
+    GraphSliceResult,
     HistoryResult,
     ImportSnapshotResult,
     InboxAddResult,
@@ -138,6 +140,7 @@ class EngineOperation(StrEnum):
     MUTATE = "mutate"
     NEIGHBORHOOD = "neighborhood"
     INSPECT = "inspect"
+    GRAPH_SLICE = "graph_slice"
     EXPORT_SNAPSHOT = "export_snapshot"
     IMPORT_SNAPSHOT = "import_snapshot"
     REPAIR = "repair"
@@ -196,8 +199,14 @@ class SafetyClass(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class OperationSpec:
-    operation: EngineOperation
-    request_type: type[EngineRequest]
+    """Protocol-visible semantics of one operation.
+
+    ``operation`` is an :class:`EngineOperation`, a host operation
+    (``host.*``) or an embedding host's extension name (``ext.<vendor>.<op>``).
+    """
+
+    operation: str
+    request_type: type[object]
     result_type: type[object]
     safety: SafetyClass
     destructive: bool = False
@@ -218,6 +227,24 @@ class OperationSpec:
             raise ValueError(
                 "resource conflict metadata is valid only for resource mutations"
             )
+
+    @property
+    def name(self) -> str:
+        """The operation's wire name."""
+
+        return str(self.operation)
+
+    @property
+    def family(self) -> str:
+        """``engine``, ``host`` or ``extension``."""
+
+        if isinstance(self.operation, EngineOperation):
+            return "engine"
+        if self.name.startswith("host."):
+            return "host"
+        if self.name.startswith("ext."):
+            return "extension"
+        return "unknown"
 
 
 _READ = SafetyClass.SHARED_CONTEXT_READ
@@ -256,6 +283,9 @@ _SPECS = (
         _READ,
     ),
     OperationSpec(EngineOperation.INSPECT, InspectRequest, InspectResult, _READ),
+    OperationSpec(
+        EngineOperation.GRAPH_SLICE, GraphSliceRequest, GraphSliceResult, _READ
+    ),
     OperationSpec(
         EngineOperation.EXPORT_SNAPSHOT,
         ExportSnapshotRequest,
@@ -672,12 +702,19 @@ def operation_schema(
 def operation_schema_document(
     specs: Iterable[OperationSpec] | None = None,
 ) -> dict[str, object]:
-    """Every operation's wire contract plus the closed error categories."""
+    """Every engine and host operation's wire contract plus the error categories.
+
+    Extension operations belong to the embedding host that registers them and
+    are not part of this document.
+    """
 
     from potpie.runtime.codec import ERROR_CATEGORIES
+    from potpie.runtime.host_operations import HOST_OPERATION_CATALOG
     from potpie.runtime.protocol import PROTOCOL_VERSION
 
-    chosen = sorted(_SPECS if specs is None else specs, key=_operation_name)
+    if specs is None:
+        specs = (*_SPECS, *HOST_OPERATION_CATALOG.values())
+    chosen = sorted(specs, key=_operation_name)
     types: dict[str, dict[str, object]] = {}
     operations = {
         _operation_name(spec): operation_schema(spec, types) for spec in chosen
@@ -833,13 +870,11 @@ def _json_value(value: object) -> object:
 
 
 def _operation_name(spec: OperationSpec) -> str:
-    return str(spec.operation.value)
+    return spec.name
 
 
 def _operation_family(spec: OperationSpec) -> str:
-    if isinstance(spec.operation, EngineOperation):
-        return "engine"
-    return "other"
+    return spec.family
 
 
 def operation_capabilities() -> tuple[str, ...]:
