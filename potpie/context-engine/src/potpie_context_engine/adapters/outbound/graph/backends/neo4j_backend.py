@@ -7,11 +7,11 @@ relationship vector index, while inspection/snapshot remain fail-closed stubs
 until they are built out.
 
     claim_query  -> Neo4jClaimQueryStore           (existing, real)
-    mutation     -> existing apply path             # TODO(stage-N)
+    mutation     -> atomic batch + durable receipt and pot revision
     analytics    -> ClaimQueryAnalytics             (computed from claim_query, real)
     semantic     -> ClaimQuerySemanticSearch        (native vector via claim_query)
     inspection   -> CapabilityNotImplemented        # TODO(stage-N): cypher traversal
-    snapshot     -> CapabilityNotImplemented        # TODO(stage-N): portable export/import
+    snapshot     -> Neo4jSnapshot                    (transactional portable export/import)
 
 Neo4j imports are lazy so the skeleton (and the in_memory profile) load without
 the ``graph`` extra installed; a missing driver surfaces only when this profile
@@ -20,28 +20,44 @@ is actually selected.
 
 from __future__ import annotations
 
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
-import uuid
+
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
+from potpie_context_engine.core.graph_mutations import InvalidationOp, ProvenanceContext
+from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
+from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.ports.graph.mutation import (
+    BackendReadiness,
+    MutationExecutionLookup,
+    MutationExecutionState,
+)
+from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
 )
 from potpie_context_engine.adapters.outbound.graph.backends._unimplemented import (
     UnimplementedInspection,
-    UnimplementedSnapshot,
-)
-from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
-    ClaimQuerySemanticSearch,
 )
 from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import (
     ClaimQueryAnalytics,
 )
+from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
+    ClaimQuerySemanticSearch,
+)
 from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
-from potpie_context_engine.core.definition import (
-    DEFAULT_GRAPH_DEFINITION,
-    GraphDefinition,
+from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
+    ENTITY_LABEL_REPAIR_LIMIT,
+    ENTITY_LABEL_SCAN_CYPHER,
+    canonical_label_changes,
+    repaired_entity_labels,
 )
 from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
     ENTITY_SUMMARY_REPAIR_LIMIT,
@@ -49,22 +65,6 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
     ENTITY_SUMMARY_UPDATE_CYPHER,
     repaired_entity_properties,
 )
-from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
-    ENTITY_LABEL_REPAIR_LIMIT,
-    ENTITY_LABEL_SCAN_CYPHER,
-    canonical_label_changes,
-    repaired_entity_labels,
-)
-from potpie_context_engine.core.graph_mutations import ProvenanceContext
-from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
-from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
-from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
-from potpie_context_engine.core.ports.graph.mutation import (
-    MutationExecutionLookup,
-    MutationExecutionState,
-)
-from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
-from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
 
 _PROFILE = "neo4j"
@@ -121,6 +121,10 @@ class _Neo4jMutation:
             )
         return self.writer
 
+    @property
+    def atomic_mutations_supported(self) -> bool:
+        return callable(getattr(self._get_writer(), "in_transaction", None))
+
     async def apply_async(
         self,
         plan: MutationBatch,
@@ -142,6 +146,20 @@ class _Neo4jMutation:
             provenance_context or ProvenanceContext(),
             mutation_id=mutation_id,
         )
+        writer = self._get_writer()
+        if callable(getattr(writer, "in_transaction", None)):
+            from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
+                apply_atomic,
+            )
+
+            return await apply_atomic(
+                writer,
+                plan,
+                expected_pot_id=expected_pot_id,
+                provenance_context=context,
+                definition=self.definition,
+                reconciliation_config=reconciliation_config,
+            )
         return await self.execution_registry.execute_async(
             plan,
             expected_pot_id=expected_pot_id,
@@ -163,6 +181,20 @@ class _Neo4jMutation:
         expected_pot_id: str,
         mutation_id: str,
     ) -> MutationExecutionLookup:
+        writer = self._get_writer()
+        if callable(getattr(writer, "in_transaction", None)):
+            from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
+                lookup_execution,
+            )
+
+            return _run_sync(
+                lookup_execution(
+                    writer,
+                    plan,
+                    expected_pot_id=expected_pot_id,
+                    mutation_id=mutation_id,
+                )
+            )
         lookup = self.execution_registry.lookup(
             plan,
             expected_pot_id=expected_pot_id,
@@ -175,6 +207,43 @@ class _Neo4jMutation:
             mutation_id=mutation_id,
             batch_fingerprint=lookup.batch_fingerprint,
             detail="Neo4j mutation receipts are not durable across processes",
+        )
+
+    def current_version(self, pot_id: str) -> int:
+        from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
+            current_version,
+        )
+
+        return _run_sync(current_version(self._get_writer(), pot_id))
+
+    def compare_and_apply(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
+        from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
+            apply_atomic,
+        )
+
+        context = replace(
+            provenance_context or ProvenanceContext(),
+            mutation_id=(provenance_context.mutation_id if provenance_context else None)
+            or uuid.uuid4().hex,
+        )
+        return _run_sync(
+            apply_atomic(
+                self._get_writer(),
+                plan,
+                expected_pot_id=expected_pot_id,
+                expected_version=expected_version,
+                provenance_context=context,
+                definition=self.definition,
+                reconciliation_config=reconciliation_config,
+            )
         )
 
     def apply(
@@ -197,30 +266,49 @@ class _Neo4jMutation:
     def invalidate(
         self, *, pot_id: str, claim_keys: Any, reason: str | None = None
     ) -> int:
-        # TODO(stage-N): cypher invalidation by claim key.
-        from potpie_context_engine.core.errors import CapabilityNotImplemented
-
-        raise CapabilityNotImplemented(
-            "graph.neo4j.mutation.invalidate",
-            recommended_next_action="implement cypher invalidation",
+        keys = tuple(dict.fromkeys(claim_keys))
+        if not keys:
+            return 0
+        result = self.apply(
+            MutationBatch(
+                invalidations=[
+                    InvalidationOp(
+                        target_entity_key=None,
+                        target_edge=None,
+                        target_claim_keys=keys,
+                        reason=reason or "claim invalidated",
+                    )
+                ]
+            ),
+            expected_pot_id=pot_id,
         )
+        return result.mutation_summary.invalidations_applied
 
     def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        # TODO(stage-N): route through the existing hard_reset_pot use case.
+        if callable(getattr(self._get_writer(), "in_transaction", None)):
+            from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
+                reset_atomic,
+            )
+
+            return _run_sync(reset_atomic(self._get_writer(), pot_id))
         return _run_sync(self._get_writer().reset_pot(pot_id))
 
     def readiness(self, pot_id: str) -> BackendReadiness:
+        ready = bool(getattr(self._get_writer(), "enabled", False))
+        atomic = ready and self.atomic_mutations_supported
         return BackendReadiness(
             profile=_PROFILE,
-            ready=True,
-            detail="neo4j claim_query + mutation + semantic + analytics wired; inspection/snapshot pending",
+            ready=ready,
+            detail="neo4j claim_query + mutation + semantic + analytics + snapshot wired; inspection pending",
             capability_ready={
-                "mutation": True,
-                "claim_query": True,
-                "analytics": True,
-                "semantic": True,
+                "mutation": ready,
+                "claim_query": ready,
+                "analytics": ready,
+                "atomic_mutation": atomic,
+                "durable_mutation_receipts": atomic,
+                "semantic": ready,
                 "inspection": False,
-                "snapshot": False,
+                "snapshot": ready,
             },
         )
 
@@ -273,6 +361,14 @@ class Neo4jGraphBackend:
         return _PROFILE
 
     @property
+    def journal(self):
+        from potpie_context_engine.adapters.outbound.graph.unavailable_journal import (
+            UnavailableJournal,
+        )
+
+        return UnavailableJournal("Neo4j journal and rollback are deferred")
+
+    @property
     def graph_writer(self) -> Any:
         """Compatibility alias for old ingestion paths that seed via writer."""
         return self._mutation._get_writer()
@@ -304,8 +400,12 @@ class Neo4jGraphBackend:
         )
 
     @property
-    def snapshot(self) -> UnimplementedSnapshot:
-        return UnimplementedSnapshot(_PROFILE)
+    def snapshot(self) -> Any:
+        from potpie_context_engine.adapters.outbound.graph.neo4j_snapshot import (
+            Neo4jSnapshot,
+        )
+
+        return Neo4jSnapshot(self.settings)
 
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
@@ -315,7 +415,7 @@ class Neo4jGraphBackend:
             analytics=True,
             semantic=True,
             inspection=False,
-            snapshot=False,
+            snapshot=True,
         )
 
     def bind_definition(self, definition: GraphDefinition) -> Neo4jGraphBackend:

@@ -59,6 +59,7 @@ class GraphMutationDiff:
     edge_deletes: int = 0
     invalidations: int = 0
     claim_keys: tuple[str, ...] = ()
+    retracted_claim_keys: tuple[str, ...] = ()
 
     @classmethod
     def from_batch(
@@ -72,6 +73,13 @@ class GraphMutationDiff:
             edge_deletes=len(batch.edge_deletes),
             invalidations=len(batch.invalidations),
             claim_keys=claim_keys,
+            retracted_claim_keys=tuple(
+                dict.fromkeys(
+                    key
+                    for item in batch.invalidations
+                    for key in (item.target_claim_keys or ())
+                )
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,8 +89,9 @@ class GraphMutationDiff:
             "edge_deletes": self.edge_deletes,
             "invalidations": self.invalidations,
             "claims_asserted": len(self.claim_keys),
-            "claims_retracted": self.invalidations,
+            "claims_retracted": len(self.retracted_claim_keys),
             "claim_keys": list(self.claim_keys),
+            "retracted_claim_keys": list(self.retracted_claim_keys),
         }
 
     @classmethod
@@ -94,6 +103,9 @@ class GraphMutationDiff:
             edge_deletes=_int(data.get("edge_deletes")),
             invalidations=_int(data.get("invalidations")),
             claim_keys=tuple(str(k) for k in data.get("claim_keys") or ()),
+            retracted_claim_keys=tuple(
+                str(k) for k in data.get("retracted_claim_keys") or ()
+            ),
         )
 
 
@@ -156,6 +168,7 @@ class GraphMutationPlanRecord:
     ontology_version: str = ONTOLOGY_VERSION
     commit_attempt_id: str | None = None
     commit_attempt_started_at: datetime | None = None
+    verification_quality_before: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -183,6 +196,7 @@ class GraphMutationPlanRecord:
             "warnings": list(self.warnings),
             "approval": self.approval.to_dict() if self.approval else None,
             "mutation_id": self.mutation_id,
+            "verification_quality_before": _json_safe(self.verification_quality_before),
             "commit_attempt_id": self.commit_attempt_id,
             "commit_attempt_started_at": self.commit_attempt_started_at.isoformat()
             if self.commit_attempt_started_at is not None
@@ -217,6 +231,7 @@ class GraphMutationPlanRecord:
                 dict(i) for i in raw.get("review_required_ops") or ()
             ),
             rejected_ops=tuple(dict(i) for i in raw.get("rejected_ops") or ()),
+            verification_quality_before=raw.get("verification_quality_before"),
             lowered_batch=mutation_batch_from_dict(raw.get("lowered_batch")),
             provenance=provenance_context_from_dict(raw.get("provenance")),
             expected_subgraph_versions=_int_mapping(
@@ -245,6 +260,14 @@ class GraphMutationPlanRecord:
             ontology_version=str(raw.get("ontology_version") or ONTOLOGY_VERSION),
         )
 
+    @property
+    def reserves_idempotency(self) -> bool:
+        """A refused key-reuse attempt is audit history, not a new key owner."""
+        return not any(
+            issue.get("code") == "idempotency_key_reused"
+            for issue in self.validation_issues
+        )
+
     def is_expired(self, *, now: datetime | None = None) -> bool:
         probe = now or datetime.now(timezone.utc)
         return probe >= self.expires_at
@@ -271,6 +294,8 @@ class GraphMutationProposal:
     detail: str | None = None
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
     ontology_version: str = ONTOLOGY_VERSION
+    approval: GraphMutationApproval | None = None
+    """Recorded when ``propose`` was given ``approved_by``; commit then needs none."""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -293,6 +318,7 @@ class GraphMutationProposal:
             "claim_keys": list(self.claim_keys),
             "graph_contract_version": self.graph_contract_version,
             "ontology_version": self.ontology_version,
+            "approval": self.approval.to_dict() if self.approval is not None else None,
         }
         if self.recommended_next_action:
             out["recommended_next_action"] = self.recommended_next_action
@@ -313,6 +339,7 @@ class GraphIngestionVerificationResult:
     readback_claim_keys: tuple[str, ...] = ()
     missing_claim_keys: tuple[str, ...] = ()
     readback_count: int = 0
+    content_readback: Mapping[str, Any] = field(default_factory=dict)
     quality_status: str | None = None
     quality_counts: Mapping[str, int] = field(default_factory=dict)
     quality_delta: Mapping[str, int] = field(default_factory=dict)
@@ -334,6 +361,7 @@ class GraphIngestionVerificationResult:
             "readback_claim_keys": list(self.readback_claim_keys),
             "missing_claim_keys": list(self.missing_claim_keys),
             "readback_count": self.readback_count,
+            "content_readback": dict(self.content_readback),
             "quality_status": self.quality_status,
             "quality_counts": dict(self.quality_counts),
             "quality_delta": dict(self.quality_delta),
@@ -445,6 +473,9 @@ def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:
                 "reason": item.reason,
                 "superseded_by_key": item.superseded_by_key,
                 "valid_to": item.valid_to,
+                "target_claim_keys": list(item.target_claim_keys)
+                if item.target_claim_keys is not None
+                else None,
             }
             for item in batch.invalidations
         ],
@@ -501,6 +532,9 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
                 reason=str(item.get("reason") or ""),
                 superseded_by_key=str(item.get("superseded_by_key") or "") or None,
                 valid_to=str(item.get("valid_to") or "") or None,
+                target_claim_keys=tuple(item["target_claim_keys"])
+                if item.get("target_claim_keys") is not None
+                else None,
             )
             for item in raw.get("invalidations") or ()
             if isinstance(item, Mapping)

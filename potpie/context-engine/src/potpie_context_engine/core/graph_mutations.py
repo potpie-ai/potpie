@@ -160,7 +160,7 @@ class EdgeDelete:
 class InvalidationOp:
     """Mark a fact or entity invalidated with provenance.
 
-    Either target_entity_key or target_edge must be set.
+    Either target_entity_key, target_edge or target_claim_keys must be set.
     When superseded_by_key is provided a SUPERSEDES edge is created from the
     new entity to the invalidated one; the invalidated node/edge gets valid_to
     stamped rather than being deleted, preserving the audit trail.
@@ -171,3 +171,5 @@ class InvalidationOp:
     reason: str
     superseded_by_key: str | None = None
     valid_to: str | None = None
+    # None retains the legacy internal selector. An empty tuple selects no claims.
+    target_claim_keys: tuple[str, ...] | None = None

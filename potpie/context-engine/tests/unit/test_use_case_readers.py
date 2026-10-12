@@ -1,4 +1,4 @@
-"""P9 use-case readers (rebuild plan P9).
+"""Use-case readers.
 
 These tests exercise the four UC readers (CodingPreferences, InfraTopology,
 Timeline, PriorBugs) against the in-memory claim store. The goal is to
@@ -9,6 +9,7 @@ F1/F2/F4 fix paths produce the right answers.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -377,6 +378,184 @@ class TestCodingPreferencesReader:
 
         keys = {r.candidate.payload["subject_key"] for r in response.items}
         assert keys == {"preference:python-fastapi"}
+
+    def test_relation_target_scopes_rules_without_duplicate_code_scope(self) -> None:
+        store = InMemoryClaimQueryStore()
+        for subject, target in (
+            ("preference:pie", "repo:github.com/acme/pie"),
+            ("preference:potpie", "repo:github.com/acme/potpie"),
+            ("preference:shared", "scope:any"),
+        ):
+            store.add(
+                _row(
+                    predicate="POLICY_APPLIES_TO",
+                    subject_key=subject,
+                    object_key=target,
+                    fact=f"rule for {subject}",
+                )
+            )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "https://github.com/acme/pie.git"},
+                max_items=10,
+            )
+        )
+
+        keys = {item.candidate.payload["subject_key"] for item in response.items}
+        assert keys == {"preference:pie", "preference:shared"}
+
+    def test_service_folder_and_environment_are_all_required(self) -> None:
+        store = InMemoryClaimQueryStore()
+        for subject, target, environment in (
+            ("preference:match", "code:service:api:src/payments", "prod"),
+            ("preference:wrong-folder", "code:service:api:src/ledger", "prod"),
+            ("preference:wrong-service", "code:service:worker:src/payments", "prod"),
+            ("preference:wrong-env", "code:service:api:src/payments", "staging"),
+        ):
+            store.add(
+                _row(
+                    predicate="POLICY_APPLIES_TO",
+                    subject_key=subject,
+                    object_key=target,
+                    environment=environment,
+                    fact=subject,
+                )
+            )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={
+                    "service": "api",
+                    "path": "src/payments/client.py",
+                    "environment": "prod",
+                },
+                max_items=10,
+            )
+        )
+
+        assert [item.candidate.payload["subject_key"] for item in response.items] == [
+            "preference:match"
+        ]
+
+    def test_project_target_isolated_from_other_projects(self) -> None:
+        store = InMemoryClaimQueryStore()
+        for project in ("checkout", "billing"):
+            store.add(
+                _row(
+                    predicate="POLICY_APPLIES_TO",
+                    subject_key=f"preference:{project}",
+                    object_key=f"project:{project}",
+                    fact=f"{project} project preference",
+                )
+            )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(ReadRequest(pot_id="pot-1", scope={"project": "checkout"}, max_items=10))
+
+        assert [item.candidate.payload["subject_key"] for item in response.items] == [
+            "preference:checkout"
+        ]
+
+    def test_prefixed_and_plain_service_scopes_are_equivalent(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:payments",
+                object_key="service:payments",
+                fact="payments service preference",
+            )
+        )
+        reader = CodingPreferencesReader(claim_query=store, ranker=RankingService())
+
+        for service in ("payments", "service:payments"):
+            response = reader.read(
+                ReadRequest(pot_id="pot-1", scope={"service": service}, max_items=10)
+            )
+            assert [
+                item.candidate.payload["subject_key"] for item in response.items
+            ] == ["preference:payments"]
+
+    def test_scope_filter_runs_before_output_candidate_limit(self) -> None:
+        class RecordingStore(InMemoryClaimQueryStore):
+            def __init__(self):
+                super().__init__()
+                self.filters = []
+
+            def find_claims(self, filter_):
+                self.filters.append(filter_)
+                return super().find_claims(filter_)
+
+        store = RecordingStore()
+        for index in range(20):
+            store.add(
+                _row(
+                    predicate="POLICY_APPLIES_TO",
+                    subject_key=f"preference:unrelated-{index}",
+                    object_key=f"repo:github.com/acme/unrelated-{index}",
+                    fact="unrelated preference",
+                )
+            )
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:applicable",
+                object_key="repo:github.com/acme/pie",
+                fact="applicable preference beyond the old candidate cap",
+            )
+        )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/acme/pie"},
+                query="preference",
+                max_items=1,
+            )
+        )
+
+        assert response.items[0].candidate.payload["subject_key"] == (
+            "preference:applicable"
+        )
+        assert store.filters[0].fact_query is None
+        assert store.filters[0].limit is None
+        assert store.filters[1].fact_query == "preference"
+        assert store.filters[1].claim_key_in == (
+            "claim:POLICY_APPLIES_TO:preference:applicable:repo:github.com/acme/pie",
+        )
+
+    def test_unknown_missing_scope_is_not_guessed_to_be_shared(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="POLICY_APPLIES_TO",
+                subject_key="preference:ambiguous",
+                object_key="scope:legacy-unknown",
+                fact="legacy rule with unknown applicability",
+            )
+        )
+
+        response = CodingPreferencesReader(
+            claim_query=store, ranker=RankingService()
+        ).read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"repo": "github.com/acme/pie"},
+                max_items=10,
+            )
+        )
+
+        assert response.items == ()
 
 
 # ---------------------------------------------------------------------------
@@ -1159,6 +1338,352 @@ class TestNewUseCaseReaders:
             == "document:graph-runbook"
         )
 
+    def test_docs_reader_returns_document_sections_and_their_parent(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1",
+            entity_key="docsection:q3-review:capacity",
+            labels=("DocumentSection",),
+        )
+        store.add(
+            _row(
+                predicate="DOCUMENTS",
+                subject_key="docsection:q3-review:capacity",
+                object_key="service:context-engine",
+                fact="Q3 capacity planning for the context engine",
+            )
+        )
+        store.add(
+            _row(
+                predicate="SECTION_OF",
+                subject_key="docsection:q3-review:capacity",
+                object_key="document:q3-review",
+                fact="capacity section of the Q3 review",
+            )
+        )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"})
+        )
+
+        predicates = {r.candidate.payload["predicate"] for r in response.items}
+        # The section is found on its own label, then expanded one hop so the
+        # result carries the document it came from.
+        assert {"DOCUMENTS", "SECTION_OF"} <= predicates
+
+    def test_docs_reader_returns_sections_with_their_chunk_ids(self) -> None:
+        """An unscoped read is search-then-get in two calls: the section claim
+        an import wrote comes back already holding the ids ``resource get``
+        takes, so no ``resource list`` hop sits in between (R13)."""
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1",
+            entity_key="docsection:q3-review:capacity",
+            labels=("DocumentSection",),
+        )
+        store.add(
+            _row(
+                predicate="SECTION_OF",
+                subject_key="docsection:q3-review:capacity",
+                object_key="document:q3-review",
+                fact="capacity planning for Q3, by team",
+                source_ref="potpie://res/q3-review/capacity/0000",
+            )
+        )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query="capacity planning"))
+
+        assert response.items
+        payload = response.items[0].candidate.payload
+        assert payload["subject_key"] == "docsection:q3-review:capacity"
+        assert payload["chunk_ids"] == ["potpie://res/q3-review/capacity/0000"]
+
+    def test_docs_reader_omits_chunk_ids_when_a_claim_has_none(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1", entity_key="document:plain", labels=("Document",)
+        )
+        store.add(
+            _row(
+                predicate="DOCUMENTS",
+                subject_key="document:plain",
+                object_key="service:context-engine",
+                fact="a document with no stored chunks",
+            )
+        )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"})
+        )
+
+        assert "chunk_ids" not in response.items[0].candidate.payload
+
+    def test_docs_reader_still_reads_legacy_related_to_doc_claims(self) -> None:
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1", entity_key="document:legacy-note", labels=("Document",)
+        )
+        store.add(
+            _row(
+                predicate="RELATED_TO",
+                subject_key="document:legacy-note",
+                object_key="service:context-engine",
+                fact="note written before DOCUMENTS existed",
+            )
+        )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "context-engine"})
+        )
+
+        assert [r.candidate.payload["subject_key"] for r in response.items] == [
+            "document:legacy-note"
+        ]
+
+    def test_docs_reader_returns_one_item_when_both_spellings_exist(self) -> None:
+        # Nothing migrates the RELATED_TO fallback, so a document can carry
+        # both predicates for one scope. That is one document, not two.
+        store = InMemoryClaimQueryStore()
+        store.set_entity_label(
+            pot_id="pot-1", entity_key="document:runbook", labels=("Document",)
+        )
+        for predicate in ("RELATED_TO", "DOCUMENTS"):
+            store.add(
+                _row(
+                    predicate=predicate,
+                    subject_key="document:runbook",
+                    object_key="service:payments-api",
+                    fact="runbook for the payments api",
+                )
+            )
+        reader = DocsReader(claim_query=store, ranker=RankingService())
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "payments-api"})
+        )
+
+        assert [r.candidate.payload["predicate"] for r in response.items] == [
+            "DOCUMENTS"
+        ]
+
+
+# ---------------------------------------------------------------------------
+# DocsReader relevance floor
+#
+# A KNN returns k rows whether or not any of them answers the query, so a docs
+# read without a floor pads its reply to the limit with whatever the corpus
+# holds. Measured on the resource corpus before this landed: a database
+# incident question returned 12 hits spanning 0.021 of score, all from a cloud
+# cost spreadsheet, with the runbook section holding the literal error string
+# absent entirely.
+#
+# Similarities are set explicitly here rather than computed, because the whole
+# point is behaviour across a *scale*: real scores on that corpus top out near
+# 0.60 and clamp to exactly 0.0 at orthogonal.
+# ---------------------------------------------------------------------------
+
+
+def _scored(row: ClaimRow, similarity: float | None) -> ClaimRow:
+    properties = dict(row.properties)
+    if similarity is None:
+        properties.pop("semantic_similarity", None)
+    else:
+        properties["semantic_similarity"] = similarity
+    return replace(row, properties=properties)
+
+
+def _doc_label(entity_key: str) -> str | None:
+    if entity_key.startswith("document:"):
+        return "Document"
+    if entity_key.startswith("docsection:"):
+        return "DocumentSection"
+    return None
+
+
+class _StubDocClaimQuery:
+    """Claim-query stub with per-row control over the stamped similarity.
+
+    Mirrors the one backend behaviour that matters here: a query carries a
+    similarity onto every row it returns, and a lookup **by key** does not —
+    which is why the reader's one-hop ``SECTION_OF`` expansion arrives
+    unscored.
+    """
+
+    def __init__(self, rows: Sequence[tuple[ClaimRow, float | None]]) -> None:
+        self._rows = list(rows)
+
+    def find_claims(self, filter_) -> list[ClaimRow]:
+        out: list[ClaimRow] = []
+        for row, similarity in self._rows:
+            if filter_.predicate_in and row.predicate not in filter_.predicate_in:
+                continue
+            if filter_.subject_key_in and row.subject_key not in filter_.subject_key_in:
+                continue
+            if filter_.object_key_in and row.object_key not in filter_.object_key_in:
+                continue
+            if (
+                filter_.subject_label
+                and _doc_label(row.subject_key) != filter_.subject_label
+            ):
+                continue
+            out.append(_scored(row, similarity if filter_.fact_query else None))
+        return out
+
+    def entity_labels(self, *, pot_id: str, entity_keys):  # pragma: no cover - unused
+        return {}
+
+
+def _docs_reader(rows: Sequence[tuple[ClaimRow, float | None]]) -> DocsReader:
+    return DocsReader(claim_query=_StubDocClaimQuery(rows), ranker=RankingService())
+
+
+def _documents_row(subject_key: str, fact: str) -> ClaimRow:
+    return _row(
+        predicate="DOCUMENTS",
+        subject_key=subject_key,
+        object_key="service:payments-api",
+        fact=fact,
+    )
+
+
+class TestDocsReaderRelevanceFloor:
+    def test_drops_rows_far_below_the_best_match_in_the_pool(self) -> None:
+        best = _documents_row("docsection:alpha:one", "quarterly capacity forecast")
+        near = _documents_row("docsection:alpha:two", "capacity planning notes")
+        filler = _documents_row("docsection:beta:one", "vendor invoice totals")
+        reader = _docs_reader([(best, 0.60), (near, 0.31), (filler, 0.10)])
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", query="quarterly capacity forecast")
+        )
+
+        # Floor is half of the pool's best (0.60) — 0.31 clears it, 0.10 does not.
+        assert [r.candidate.payload["subject_key"] for r in response.items] == [
+            "docsection:alpha:one",
+            "docsection:alpha:two",
+        ]
+
+    def test_keeps_an_exact_lexical_match_below_the_floor(self) -> None:
+        """The strongest relevance signal is the weakest embedding signal.
+
+        A rare identifier is one token to a reader and noise to a sentence
+        embedder, so a verbatim hit survives on its text even when the vector
+        channel scored it near zero.
+        """
+        best = _documents_row("docsection:alpha:one", "connection pooling overview")
+        verbatim = _documents_row(
+            "docsection:beta:one",
+            "raise pool_max_conns when DBConnectionPoolExhausted fires",
+        )
+        reader = _docs_reader([(best, 0.60), (verbatim, 0.02)])
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", query="DBConnectionPoolExhausted")
+        )
+
+        assert "docsection:beta:one" in {
+            r.candidate.payload["subject_key"] for r in response.items
+        }
+
+    def test_returns_nothing_when_the_whole_pool_scored_zero(self) -> None:
+        """A tail of exact zeros is not a weak answer, it is no answer.
+
+        Every row at or past orthogonal clamps to 0.0, so a purely relative
+        floor would admit the entire tail on the strength of its own worst
+        member.
+        """
+        rows = [
+            (_documents_row(f"docsection:alpha:{i}", f"unrelated section {i}"), 0.0)
+            for i in range(3)
+        ]
+        reader = _docs_reader(rows)
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query="how to make a cake"))
+
+        assert response.items == ()
+        assert response.coverage_status == "empty"
+
+    def test_no_query_returns_the_whole_pool(self) -> None:
+        rows = [
+            (_documents_row(f"docsection:alpha:{i}", f"section {i}"), None)
+            for i in range(3)
+        ]
+        reader = _docs_reader(rows)
+
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"service": "payments-api"})
+        )
+
+        assert len(response.items) == 3
+
+
+class TestDocsReaderStructuralRows:
+    """The one-hop ``SECTION_OF`` expansion is fetched by key, never scored.
+
+    The query here deliberately shares no token with either row, so these
+    exercise the floor rather than the lexical rescue.
+    """
+
+    QUERY = "database connection pooling"
+
+    def _rows(
+        self, section_similarity: float
+    ) -> Sequence[tuple[ClaimRow, float | None]]:
+        section = _documents_row("docsection:alpha:one", "quarterly capacity forecast")
+        structure = _row(
+            predicate="SECTION_OF",
+            subject_key="docsection:alpha:one",
+            object_key="document:alpha",
+            fact="capacity forecast section",
+            source_ref="potpie://res/alpha/one/0000",
+        )
+        return [(section, section_similarity), (structure, None)]
+
+    def test_kept_when_its_section_cleared_the_floor(self) -> None:
+        """Dropping it would take the section's fetchable chunk ids with it."""
+        reader = _docs_reader(self._rows(0.60))
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query=self.QUERY))
+
+        predicates = [r.candidate.payload["predicate"] for r in response.items]
+        assert "SECTION_OF" in predicates
+        chunk_ids = [
+            ref
+            for item in response.items
+            for ref in item.candidate.payload.get("chunk_ids", [])
+        ]
+        assert "potpie://res/alpha/one/0000" in chunk_ids
+
+    def test_dropped_when_its_section_did_not(self) -> None:
+        reader = _docs_reader(self._rows(0.0))
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query=self.QUERY))
+
+        assert response.items == ()
+
+    def test_is_scored_as_its_section_not_as_unknown(self) -> None:
+        """Regression: an unscored row takes the ranker's neutral 0.5 default.
+
+        On a corpus whose real scores top out near 0.60 that puts "never
+        compared to the query" above every row that was compared and matched —
+        measured, four such rows held the top of a scoped read. It was admitted
+        because its section matched, so it is scored the same way.
+        """
+        reader = _docs_reader(self._rows(0.60))
+
+        response = reader.read(ReadRequest(pot_id="pot-1", query=self.QUERY))
+
+        structural = next(
+            item
+            for item in response.items
+            if item.candidate.payload["predicate"] == "SECTION_OF"
+        )
+        assert structural.breakdown["semantic_similarity"] == 0.60
+
 
 # ---------------------------------------------------------------------------
 # PriorBugsReader (UC4)
@@ -1277,3 +1802,111 @@ class TestPriorBugsReader:
 
         predicates = {r.candidate.payload["predicate"] for r in response.items}
         assert {"REPRODUCES", "RESOLVED"} <= predicates
+
+    def test_section_claims_do_not_crowd_or_leak_into_prior_bugs(self) -> None:
+        # P9: a dense knowledge/SECTION_OF corpus that shares symptom text with
+        # a real bug must neither appear as prior_bugs items nor empty the
+        # reader when the bug claim exists.
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="REPRODUCES",
+                subject_key="bug_pattern:pool-timeout",
+                object_key="service:auth-svc",
+                fact="connection pool exhausted under load timeout",
+                evidence_strength="attested",
+                subgraph="debugging",
+                properties={"scope_keys": ["service:auth-svc"]},
+            )
+        )
+        store.add(
+            _row(
+                predicate="RESOLVED",
+                subject_key="fix:pool-timeout",
+                object_key="bug_pattern:pool-timeout",
+                fact="raise the pool size when connection pool exhausted",
+                evidence_strength="attested",
+                subgraph="debugging",
+            )
+        )
+        for i in range(40):
+            store.add(
+                _row(
+                    predicate="SECTION_OF",
+                    subject_key=f"docsection:ops-runbook:pool-{i}",
+                    object_key="document:ops-runbook",
+                    fact="connection pool exhausted under load timeout",
+                    evidence_strength="stated",
+                    subgraph="knowledge",
+                )
+            )
+            store.set_entity_label(
+                pot_id="pot-1",
+                entity_key=f"docsection:ops-runbook:pool-{i}",
+                labels=("Entity", "DocumentSection"),
+            )
+
+        reader = PriorBugsReader(claim_query=store, ranker=RankingService())
+        response = reader.read(
+            ReadRequest(
+                pot_id="pot-1",
+                scope={"services": ["auth-svc"]},
+                query="connection pool exhausted under load timeout",
+                max_items=8,
+            )
+        )
+
+        predicates = {r.candidate.payload["predicate"] for r in response.items}
+        assert "SECTION_OF" not in predicates
+        assert "DOCUMENTS" not in predicates
+        assert {"REPRODUCES", "RESOLVED"} & predicates
+        assert response.coverage_status != "empty"
+
+
+class TestInfraTopologyDepthDisclosure:
+    """The reader reports the walk it ran, so a capped depth is visible."""
+
+    def _store(self) -> InMemoryClaimQueryStore:
+        store = InMemoryClaimQueryStore()
+        store.add(
+            _row(
+                predicate="DEPENDS_ON",
+                subject_key="service:web",
+                object_key="service:auth",
+                fact="web depends on auth",
+                evidence_strength="deterministic",
+                truth="source_observation",
+            )
+        )
+        return store
+
+    def test_depth_above_the_maximum_runs_at_the_maximum_and_says_so(self) -> None:
+        reader = InfraTopologyReader(claim_query=self._store(), ranker=RankingService())
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["web"]}, depth=100)
+        )
+        assert response.meta["requested_depth"] == 100
+        assert response.meta["effective_depth"] == 4
+        assert response.meta["max_depth"] == 4
+        assert response.meta["direction"] == "both"
+
+    def test_omitted_depth_reports_the_default_walk(self) -> None:
+        reader = InfraTopologyReader(claim_query=self._store(), ranker=RankingService())
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["web"]}, direction="out")
+        )
+        assert response.meta["requested_depth"] is None
+        assert response.meta["effective_depth"] == 2
+        assert response.meta["direction"] == "out"
+
+    def test_reader_bound_is_the_view_contracts_bound(self) -> None:
+        from potpie_context_engine.core.graph_views import view_depth_bounds
+
+        reader = InfraTopologyReader(claim_query=self._store(), ranker=RankingService())
+        response = reader.read(
+            ReadRequest(pot_id="pot-1", scope={"services": ["web"]}, depth=99)
+        )
+        assert view_depth_bounds("infra_topology.service_neighborhood") == (
+            2,
+            response.meta["effective_depth"],
+        )

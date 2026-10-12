@@ -21,6 +21,7 @@ from potpie_context_engine.context_engine import (
     WorkbenchOperations,
     create_engine,
 )
+from potpie_context_engine.protocols import protocols_definition
 from potpie_context_engine.domain.ranking import (
     Candidate,
     RankedItem,
@@ -60,4 +61,5 @@ __all__ = [
     "ReadResponse",
     "TaskContext",
     "build_graph_service",
+    "protocols_definition",
 ]

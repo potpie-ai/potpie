@@ -548,10 +548,13 @@ def graph_read(
         None, "--view", help="View name within --subgraph, e.g. prior_occurrences"
     ),
     query: str = typer.Option(None, "--query"),
-    query_threshold: float = typer.Option(
-        0.70,
+    query_threshold: float | None = typer.Option(
+        None,
         "--query-threshold",
-        help="Minimum semantic similarity for --query matches (0.0-1.0).",
+        help=(
+            "Minimum semantic similarity for --query matches (0.0-1.0). "
+            "Omit to use the view's default filtering."
+        ),
     ),
     scope: str = typer.Option(None, "--scope", help="key:value[,key:value]"),
     current: bool = typer.Option(
@@ -679,10 +682,13 @@ def graph_read(
 @timeline_app.command("recent")
 def timeline_recent(
     query: str = typer.Option(None, "--query"),
-    query_threshold: float = typer.Option(
-        0.70,
+    query_threshold: float | None = typer.Option(
+        None,
         "--query-threshold",
-        help="Minimum semantic similarity for --query matches (0.0-1.0).",
+        help=(
+            "Minimum semantic similarity for --query matches (0.0-1.0). "
+            "Omit to use the view's default filtering."
+        ),
     ),
     since: str = typer.Option(None, "--since", help="ISO instant lower bound."),
     until: str = typer.Option(None, "--until", help="ISO instant upper bound."),
@@ -3480,7 +3486,9 @@ def _resolve_time_bounds(
     return None, until_dt
 
 
-def _normalize_query_threshold(value: float) -> float:
+def _normalize_query_threshold(value: float | None) -> float | None:
+    if value is None:
+        return None
     threshold = float(value)
     if threshold < 0.0 or threshold > 1.0:
         raise ValueError("--query-threshold must be between 0.0 and 1.0")

@@ -9,12 +9,20 @@ import re
 from typing import Any
 
 from potpie_context_engine.core.ports.claim_query import ClaimRow
+from potpie_context_engine.core.source_references import evidence_review_fields
 from potpie_context_engine.domain.ranking import (
     Candidate,
     RankedItem,
     RankingService,
     TaskContext,
 )
+
+
+# Resource-store section claims live under the knowledge subgraph. Non-docs
+# readers exclude it so a document corpus cannot crowd ANN recall for project
+# memory (resources P9). DocsReader does not use this — that is its home.
+KNOWLEDGE_SUBGRAPH = "knowledge"
+EXCLUDE_KNOWLEDGE_SUBGRAPH: tuple[str, ...] = (KNOWLEDGE_SUBGRAPH,)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,10 +37,11 @@ class ReadRequest:
     since: datetime | None = None
     until: datetime | None = None
     max_items: int = 12
+    detail: str = "compact"
     freshness_preference: str = "balanced"
     include_invalidated: bool = False
     source_refs: tuple[str, ...] = ()
-    query_threshold: float = 0.70
+    query_threshold: float | None = None
     # Traverse-axis controls (Query Surface). Only the neighborhood reader uses
     # these; other readers ignore them.
     depth: int | None = None
@@ -56,6 +65,8 @@ def make_task_context(req: ReadRequest) -> TaskContext:
         intent=req.intent,
         freshness_preference=req.freshness_preference,
         now=req.as_of,
+        # Carrying the query selects the ranker's relevance-led weight profile.
+        query=req.query,
     )
 
 
@@ -178,6 +189,7 @@ def claim_payload(
     }
     if extra:
         payload.update(extra)
+    payload.update(evidence_review_fields(row.properties))
     return payload
 
 
@@ -225,6 +237,14 @@ def row_in_anchor_set(row: ClaimRow, anchor_keys: Iterable[str]) -> bool:
 
 _PATH_SCOPE_KEYS = ("file_path", "path")
 QUERY_SIMILARITY_THRESHOLD = 0.70
+
+# Keep a row only while it scores at least this fraction of the pool's best
+# match. 0.5 was chosen against the measured corpus: it keeps every hit an
+# adversarial verifier judged correct, and drops the flat tail that made a
+# 12-hit result set span 0.02 of final score.
+RELEVANCE_FLOOR_FRACTION = 0.5
+# Absolute floor for a pool where nothing matched at all.
+RELEVANCE_FLOOR_MINIMUM = 0.05
 
 
 def graph_read_scope(scope: Mapping[str, Any]) -> dict[str, str]:
@@ -303,20 +323,58 @@ def code_scope_conflicts(
     return False
 
 
+def relative_relevance_floor(
+    rows: Iterable[ClaimRow],
+    *,
+    fraction: float = RELEVANCE_FLOOR_FRACTION,
+    minimum: float = RELEVANCE_FLOOR_MINIMUM,
+) -> float:
+    """A relevance floor derived from the best match in this pool.
+
+    Deliberately relative. Similarity here is
+    ``1 - distance`` over the backend's ANN result, which is not a calibrated
+    probability: measured against the resource corpus (MiniLM-L6-v2, three
+    ingested documents) the *best* hit for a well-formed query lands at
+    0.50-0.60, and anything at or past orthogonal clamps to exactly 0.0. So an
+    absolute floor is unusable across corpora and embedders — in particular
+    :data:`QUERY_SIMILARITY_THRESHOLD` (0.70), the historical shared default,
+    is above every score that corpus can produce and would empty
+    every read. What *is* stable is the shape: a real answer sits well clear of
+    the tail behind it, so cutting at a fraction of the pool's best keeps the
+    answer and drops the filler regardless of where the scale happens to sit.
+
+    ``minimum`` exists for the pathological pool where nothing scored at all —
+    a tail of exact 0.0 rows carries no evidence of relevance and must not be
+    admitted just because the top of its own pool was also 0.0.
+    """
+    best = 0.0
+    for row in rows:
+        similarity = claim_semantic_similarity(row)
+        if similarity is not None and similarity > best:
+            best = similarity
+    return max(best * fraction, minimum)
+
+
 def row_matches_query(
     row: ClaimRow,
     query: str | None,
     *,
-    threshold: float = QUERY_SIMILARITY_THRESHOLD,
+    threshold: float | None = None,
+    semantic_only: bool = False,
 ) -> bool:
     """Return whether a row is relevant enough for an explicit graph-read query."""
     clean_query = _clean_query(query)
     if clean_query is None:
         return True
+    similarity = claim_semantic_similarity(row)
+    if semantic_only:
+        return similarity is not None and similarity >= (
+            threshold if threshold is not None else QUERY_SIMILARITY_THRESHOLD
+        )
     if _query_text_matches(row, clean_query):
         return True
-    similarity = claim_semantic_similarity(row)
-    return similarity is not None and similarity >= threshold
+    floor = QUERY_SIMILARITY_THRESHOLD if threshold is None else threshold
+    return similarity is not None and similarity >= floor
 
 
 def _endpoints(row: ClaimRow) -> tuple[str, str]:
@@ -449,6 +507,8 @@ def _strip_glob(path: str) -> str:
 
 
 __all__ = [
+    "EXCLUDE_KNOWLEDGE_SUBGRAPH",
+    "KNOWLEDGE_SUBGRAPH",
     "ReadRequest",
     "ReadResponse",
     "claim_candidate_key",
@@ -462,6 +522,7 @@ __all__ = [
     "graph_read_scope",
     "make_task_context",
     "rank_candidates",
+    "relative_relevance_floor",
     "row_in_anchor_set",
     "row_matches_query",
     "scope_ref_matches",

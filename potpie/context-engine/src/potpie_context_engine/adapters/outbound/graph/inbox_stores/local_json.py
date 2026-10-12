@@ -40,6 +40,28 @@ class LocalJsonGraphInboxStore:
             return None
         return GraphInboxItem.from_dict(raw)
 
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool:
+        """Swap one item under the store lock; the claim lease depends on it."""
+        key = (expected.pot_id, expected.item_id)
+        if key != (replacement.pot_id, replacement.item_id):
+            raise ValueError("inbox compare-and-set cannot change item identity")
+        with locked_json_store(self._path):
+            state = self._load()
+            by_pot = state.setdefault("items", {}).setdefault(expected.pot_id, {})
+            raw = by_pot.get(expected.item_id)
+            if not isinstance(raw, dict):
+                return False
+            if GraphInboxItem.from_dict(raw) != expected:
+                return False
+            by_pot[replacement.item_id] = replacement.to_dict()
+            self._save(state)
+            return True
+
     def list(
         self,
         *,

@@ -1,0 +1,1693 @@
+{
+  "names": {
+    "request": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+    "status": "protocol_field:a0dda134f1a4b3d23e40ce2c7c77ba287ba3513c8fe2d6bbbd701bb67f928dc7",
+    "case_request": "protocol_message:c1d06debc58efcb2213cd1bf080ff6c09a69160b70779f03df4c39277ea93eb9",
+    "protocol": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+    "event": "protocol_message:581fb4ffb35906f5c9ac01120691fae65706f517a0d230390a721d48a56ead2c",
+    "revision2": "protocol_message:28d29c0544da7f43160f3af7a400b77ca0af6c99ca8374ee9eb4688550f47a1d",
+    "unknown": "protocol_message:05a866cb0a70cfe3cb1145b50d47ef3f066102d4b50e6124900b9322e4f02c1c",
+    "large": "protocol_message:4c2586d8bdd4c1a5aa5168ed365e196591534aad3886acf06f7188d33b4cf08b",
+    "modbus_request": "protocol_message:4b1d29037fe0f8dcac485063aed3ef7c16beeb647abfc7de1e9c1124edd0a1c2",
+    "modbus_response": "protocol_message:0f3f2415fa651ffe896b904e594c0b6921bda57072af4b231277302959e2acc8"
+  },
+  "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+  "evidence": {
+    "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+    "metadata": {
+      "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+      "locator": "demo.md contract",
+      "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+    }
+  },
+  "operations": [
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+        "type": "Protocol",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3]",
+        "properties": {
+          "namespace": "synthetic",
+          "identifier": "Demo",
+          "revision": "1",
+          "profile": "Test"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 2,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 2,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:a0dda134f1a4b3d23e40ce2c7c77ba287ba3513c8fe2d6bbbd701bb67f928dc7",
+        "type": "ProtocolField",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8] / header.Status [1bb67f928dc7]",
+        "properties": {
+          "message_key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+          "ordinal": 0,
+          "path": "header.Status",
+          "type": "uint8",
+          "byte_offset": 0,
+          "offset_origin": "PDU",
+          "allowed_values": [
+            {
+              "raw_value": 0,
+              "symbol": "IDLE",
+              "meaning": "No work"
+            },
+            {
+              "raw_value": 2,
+              "symbol": "BUSY",
+              "meaning": "Work pending"
+            },
+            {
+              "raw_value": "2",
+              "symbol": "TEXT",
+              "meaning": "Text representation"
+            },
+            {
+              "raw_value": false,
+              "symbol": "OFF",
+              "meaning": "Boolean disabled"
+            }
+          ]
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8] field header.Status ",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 2,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:b23afc54032ad8e97125ab1fbc968be7bbe1b1984083a578d2cce06114af60ee",
+        "type": "ProtocolField",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8] / payload.status [e06114af60ee]",
+        "properties": {
+          "message_key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+          "ordinal": 1,
+          "path": "payload.status",
+          "type": "uint8",
+          "presence_rule": "header.Status == 2",
+          "description": "Nested conditional status, offset unknown"
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8] field payload.status Nested conditional status, offset unknown",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+        "type": "Protocol",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3]",
+        "properties": {
+          "namespace": "synthetic",
+          "identifier": "Demo",
+          "revision": "1",
+          "profile": "Test"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:c1d06debc58efcb2213cd1bf080ff6c09a69160b70779f03df4c39277ea93eb9",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"q\" [39277ea93eb9]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "q",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request q telegram fields header.Status payload.status status enum BUSY decoder",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+        "type": "Protocol",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3]",
+        "properties": {
+          "namespace": "synthetic",
+          "identifier": "Demo",
+          "revision": "1",
+          "profile": "Test"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:1d79658c60f9de6fa0af87910982784bdf1a90fe50b080af99c466b36f8f5819",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU response server-to-client \"A\" [66b36f8f5819]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": "A",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response A telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response A telegram fields header.Status payload.status status enum BUSY decoder",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+        "type": "Protocol",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3]",
+        "properties": {
+          "namespace": "synthetic",
+          "identifier": "Demo",
+          "revision": "1",
+          "profile": "Test"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:9d5675516296ebbe1feee93eaf97d9a05f654556ed6fc32a02733498658ae4ea",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU response server-to-client \"F\" [3498658ae4ea]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": "F",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response F telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response F telegram fields header.Status payload.status status enum BUSY decoder",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+        "type": "Protocol",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3]",
+        "properties": {
+          "namespace": "synthetic",
+          "identifier": "Demo",
+          "revision": "1",
+          "profile": "Test"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:581fb4ffb35906f5c9ac01120691fae65706f517a0d230390a721d48a56ead2c",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU event server-to-client \"Tick\" [1d48a56ead2c]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "event",
+          "direction": "server-to-client",
+          "discriminator": "Tick",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] event Tick telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] event Tick telegram fields header.Status payload.status status enum BUSY decoder",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:1d79658c60f9de6fa0af87910982784bdf1a90fe50b080af99c466b36f8f5819",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU response server-to-client \"A\" [66b36f8f5819]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": "A",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response A telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "predicate": "RESPONDS_TO",
+      "object": {
+        "key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 2,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "Synthetic Answer corresponds to Query",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:9d5675516296ebbe1feee93eaf97d9a05f654556ed6fc32a02733498658ae4ea",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU response server-to-client \"F\" [3498658ae4ea]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": "F",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response F telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "predicate": "RESPONDS_TO",
+      "object": {
+        "key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 2,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "Synthetic Failure also corresponds to Query",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "service:demo",
+        "type": "Service",
+        "name": "DemoService"
+      },
+      "predicate": "CAN_SEND",
+      "object": {
+        "key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 2,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "DemoService can send Demo revision 1 Query",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "service:demo-peer",
+        "type": "Service",
+        "name": "DemoPeer"
+      },
+      "predicate": "CAN_RECEIVE",
+      "object": {
+        "key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 2,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "DemoPeer can receive Query",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "service:demo",
+        "type": "Service",
+        "name": "DemoService"
+      },
+      "predicate": "CAN_RECEIVE",
+      "object": {
+        "key": "protocol_message:1d79658c60f9de6fa0af87910982784bdf1a90fe50b080af99c466b36f8f5819",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU response server-to-client \"A\" [66b36f8f5819]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": "A",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response A telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "DemoService can receive Demo response",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "service:demo-peer",
+        "type": "Service",
+        "name": "DemoPeer"
+      },
+      "predicate": "CAN_SEND",
+      "object": {
+        "key": "protocol_message:1d79658c60f9de6fa0af87910982784bdf1a90fe50b080af99c466b36f8f5819",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU response server-to-client \"A\" [66b36f8f5819]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": "A",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response A telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "DemoPeer can send response",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "service:demo",
+        "type": "Service",
+        "name": "DemoService"
+      },
+      "predicate": "CAN_RECEIVE",
+      "object": {
+        "key": "protocol_message:9d5675516296ebbe1feee93eaf97d9a05f654556ed6fc32a02733498658ae4ea",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU response server-to-client \"F\" [3498658ae4ea]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": "F",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response F telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "DemoService can receive Demo response",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "service:demo-peer",
+        "type": "Service",
+        "name": "DemoPeer"
+      },
+      "predicate": "CAN_SEND",
+      "object": {
+        "key": "protocol_message:9d5675516296ebbe1feee93eaf97d9a05f654556ed6fc32a02733498658ae4ea",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU response server-to-client \"F\" [3498658ae4ea]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": "F",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] response F telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "DemoPeer can send response",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:ff3c02dab7c93f0315a1311163b905d31a7d567171be0ec70efdad52739fd6e8",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Q\" [ad52739fd6e8]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 2,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "predicate": "PROTOCOL_IMPLEMENTED_BY",
+      "object": {
+        "key": "code:demo:src/decoder.py",
+        "type": "CodeAsset",
+        "name": "Synthetic Demo decoder"
+      },
+      "truth": "agent_claim",
+      "description": "Synthetic decoder implements Demo Query",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:8137f6414145b41817fdb4ae1a3420fd52171b6b58c0016625690c920337fd3e",
+        "type": "Protocol",
+        "name": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e]",
+        "properties": {
+          "namespace": "synthetic",
+          "identifier": "Demo",
+          "revision": "2",
+          "profile": "Test"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:28d29c0544da7f43160f3af7a400b77ca0af6c99ca8374ee9eb4688550f47a1d",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d]",
+        "properties": {
+          "protocol_key": "protocol:8137f6414145b41817fdb4ae1a3420fd52171b6b58c0016625690c920337fd3e",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:28d29c0544da7f43160f3af7a400b77ca0af6c99ca8374ee9eb4688550f47a1d",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d]",
+        "properties": {
+          "protocol_key": "protocol:8137f6414145b41817fdb4ae1a3420fd52171b6b58c0016625690c920337fd3e",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:271db8968d85b9ea451ce386c2c15ebf90d337a0114214a48a28d586d06b4643",
+        "type": "ProtocolField",
+        "name": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d] / header.Status [d586d06b4643]",
+        "properties": {
+          "message_key": "protocol_message:28d29c0544da7f43160f3af7a400b77ca0af6c99ca8374ee9eb4688550f47a1d",
+          "ordinal": 0,
+          "path": "header.Status",
+          "type": "uint8",
+          "byte_offset": 0,
+          "offset_origin": "PDU",
+          "allowed_values": [
+            {
+              "raw_value": 0,
+              "symbol": "IDLE",
+              "meaning": "No work"
+            },
+            {
+              "raw_value": 2,
+              "symbol": "BUSY",
+              "meaning": "Work pending"
+            },
+            {
+              "raw_value": "2",
+              "symbol": "TEXT",
+              "meaning": "Text representation"
+            },
+            {
+              "raw_value": false,
+              "symbol": "OFF",
+              "meaning": "Boolean disabled"
+            }
+          ]
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d] field header.Status ",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:28d29c0544da7f43160f3af7a400b77ca0af6c99ca8374ee9eb4688550f47a1d",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d]",
+        "properties": {
+          "protocol_key": "protocol:8137f6414145b41817fdb4ae1a3420fd52171b6b58c0016625690c920337fd3e",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:3a3f85758b234c7f95b882a5532eee41436fe8fdeca110222ddb969bcd600cab",
+        "type": "ProtocolField",
+        "name": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d] / payload.status [969bcd600cab]",
+        "properties": {
+          "message_key": "protocol_message:28d29c0544da7f43160f3af7a400b77ca0af6c99ca8374ee9eb4688550f47a1d",
+          "ordinal": 1,
+          "path": "payload.status",
+          "type": "uint8",
+          "presence_rule": "header.Status == 2",
+          "description": "Nested conditional status, offset unknown"
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d] field payload.status Nested conditional status, offset unknown",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:28d29c0544da7f43160f3af7a400b77ca0af6c99ca8374ee9eb4688550f47a1d",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d]",
+        "properties": {
+          "protocol_key": "protocol:8137f6414145b41817fdb4ae1a3420fd52171b6b58c0016625690c920337fd3e",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Q",
+          "description": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] request Q telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:d9085022b9c5733fb45caf716b69f0a67b07ccae432e3a5c371c8b7c1721ec9c",
+        "type": "ProtocolField",
+        "name": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d] / units [8b7c1721ec9c]",
+        "properties": {
+          "message_key": "protocol_message:28d29c0544da7f43160f3af7a400b77ca0af6c99ca8374ee9eb4688550f47a1d",
+          "ordinal": 2,
+          "path": "units",
+          "type": "uint8"
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"2\" profile=\"Test\" [0c920337fd3e] / PDU request client-to-server \"Q\" [688550f47a1d] field units ",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:e0b092305d80097a211356968c30e408eb31f3785d320f6667f629346d7753e5",
+        "type": "Protocol",
+        "name": "synthetic/Demo revision=null profile=\"Test\" source=potpie://res/demo-0749f339115d/contract/0000 [29346d7753e5]",
+        "properties": {
+          "namespace": "synthetic",
+          "identifier": "Demo",
+          "revision": null,
+          "profile": "Test",
+          "unresolved_source": "potpie://res/demo-0749f339115d/contract/0000"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:05a866cb0a70cfe3cb1145b50d47ef3f066102d4b50e6124900b9322e4f02c1c",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=null profile=\"Test\" source=potpie://res/demo-0749f339115d/contract/0000 [29346d7753e5] / PDU request client-to-server \"Unresolved\" [9322e4f02c1c]",
+        "properties": {
+          "protocol_key": "protocol:e0b092305d80097a211356968c30e408eb31f3785d320f6667f629346d7753e5",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Unresolved",
+          "description": "synthetic/Demo revision=null profile=\"Test\" source=potpie://res/demo-0749f339115d/contract/0000 [29346d7753e5] request Unresolved telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 0
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=null profile=\"Test\" source=potpie://res/demo-0749f339115d/contract/0000 [29346d7753e5] request Unresolved telegram fields header.Status payload.status status enum BUSY decoder",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+        "type": "Protocol",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299]",
+        "properties": {
+          "namespace": "modbus.org",
+          "identifier": "Modbus",
+          "revision": "1.1b3",
+          "profile": "PDU",
+          "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:4b1d29037fe0f8dcac485063aed3ef7c16beeb647abfc7de1e9c1124edd0a1c2",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] request 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] request 3 read holding registers PDU definition",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+          "metadata": {
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "Modbus V1.1b3 §6.3 page 15; fixture paraphrase",
+            "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:4b1d29037fe0f8dcac485063aed3ef7c16beeb647abfc7de1e9c1124edd0a1c2",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] request 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:f813a01c0f2f41a0017949813ee8449f7b8a92ea5fa41e8c8c59aa94c84f4b2a",
+        "type": "ProtocolField",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2] / function [aa94c84f4b2a]",
+        "properties": {
+          "message_key": "protocol_message:4b1d29037fe0f8dcac485063aed3ef7c16beeb647abfc7de1e9c1124edd0a1c2",
+          "ordinal": 0,
+          "path": "function",
+          "type": "uint8",
+          "byte_offset": 0,
+          "width": 8,
+          "constraints": {
+            "constant": 3
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2] field function ",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+          "metadata": {
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "Modbus V1.1b3 §6.3 page 15; fixture paraphrase",
+            "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:4b1d29037fe0f8dcac485063aed3ef7c16beeb647abfc7de1e9c1124edd0a1c2",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] request 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:b8a93ac23b2dafecf1c244598522aec8a7f47117bc15853c6d35d9a3dcab7a9f",
+        "type": "ProtocolField",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2] / starting_address [d9a3dcab7a9f]",
+        "properties": {
+          "message_key": "protocol_message:4b1d29037fe0f8dcac485063aed3ef7c16beeb647abfc7de1e9c1124edd0a1c2",
+          "ordinal": 1,
+          "path": "starting_address",
+          "type": "uint16",
+          "byte_offset": 1,
+          "width": 16,
+          "endianness": "big",
+          "constraints": {
+            "min": 0,
+            "max": 65535
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2] field starting_address ",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+          "metadata": {
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "Modbus V1.1b3 §6.3 page 15; fixture paraphrase",
+            "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:4b1d29037fe0f8dcac485063aed3ef7c16beeb647abfc7de1e9c1124edd0a1c2",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] request 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:b77589d8f948c3af2058e638c208ba4a60c205683d4d1b55ef1bbef741ce9cea",
+        "type": "ProtocolField",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2] / quantity [bef741ce9cea]",
+        "properties": {
+          "message_key": "protocol_message:4b1d29037fe0f8dcac485063aed3ef7c16beeb647abfc7de1e9c1124edd0a1c2",
+          "ordinal": 2,
+          "path": "quantity",
+          "type": "uint16",
+          "byte_offset": 3,
+          "width": 16,
+          "endianness": "big",
+          "constraints": {
+            "min": 1,
+            "max": 125
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2] field quantity ",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+          "metadata": {
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "Modbus V1.1b3 §6.3 page 15; fixture paraphrase",
+            "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+        "type": "Protocol",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299]",
+        "properties": {
+          "namespace": "modbus.org",
+          "identifier": "Modbus",
+          "revision": "1.1b3",
+          "profile": "PDU",
+          "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:0f3f2415fa651ffe896b904e594c0b6921bda57072af4b231277302959e2acc8",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] response 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] response 3 read holding registers PDU definition",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+          "metadata": {
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "Modbus V1.1b3 §6.3 page 15; fixture paraphrase",
+            "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:0f3f2415fa651ffe896b904e594c0b6921bda57072af4b231277302959e2acc8",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] response 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:34d5f7c47596c2c83e75f4a3c74b932e1ad5b1b7848d70ab5b84c62cde15c5d9",
+        "type": "ProtocolField",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8] / function [c62cde15c5d9]",
+        "properties": {
+          "message_key": "protocol_message:0f3f2415fa651ffe896b904e594c0b6921bda57072af4b231277302959e2acc8",
+          "ordinal": 0,
+          "path": "function",
+          "type": "uint8",
+          "byte_offset": 0,
+          "width": 8,
+          "constraints": {
+            "constant": 3
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8] field function ",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+          "metadata": {
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "Modbus V1.1b3 §6.3 page 15; fixture paraphrase",
+            "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:0f3f2415fa651ffe896b904e594c0b6921bda57072af4b231277302959e2acc8",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] response 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:3c61cf4b67e198a869a153af3a6f10eb071e5d12f514dc898273b0e3d1df7f28",
+        "type": "ProtocolField",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8] / byte_count [b0e3d1df7f28]",
+        "properties": {
+          "message_key": "protocol_message:0f3f2415fa651ffe896b904e594c0b6921bda57072af4b231277302959e2acc8",
+          "ordinal": 1,
+          "path": "byte_count",
+          "type": "uint8",
+          "byte_offset": 1,
+          "width": 8,
+          "description": "Twice the requested register count"
+        }
+      },
+      "truth": "agent_claim",
+      "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8] field byte_count Twice the requested register count",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+          "metadata": {
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "Modbus V1.1b3 §6.3 page 15; fixture paraphrase",
+            "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:0f3f2415fa651ffe896b904e594c0b6921bda57072af4b231277302959e2acc8",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] response 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:7848913af71c8d04389a915b499016811ed97e330a90478c23adc2723a5969bf",
+        "type": "ProtocolField",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8] / registers [c2723a5969bf]",
+        "properties": {
+          "message_key": "protocol_message:0f3f2415fa651ffe896b904e594c0b6921bda57072af4b231277302959e2acc8",
+          "ordinal": 2,
+          "path": "registers",
+          "type": "uint16[]",
+          "byte_offset": 2,
+          "endianness": "big",
+          "array_length_rule": "request.quantity"
+        }
+      },
+      "truth": "agent_claim",
+      "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8] field registers ",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+          "metadata": {
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "Modbus V1.1b3 §6.3 page 15; fixture paraphrase",
+            "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:0f3f2415fa651ffe896b904e594c0b6921bda57072af4b231277302959e2acc8",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU response server-to-client 3 [302959e2acc8]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "response",
+          "direction": "server-to-client",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] response 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "predicate": "RESPONDS_TO",
+      "object": {
+        "key": "protocol_message:4b1d29037fe0f8dcac485063aed3ef7c16beeb647abfc7de1e9c1124edd0a1c2",
+        "type": "ProtocolMessage",
+        "name": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] / PDU request client-to-server 3 [1124edd0a1c2]",
+        "properties": {
+          "protocol_key": "protocol:e241222c2dd7d2ca1559c6e139e35232cc67ed94c55af8516a4b278d64560299",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": 3,
+          "description": "modbus.org/Modbus revision=\"1.1b3\" profile=\"PDU\" [278d64560299] request 3 read holding registers PDU definition",
+          "expected_field_count": 3,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "normal PDU layout only; §6.3 page 15"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "Modbus 03 normal response for read holding registers",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000",
+          "metadata": {
+            "digest": "5d8bc4f9d00d73e13f251259debb2fc07d5b53889d60e8fee581f5fdbd1848b4",
+            "locator": "Modbus V1.1b3 §6.3 page 15; fixture paraphrase",
+            "specification_ref": "https://www.modbus.org/file/secure/modbusprotocolspecification.pdf"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    }
+  ],
+  "large_template": [
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+        "type": "Protocol",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3]",
+        "properties": {
+          "namespace": "synthetic",
+          "identifier": "Demo",
+          "revision": "1",
+          "profile": "Test"
+        }
+      },
+      "predicate": "DEFINES_MESSAGE",
+      "object": {
+        "key": "protocol_message:4c2586d8bdd4c1a5aa5168ed365e196591534aad3886acf06f7188d33b4cf08b",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Large\" [88d33b4cf08b]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Large",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Large telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 300,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Large telegram fields header.Status payload.status status enum BUSY decoder",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    },
+    {
+      "op": "assert_claim",
+      "subgraph": "protocols",
+      "subject": {
+        "key": "protocol_message:4c2586d8bdd4c1a5aa5168ed365e196591534aad3886acf06f7188d33b4cf08b",
+        "type": "ProtocolMessage",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Large\" [88d33b4cf08b]",
+        "properties": {
+          "protocol_key": "protocol:74d5653d3229e42a74276b6d9243cae28851c376262fc53c5cc955193821fde3",
+          "namespace": "PDU",
+          "kind": "request",
+          "direction": "client-to-server",
+          "discriminator": "Large",
+          "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] request Large telegram fields header.Status payload.status status enum BUSY decoder",
+          "expected_field_count": 300,
+          "source_coverage": {
+            "status": "complete",
+            "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract"
+          }
+        }
+      },
+      "predicate": "HAS_FIELD",
+      "object": {
+        "key": "protocol_field:72cdefaee964a41c4e594c773e9ab12962813a9df127e71f377684fe7fb75ec1",
+        "type": "ProtocolField",
+        "name": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Large\" [88d33b4cf08b] / field.000 [84fe7fb75ec1]",
+        "properties": {
+          "message_key": "protocol_message:4c2586d8bdd4c1a5aa5168ed365e196591534aad3886acf06f7188d33b4cf08b",
+          "ordinal": 0,
+          "path": "field.000",
+          "type": "uint8",
+          "byte_offset": 0
+        }
+      },
+      "truth": "agent_claim",
+      "description": "synthetic/Demo revision=\"1\" profile=\"Test\" [55193821fde3] / PDU request client-to-server \"Large\" [88d33b4cf08b] field field.000 ",
+      "evidence": [
+        {
+          "source_ref": "potpie://res/demo-0749f339115d/contract/0000",
+          "metadata": {
+            "digest": "0749f339115df84abab84a5038497440ec278aaeffaaa472fbd0f63b478ec1fd",
+            "locator": "demo.md contract",
+            "chunk_id": "potpie://res/demo-0749f339115d/contract/0000"
+          }
+        }
+      ],
+      "valid_from": "2026-09-16T00:00:00+00:00",
+      "observed_at": "2026-09-16T00:00:00+00:00"
+    }
+  ],
+  "modbus_source_ref": "potpie://res/modbus-03-5d8bc4f9d00d/contract/0000"
+}

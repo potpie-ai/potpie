@@ -30,18 +30,9 @@ import logging
 import os
 import platform
 import time
-from typing import Any, Callable, Coroutine, TypeVar
+from collections.abc import Callable, Coroutine
+from typing import Any, TypeVar
 
-from potpie_context_engine.adapters.outbound.graph.cypher import (
-    _render_fact,
-    _require_valid_pot_id,
-    _stable_source_ref,
-    apply_invalidations_async,
-    delete_edges_async,
-    upsert_edges_async,
-    upsert_entities_async,
-)
-from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
@@ -57,8 +48,20 @@ from potpie_context_engine.core.graph_mutations import (
     InvalidationOp,
     ProvenanceRef,
 )
-from potpie_context_engine.domain.retrieval_card import build_retrieval_card
+
+from potpie_context_engine.adapters.outbound.graph.cypher import (
+    _render_fact,
+    _require_valid_pot_id,
+    _stable_source_ref,
+    apply_invalidations_async,
+    delete_edges_async,
+    upsert_edges_async,
+    upsert_entities_async,
+)
+from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
+
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
+from potpie_context_engine.domain.retrieval_card import build_retrieval_card
 
 logger = logging.getLogger(__name__)
 
@@ -144,16 +147,36 @@ class _FalkorAsyncSession:
     def __init__(self, graph: Any) -> None:
         self._graph = graph
 
-    async def __aenter__(self) -> "_FalkorAsyncSession":
+    async def __aenter__(self) -> _FalkorAsyncSession:
         return self
 
-    async def __aexit__(self, *exc: Any) -> bool:
+    async def __aexit__(self, *exc: object) -> bool:
         return False
 
     async def run(self, cypher: str, **params: Any) -> _FalkorAsyncResult:
         def _run() -> list[dict[str, Any]]:
-            result = self._graph.query(cypher, params=params or None)
-            return _records_from_result(result)
+            pot_id = params.get("group_id") or params.get("gid") or params.get("pot_id")
+            guarded = cypher
+            if pot_id:
+                from potpie_context_engine.core.graph_journal import JournalError
+
+                from .falkordb_journal import _state
+
+                if _state(self._graph, pot_id) is not None:
+                    raise JournalError(
+                        "legacy direct writer is unsupported on a journal-enabled pot"
+                    )
+                params["journal_pot"] = pot_id
+                guarded = (
+                    "OPTIONAL MATCH (journal_revision:PotpieRevision {pot_id:$journal_pot}) "
+                    "WITH journal_revision WHERE journal_revision IS NULL OR journal_revision.journal IS NULL "
+                    + cypher
+                )
+            result = self._graph.query(guarded, params=params or None)
+            records = _records_from_result(result)
+            if pot_id and not records and _state(self._graph, pot_id) is not None:
+                raise JournalError("journal activation fenced the legacy direct writer")
+            return records
 
         records = await asyncio.to_thread(_run)
         return _FalkorAsyncResult(records)
@@ -730,32 +753,9 @@ class FalkorDBGraphWriter(GraphWriterPort):
             return {"ok": False, "error": str(exc)}
 
     def _reset_pot_sync(self, pot_id: str) -> dict[str, Any]:
-        graph = self._get_graph()
-        before = self._count(graph, pot_id)
-        # Client-side batched delete (no CALL {} IN TRANSACTIONS on FalkorDB).
-        # The LIMIT guarantees forward progress; cap iterations defensively.
-        # Count once up front, then re-count only after each delete batch.
-        remaining = before
-        for _ in range(before // _RESET_BATCH + 2):
-            if remaining == 0:
-                break
-            graph.query(
-                "MATCH (n {group_id: $gid}) WITH n LIMIT $lim DETACH DELETE n",
-                params={"gid": pot_id, "lim": _RESET_BATCH},
-            )
-            remaining = self._count(graph, pot_id)
-        if remaining:
-            return {
-                "ok": False,
-                "error": "group_id_reset_incomplete",
-                "group_id_nodes_before": before,
-                "group_id_nodes_remaining": remaining,
-            }
-        return {
-            "ok": True,
-            "group_id_nodes_before": before,
-            "group_id_nodes_remaining": 0,
-        }
+        from .falkordb_atomic import reset_pot
+
+        return reset_pot(self._get_graph(), pot_id)
 
     @staticmethod
     def _count(graph: Any, pot_id: str) -> int:
@@ -805,6 +805,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
             )
             if not card:
                 continue
+            claim_key = raw_props.get("claim_key")
             try:
                 # Keep embedding inside the try: a model error must degrade to
                 # "no vector enrichment", not abort the already-written edge.
@@ -820,6 +821,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
                               source_ref: $source_ref
                           }]->
                           (:Entity {group_id: $gid, entity_key: $to_key})
+                    WHERE $claim_key IS NULL OR r.claim_key = $claim_key
                     SET r.fact_embedding = vecf32($embedding),
                         r.embedding_model = $embedding_model,
                         r.embedding_dim = $embedding_dim
@@ -830,6 +832,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
                         "from_key": item.from_entity_key,
                         "to_key": item.to_entity_key,
                         "source_ref": source_ref,
+                        "claim_key": claim_key,
                         "embedding": embedding,
                         "embedding_model": getattr(self._embedder, "name", "unknown"),
                         "embedding_dim": int(
