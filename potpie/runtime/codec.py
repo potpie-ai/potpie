@@ -15,7 +15,7 @@ managed hosts alike):
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import MISSING, Field, fields, is_dataclass
 from datetime import date, datetime
 from enum import Enum
@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import TypeAlias, cast
 from uuid import UUID
 
+from potpie.runtime.extensions import HostExtension
+from potpie.runtime.host_operations import HOST_OPERATION_CATALOG, HostOperation
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
     DaemonControlOperation,
@@ -39,6 +41,7 @@ from potpie.runtime.protocol import (
     HandshakePayload,
     HandshakeRequest,
     HandshakeResult,
+    HostOperationRequest,
     LifecycleState,
     ProtocolError,
     ProtocolRequest,
@@ -109,9 +112,9 @@ def encode_request(request: ProtocolRequest) -> dict[str, object]:
     common: dict[str, object] = {
         "protocol_version": request.protocol_version,
         "request_id": request.request_id,
-        "operation": request.operation.value,
+        "operation": str(request.operation),
     }
-    if isinstance(request, EngineOperationRequest):
+    if isinstance(request, (EngineOperationRequest, HostOperationRequest)):
         common.update(
             {
                 "selector": {
@@ -142,7 +145,22 @@ def encode_request(request: ProtocolRequest) -> dict[str, object]:
     raise TypeError("unsupported protocol request")
 
 
-def decode_request(document: object) -> DecodeRequestOutcome:
+def decode_request(
+    document: object,
+    *,
+    engine_operations: Collection[EngineOperation] | None = None,
+    host_operations: bool = False,
+    extensions: Mapping[str, HostExtension] | None = None,
+) -> DecodeRequestOutcome:
+    """Decode one request envelope into its typed protocol request.
+
+    By default only the engine and daemon-control catalogs are known, which
+    is what the local daemon serves. A managed host names what it serves:
+    ``engine_operations`` (a subset of the engine catalog; ``None`` is all of
+    it), ``host_operations`` (the ``host.*`` catalog) and ``extensions`` (its
+    ``ext.*`` operations by name). Anything else is ``operation_unknown``.
+    """
+
     if not isinstance(document, Mapping):
         return _protocol_failure(
             "request_envelope_malformed", "request must be an object"
@@ -153,69 +171,52 @@ def decode_request(document: object) -> DecodeRequestOutcome:
     protocol_version, request_id, operation_text = common.value
 
     try:
-        engine_operation = EngineOperation(operation_text)
+        engine_operation: EngineOperation | None = EngineOperation(operation_text)
     except ValueError:
         engine_operation = None
-    if engine_operation is not None:
-        unexpected = _unexpected_keys(
+    if engine_operation is not None and (
+        engine_operations is None or engine_operation in engine_operations
+    ):
+        return _decode_operation_envelope(
             document,
-            required={
-                "protocol_version",
-                "request_id",
-                "operation",
-                "selector",
-                "payload",
-                "compatibility_ticket",
-            },
-            optional={"destructive_intent"},
+            protocol_version=protocol_version,
+            request_id=request_id,
+            operation=engine_operation,
+            request_type=ENGINE_OPERATION_CATALOG[engine_operation].request_type,
+            build=EngineOperationRequest,
         )
-        if unexpected is not None:
-            return unexpected
-        selector = _decode_selector(document["selector"])
-        if isinstance(selector, Failure):
-            return selector
-        payload = document["payload"]
-        if not isinstance(payload, Mapping):
-            return _protocol_failure(
-                "operation_payload_malformed", "operation payload must be an object"
-            )
-        intent = _decode_destructive_intent(document.get("destructive_intent"))
-        if isinstance(intent, Failure):
-            return intent
-        request_type = ENGINE_OPERATION_CATALOG[engine_operation].request_type
-        typed_payload = decode_request_payload(
-            engine_operation.value, request_type, payload
+
+    try:
+        host_operation: HostOperation | None = HostOperation(operation_text)
+    except ValueError:
+        host_operation = None
+    if host_operation is not None and host_operations:
+        return _decode_operation_envelope(
+            document,
+            protocol_version=protocol_version,
+            request_id=request_id,
+            operation=host_operation,
+            request_type=HOST_OPERATION_CATALOG[host_operation].request_type,
+            build=HostOperationRequest,
         )
-        if isinstance(typed_payload, Failure):
-            return typed_payload
-        try:
-            return Success(
-                EngineOperationRequest(
-                    protocol_version=protocol_version,
-                    request_id=request_id,
-                    operation=engine_operation,
-                    selector=selector.value,
-                    payload=typed_payload.value,
-                    destructive_intent=intent.value,
-                    compatibility_ticket=_optional_string(
-                        document, "compatibility_ticket"
-                    ),
-                )
-            )
-        except (TypeError, ValueError):
-            return _protocol_failure(
-                "operation_payload_malformed",
-                "operation payload does not match the typed request",
-            )
+
+    extension = (extensions or {}).get(operation_text)
+    if extension is not None:
+        return _decode_operation_envelope(
+            document,
+            protocol_version=protocol_version,
+            request_id=request_id,
+            operation=extension.name,
+            request_type=extension.request_type,
+            build=HostOperationRequest,
+        )
+    if engine_operation is not None or host_operation is not None:
+        return _operation_unknown(operation_text)
 
     try:
         control_operation = DaemonControlOperation(operation_text)
     except ValueError:
-        return _protocol_failure(
-            "operation_unknown",
-            "the requested operation is not registered",
-            details={"operation": operation_text},
-        )
+        return _operation_unknown(operation_text)
     required = {"protocol_version", "request_id", "operation", "payload"}
     if control_operation is not DaemonControlOperation.HANDSHAKE:
         required.add("compatibility_ticket")
@@ -287,6 +288,72 @@ def decode_request(document: object) -> DecodeRequestOutcome:
             compatibility_ticket=_optional_string(document, "compatibility_ticket"),
         )
     )
+
+
+def _operation_unknown(operation: str) -> Failure[ProtocolError]:
+    return _protocol_failure(
+        "operation_unknown",
+        "the requested operation is not registered",
+        details={"operation": operation},
+    )
+
+
+def _decode_operation_envelope(
+    document: Mapping[object, object],
+    *,
+    protocol_version: int,
+    request_id: str,
+    operation: object,
+    request_type: type,
+    build: Callable[..., ProtocolRequest],
+) -> DecodeRequestOutcome:
+    """Decode the selector, payload and intent every operation envelope carries."""
+
+    unexpected = _unexpected_keys(
+        document,
+        required={
+            "protocol_version",
+            "request_id",
+            "operation",
+            "selector",
+            "payload",
+            "compatibility_ticket",
+        },
+        optional={"destructive_intent"},
+    )
+    if unexpected is not None:
+        return unexpected
+    selector = _decode_selector(document["selector"])
+    if isinstance(selector, Failure):
+        return selector
+    payload = document["payload"]
+    if not isinstance(payload, Mapping):
+        return _protocol_failure(
+            "operation_payload_malformed", "operation payload must be an object"
+        )
+    intent = _decode_destructive_intent(document.get("destructive_intent"))
+    if isinstance(intent, Failure):
+        return intent
+    typed_payload = decode_request_payload(str(operation), request_type, payload)
+    if isinstance(typed_payload, Failure):
+        return typed_payload
+    try:
+        return Success(
+            build(
+                protocol_version=protocol_version,
+                request_id=request_id,
+                operation=operation,
+                selector=selector.value,
+                payload=typed_payload.value,
+                destructive_intent=intent.value,
+                compatibility_ticket=_optional_string(document, "compatibility_ticket"),
+            )
+        )
+    except (TypeError, ValueError):
+        return _protocol_failure(
+            "operation_payload_malformed",
+            "operation payload does not match the typed request",
+        )
 
 
 def compact_payload(payload: object) -> dict[str, object]:
@@ -493,15 +560,22 @@ def _decode_result(
             )
     if isinstance(request, EngineOperationRequest):
         result_type = ENGINE_OPERATION_CATALOG[request.operation].result_type
-        try:
-            return Success(result_from_payload(result_type, value))
-        except (TypeError, ValueError, KeyError):
-            return _protocol_failure(
-                "response_result_malformed",
-                "operation result does not match the operation catalog",
-                details={"operation": request.operation.value},
-            )
-    return Success(_from_wire(value))
+    elif isinstance(request, HostOperationRequest) and not request.is_extension:
+        result_type = HOST_OPERATION_CATALOG[
+            HostOperation(request.operation)
+        ].result_type
+    else:
+        # An extension's result type belongs to the caller that registered or
+        # called it; it decodes the plain wire value itself.
+        return Success(_from_wire(value))
+    try:
+        return Success(result_from_payload(result_type, value))
+    except (TypeError, ValueError, KeyError):
+        return _protocol_failure(
+            "response_result_malformed",
+            "operation result does not match the operation catalog",
+            details={"operation": str(request.operation)},
+        )
 
 
 def _decode_daemon_build(value: object) -> DaemonBuild | None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -10,6 +11,12 @@ from uuid import uuid4
 
 from potpie.runtime.commit_access import authorization_scope
 from potpie.runtime.coordinator import OperationCoordinator
+from potpie.runtime.extensions import HostExtension
+from potpie.runtime.host_operations import (
+    HOST_OPERATION_CATALOG,
+    HostOperation,
+    HostOperationHandler,
+)
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
     DaemonControlOperation,
@@ -32,6 +39,7 @@ from potpie.runtime.protocol import (
     HandshakePayload,
     HandshakeRequest,
     HandshakeResult,
+    HostOperationRequest,
     ProtocolError,
     ProtocolRequest,
     ProtocolResponse,
@@ -46,11 +54,18 @@ from potpie.runtime.protocol import (
 )
 from potpie.runtime.resource_manager import (
     AcquisitionRequest,
+    AuthorizationScope,
     ContextResourceManager,
     ContextSelector,
     DestructiveIntent,
 )
-from potpie_context_engine import ContextEngine, Failure, Outcome, Success
+from potpie_context_engine import (
+    ContextEngine,
+    ContextIdentity,
+    Failure,
+    Outcome,
+    Success,
+)
 from potpie_context_engine.requests import (
     ApplyPreviewRequest,
     CatalogRequest,
@@ -63,6 +78,7 @@ from potpie_context_engine.requests import (
     DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
+    GraphSliceRequest,
     HistoryRequest,
     ImportSnapshotRequest,
     InboxAddRequest,
@@ -170,6 +186,9 @@ class EngineClient(ABC):
 
     async def inspect(self, request: InspectRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.INSPECT, request)
+
+    async def graph_slice(self, request: GraphSliceRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.GRAPH_SLICE, request)
 
     async def export_snapshot(self, request: ExportSnapshotRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.EXPORT_SNAPSHOT, request)
@@ -379,6 +398,12 @@ async def _neighborhood(
 
 async def _inspect(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
     return await engine.inspect(cast(InspectRequest, request))
+
+
+async def _graph_slice(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.slice(cast(GraphSliceRequest, request))
 
 
 async def _export_snapshot(
@@ -597,6 +622,7 @@ _ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
     EngineOperation.MUTATE: _mutate,
     EngineOperation.NEIGHBORHOOD: _neighborhood,
     EngineOperation.INSPECT: _inspect,
+    EngineOperation.GRAPH_SLICE: _graph_slice,
     EngineOperation.EXPORT_SNAPSHOT: _export_snapshot,
     EngineOperation.IMPORT_SNAPSHOT: _import_snapshot,
     EngineOperation.REPAIR: _repair,
@@ -640,8 +666,17 @@ if set(_ENGINE_HANDLERS) != set(ENGINE_OPERATION_CATALOG):
     raise RuntimeError("each engine operation must have exactly one local handler")
 
 
-class TypedEngineOperationHandler:
-    """Shared transport-neutral lease-to-engine operation handler."""
+class TypedOperationHandler:
+    """Shared transport-neutral handler for every typed operation family.
+
+    Engine operations acquire a lease from the Resource Manager and run on the
+    leased engine under the operation coordinator. Host (``host.*``) and
+    extension (``ext.*``) operations reach the embedding host's handler: one
+    that requires a context is authenticated, resolved and authorized by the
+    same Resource Manager first; one that does not is authenticated only.
+    Every handler call runs with its authorization scope bound, which is where
+    commit access and the acting principal come from.
+    """
 
     def __init__(
         self,
@@ -654,12 +689,25 @@ class TypedEngineOperationHandler:
         self._coordinator = coordinator
         self._context_free_handler = context_free_handler
 
+    @property
+    def resource_manager(self) -> ContextResourceManager:
+        return self._resource_manager
+
     async def handle(
         self,
-        request: EngineOperationRequest,
+        request: EngineOperationRequest | HostOperationRequest,
         *,
         authentication: object,
+        host_handler: HostOperationHandler | None = None,
+        extension: HostExtension | None = None,
     ) -> ClientOutcome:
+        if isinstance(request, HostOperationRequest):
+            return await self._handle_host(
+                request,
+                authentication=authentication,
+                host_handler=host_handler,
+                extension=extension,
+            )
         spec = ENGINE_OPERATION_CATALOG[request.operation]
         if not spec.context_required:
             if self._context_free_handler is None:
@@ -676,14 +724,7 @@ class TypedEngineOperationHandler:
                     request.operation, request.payload
                 )
             except Exception:
-                return Failure(
-                    DaemonInternalError(
-                        code="operation_handler_failed",
-                        message="the typed operation handler failed",
-                        details={"request_id": request.request_id},
-                        recommended_next_action="retry or inspect runtime logs",
-                    )
-                )
+                return _handler_failed(request.request_id)
         try:
             acquisition = await self._resource_manager.acquire(
                 AcquisitionRequest(
@@ -696,14 +737,7 @@ class TypedEngineOperationHandler:
                 )
             )
         except Exception:
-            return Failure(
-                DaemonInternalError(
-                    code="operation_acquisition_failed",
-                    message="the typed operation could not acquire its context",
-                    details={"request_id": request.request_id},
-                    recommended_next_action="retry or inspect runtime logs",
-                )
-            )
+            return _acquisition_failed(request.request_id)
         if isinstance(acquisition, Failure):
             return acquisition
         lease = acquisition.value
@@ -721,16 +755,114 @@ class TypedEngineOperationHandler:
                             lease.engine, request.payload
                         )
             except Exception:
-                return Failure(
-                    DaemonInternalError(
-                        code="operation_handler_failed",
-                        message="the typed operation handler failed",
-                        details={"request_id": request.request_id},
-                        recommended_next_action="retry or inspect runtime logs",
-                    )
-                )
+                return _handler_failed(request.request_id)
         finally:
             await lease.release()
+
+    async def _handle_host(
+        self,
+        request: HostOperationRequest,
+        *,
+        authentication: object,
+        host_handler: HostOperationHandler | None,
+        extension: HostExtension | None,
+    ) -> ClientOutcome:
+        operation = str(request.operation)
+        if request.is_extension:
+            if extension is None or extension.name != operation:
+                return _not_served(request)
+            spec = extension.spec
+        else:
+            if host_handler is None:
+                return _not_served(request)
+            spec = HOST_OPERATION_CATALOG[HostOperation(operation)]
+
+        scope: AuthorizationScope | None = None
+        context: ContextIdentity | None = None
+        try:
+            if spec.context_required:
+                authorized = await self._resource_manager.authorize(
+                    AcquisitionRequest(
+                        request_id=request.request_id,
+                        selector=request.selector,
+                        operation=operation,
+                        authentication=authentication,
+                        destructive=spec.destructive,
+                        destructive_intent=request.destructive_intent,
+                    )
+                )
+                if isinstance(authorized, Failure):
+                    return authorized
+                actor = authorized.value.actor
+                context = authorized.value.context
+                scope = authorized.value.scope
+            else:
+                authenticated = await self._resource_manager.authenticate(
+                    authentication
+                )
+                if isinstance(authenticated, Failure):
+                    return authenticated
+                actor = authenticated.value
+        except Exception:
+            return _acquisition_failed(request.request_id)
+
+        try:
+            with contextlib.ExitStack() as stack:
+                if scope is not None:
+                    stack.enter_context(authorization_scope(scope))
+                if extension is not None:
+                    result = await extension.handle(
+                        request.payload, actor=actor, context=context
+                    )
+                else:
+                    assert host_handler is not None
+                    result = await host_handler.handle(
+                        HostOperation(operation),
+                        request.payload,
+                        actor=actor,
+                        context=context,
+                    )
+        except Exception:
+            return _handler_failed(request.request_id)
+        if isinstance(result, (Success, Failure)):
+            return result
+        return Success(result)
+
+
+#: The former name, kept for callers that only route engine operations.
+TypedEngineOperationHandler = TypedOperationHandler
+
+
+def _handler_failed(request_id: str) -> Failure[DaemonInternalError]:
+    return Failure(
+        DaemonInternalError(
+            code="operation_handler_failed",
+            message="the typed operation handler failed",
+            details={"request_id": request_id},
+            recommended_next_action="retry or inspect runtime logs",
+        )
+    )
+
+
+def _acquisition_failed(request_id: str) -> Failure[DaemonInternalError]:
+    return Failure(
+        DaemonInternalError(
+            code="operation_acquisition_failed",
+            message="the typed operation could not acquire its context",
+            details={"request_id": request_id},
+            recommended_next_action="retry or inspect runtime logs",
+        )
+    )
+
+
+def _not_served(request: HostOperationRequest) -> Failure[ProtocolError]:
+    return Failure(
+        ProtocolError(
+            code="operation_unknown",
+            message="the requested operation is not registered",
+            details={"operation": str(request.operation)},
+        )
+    )
 
 
 class LocalEngineClient(EngineClient):
@@ -748,7 +880,7 @@ class LocalEngineClient(EngineClient):
     ) -> None:
         self._selector = selector
         self._authentication = authentication
-        self._handler = TypedEngineOperationHandler(
+        self._handler = TypedOperationHandler(
             resource_manager,
             coordinator=coordinator,
             context_free_handler=context_free_handler,
@@ -1323,4 +1455,5 @@ __all__ = [
     "LocalEngineClient",
     "RequestIdFactory",
     "TypedEngineOperationHandler",
+    "TypedOperationHandler",
 ]

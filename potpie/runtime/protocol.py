@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from typing import Generic, Literal, Mapping, TypeAlias, TypeVar
 
+from potpie.runtime.extensions import EXTENSION_NAME
+from potpie.runtime.host_operations import HOST_OPERATION_CATALOG, HostOperation
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
     DaemonControlOperation,
@@ -186,6 +188,48 @@ class EngineOperationRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class HostOperationRequest:
+    """A ``host.*`` or ``ext.<vendor>.<op>`` request, on the engine envelope.
+
+    Same wire shape as :class:`EngineOperationRequest`; only a host that
+    serves the operation decodes it. ``payload`` is the operation's request
+    dataclass (the host catalog's type for ``host.*``, the extension's own
+    type for ``ext.*``).
+    """
+
+    protocol_version: int
+    request_id: str
+    operation: str
+    selector: ContextSelector
+    payload: object
+    destructive_intent: DestructiveIntent | None = None
+    compatibility_ticket: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_request_identity(self.protocol_version, self.request_id)
+        if not is_dataclass(self.payload) or isinstance(self.payload, type):
+            raise ValueError(f"{self.operation} requires a dataclass payload")
+        try:
+            host_operation = HostOperation(self.operation)
+        except ValueError:
+            if not EXTENSION_NAME.fullmatch(str(self.operation)):
+                raise ValueError(
+                    f"{self.operation!r} is neither a host operation nor an "
+                    "extension operation name"
+                ) from None
+            return
+        expected = HOST_OPERATION_CATALOG[host_operation].request_type
+        if type(self.payload) is not expected:
+            raise ValueError(
+                f"{host_operation.value} requires payload {expected.__name__}"
+            )
+
+    @property
+    def is_extension(self) -> bool:
+        return str(self.operation).startswith("ext.")
+
+
+@dataclass(frozen=True, slots=True)
 class HandshakeRequest:
     protocol_version: int
     request_id: str
@@ -225,7 +269,11 @@ class DaemonStatusRequest:
 
 
 ProtocolRequest: TypeAlias = (
-    EngineOperationRequest | HandshakeRequest | DaemonStatusRequest | ShutdownRequest
+    EngineOperationRequest
+    | HostOperationRequest
+    | HandshakeRequest
+    | DaemonStatusRequest
+    | ShutdownRequest
 )
 
 T = TypeVar("T")
@@ -305,6 +353,7 @@ __all__ = [
     "HandshakePayload",
     "HandshakeRequest",
     "HandshakeResult",
+    "HostOperationRequest",
     "LifecycleState",
     "ProtocolError",
     "ProtocolRequest",
