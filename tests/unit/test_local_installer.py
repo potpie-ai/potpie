@@ -120,6 +120,35 @@ def test_probe_spawns_help_without_pipes_or_a_terminal(monkeypatch) -> None:
         assert ("creationflags" in kwargs) == (os.name == "nt")
 
 
+def test_probe_reads_help_that_carries_terminal_colour(monkeypatch) -> None:
+    """Typer colours help under GITHUB_ACTIONS even when it goes to a file."""
+
+    def coloured(group: tuple[str, ...]) -> tuple[int, str]:
+        return 0, "\n".join(
+            f"\x1b[2m│\x1b[0m \x1b[1;36m{name}\x1b[0m  help"
+            for name in REQUIRED_COMMAND_GROUPS[group]
+        )
+
+    monkeypatch.setattr(cli_probe.subprocess, "run", _HelpRun(coloured))
+
+    probe = probe_cli_surface("potpie")
+
+    assert probe["missing_commands"] == []
+    assert probe["ok"] is True
+
+
+def test_probe_asks_for_help_without_terminal_colour(monkeypatch) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    run = _HelpRun(_full_help)
+    monkeypatch.setattr(cli_probe.subprocess, "run", run)
+
+    probe_cli_surface("potpie")
+
+    for _argv, kwargs in run.calls:
+        assert kwargs["env"]["_TYPER_FORCE_DISABLE_TERMINAL"] == "1"
+        assert kwargs["env"]["NO_COLOR"] == "1"
+
+
 def test_an_absent_executable_is_reported_without_spawning(monkeypatch) -> None:
     def refuse(*_args, **_kwargs):  # pragma: no cover - must not run
         raise AssertionError("nothing to spawn")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import socket
 import tempfile
@@ -11,6 +12,12 @@ from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
+
+# Typer forces Rich terminal output (ANSI colour) when GITHUB_ACTIONS,
+# FORCE_COLOR or PY_COLORS is set, as on GitHub Actions. Tests read CLI help and
+# errors as plain text, in-process and from child processes, so turn it off
+# before any test module imports Typer.
+os.environ["_TYPER_FORCE_DISABLE_TERMINAL"] = "1"
 
 # tests/docs is Node (docs-check.mjs). Do not collect it as pytest.
 collect_ignore = ["docs"]

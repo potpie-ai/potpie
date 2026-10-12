@@ -39,6 +39,10 @@ REQUIRED_COMMANDS = tuple(
 _HELP_TIMEOUT_S = 10
 #: ``subprocess.CREATE_NO_WINDOW`` by value; the name exists only on Windows.
 _WINDOWS_CREATE_NO_WINDOW: Final[int] = 0x08000000
+#: Typer forces Rich terminal output when ``GITHUB_ACTIONS``, ``FORCE_COLOR`` or
+#: ``PY_COLORS`` is set, so help written to a file still carries ANSI codes,
+#: and those codes hide command names from :func:`_help_lists`.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
 def probe_cli_surface(executable: str | None) -> dict[str, Any]:
@@ -87,10 +91,11 @@ def _probe_group(
                 stdout=out,
                 stderr=subprocess.STDOUT,
                 timeout=_HELP_TIMEOUT_S,
+                env=_plain_help_env(),
                 **_no_window_kwargs(),
             )
             out.seek(0)
-            output = out.read().decode("utf-8", errors="replace")
+            output = _ANSI_ESCAPE.sub("", out.read().decode("utf-8", errors="replace"))
     except (OSError, subprocess.TimeoutExpired) as exc:
         return [], {
             "command": label,
@@ -109,6 +114,15 @@ def _probe_group(
         "exit_code": proc.returncode,
         "detail": None if proc.returncode == 0 else "help command failed",
     }
+
+
+def _plain_help_env() -> dict[str, str]:
+    """The probe's environment with terminal colour turned off.
+
+    Stripping the codes still matters: an older install on ``PATH`` may ship
+    a Typer that ignores these variables.
+    """
+    return {**os.environ, "_TYPER_FORCE_DISABLE_TERMINAL": "1", "NO_COLOR": "1"}
 
 
 def _no_window_kwargs() -> dict[str, int]:
