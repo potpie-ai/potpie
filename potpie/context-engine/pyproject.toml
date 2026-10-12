@@ -149,4 +149,6 @@ constraint-dependencies = [
     "httpcore2>=2.10.0",
     "anyio>=4.14.2",
     "soupsieve>=2.9.0",
+    "multidict>=6.9.1",
+    "fsspec>=2026.6.0",
 ]
