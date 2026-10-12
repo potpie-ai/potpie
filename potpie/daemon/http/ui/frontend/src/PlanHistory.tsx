@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { CommitIcon } from "./CommitPanels";
+import type { Origin } from "./types";
 
 import type { PlanHistoryPage, SavedPlan } from "./commitTypes";
 
@@ -11,7 +12,19 @@ const planTitle = (plan: SavedPlan) => {
     : `${diff.claims_asserted} claims to add · ${diff.claims_retracted} to retract`;
 };
 
-export default function PlanHistory({ pot }: { pot: string }) {
+const NO_JOURNAL_NOTICE =
+  "Native journal coverage has not started for this pot. Saved plans show " +
+  "mutation status and scope. Before/after comparisons and rollback are unavailable.";
+
+export default function PlanHistory({
+  pot,
+  host,
+  notice = NO_JOURNAL_NOTICE,
+}: {
+  pot: string;
+  host: Origin;
+  notice?: string;
+}) {
   const [page, setPage] = useState<PlanHistoryPage | null>(null);
   const [selected, setSelected] = useState<string>();
   const [query, setQuery] = useState("");
@@ -24,7 +37,7 @@ export default function PlanHistory({ pot }: { pot: string }) {
     setBusy(true);
     setError("");
     try {
-      const next = await api.mutationHistory(pot, count);
+      const next = await api.mutationHistory(pot, host, count);
       if (request.current !== token) return;
       setPage(next);
       setLimit(count);
@@ -36,7 +49,7 @@ export default function PlanHistory({ pot }: { pot: string }) {
     } finally {
       if (request.current === token) setBusy(false);
     }
-  }, [pot]);
+  }, [pot, host]);
 
   useEffect(() => {
     void load(50);
@@ -95,10 +108,7 @@ export default function PlanHistory({ pot }: { pot: string }) {
       </aside>
       <div className="commit-detail">
         <div className="commit-detail-content saved-plan-detail">
-          <p className="commit-notice warning" role="status">
-            Native journal coverage has not started for this pot. Saved plans show
-            mutation status and scope. Before/after comparisons and rollback are unavailable.
-          </p>
+          <p className="commit-notice warning" role="status">{notice}</p>
           {error && <p className="commit-notice error-notice" role="alert">{error}</p>}
           {page?.warnings.map(warning => <p key={warning} className="commit-notice warning">{warning}</p>)}
           {detail && <>

@@ -33,6 +33,15 @@ REMOTE_URL = "https://github.com/acme/shop.git"
 REPO_KEY = "github.com/acme/shop"
 
 
+@pytest.fixture(autouse=True)
+def _scratch_user_home(tmp_path, monkeypatch) -> None:
+    """The subprocess CLI gets a scratch ``HOME`` too, never the real one."""
+    home = tmp_path / "user-home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("POTPIE_TELEMETRY_DISABLED", "1")
+
+
 @pytest.fixture
 def served(tmp_path):
     with ServedReferenceHost(tmp_path / "reference-host") as host:
@@ -229,3 +238,77 @@ def test_a_refused_key_is_an_authentication_failure(served, clone) -> None:
 
     assert code == _common.EXIT_AUTH, refused
     assert refused["code"] == "authentication_failed"
+
+
+# --- the explorer: the local daemon proxies the managed host --------------------
+
+
+def test_the_explorer_reads_a_managed_pot_through_the_local_daemon(
+    served, clone, tmp_path, monkeypatch
+) -> None:
+    """``potpie ui --pot managed:<id>`` names the host in the URL, and the local
+    daemon answers the explorer API for it with the key it holds."""
+    import httpx
+
+    from potpie.daemon.discovery import read_daemon_credential
+    from potpie.daemon.lifecycle import Daemon
+
+    runtime_home = tmp_path / "runtime"
+    for name, value in {
+        "CONTEXT_ENGINE_HOME": runtime_home,
+        "XDG_CONFIG_HOME": tmp_path / "xdg",
+    }.items():
+        Path(value).mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv(name, str(value))
+    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "daemon")
+    monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "embedded")
+    _common.set_runtime(None)
+
+    _cli(
+        "--json",
+        "host",
+        "set",
+        served.base_url,
+        "--no-check",
+        "--token",
+        "-",
+        cwd=clone,
+        stdin=ALICE_KEY + "\n",
+    )
+    _cli("--json", "pot", "use", "managed:pot_shop", cwd=clone)
+    try:
+        opened = _cli("--json", "ui", "--no-open", "--pot", "managed:shop", cwd=clone)
+        assert opened["origin"] == "managed"
+        assert opened["pot_id"] == "pot_shop"
+        assert "host=managed" in opened["url"] and "pot=pot_shop" in opened["url"]
+        assert opened["warning"] is None
+        assert ALICE_KEY not in json.dumps(opened)
+
+        base = opened["url"].split("/ui?", 1)[0]
+        headers = {"Authorization": f"Bearer {read_daemon_credential(runtime_home)}"}
+        pots = httpx.get(
+            f"{base}/ui/api/pots", params={"host": "managed"}, headers=headers
+        ).json()
+        graph = httpx.get(
+            f"{base}/ui/api/graph",
+            params={"host": "managed", "pot": "pot_shop"},
+            headers=headers,
+        )
+        commits = httpx.get(
+            f"{base}/ui/api/commits",
+            params={"host": "managed", "pot": "pot_shop"},
+            headers=headers,
+        )
+
+        assert {p["id"] for p in pots["pots"] if p["origin"] == "managed"} == {
+            "pot_shop",
+            "pot_lab",
+        }
+        assert graph.status_code == 200, graph.text
+        assert graph.json()["pot_id"] == "pot_shop"
+        assert commits.status_code == 200, commits.text
+        assert {"graph_slice", "commits"} <= {
+            request["operation"] for request in served.requests
+        }
+    finally:
+        Daemon(home=runtime_home, in_process=False).stop()
