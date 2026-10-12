@@ -45,6 +45,7 @@ from potpie_context_engine.application.services.resource_journal import (
     JOURNAL_CAPTURE_ACTIVE,
     refuse_while_journaling,
 )
+from potpie_context_engine.core.api import run_in_worker_thread
 from potpie_context_engine.core.commit_service import (
     COMMIT_ACCESS_LEVELS,
     CommitAccessDenied,
@@ -275,11 +276,19 @@ class LocalCliAuthorizer:
         )
 
 
+#: The failure code for an engine operation that raised something unexpected.
+#: Transport-neutral: the local daemon and a managed host report the same one.
+ENGINE_OPERATION_FAILED = "engine_operation_failed"
+
+
 class ServiceEngineOperations:
     """Finite engine-owned operations backed by explicit engine services.
 
     The one implementation of every engine operation, for the local runtime
-    and for embedding hosts alike.
+    and for embedding hosts alike. Sync service calls run in a worker thread
+    bridged to the calling event loop (``run_in_worker_thread``), so a host
+    whose plan or inbox store is async only (an async database pool) serves
+    every operation from the loop that owns that store.
     """
 
     def __init__(self, services: Any) -> None:
@@ -757,7 +766,7 @@ class ServiceEngineOperations:
     ) -> Outcome[object]:
         event_id = _required_value(request.event_id, "event_id")
         try:
-            event = await asyncio.to_thread(
+            event = await run_in_worker_thread(
                 self._ingestion_event_store().get_event, event_id
             )
         except Exception as exc:
@@ -1113,7 +1122,7 @@ class ServiceEngineOperations:
             return Failure(
                 DomainError(
                     code="operation_not_supported",
-                    message=f"{operation.value} is not supported by the local engine",
+                    message=f"{operation.value} is not supported by this engine",
                 )
             )
         return await handler(context, request)
@@ -1293,8 +1302,8 @@ class ServiceEngineOperations:
     ) -> Failure[DependencyError]:
         return Failure(
             DependencyError(
-                code="local_engine_operation_failed",
-                message="the local engine operation failed",
+                code=ENGINE_OPERATION_FAILED,
+                message="the engine operation failed",
                 details={"operation": operation, "error_type": type(exc).__name__},
                 recommended_next_action="inspect runtime logs",
             )
@@ -1302,7 +1311,7 @@ class ServiceEngineOperations:
 
     async def _call(self, call: Callable[[], object]) -> Outcome[object]:
         try:
-            return Success(await asyncio.to_thread(call))
+            return Success(await run_in_worker_thread(call))
         except CapabilityNotImplemented as exc:
             return Failure(
                 DomainError(
@@ -1375,8 +1384,8 @@ class ServiceEngineOperations:
         except Exception as exc:
             return Failure(
                 DependencyError(
-                    code="local_engine_operation_failed",
-                    message="the local engine operation failed",
+                    code=ENGINE_OPERATION_FAILED,
+                    message="the engine operation failed",
                     details={"error_type": type(exc).__name__},
                     recommended_next_action="inspect runtime logs",
                 )
@@ -1480,6 +1489,7 @@ def _snapshot_document_count(resources: Mapping[str, Any]) -> int:
 
 
 __all__ = [
+    "ENGINE_OPERATION_FAILED",
     "LOCAL_ACTOR",
     "EngineServices",
     "GraphMetadataOperationHandler",
