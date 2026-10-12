@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol, TypeAlias, cast
 from uuid import uuid4
 
+from potpie.runtime.commit_access import authorization_scope
 from potpie.runtime.coordinator import OperationCoordinator
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
@@ -713,9 +714,12 @@ class TypedEngineOperationHandler:
                     context=lease.context,
                     request=request.payload,
                 ):
-                    return await _ENGINE_HANDLERS[request.operation](
-                        lease.engine, request.payload
-                    )
+                    # Commit access and the acting principal derive from the
+                    # scope this request was authorized under.
+                    with authorization_scope(lease.scope):
+                        return await _ENGINE_HANDLERS[request.operation](
+                            lease.engine, request.payload
+                        )
             except Exception:
                 return Failure(
                     DaemonInternalError(
