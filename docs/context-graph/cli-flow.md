@@ -21,7 +21,7 @@ domain code lives under `potpie/context-engine/`.
 There is no separate human-vs-agent API. Both people and coding harnesses drive
 the same `potpie` CLI.
 `potpie/cli/main.py build_app()` is the single console entrypoint
-(`[project.scripts]`): one Typer root whose `@app.callback` exposes three global
+(`[project.scripts]`): one Typer root whose `@app.callback` exposes four global
 options, with the rest of the surface assembled from top-level registrars and
 `add_typer` sub-apps. Engine operations route through an `EngineClient`; root
 capability commands use finite root-owned services.
@@ -44,6 +44,7 @@ flowchart LR
 |---|---|
 | `--json` | machine-readable output for scripts/agents (stable, additive fields) |
 | `--verbose` / `-v` | verbose diagnostics |
+| `--host local\|managed` | run this one command against that host without changing the active one; applied last, never persisted. Naming a managed host that is not configured (or unusable) is refused with `validation_error` rather than answered locally. It may also follow a command that has no `--host` of its own (`potpie status --host managed`). See [Hosts](#hosts-commandshostpy) |
 | `--version` | print `potpie <version> (<short rev>[, dirty])`, the engine version and the interpreter, then exit; with `--json`: `{name, version, build: {rev, dirty, built_at}, engine: {name, version}, python, executable}` |
 
 ## Shared plumbing (`commands/_common.py`)
@@ -51,10 +52,17 @@ flowchart LR
 Every command is wrapped by the same three helpers, so the contract below holds
 uniformly across the surface.
 
-- **`get_engine_client()`** — returns `DaemonEngineClient` by default after
-  canonical discovery and an authenticated handshake. With
-  `CONTEXT_ENGINE_HOST_MODE=in_process`, it returns `LocalEngineClient` over the
-  same typed operation handlers and Resource Manager.
+- **`get_engine_client()`** — routes to the invocation's origin first (see
+  [Hosts](#hosts-commandshostpy)). On the local origin it returns
+  `DaemonEngineClient` by default after canonical discovery and an
+  authenticated handshake; with `CONTEXT_ENGINE_HOST_MODE=in_process`, it
+  returns `LocalEngineClient` over the same typed operation handlers and
+  Resource Manager. On the managed origin it returns a `RemoteEngineClient`
+  for that host (`potpie.runtime.remote`), with no handshake or ticket.
+- **`pot_directory()`** — the current origin's `PotDirectory`
+  (`potpie.pots.directory`): `LocalPotDirectory` over the in-process pot
+  service, or `ManagedPotDirectory` over the host's `host.*` operations. Pot,
+  source, grant, `whoami` and `status` commands read and write pots through it.
 - **`get_root_runtime()` and finite service accessors** — provide Potpie-owned
   setup, auth, configuration, pot/source, skills, ledger, and lifecycle services
   without adding them to `ContextEngine`.
@@ -95,7 +103,7 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 | `setup` `doctor` `whoami` `use` `config` | `commands/bootstrap.py` | finite root services plus `EngineClient` readiness where needed |
 | `login` `logout` + provider groups (`github`/`git`/`linear`/`jira`/`confluence`/`auth`) | `commands/auth.py` | root-owned Firebase/API-key auth + integration read clients |
 | `ui` | `commands/ui.py` | ensures daemon, opens read-only graph explorer |
-| `pot` `source` | `commands/pots.py` | root `PotResourceService` |
+| `pot` `source` | `commands/pots.py` | the origin's `PotDirectory` (local pot service or a managed host's `host.*` operations) |
 | `daemon` | `commands/daemon.py` | root lifecycle service and `DaemonController` |
 | `ledger` | `commands/ledger.py` | root `LedgerService` (clients are stubs — roadmap) |
 | `graph` (+ nested `inbox`, `quality`, `bulk`) | `commands/graph.py` | finite `EngineClient` operations; root backend administration where required |
@@ -104,6 +112,7 @@ and `add_typer` sub-apps. Note the corrections vs older docs: there is **no
 | `backend` | `commands/graph.py` | root backend administration service |
 | `skills` | `commands/skills.py` | root `SkillManager` |
 | `resource` (+ nested `index`) | `commands/resource.py` | finite `EngineClient` resource operations |
+| `host` | `commands/host.py` | host registry (`potpie.config.host_registry`); `set --check` probes the host |
 | `cloud` | `commands/cloud.py` | managed sync — **all raise `CapabilityNotImplemented`** (roadmap) |
 
 The async ingestion pipeline behind the HTTP API keeps a **separate**
@@ -134,7 +143,7 @@ potpie config  set <key> <value>
 potpie config  unset <key>
 potpie login   [--api-key/-k <key>] [--url/-u <url>]
 potpie logout
-potpie ui      [--open/--no-open] [--pot <ref>]
+potpie ui      [--open/--no-open] [--pot <ref>]   # <ref> may be managed:<id>
 ```
 
 - **`resolve` / `search` / `record`** → the corresponding typed `EngineClient`
@@ -161,7 +170,10 @@ potpie ui      [--open/--no-open] [--pot <ref>]
   A record the graph service **refuses** exits `1` and reports `accepted: false`
   with the store's reason in `detail`.
 - **`status`** — context data-plane readiness combined with root runtime state: daemon, backend,
-  pot, quality, and skill state. `--host` is a deprecated no-op (readiness is the default).
+  pot, quality, and skill state. On a managed host the pot half is `host.pot_status`,
+  the data plane is the host's, `profile` is `managed`, and skill readiness is still
+  this machine's. `potpie status --host managed` is the global option typed after
+  the command; status has no `--host` flag of its own.
   `--verify` is rejected here — it moved to `potpie auth status --verify`, the
   explicit integration-auth report.
 - **`setup`** — idempotent first-run that builds a `SetupPlan`
@@ -180,7 +192,12 @@ potpie ui      [--open/--no-open] [--pot <ref>]
   `backend.mutation.readiness()` + `daemon.status()` + `ledger.status()` + the
   resource store and retrieval index status (`resources`, `resource_index`); also
   reports `effective_current_repo_pot` and `repo_default_pot` (the repo→pot
-  routing resolution for the current directory).
+  routing resolution for the current directory). A `host` block names the
+  origin; on a managed host it adds the host's handshake and `daemon.status`
+  answer (`reachable`, `instance_id`, `version`, `build`, `protocol`,
+  `operations`, `problem`), the backend rows come from the host's data plane,
+  and every row degrades on its own. The `daemon`, `cli_install` and
+  embedded-server rows are always this machine's.
 - **`config get|set|unset`** — reads and writes `<home>/config.json`. `set`
   accepts only the known keys (`config --help` and `config list` name them) and
   checks the value of a key that takes a closed set: `resource_index` takes an
@@ -193,16 +210,21 @@ potpie ui      [--open/--no-open] [--pot <ref>]
   reports `restart_required: true` and a running daemon keeps its old setting
   until `potpie daemon restart`. Turning it off hides the protocol types and view
   and keeps the data. There is no environment switch for it.
-- **`whoami`** — local OSS reports a `none` identity.
-- **`use <ref>`** — alias for `pot use`. `--managed` raises `CapabilityNotImplemented`
-  (see Roadmap below).
+- **`whoami`** — who the current host believes you are: local OSS reports a
+  `none` identity; a managed host answers `host.whoami` (`subject`, `mode`,
+  `detail`).
+- **`use <ref>`** — alias for `pot use`. `--local` / `--managed` select the host
+  exactly as qualifying the ref does (`local:<ref>` / `managed:<ref>`); both at
+  once, or a flag that contradicts the ref's prefix, is a `validation_error`.
 - **`login` / `logout`** — root-owned Firebase browser session or API-key store.
   Flags are `--api-key/-k` and `--url/-u`.
-- **`ui`** — ensures the daemon, discovers its `base_url`, opens `<base>/ui`, the
-  read-only graph explorer.
-
-> **Roadmap (not yet wired):** `use --managed` raises `CapabilityNotImplemented`.
-> Managed-backend routing is designed and wired-for but not functional today.
+- **`ui`** — ensures the daemon, discovers its `base_url`, opens
+  `<base>/ui?host=<origin>[&pot=<id>]&k=<code>`, the read-only graph explorer.
+  The local daemon serves the explorer for both hosts: `--pot managed:<ref>`
+  resolves the pot on the managed host and puts `host=managed` in the URL, and
+  the daemon reads that host with the key from the host registry, so the key
+  never reaches the browser. `k` is the single-use handoff code. JSON:
+  `{url, pot_id, origin, warning}`.
 
 ### Provider auth groups (root, `commands/auth.py`)
 
@@ -236,6 +258,9 @@ potpie pot use    <ref> [--also-default-for-current-repo]
 potpie pot rename <ref> <new-name>
 potpie pot reset  [<ref>] [--confirm]
 potpie pot archive <ref> [--confirm]
+potpie pot grant  <ref> <actor-id> [--role reader|writer|admin]   # managed host only
+potpie pot revoke <ref> <actor-id>                               # managed host only
+potpie pot grants <ref>                                          # managed host only
 
 potpie pot linked  [--repo .] [--summary]
 potpie pot default show | set | clear [--repo .]
@@ -247,6 +272,34 @@ potpie source status [<id>] [--pot <ref>]
 potpie source remove <id> [--pot <ref>]
 ```
 
+- **`pot list`** lists every configured host by default; `--local` / `--managed`
+  narrow it, and naming both (or `--all`) lists both, so a managed host that is
+  missing or down is stated rather than merely absent. JSON:
+  `{pots: [{id, name, active, archived, current, origin}], active_origin,
+  unavailable?}`. `active` is that host's own pointer; `current` marks the pot
+  commands act on (the active host's active pot). Each host degrades on its
+  own (`unavailable.<origin>` names why); when no listed host answers, the
+  command fails with `unavailable` (exit `2`) instead of an empty listing.
+  `--managed` with no managed host configured is `not_implemented` (exit `2`).
+- **`pot info`** — `{active_pot, current_repo}` for the current host;
+  `current_repo` is the repo→pot routing for this directory (`repo`,
+  `active_pot_id`, `default_pot_id`, `effective_pot`, `reason`, `status`,
+  `candidates`). On a managed host the repo default is the host's, and only a
+  repository identified by its git remote has one.
+- **`pot use`** selects the pot on the host its ref targets and then persists
+  that host as the active origin. With `--also-default-for-current-repo` the
+  repo default is bound on the same host after the selection succeeds, and the
+  origin is persisted only then. On a managed host that needs a git remote.
+  JSON: `{id, name, origin, repo_default_set, current_repo, warnings}`.
+- **`pot grant` / `revoke` / `grants`** share a managed host's pot with other
+  actors (`reader` reads, `writer` writes, `admin` also does destructive work
+  and sharing; the host enforces it). On the local host they refuse with
+  `unsupported`: the local daemon is single-user. JSON: `grant` →
+  `{pot_id, actor_id, role}`, `revoke` → `{pot, actor_id, revoked}`, `grants` →
+  `{pot, grants: [...]}`.
+- **Local-only lifecycle.** `pot rename`, `pot archive`, `source status <id>`
+  and `source remove` are served by the local host only; on a managed host they
+  are refused as `not_implemented` before anything runs.
 - **`pot reset`** is the destructive per-pot wipe — note there is **no
   `graph reset`** command. The CLI resolves the exact pot once, binds
   confirmation to that context, and dispatches `ResetContextRequest` through
@@ -362,6 +415,75 @@ per-`(pot,source)` cursor. `--filter` is reserved/unused; `ledger use` writes co
 
 ---
 
+## Hosts (`commands/host.py`)
+
+The CLI talks to two kinds of context host. The **local** host is this
+machine's daemon (or in-process runtime) and needs no configuration. A
+**managed** host is a hosted context-graph service that serves the same typed
+operations at `POST <base>/v1/operations` over HTTPS with a per-actor API key.
+
+```bash
+potpie host list
+potpie host set <url> [--token -|''] [--check/--no-check] [--allow-insecure]
+potpie host clear
+potpie host use local|managed
+```
+
+- **Registry.** `host set` stores the URL and key in `<home>/cli_hosts.json`
+  (`0600`, replaced atomically; an unreadable file fails loudly and `host
+  clear` moves it aside to `cli_hosts.json.corrupt`). `POTPIE_MANAGED_URL`
+  (with `POTPIE_MANAGED_TOKEN`) outranks the file for one-off runs.
+- **The key never travels on argv.** `--token -` reads it from stdin (a hidden
+  prompt on a terminal), `--token ''` clears a stored one, and a literal
+  `--token <key>` is refused with `validation_error` because it would be
+  visible in the process list and shell history.
+- **TLS.** `https://` is required, except plain `http://` for a loopback host or
+  for exactly one opted-in `host[:port]` (`--allow-insecure`, or
+  `POTPIE_ALLOW_INSECURE_HOST` for `POTPIE_MANAGED_URL`). Every command that
+  sends the key over that opt-in prints a one-line warning on stderr, never on
+  stdout.
+- **`--check`** (the default) runs a handshake and `host.pot_list` before
+  saving, so a typo never replaces a working endpoint. JSON: `{origin,
+  endpoint, checked, pots?, shadowed_by_env, allow_insecure_host}`.
+- **`host list`** JSON: `{hosts: [{origin, configured, endpoint, problem,
+  active, allow_insecure_host}], active_origin, selected_origin,
+  persisted_origin, degraded, problem}`.
+
+**Which host a command talks to.** The origin of one invocation is, in order:
+the prefix of a qualified pot ref (`managed:<ref>`, `local:<ref>`), else
+`--host`, else the pointer `host use` (or `pot use`) persisted. A persisted
+`managed` pointer degrades to `local` while no managed host is configured; an
+explicit target (`--host managed`, a `managed:` ref) never degrades and is
+refused instead. On the managed origin:
+
+- engine commands (`resolve`, `search`, `record`, `status`, `graph …`,
+  `resource …`, `timeline`) go to the host through `RemoteEngineClient`;
+- pot, source, grant and `whoami` commands go through the host's `host.*`
+  operations;
+- without `--pot`, the host selects the pot for the current repository. The
+  repository is sent only when it is identified by a git remote; a
+  path-derived identity is never sent, and the host then uses your active pot.
+
+`daemon`, `skills`, `setup`, integration `auth` and harness configuration are
+always this machine's. `--host managed setup` is refused: setup provisions the
+local machine.
+
+**Bare refs** resolve on the current origin only, never on the other host
+(names are per-host labels). When a bare ref is not found there, the
+`pot_not_found` refusal names the qualified ref of any match the other
+configured host holds, e.g. `'managed:api'`.
+
+**An older host.** A managed host that lacks an operation or a field this
+client sends answers with a precise refusal; the CLI reports it as
+`not_implemented` (exit `2`) naming the operation and fields, and everything
+else the host supports keeps working. Results from a newer host decode
+leniently.
+
+**Python façade.** `potpie.runtime.connect()` returns a `HostConnection` for
+the registry's managed host: `engine(selector)` (an async `EngineClient`),
+`pots` (a synchronous `PotDirectory`, usable from any thread) and
+`extension(name, request, result_type)` for host extension operations.
+
 ## Cloud (`commands/cloud.py`)
 
 ```bash
@@ -369,9 +491,9 @@ potpie cloud login | status | push [--pot <ref>] | pull [--pot <ref>]
 potpie cloud skills sync [--agent <id>]
 ```
 
-> **Roadmap (not yet wired):** every `cloud` command (and `pot list --managed`,
-> `use --managed`) raises `CapabilityNotImplemented`. The managed profile shares the
-> same service modules and command language; only the routing is unbuilt.
+> **Roadmap (not yet wired):** every `cloud` command raises
+> `CapabilityNotImplemented`. Managed hosts are reached through the `host`
+> group and qualified pot refs instead (see [Hosts](#hosts-commandshostpy)).
 
 ---
 
@@ -865,9 +987,16 @@ potpie graph propose --file mutation.json
 potpie graph commit <plan_id> --verify
 ```
 
-> **Roadmap (not yet wired):** the managed-backend journey
-> (`potpie login` → `potpie use <pot> --managed` → the same `potpie graph …`
-> commands) is documented but raises `CapabilityNotImplemented` today.
+The managed-host journey uses the same commands against a hosted graph:
+
+```bash
+printf '%s\n' "$KEY" | potpie host set https://your-host.example --token -
+potpie host use managed
+potpie pot list --managed
+potpie pot use managed:<id> --also-default-for-current-repo
+potpie resolve "what should I know before working in this repository?"
+potpie graph propose --file mutation.json
+```
 
 ## Output contract
 
