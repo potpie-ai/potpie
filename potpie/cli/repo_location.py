@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
+
+from potpie_context_engine.domain.git_probe import run_git_probe
 
 
 def resolve_repo_location(location: str) -> str:
@@ -50,19 +51,12 @@ def current_repo_identity(cwd: Path) -> str | None:
 
 
 def current_git_remote(cwd: Path) -> str | None:
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(cwd), "remote", "get-url", "origin"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except Exception:
+    """The normalized ``origin`` remote of the repository at ``cwd``, or ``None``."""
+
+    remote = run_git_probe(["remote", "get-url", "origin"], cwd=cwd, timeout=2)
+    if not remote:
         return None
-    if proc.returncode != 0:
-        return None
-    return normalize_repo_ref(proc.stdout.strip())
+    return normalize_repo_ref(remote)
 
 
 def normalize_repo_ref(value: str) -> str | None:

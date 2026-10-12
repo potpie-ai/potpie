@@ -2122,7 +2122,8 @@ def test_graph_nudge_accepts_dash_event_alias() -> None:
     emitted = json.loads(result.output)
     body = _assert_graph_envelope(emitted, "graph.nudge")
     assert body["event"] == "pre_edit"
-    assert "legacy transition command" in emitted["warnings"][0]
+    # Harnesses call this command directly; it does not steer them elsewhere.
+    assert not any("legacy" in warning for warning in emitted["warnings"])
 
 
 def test_graph_catalog_json_advertises_v2_workbench_commands() -> None:

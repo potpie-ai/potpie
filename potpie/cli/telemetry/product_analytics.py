@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import atexit
-import queue
 import threading
-import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Final, Mapping, Protocol, TypeAlias
 
 import httpx
@@ -15,9 +14,6 @@ from .settings import ProductAnalyticsSettings
 AnalyticsValue: TypeAlias = str | int | float | bool | None | tuple[str, ...]
 AnalyticsProperties: TypeAlias = Mapping[str, AnalyticsValue]
 ProductAnalyticsPayload: TypeAlias = dict[str, str | AnalyticsProperties]
-_DISPATCH_QUEUE_MAX_SIZE: Final[int] = 128
-_DISPATCH_WORKER_IDLE_TIMEOUT_SECONDS: Final[float] = 0.1
-_DISPATCH_WORKER_JOIN_TIMEOUT_SECONDS: Final[float] = 5.0
 _CANONICAL_ANALYTICS_PROPERTY_KEYS: Final[frozenset[str]] = frozenset(
     {
         "anonymous_install_id",
@@ -49,89 +45,32 @@ class NoOpProductAnalyticsSink:
         del event
 
 
-class _QueuedProductAnalyticsPayload:
-    __slots__ = ("payload", "url")
-
-    def __init__(self, *, url: str, payload: Mapping[str, object]) -> None:
-        self.url = url
-        self.payload = payload
-
-
-class _ProductAnalyticsDispatcher:
-    def __init__(self) -> None:
-        self._queue: queue.Queue[_QueuedProductAnalyticsPayload] = queue.Queue(
-            maxsize=_DISPATCH_QUEUE_MAX_SIZE
-        )
-        self._lock = threading.Lock()
-        self._worker: threading.Thread | None = None
-
-    def dispatch(self, *, url: str, payload: Mapping[str, object]) -> None:
-        try:
-            self._queue.put_nowait(
-                _QueuedProductAnalyticsPayload(url=url, payload=payload)
-            )
-        except queue.Full:
-            return
-        self._ensure_worker()
-
-    def flush(self) -> None:
-        deadline = time.monotonic() + _DISPATCH_WORKER_JOIN_TIMEOUT_SECONDS
-        while self._queue.unfinished_tasks and time.monotonic() < deadline:
-            time.sleep(0.01)
-        worker = self._worker
-        if worker is not None:
-            worker.join(timeout=max(0.0, deadline - time.monotonic()))
-
-    def _ensure_worker(self) -> None:
-        with self._lock:
-            if self._worker is not None and self._worker.is_alive():
-                return
-            self._worker = threading.Thread(
-                target=self._run,
-                daemon=False,
-                name="potpie-product-analytics",
-            )
-            self._worker.start()
-
-    def _run(self) -> None:
-        while True:
-            try:
-                queued_payload = self._queue.get(
-                    timeout=_DISPATCH_WORKER_IDLE_TIMEOUT_SECONDS
-                )
-            except queue.Empty:
-                with self._lock:
-                    if self._queue.empty():
-                        self._worker = None
-                        return
-                continue
-            try:
-                _post_product_analytics_payload(
-                    url=queued_payload.url,
-                    payload=queued_payload.payload,
-                )
-            finally:
-                self._queue.task_done()
-
-
 @dataclass(frozen=True, slots=True)
 class PostHogSink:
+    """Spools the event; a detached flusher ships it (see :mod:`.spool`).
+
+    The sink used to POST from the CLI process — first one event at a time on
+    a fresh TLS connection each, then as one batch at exit — and either way
+    the command's wall time carried the round trip. Now the process only
+    writes a line. The timestamp travels with the event so the flusher's
+    delay does not move it.
+    """
+
     settings: ProductAnalyticsSettings
 
     def capture(self, event: ProductAnalyticsEvent) -> None:
         if not self.settings.enabled or self.settings.api_key is None:
             return
         payload: ProductAnalyticsPayload = {
-            "api_key": self.settings.api_key,
             "event": event.name,
             "distinct_id": event.distinct_id,
             "properties": dict(event.properties),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        _send_product_analytics_payload(_capture_url(self.settings.host), payload)
+        _spool_product_analytics_event(payload)
 
 
 _sink: ProductAnalyticsSink = NoOpProductAnalyticsSink()
-_dispatcher = _ProductAnalyticsDispatcher()
 
 
 def configure_product_analytics(settings: ProductAnalyticsSettings) -> None:
@@ -174,38 +113,55 @@ def capture_event(name: str, properties: AnalyticsProperties | None = None) -> N
         return
 
 
-def _capture_url(host: str) -> str:
-    return f"{host.rstrip('/')}/capture/"
+def _batch_url(host: str) -> str:
+    return f"{host.rstrip('/')}/batch/"
 
 
 def _timeout() -> httpx.Timeout:
     return httpx.Timeout(connect=1.0, read=2.0, write=1.0, pool=1.0)
 
 
-def _send_product_analytics_payload(
-    url: str,
-    payload: Mapping[str, object],
-) -> None:
-    _dispatcher.dispatch(url=url, payload=payload)
+def _spool_product_analytics_event(payload: Mapping[str, object]) -> None:
+    from . import spool
+
+    spool.append({"kind": "analytics", "event": dict(payload)})
 
 
-def _flush_product_analytics_dispatcher() -> None:
-    _dispatcher.flush()
+_http_client: httpx.Client | None = None
+_http_client_lock = threading.Lock()
 
 
-def _post_product_analytics_payload(
+def _http() -> httpx.Client:
+    global _http_client
+    with _http_client_lock:
+        if _http_client is None:
+            _http_client = httpx.Client(timeout=_timeout(), follow_redirects=True)
+        return _http_client
+
+
+def _close_http_client() -> None:
+    global _http_client
+    with _http_client_lock:
+        client, _http_client = _http_client, None
+    if client is not None:
+        try:
+            client.close()
+        except Exception:  # noqa: BLE001 - shutdown must never fail CLI work.
+            return
+
+
+def _post_product_analytics_batch(
     *,
     url: str,
     payload: Mapping[str, object],
 ) -> None:
     try:
-        with httpx.Client(timeout=_timeout(), follow_redirects=True) as client:
-            client.post(url, json=payload)
+        _http().post(url, json=payload)
     except Exception:  # noqa: BLE001 - product analytics must never affect CLI work.
         return
 
 
-atexit.register(_flush_product_analytics_dispatcher)
+atexit.register(_close_http_client)
 
 
 __all__ = [

@@ -4,13 +4,24 @@ Every route resolves a pot (explicit ``?pot=`` or the active pot) and delegates
 to explicit root- and engine-owned services. Nothing here mutates the graph —
 the UI is a browse/select surface, in keeping with the "harness is the
 intelligence" model.
+
+Every route is behind ``require_ui_credential`` and ``require_same_origin``:
+it reads the same graph the typed daemon protocol does, so an anonymous caller
+or another site's page must get nothing. See ``auth.py``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+
+from potpie.daemon.http.ui.auth import (
+    require_bearer,
+    require_same_origin,
+    require_ui_credential,
+    ui_auth,
+)
 
 from potpie_context_engine.core.errors import CapabilityNotImplemented, PotNotFound
 from potpie_context_engine.core.graph_entity_summary import (
@@ -143,8 +154,15 @@ def _slice_to_graph(sl: Any) -> dict[str, Any]:
 
 
 def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
-    """Build the ``/ui/api`` router from explicit runtime services."""
-    router = APIRouter()
+    """Build the ``/ui/api`` router from explicit runtime services.
+
+    The credential and origin checks are router-level dependencies rather than
+    per-route ones, so a route added here later is authenticated by
+    construction, not by whoever remembers to add the decorator.
+    """
+    router = APIRouter(
+        dependencies=[Depends(require_ui_credential), Depends(require_same_origin)]
+    )
 
     def _guarded(fn):
         # Map domain errors to HTTP so the SPA gets a clean JSON error body.
@@ -181,6 +199,17 @@ def build_ui_api_router(*, pots: Any, graph: Any, backend: Any) -> APIRouter:
             }
 
         return _guarded(go)
+
+    @router.post("/api/handoff", dependencies=[Depends(require_bearer)])
+    def handoff(request: Request) -> dict[str, Any]:
+        """Trade the daemon token for a code a browser navigation can carry.
+
+        ``potpie ui`` calls this and puts the code in the URL it opens; the
+        shell handler spends it for a cookie. The token itself never reaches
+        the browser, where it would sit in history for the life of the profile.
+        """
+        code, expires_in = ui_auth(request).mint_code()
+        return {"code": code, "expires_in": expires_in}
 
     @router.post("/api/pots/use")
     def use_pot(ref: str = Body(..., embed=True)) -> dict[str, Any]:

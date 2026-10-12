@@ -408,7 +408,6 @@ by [ingestion-nudge.md](./ingestion-nudge.md).
 | `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | Reconciliation chunk size | 20 |
 | `CONTEXT_ENGINE_RECONCILIATION_ENABLED` / `_INFER_LABELS` / `_CONFLICT_DETECT` / `_AUTO_SUPERSEDE` | Reconciliation feature flags | on (planner off) |
 | `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS` / `GITHUB_WEBHOOK_SECRET` | GitHub webhook HMAC handling (fail-closed by default) | signed required |
-| `POTPIE_HOOK_DEBUG` / `POTPIE_HOOK_TIMEOUT` / `POTPIE_BIN` / `POTPIE_POT` | Claude Code nudge-hook adapter env | — |
 
 > **Roadmap (not yet wired):** `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED` turns on
 > service-side LLM reconciliation, which is parked/non-canonical — canonical

@@ -4,18 +4,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from typing import Any
+
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from potpie.cli.telemetry import product_analytics
 from potpie.cli.telemetry.context import TelemetryContext
+from potpie.daemon.http.ui import build_ui_app
 from potpie.daemon.http.ui.router import (
     _caption,
     _node_type,
     _parse_scope,
     _slice_to_graph,
-    build_ui_api_router,
 )
 from potpie_context_engine.core.ports.graph.inspection import (
     GraphEdge,
@@ -25,6 +26,18 @@ from potpie_context_engine.core.ports.graph.inspection import (
 
 if TYPE_CHECKING:
     from potpie.cli.telemetry.product_analytics import ProductAnalyticsEvent
+
+_TOKEN = "router-test-daemon-token"  # noqa: S105 - non-secret test fixture
+
+
+def _client(*, pots: Any, graph: Any, backend: Any) -> TestClient:
+    """The explorer app as the daemon builds it, called with the daemon token."""
+    app = build_ui_app(pots=pots, graph=graph, backend=backend, bearer_token=_TOKEN)
+    return TestClient(
+        app,
+        base_url="http://127.0.0.1:8765",
+        headers={"Authorization": f"Bearer {_TOKEN}"},
+    )
 
 
 def test_node_type_prefers_canonical_key_prefix_over_stray_label() -> None:
@@ -124,12 +137,9 @@ def test_pots_api_includes_counts_for_selector() -> None:
                 {"claims": 82, "entities": 46} if pot_id == "p2" else {"claims": 0}
             )
 
-    app = FastAPI()
-    app.include_router(
-        build_ui_api_router(pots=Pots(), graph=Graph(), backend=object())
-    )
+    client = _client(pots=Pots(), graph=Graph(), backend=object())
 
-    response = TestClient(app).get("/api/pots")
+    response = client.get("/ui/api/pots")
 
     assert response.status_code == 200
     body = response.json()
@@ -165,12 +175,9 @@ def test_ui_session_beacon_records_usage_without_sensitive_payload(
             arch="arm64",
         ),
     )
-    app = FastAPI()
-    app.include_router(
-        build_ui_api_router(pots=object(), graph=object(), backend=object())
-    )
-    response = TestClient(app).post(
-        "/api/telemetry/session",
+    client = _client(pots=object(), graph=object(), backend=object())
+    response = client.post(
+        "/ui/api/telemetry/session",
         json={
             "had_graph": True,
             "pot_id": "secret-pot",
@@ -224,20 +231,14 @@ def test_pots_list_does_not_record_ui_session(
 
     sink = _Sink()
     monkeypatch.setattr(product_analytics, "_sink", sink)
-    app = FastAPI()
-    app.include_router(
-        build_ui_api_router(pots=Pots(), graph=Graph(), backend=object())
-    )
-    response = TestClient(app).get("/api/pots")
+    client = _client(pots=Pots(), graph=Graph(), backend=object())
+    response = client.get("/ui/api/pots")
     assert response.status_code == 200
     assert sink.events == []
 
 
 def test_ui_session_beacon_succeeds_when_analytics_is_noop() -> None:
-    app = FastAPI()
-    app.include_router(
-        build_ui_api_router(pots=object(), graph=object(), backend=object())
-    )
-    response = TestClient(app).post("/api/telemetry/session")
+    client = _client(pots=object(), graph=object(), backend=object())
+    response = client.post("/ui/api/telemetry/session")
     assert response.status_code == 200
     assert response.json() == {"ok": True}

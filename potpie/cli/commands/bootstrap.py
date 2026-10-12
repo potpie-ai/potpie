@@ -70,6 +70,29 @@ from potpie_context_engine.core.ports.agent_context import StatusReport
 from potpie_context_engine.requests import DataPlaneStatusRequest
 
 
+def _embedded_graph_servers(profile: str) -> dict | None:
+    """Report leaked embedded graph servers, for the profile that has them.
+
+    Only ``falkordb_lite`` runs one. It is daemonized, so it outlives whatever
+    started it; anything that died without stopping it leaves a ``redis-server``
+    holding a db file and its memory until the machine reboots, and nothing
+    else on the system will ever mention it.
+    """
+    if profile != "falkordb_lite":
+        return None
+    try:
+        from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
+            embedded_server_report,
+        )
+        from potpie_context_engine.adapters.outbound.settings_env import (
+            EnvContextEngineSettings,
+        )
+
+        return embedded_server_report(EnvContextEngineSettings().falkordb_lite_path())
+    except Exception:  # noqa: BLE001 - a diagnostic must never break doctor
+        return None
+
+
 def _effective_current_repo_pot_id(
     host, *, repo_identity: str | None, active_pot_id: str | None
 ) -> str | None:
@@ -422,9 +445,11 @@ def register(root: typer.Typer) -> None:
             default_pot_id = repo_default_pot_id(host, repo_identity)
 
             cli_install = collect_cli_install_status()
+            embedded_servers = _embedded_graph_servers(host.backend.profile)
             emit(
                 {
                     "daemon": daemon_status,
+                    "embedded_graph_servers": embedded_servers,
                     "cli_install": cli_install,
                     "backend_profile": host.backend.profile,
                     "backend_ready": readiness.ready,
@@ -461,6 +486,11 @@ def register(root: typer.Typer) -> None:
                             else " (no repo default set)"
                         )
                         if repo_identity
+                        else ""
+                    )
+                    + (
+                        f"\nembedded servers: {embedded_servers['detail']}"
+                        if embedded_servers and embedded_servers.get("detail")
                         else ""
                     )
                 ),

@@ -4,10 +4,12 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { api } from "./api";
+import { session } from "./session";
 import GraphView from "./GraphView";
 import Timeline from "./Timeline";
 import {
@@ -66,6 +68,11 @@ function mergeGraph(a: GraphData, b: GraphData): GraphData {
 }
 
 export default function App() {
+  // Once the daemon refuses this page's session, nothing else on it can work.
+  const sessionRequired = useSyncExternalStore(
+    session.subscribe,
+    session.isRequired,
+  );
   const [pots, setPots] = useState<PotRef[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -286,6 +293,8 @@ export default function App() {
   };
 
   const counts = status?.counts || {};
+
+  if (sessionRequired) return <SessionRequired />;
 
   return (
     <div className="app">
@@ -676,6 +685,33 @@ function NodePanel({ node }: { node: GraphNode }) {
             <div className="pv">{formatValue(k, v)}</div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** Shown once the daemon refuses this page's session cookie. Only the CLI can
+ * read the daemon token, so the way back in is a fresh `potpie ui`. */
+function SessionRequired() {
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <img className="logo-img" src={logoUrl} alt="Potpie" />
+          <span className="title">Graph Explorer</span>
+        </div>
+      </header>
+      <div className="session-required" role="alert">
+        <h1>Run <code>potpie ui</code> to open the explorer again</h1>
+        <p>
+          This page no longer has a session with the Potpie daemon. Sessions end
+          when the daemon restarts, after 12 hours, or when the page was opened
+          without the one-time link <code>potpie ui</code> creates.
+        </p>
+        <p>
+          Run <code>potpie ui</code> in your terminal. It opens a new tab with a
+          fresh session; you can close this one.
+        </p>
       </div>
     </div>
   );

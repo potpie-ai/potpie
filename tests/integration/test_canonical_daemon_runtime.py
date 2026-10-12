@@ -15,6 +15,7 @@ from potpie.runtime import (
     AuthenticationError,
     CanonicalDaemonRuntime,
     ContextSelector,
+    DaemonBuild,
     DaemonControlClient,
     DaemonEngineClient,
     DaemonInternalError,
@@ -63,6 +64,9 @@ class _Handler:
         )
 
 
+_SERVED_BUILD = DaemonBuild(rev="a" * 40, dirty=False, built_at="2026-06-28T00:00:00Z")
+
+
 def _endpoint(kind: str, tmp_path: Path) -> RuntimeEndpoint:
     if kind == "uds":
         return RuntimeEndpoint(kind="uds", address=str(tmp_path / "runtime.sock"))
@@ -81,6 +85,8 @@ async def _running_runtime(kind: str, tmp_path: Path, handler: _Handler):
         instance_id="instance-1",
         backend_profile="embedded",
         ui_url="http://127.0.0.1:8765",
+        version="2.0.1",
+        build=_SERVED_BUILD,
         coordinator=OperationCoordinator(),
     )
     await runtime.start()
@@ -135,6 +141,8 @@ async def test_authenticated_runtime_handshake_operation_and_typed_stop(
         assert isinstance(status, Success)
         assert status.value.backend_profile == "embedded"
         assert status.value.ui_url == "http://127.0.0.1:8765"
+        assert status.value.version == "2.0.1"
+        assert status.value.build == _SERVED_BUILD
         assert isinstance(operation, Success)
         assert operation.value == AgentEnvelope(
             pot_id="context-a",

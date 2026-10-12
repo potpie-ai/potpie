@@ -86,7 +86,11 @@ from potpie_context_engine.core.ports.graph.mutation import (
     MutationExecutionState,
 )
 from potpie_context_engine.core.ports.graph.plan_store import GraphPlanStorePort
-from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
+from potpie_context_engine.core.ports.claim_query import (
+    ClaimQueryFilter,
+    ClaimRow,
+    entity_properties_many,
+)
 from potpie_context_engine.core.semantic_mutations import (
     LoweredOperation,
     SemanticMutationParseError,
@@ -2812,18 +2816,20 @@ def _quality_entity_metadata(
         )
     props: dict[str, Mapping[str, Any]] = {}
     if properties:
-        for key in entity_keys:
-            try:
-                props[key] = dict(
-                    backend.claim_query.entity_properties(pot_id=pot_id, entity_key=key)
+        try:
+            # A default quality scan can reach 2,000 entities. Use the same
+            # bulk capability as graph readers instead of one query per entity.
+            props = dict(
+                entity_properties_many(
+                    backend.claim_query, pot_id=pot_id, entity_keys=entity_keys
                 )
-            except CapabilityNotImplemented as exc:
-                unsupported.append(
-                    _unsupported_from_exception(
-                        exc, fallback="claim_query.entity_properties"
-                    )
+            )
+        except CapabilityNotImplemented as exc:
+            unsupported.append(
+                _unsupported_from_exception(
+                    exc, fallback="claim_query.entity_properties"
                 )
-                break
+            )
     return labels, props, tuple(unsupported)
 
 

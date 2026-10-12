@@ -1,5 +1,6 @@
 ---
 name: potpie-project-preferences
+version: "2"
 description: "Use before writing, modifying, reviewing, refactoring, or testing code so repo/project preferences surface: error handling, file structure, frameworks, logging, dependency choices, testing, security, API style, and naming. Also use after code work when a reusable project preference should be recorded."
 ---
 
@@ -10,27 +11,46 @@ work instead of being rediscovered from code.
 
 ## Fast Path
 
-1. Identify the narrowest scope you know: repo, path, service, package, or file.
-2. Expand the user's task into preference search terms: error handling, retries,
-   validation, logging, observability, framework, folder layout, tests,
-   dependency choice, security, API shape, naming.
-3. Read preferences with the graph workbench:
+Run the two independent reads below concurrently as part of one shared
+discovery pass. Reuse current results from another skill or hook for the same
+task, pot, and scope; loading this skill does not repeat resolve. Use a known
+explicit pot selector on all calls and check returned pot IDs before combining
+results. Resolve ambiguous routing first.
+
+- One bounded context call — with the default `feature` intent it reads
+  preferences, features, infra, decisions, owners and docs:
 
 ```bash
-potpie graph read \
-  --subgraph decisions \
-  --view preferences_for_scope \
-  --scope repo:<owner-repo>,path:<path-or-dir> \
-  --query "<expanded preference query>" \
-  --limit 12
+potpie resolve "<the task in the user's words>"
 ```
 
-If the scope is unclear, first use `potpie --json pot info` and
-`potpie --json source list`, or search entities:
+- Preferences by scope, with **no `--query`**. Preferences are constraints,
+   not search hits: this view applies an absolute 0.7 similarity floor to a
+   query, which a task sentence rarely clears, and `resolve` applies the same
+   floor to the task text, so it lists a preference only on a near-verbatim
+   match. Scoped preferences are required; skip the call only when equivalent
+   current scoped results are already available.
 
 ```bash
-potpie graph search-entities "<repo service package>" --type Service --limit 10
+potpie graph read --subgraph decisions --view preferences_for_scope --repo current --limit 12
+potpie graph read --subgraph decisions --view preferences_for_scope --scope service:<service>,path:<path-or-dir> --limit 12
 ```
+
+Use the repo read immediately; the service/path command is an alternative when
+those scopes are known, or a refinement when repo results leave a gap. If the
+task names an entity whose key is unknown, run untyped `search-entities` alongside
+the initial reads; use its returned key for dependent scope refinements.
+
+`--repo current` takes the repo key from the working tree; spelled by hand it
+is `repo:<host>/<org>/<name>` (`repo:github.com/acme-corp/acme-shop`). A scope
+hides only preferences bound to a *different* value of the same dimension: a
+service key hides other services' rules, a repo key hides nothing bound by
+service, and `items=0` means nothing is bound to that value. Each row comes
+with its anchor entity, so `items=2` is one preference. Add
+`--query "<terms>" --query-threshold 0.4` only when the scope returns more
+than a dozen rows. Search only for a key no read has shown:
+`potpie graph search-entities "<repo service package>" --limit 10`. Do not
+pre-read `pot info`, `source list`, or `graph status`.
 
 ## Apply Results
 
@@ -41,21 +61,44 @@ user before choosing.
 
 Do not quote Potpie context back unless it matters. Use it to write better code.
 
+## Report Back
+
+Still show the `graph read` you ran, with its `--scope` or `--repo`. That is
+not the same as quoting the context back: the command is how the reader checks
+that you looked at the right scope, while the preference text belongs in the
+code you wrote, not in the reply. Say in one line when a read came back empty —
+code written against no preferences is a different claim from code written
+against none that applied.
+
+Preferences are a list, not a shape. Report them as prose or a short table and
+do not draw a mermaid diagram; boxes around a scope hierarchy are slower to read
+than the sentence "file beats directory beats service beats repo".
+
 ## Record A Preference
 
 Record only reusable, explicit preferences that are likely to matter again. Do
-not turn one-off implementation choices into project policy.
+not turn one-off implementation choices into project policy. Current behavior,
+architecture, and dependency usage are facts even when described by a user.
+For those, decisions with rationale, or events, follow
+[ontology selection](../potpie-graph/SKILL.md#ontology-selection) and choose the
+appropriate entity/relation instead of recording a preference.
 
-Use the workbench write flow:
+A preference needs its policy kind and prescription, which `potpie record`
+cannot carry, so write it — one or several — as a plan:
 
 ```bash
-potpie --json graph catalog --task "record coding preference"
-potpie graph search-entities "<scope>" --type Service --limit 10
-potpie --json graph describe decisions --view preferences_for_scope --examples
+potpie graph mutation-template --kind preference-policy
 potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 ```
+
+The template carries the keys, predicates and required properties — `policy_kind`
+(`error_handling`, `logging`, `testing`, `library_choice`, `file_structure`),
+`prescription`, `strength` and `audience` — and targets a `CodeAsset`; point
+`POLICY_APPLIES_TO` at a repo or service instead when the rule is that broad,
+and `propose` validates the rest. Omit
+`graph_contract_version` from the payload. Anchor the preference with a key a
+read returned, and keep its name short, leading with the distinctive words.
 
 A good preference write includes the policy kind, prescription, strength,
 audience, scope, truth class, evidence or source refs when available, and a

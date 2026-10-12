@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 from potpie.cli import main as cli_main
 from potpie.cli.commands import _common
 from potpie.daemon.discovery import write_daemon_pid
+from potpie.daemon.http.ui import frontend_dist_dir
 from potpie.daemon.lifecycle import Daemon
 from potpie_context_engine.core.lifecycle import DONE, SKIPPED, SetupPlan
 
@@ -271,15 +272,19 @@ def test_canonical_daemon_uses_private_discovery_and_separate_credential(
         assert (runtime_home / "daemon.credential").stat().st_mode & 0o077 == 0
         status = daemon.status()
         assert status["ready"] is True
-        ui_redirect = httpx.get(f"{status['url']}/ui", timeout=3.0)
-        if ui_redirect.status_code == 307:
-            assert ui_redirect.headers["location"] == f"{status['url']}/ui/"
-            assert httpx.get(f"{status['url']}/ui/", timeout=3.0).status_code == 200
-        else:
+        ui_shell = httpx.get(f"{status['url']}/ui", timeout=3.0)
+        assert ui_shell.status_code == 200
+        if not (frontend_dist_dir() / "index.html").is_file():
             # A clean source checkout has no ignored frontend/dist bundle and
             # intentionally serves the build-instructions placeholder at /ui.
-            assert ui_redirect.status_code == 200
-            assert "UI bundle has not been built" in ui_redirect.text
+            assert "UI bundle has not been built" in ui_shell.text
+        # The explorer API takes this boot's credential, never an anonymous caller.
+        ui_api = f"{status['url']}/ui/api/pots"
+        assert httpx.get(ui_api, timeout=3.0).status_code == 401
+        authorized = httpx.get(
+            ui_api, headers={"Authorization": f"Bearer {credential}"}, timeout=3.0
+        )
+        assert authorized.status_code == 200
         assert httpx.post(f"{status['url']}/rpc", timeout=3.0).status_code == 404
         assert httpx.post(f"{status['url']}/attr", timeout=3.0).status_code == 404
     finally:

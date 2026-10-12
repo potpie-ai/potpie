@@ -44,7 +44,7 @@ flowchart LR
 |---|---|
 | `--json` | machine-readable output for scripts/agents (stable, additive fields) |
 | `--verbose` / `-v` | verbose diagnostics |
-| `--version` | print version and exit |
+| `--version` | print `potpie <version> (<short rev>[, dirty])`, the engine version and the interpreter, then exit; with `--json`: `{name, version, build: {rev, dirty, built_at}, engine: {name, version}, python, executable}` |
 
 ## Shared plumbing (`commands/_common.py`)
 
@@ -222,11 +222,23 @@ potpie source remove <id> [--pot <ref>]
 ## Daemon (local infra)
 
 ```bash
-potpie daemon start | status | logs [--follow] | restart | stop
+potpie daemon start | status | logs [--tail N] [--since 15m|ISO-8601] [--follow] | restart | stop
 ```
 
 - **`daemon`** (`commands/daemon.py` → `host.daemon`) — local recovery tooling, not
   onboarding steps. `DaemonStartError` → exit 2.
+- **`daemon status`** names the build the running daemon serves (`version`,
+  `build: {rev, dirty, built_at}`) and sets `stale` when that rev differs from this
+  CLI's (`null` when either side has no rev). A daemon outlives the install that
+  started it, so after an upgrade `stale: true` means `potpie daemon restart`.
+  A daemon from before build reporting has neither key.
+  It exits `0` only when the daemon answers its authenticated handshake. A
+  daemon that is down, or whose process exists but does not answer, is
+  `daemon_unavailable` (exit 2); the JSON payload keeps the status fields
+  alongside the error keys.
+- **`daemon logs`** prints the last 200 lines by default (`--tail 0` for the whole
+  file). `--since` takes an ISO-8601 time or an age such as `15m`; `--follow`
+  streams new lines until interrupted (one JSON object per line with `--json`).
 - Supporting-service admin CLI (`potpie service …`) is not part of the OSS surface;
   the detached daemon does not expose a compatible `/admin/services` discovery
   contract for those commands.
@@ -439,8 +451,9 @@ potpie graph nudge --event <e> --session <id> [--path <p>] [--scope <k:v>] [--qu
 - **`graph bulk apply`** — chunked NDJSON/JSON application with resumability
   (`--start-chunk`, `--manifest`), `--continue-on-error`, and idempotency.
 - **`graph mutation-template`** — emits a static schema-only skeleton (no host call).
-- **`graph nudge`** — the zero-token in-session trigger (`host.nudge.nudge`); the
-  trigger model and the Claude Code hook are in [ingestion-nudge.md](./ingestion-nudge.md).
+- **`graph nudge`** — the zero-token in-session trigger (`host.nudge.nudge`) a
+  harness calls from its own lifecycle hooks; the trigger model and the event
+  mapping are in [ingestion-nudge.md](./ingestion-nudge.md).
   `NudgeEvent` values: `session_start, pre_edit, pre_deploy, test_failed, test_passed, stop`.
 
 ### Inbox (`graph inbox …`) — capture uncertain work
@@ -532,7 +545,6 @@ through services and capability ports.
 | `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | batch chunk size (default 20) |
 | `CONTEXT_ENGINE_RECONCILIATION_ENABLED` / `_INFER_LABELS` / `_CONFLICT_DETECT` / `_AUTO_SUPERSEDE` | reconciliation feature flags |
 | `CONTEXT_ENGINE_ALLOW_UNSIGNED_WEBHOOKS`, `GITHUB_WEBHOOK_SECRET`, `CONTEXT_ENGINE_INGEST_422` | webhook/ingest controls |
-| `POTPIE_HOOK_DEBUG`, `POTPIE_HOOK_TIMEOUT`, `POTPIE_BIN`, `POTPIE_POT` | nudge-hook env |
 
 Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >
 `falkordb_lite`. There is **no `NotImplementedError` gate** on falkordb anywhere.
@@ -547,7 +559,7 @@ flowchart LR
   cf_status["status"]
   cf_read["graph catalog → graph read / search-entities"]
   cf_write["graph propose → graph commit --verify"]
-  cf_nudge["graph nudge (zero-token hook)"]
+  cf_nudge["graph nudge (zero-token, harness-invoked)"]
 
   cf_setup --> cf_status --> cf_read --> cf_write
   cf_nudge -.-> cf_read

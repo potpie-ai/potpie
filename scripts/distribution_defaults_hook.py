@@ -4,6 +4,13 @@ During ``hatch build`` / ``uv build``, this writes public packaged defaults for
 installed wheels to ``potpie/runtime/_distribution_defaults.py`` and runtime
 build metadata to ``potpie/runtime/_build_info.py``. Process environment variables still
 win at runtime.
+
+The build metadata is the source identity ``potpie --version`` and ``potpie
+daemon status`` report: the git rev, whether tracked files were modified, and
+the build time. The package version alone cannot say which code an install
+runs, because installs pinned to a git rev share the version of the release
+they follow. An sdist carries the stamp of the checkout it was made from, and
+a wheel built from that sdist keeps it.
 """
 
 from __future__ import annotations

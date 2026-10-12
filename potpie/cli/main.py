@@ -11,13 +11,14 @@ canonical daemon ``EngineClient`` without changing command contracts.
 
 from __future__ import annotations
 
+import json
 import platform
 import sys
-from importlib import metadata
 
 import click
 import typer
 
+from potpie import build_info
 from potpie.cli.commands import auth as auth_cmds
 from potpie.cli.commands import (
     bootstrap,
@@ -43,18 +44,29 @@ from potpie.cli.commands._common import (
 from potpie.cli.telemetry.context import bind_telemetry_context
 
 
-def _package_version() -> str:
-    try:
-        return metadata.version("potpie-context-engine")
-    except metadata.PackageNotFoundError:
-        return "0.1.0"
-
-
 def _version_callback(value: bool) -> None:
     if not value:
         return
-    typer.echo(f"potpie-context-engine {_package_version()}")
-    typer.echo(f"python {platform.python_version()} ({sys.executable})")
+    # `potpie` is the distribution that owns this command; the engine is the
+    # library under it. Both versions move only at releases, so the build rev
+    # is what identifies the code (see potpie.build_info).
+    info = build_info.describe()
+    # `--version` is eager and fires before the root callback applies
+    # `--json`; `run_cli` has already applied it from argv by then.
+    if is_json():
+        typer.echo(
+            json.dumps(
+                {
+                    **info,
+                    "python": platform.python_version(),
+                    "executable": sys.executable,
+                }
+            )
+        )
+    else:
+        typer.echo(build_info.human_line(info))
+        typer.echo(f"{info['engine']['name']} {info['engine']['version']}")
+        typer.echo(f"python {platform.python_version()} ({sys.executable})")
     raise typer.Exit()
 
 
@@ -102,7 +114,6 @@ def build_app() -> typer.Typer:
         from potpie.runtime.settings import (
             ensure_runtime_environment_loaded,
         )
-        from potpie_context_engine.bootstrap import sentry_metrics_runtime
 
         set_json(json_)
         set_verbose(verbose)
@@ -111,9 +122,9 @@ def build_app() -> typer.Typer:
         configure_cli_logging(verbose)
 
         bind_telemetry_context(ctx, json_output=json_)
-        sentry_settings = settings.load_sentry_settings()
-        sentry_runtime.configure_cli_sentry(sentry_settings)
-        sentry_metrics_runtime.configure_metrics(sentry_settings)
+        # Arms crash capture and routes metrics to the telemetry spool; the
+        # Sentry SDK is initialised only if an unexpected error needs reporting.
+        sentry_runtime.configure_cli_sentry(settings.load_sentry_settings())
         configure_product_analytics(settings.load_product_analytics_settings())
 
     # Top-level commands (the four-tool surface + bootstrap + auth/login).

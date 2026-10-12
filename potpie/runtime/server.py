@@ -28,6 +28,7 @@ from potpie.runtime.protocol import (
     PROTOCOL_MAX_VERSION,
     PROTOCOL_MIN_VERSION,
     PROTOCOL_VERSION,
+    DaemonBuild,
     DaemonInternalError,
     DaemonStatusRequest,
     DaemonStatusResult,
@@ -92,6 +93,8 @@ class CanonicalDaemonRuntime:
         coordinator: OperationCoordinator,
         backend_profile: str = "unknown",
         ui_url: str = "http://127.0.0.1",
+        version: str | None = None,
+        build: DaemonBuild | None = None,
     ) -> None:
         if len(bearer_token.encode()) < 32:
             raise ValueError("daemon bearer token must contain at least 256 bits")
@@ -106,6 +109,8 @@ class CanonicalDaemonRuntime:
         self._coordinator = coordinator
         self._backend_profile = backend_profile
         self._ui_url = ui_url
+        self._version = version
+        self._build = build
         self._state = "starting"
         self._runner: web.AppRunner | None = None
         self._shutdown_requested = asyncio.Event()
@@ -350,6 +355,8 @@ class CanonicalDaemonRuntime:
                                 lifecycle_state=self._state,  # type: ignore[arg-type]
                                 backend_profile=self._backend_profile,
                                 ui_url=self._ui_url,
+                                version=self._version,
+                                build=self._build,
                             )
                         ),
                     ),

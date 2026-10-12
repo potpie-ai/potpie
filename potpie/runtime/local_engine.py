@@ -858,8 +858,11 @@ class LocalEngineOperations:
                 DependencyError(
                     code="unavailable",
                     message=str(exc),
+                    # A graph store that refuses to serve possibly stale data
+                    # names its own repair; keep it instead of the generic one.
                     recommended_next_action=(
-                        "check backend/daemon readiness with 'potpie doctor'"
+                        getattr(exc, "recommended_next_action", None)
+                        or "check backend/daemon readiness with 'potpie doctor'"
                     ),
                     retry_posture="safe",
                 )

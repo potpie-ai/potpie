@@ -4,6 +4,7 @@ import type {
   SearchEntity,
   StatusResponse,
 } from "./types";
+import { session, SessionRequiredError } from "./session.ts";
 
 const BASE = "/ui/api";
 
@@ -19,8 +20,28 @@ function errorDetail(detail: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * Every call to the daemon goes through here.
+ *
+ * `credentials: "same-origin"` sends the HttpOnly session cookie `potpie ui`
+ * handed this browser (and nothing to any other origin). A 401 means that
+ * session is gone; it is reported once to the session store, which switches
+ * the page to its "run `potpie ui` again" state.
+ */
+async function request(path: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    credentials: "same-origin",
+  });
+  if (res.status === 401) {
+    session.markRequired();
+    throw new SessionRequiredError();
+  }
+  return res;
+}
+
 async function jget<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await request(path);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(errorDetail(body?.detail, `request failed (${res.status})`));
@@ -38,7 +59,7 @@ export const api = {
   pots: () => jget<PotsResponse>("/pots"),
 
   usePot: async (ref: string) => {
-    const res = await fetch(`${BASE}/pots/use`, {
+    const res = await request("/pots/use", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ref }),
@@ -73,7 +94,7 @@ export const api = {
   reportSession: (hadGraph: boolean) => {
     if (sessionReported) return;
     sessionReported = true;
-    void fetch(`${BASE}/telemetry/session`, {
+    void request("/telemetry/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ had_graph: hadGraph }),

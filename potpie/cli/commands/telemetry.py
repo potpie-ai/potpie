@@ -3,7 +3,7 @@ from __future__ import annotations
 import typer
 
 from potpie.cli.commands._common import EXIT_UNAVAILABLE, emit, fail
-from potpie.cli.telemetry import sentry_runtime, settings
+from potpie.cli.telemetry import sentry_runtime, settings, spool
 from potpie.cli.telemetry.preferences import (
     TelemetryPreferenceWriteError,
     TelemetryPreferences,
@@ -33,6 +33,9 @@ def disable() -> None:
     """Disable outbound Potpie CLI telemetry."""
     _save_preferences(TelemetryPreferences(enabled=False))
     _refresh_runtime_sinks()
+    # Opting out also drops what earlier commands spooled and no flusher has
+    # shipped yet.
+    spool.discard()
     _emit_status()
 
 

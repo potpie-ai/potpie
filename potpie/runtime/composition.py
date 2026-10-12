@@ -41,12 +41,8 @@ from potpie.pots.local_store import LocalPotStore
 from potpie_context_engine.adapters.outbound.session.injection_ledger import (
     LocalInjectionLedger,
 )
-from potpie.skills.targets import (
-    ClaudeAgentTarget,
-    CodexAgentTarget,
-    CursorAgentTarget,
-    OpenCodeAgentTarget,
-)
+from potpie.skills.harnesses import HARNESS_LAYOUTS
+from potpie.skills.targets import AgentTarget
 from potpie.agent_context import AgentContextService
 from potpie.auth.adapters.local_identity import LocalAuthService
 from potpie.config.local import LocalConfigService
@@ -137,12 +133,7 @@ def build_local_runtime(
 
         pots = LocalPotManagementService(store=pot_store, backend=selected_backend)
         skills = DefaultSkillManager(
-            targets={
-                "claude": ClaudeAgentTarget(),
-                "codex": CodexAgentTarget(),
-                "cursor": CursorAgentTarget(),
-                "opencode": OpenCodeAgentTarget(),
-            }
+            targets={agent: AgentTarget(agent=agent) for agent in HARNESS_LAYOUTS}
         )
         agent_context = AgentContextService(
             graph=graph,

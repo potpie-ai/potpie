@@ -296,7 +296,6 @@ def _record_graph_command_telemetry(
             unit="millisecond",
             attributes=metric_attrs,
         )
-        sentry_metrics_runtime.flush(timeout=2.0)
     except Exception:  # noqa: BLE001 - Sentry metrics must never fail a command
         pass
 
@@ -1323,7 +1322,7 @@ def graph_nudge(
     """Event→action policy brain: inject ranked context, prompt a write, or stay silent.
 
     Deterministic and free — reads via the local embedder, never calls a model.
-    Hooks forward their event + path here and inject the result.
+    A harness forwards its lifecycle event + path here and injects the result.
     """
     with _graph_command("graph.nudge") as ctx:
         host = get_root_runtime()
@@ -1345,9 +1344,9 @@ def graph_nudge(
             ctx,
             result.to_dict(),
             human=_nudge_human(result),
-            warnings=_legacy_warning("graph.nudge", "the installed hook adapter"),
             recommended_next_action=(
-                "Hooks should read the `result` object from this workbench envelope."
+                "A harness should read the `result` object from this workbench "
+                "envelope."
             ),
         )
 
@@ -3557,21 +3556,12 @@ def _resolve_repo_scope(repo: str) -> str:
 
 
 def _current_repo_remote_for_scope() -> str | None:
-    import subprocess
+    from potpie_context_engine.domain.git_probe import run_git_probe
 
-    try:
-        proc = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-            check=False,
-        )
-    except Exception:  # noqa: BLE001
+    remote = run_git_probe(["config", "--get", "remote.origin.url"], timeout=1)
+    if not remote:
         return None
-    if proc.returncode != 0:
-        return None
-    return _normalize_repo_for_scope(proc.stdout.strip())
+    return _normalize_repo_for_scope(remote)
 
 
 def _normalize_repo_for_scope(value: str) -> str:

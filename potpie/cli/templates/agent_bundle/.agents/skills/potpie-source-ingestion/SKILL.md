@@ -1,5 +1,6 @@
 ---
 name: potpie-source-ingestion
+version: "2"
 description: "Use when the user explicitly asks to ingest, refresh, or deeply understand a repository, PR, issue, ticket, runbook, incident report, document, or web link into Potpie. The harness performs todo-driven discovery, uses local/GitHub/integration tools and read-only subagents when available, builds evidence-backed semantic mutations, and writes through graph propose/verified commit."
 ---
 
@@ -30,14 +31,16 @@ does not decide what source material means.
 
 1. Define source kind, pot/project, repo/path/URL, time window, and target memory
    shape: baseline, history, docs, infra, debug memory, preferences, or all.
-2. Verify Potpie scope and graph availability:
+2. Verify Potpie scope and graph availability with one call:
 
 ```bash
-potpie --json pot info
-potpie --json source list
-potpie --json graph status
-potpie --json graph catalog --task "harness-led source ingestion"
+potpie status
 ```
+
+It reports the daemon, the active pot, backend readiness and claim counts;
+every later read names the pot it used in its header, so do not pre-read
+`pot info`, `source list` or `graph status`. Pass `--pot <name-or-id>` on later
+calls once the pot is known.
 
 3. If the repo is not registered, register metadata only. Use explicit `--pot`
    when pot scope is ambiguous:
@@ -46,14 +49,25 @@ potpie --json graph catalog --task "harness-led source ingestion"
 potpie source add repo . --pot <pot-id-or-name>
 ```
 
-4. Describe the views you expect to write/read before authoring mutations:
+4. Inspect the full destination ontology before selecting mutation shapes:
 
 ```bash
-potpie --json graph describe features --view feature_context --examples
-potpie --json graph describe infra_topology --view service_neighborhood --examples
-potpie --json graph describe recent_changes --view timeline --examples
-potpie --json graph describe decisions --view preferences_for_scope --examples
-potpie --json graph describe debugging --view prior_occurrences --examples
+potpie --json graph catalog --profile full --pot <pot>
+```
+
+Read the [ontology selection guidance](../potpie-graph/SKILL.md#ontology-selection)
+to distinguish facts, decisions, policies, events, and source material. Reuse
+this catalog during the task; `--profile read` omits the ontology. Select from
+all supported entities and predicates, then use templates for payload shape.
+The templates are examples, not an exhaustive list of relationships.
+`graph describe --examples` carries read examples only.
+
+```bash
+potpie graph mutation-template --kind repo-baseline
+potpie graph mutation-template --kind infra-snapshot
+potpie graph mutation-template --kind timeline-change
+potpie graph mutation-template --kind preference-policy
+potpie graph mutation-template --kind bug-fix
 ```
 
 5. If the CLI is unavailable or broken, continue discovery, build the proposed
@@ -149,9 +163,14 @@ exhaustive pagination unless the user explicitly asks for full history.
 
 Before writing, build a compact matrix:
 
-| Candidate | Graph family | Source refs | Authority | Truth class | Confidence | Action |
+| Candidate | Entity types + predicate + direction | Source refs | Authority | Truth class | Confidence | Action |
 |---|---|---|---|---|---|---|
-| Feature/service/dependency/etc. | features/infra/etc. | file, PR, doc, issue | authoritative_code, repository_metadata, external_system, user_statement, agent_observation | authoritative_fact, source_observation, agent_claim, preference, timeline_event | 0.0-1.0 | commit / inbox / skip |
+| Worker uses Redis | Service → USES → DataStore | file/doc locator | authoritative_code | authoritative_fact | 0.95 | commit / inbox / skip |
+
+Select type/predicate from the inspected catalog and record the intended read
+that should retrieve the fact. Classify meaning independently of authority:
+a source-backed behavior is not a preference, and `feature_note` is not a
+substitute for a `Feature` with its supported relations.
 
 Guidelines:
 
@@ -165,11 +184,12 @@ Guidelines:
 
 ## Phase 6: Identity Resolution
 
-Resolve before linking. Use specific filters when known:
+Resolve before linking — one untyped search per entity you intend to link and
+have not already seen in a read (a wrong `--type` guess returns nothing);
+narrow by `--source-ref` for tickets and PRs:
 
 ```bash
 potpie graph search-entities "<repo service feature dependency>" --limit 10
-potpie graph search-entities "<service>" --type Service --environment prod --limit 10
 potpie graph search-entities "<github-or-ticket-id>" --source-ref <github-or-ticket-ref> --limit 10
 ```
 
@@ -178,9 +198,11 @@ review-required correction flow; do not create near-duplicate entities.
 
 ## Phase 7: Write
 
-Author semantic mutation JSON from the live `graph catalog` and `graph describe`
-examples. `graph mutation-template` is only a skeleton helper, not the source of
-truth.
+Author semantic mutation JSON from the `graph mutation-template` skeletons
+printed in Phase 0; `propose` validates against the live contract and names
+every rejected operation by index. Omit `graph_contract_version` from the
+payload. Use the full catalog inspected in Phase 0 for relationships absent
+from the templates. Refresh it if the destination or contract changes.
 
 ```bash
 potpie --json graph propose --file mutation.json
@@ -191,14 +213,17 @@ review flags:
 
 - `invalid` or rejected operations: fix the mutation or skip the weak fact.
 - `conflict` or duplicate risk: resolve identity or use inbox.
-- `review_required`: ask for approval or commit only with the required
-  `--approved-by` value when policy allows.
+- `review_required`: ask for approval, then commit with
+  `potpie --json graph commit <plan_id> --approved-by <user-ref> --verify`;
+  `commit` without `--approved-by` answers `review_required` again.
 - `validated` / low-risk: commit with `--verify`.
 
 ```bash
 potpie --json graph commit <plan_id> --verify
-potpie --json graph history --plan <plan_id>
 ```
+
+`commit --verify` prints the plan id, readback and quality status;
+`graph history --plan <plan_id>` is for later inspection.
 
 For large batches of agent-authored mutations, use `graph bulk apply` with
 dry-run, chunking, manifest, and verify. Bulk apply must only apply facts the
@@ -219,8 +244,26 @@ potpie --json graph quality conflicting-claims --limit 20
 potpie --json graph quality orphan-entities --limit 20
 ```
 
+Verify the selected representation as well as persistence: read each affected
+family and confirm the intended typed relationships and evidence. A valid plan
+or passing quality report cannot establish that factual prose belongs under
+`POLICY_APPLIES_TO`. If a fact is stored but absent from its intended read,
+inspect its type, relation, and scope before adding another claim.
 If the verified commit misses expected facts, fix the mutation or record an inbox item.
 Report what was ingested, what was skipped, and what remains uncertain.
+
+Report it with the commands, not as prose alone: the `propose` and
+`commit --verify` you ran, the `plan_id` they returned, and the verify outcome.
+An ingestion the reader cannot re-open with `graph history --plan <plan_id>` is
+one they have to take on trust, and the whole point of the verified gate is that
+they do not have to. Name the reads that came back empty as well — they are why
+a slice of the evidence matrix stayed thin.
+
+When the ingested source described a topology — a service map, a deploy shape, a
+set of dependencies — draw what you wrote as a mermaid ` ```mermaid ` /
+`flowchart LR` block, using the same entity keys and predicates that went into
+the mutation, so the picture and the graph can be compared line by line. Nothing else here is a shape: counts, skipped
+sources, and open questions belong in a list.
 
 ## Repository Baseline
 
@@ -236,13 +279,23 @@ Represent capabilities as `Feature` entities. Link repositories or services to
 features with `PROVIDES`, and use `IMPLEMENTED_IN` only when a source locates
 the implementation.
 
+## Documents
+
+When a source is a document — a PDF, a spreadsheet, a long markdown/HTML doc,
+an exported wiki page — do not paste its body into summaries, descriptions, or
+claims. Record where it lives with a `doc_reference` (or `runbook_note`) whose
+summary says what it covers, in the words a searcher would type, and record
+the facts it *states* (decisions, preferences, infra) as normal graph claims
+under the rules below, citing the document as evidence.
+
 ## Source Rules
 
 - Tickets and issues can record timeline events, bug patterns, decisions, and
   docs. They do not prove a fix unless tied to a merged PR, commit, deployment,
   or explicit shipped-resolution source.
 - Documents can record preferences, decisions, runbook notes, service notes, and
-  infra facts only when they explicitly say them.
+  infra facts only when they explicitly say them. Their bodies never belong in
+  graph properties (see Documents above).
 - Logs and transcripts can record diagnostic signals, investigations, fixes, and
   verifications. Keep raw logs out of descriptions except for short distinctive
   error text.

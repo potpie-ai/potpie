@@ -184,7 +184,8 @@ So "v2" survives solely as the envelope version on workbench responses. What shi
   propose+commit; `potpie record` remains the compatibility write path
   ([writing.md](./writing.md)).
 - **Defaults:** `falkordb_lite` embedded backend, a detached `daemon` host mode, the
-  bundled local embedder, installed skills, and the zero-token nudge hooks — all
+  bundled local embedder, installed skills, and the zero-token `graph nudge` a
+  harness can call from its own hooks — all
   with no mandatory Docker, Neo4j, Postgres, or cloud service.
 
 The canonical local first-run is one command (note `--scan` is **opt-in**, off by

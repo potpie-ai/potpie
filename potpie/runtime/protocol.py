@@ -121,12 +121,31 @@ class DaemonStatusPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class DaemonBuild:
+    """Source identity of the build a daemon process was started from."""
+
+    rev: str | None = None
+    dirty: bool | None = None
+    built_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class DaemonStatusResult:
+    """Live daemon status.
+
+    ``version`` and ``build`` say which build is serving. They travel as a
+    pair that a daemon from before build reporting omits; either way an
+    unreported build is ``None``, and an unknown field inside a reported one
+    is ``None`` too.
+    """
+
     instance_id: str
     pid: int
     lifecycle_state: LifecycleState
     backend_profile: str
     ui_url: str
+    version: str | None = None
+    build: DaemonBuild | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +276,7 @@ __all__ = [
     "PROTOCOL_MAX_VERSION",
     "PROTOCOL_MIN_VERSION",
     "PROTOCOL_VERSION",
+    "DaemonBuild",
     "DaemonInternalError",
     "DaemonStatusPayload",
     "DaemonStatusRequest",

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib import import_module
 import sys
+import types
 from types import ModuleType
 from typing import Optional, Union
 
@@ -20,6 +21,7 @@ count = getattr(sentry_metrics_runtime, "count")
 distribution = getattr(sentry_metrics_runtime, "distribution")
 gauge = getattr(sentry_metrics_runtime, "gauge")
 flush = getattr(sentry_metrics_runtime, "flush")
+set_metric_recorder = getattr(sentry_metrics_runtime, "set_metric_recorder")
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,7 @@ def reset_metrics_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sentry_metrics_runtime, "_enabled", False)
     monkeypatch.setattr(sentry_metrics_runtime, "_configured", False)
     monkeypatch.setattr(sentry_metrics_runtime, "_sentry_sdk", None)
+    monkeypatch.setattr(sentry_metrics_runtime, "_recorder", None)
 
 
 def test_configure_metrics_disabled_is_noop(
@@ -174,6 +177,94 @@ def test_configure_metrics_initializes_sentry_once_with_privacy_options(
     assert fake.metrics.count_calls == [
         _MetricCall("ce.init", 1, None, {"result": "ok"}),
     ]
+
+
+def test_short_lived_profile_skips_auto_integrations_and_bounds_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI profile: no integration probes, bounded flush, quiet atexit.
+
+    The SDK default probes forty auto-enabling integrations by importing
+    their packages (about half a second per command on a full install), and
+    its atexit callback prints a "Sentry is attempting to send N pending
+    events" notice to stderr whenever an envelope is pending at exit.
+    """
+    fake = _FakeSentry()
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+    atexit_calls: list[object] = []
+
+    class _AtexitIntegration:
+        def __init__(self, callback: object = None) -> None:
+            atexit_calls.append(callback)
+
+    fake_atexit = types.ModuleType("sentry_sdk.integrations.atexit")
+    fake_atexit.AtexitIntegration = _AtexitIntegration  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sentry_sdk.integrations.atexit", fake_atexit)
+
+    configure_metrics(_settings(enabled=True), short_lived_process=True)
+
+    call = fake.init_calls[0]
+    assert call["auto_enabling_integrations"] is False
+    assert call["shutdown_timeout"] == 1.0
+    assert "default_integrations" not in call
+    assert len(call["integrations"]) == 1
+    assert len(atexit_calls) == 1
+    # The quiet callback swallows the SDK's arguments without printing.
+    assert atexit_calls[0](3, 1.0) is None
+
+
+def test_service_profile_keeps_sdk_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakeSentry()
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+
+    configure_metrics(_settings(enabled=True))
+
+    call = fake.init_calls[0]
+    assert "auto_enabling_integrations" not in call
+    assert "shutdown_timeout" not in call
+    assert "integrations" not in call
+
+
+def test_an_installed_recorder_takes_every_metric_and_the_sdk_sees_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attributes reach a recorder already allowlisted, so it can never
+    receive what the SDK path would have dropped."""
+    fake = _FakeSentry()
+    monkeypatch.setitem(sys.modules, "sentry_sdk", fake)
+    configure_metrics(_settings(enabled=True))
+    taken: list[tuple[object, ...]] = []
+
+    set_metric_recorder(
+        lambda kind, name, value, unit, attributes: taken.append(
+            (kind, name, value, unit, attributes)
+        )
+    )
+    try:
+        count("ce.a", attributes={"result": "ok", "path": "/etc/passwd"})
+        distribution("ce.b", 2.5, unit="millisecond")
+        gauge("ce.c", 3, attributes={"unknown_key": "x"})
+    finally:
+        set_metric_recorder(None)
+
+    assert taken == [
+        ("count", "ce.a", 1, None, {"result": "ok"}),
+        ("distribution", "ce.b", 2.5, "millisecond", None),
+        ("gauge", "ce.c", 3, None, None),
+    ]
+    assert fake.metrics.count_calls == []
+    assert fake.metrics.distribution_calls == []
+
+
+def test_a_failing_recorder_never_reaches_the_caller() -> None:
+    def _broken(*args: object) -> None:
+        raise RuntimeError("recorder down")
+
+    set_metric_recorder(_broken)
+    try:
+        count("ce.a")
+    finally:
+        set_metric_recorder(None)
 
 
 def test_count_distribution_and_gauge_emit_metrics(
