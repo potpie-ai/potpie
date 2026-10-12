@@ -17,6 +17,7 @@ import os
 import signal
 import sys
 import time
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -72,9 +73,28 @@ def _alive(pid: int) -> bool:
     return True
 
 
+@pytest.fixture
+def older_pid(isolated_home: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[int]:
+    """Start a daemon from the "older" build and yield its PID.
+
+    The ``Daemon`` that launched it stays referenced until teardown. Its asyncio
+    subprocess transport kills a child that is still running when it is
+    garbage collected, and on Linux that can happen in the middle of a test.
+    """
+    launcher, pid = _start_older_build_daemon(isolated_home, monkeypatch)
+    try:
+        yield pid
+    finally:
+        if _alive(pid):
+            # Test cleanup of the process this fixture started, if a stop failed.
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        del launcher
+
+
 def _start_older_build_daemon(
     runtime_home: Path, monkeypatch: pytest.MonkeyPatch
-) -> int:
+) -> tuple[Daemon, int]:
     launch_spec = Daemon._launch_spec
 
     def older_build_launch_spec(self: Daemon, **kwargs):
@@ -90,13 +110,12 @@ def _start_older_build_daemon(
             runtime_clients, "operation_catalog_fingerprint", lambda: _OLDER_CATALOG
         )
         started = Daemon(home=runtime_home, in_process=False, startup_timeout_s=30)
-        return int(started.start(backend="embedded")["pid"])
+        return started, int(started.start(backend="embedded")["pid"])
 
 
 def test_a_daemon_from_another_build_is_reported_and_replaced_by_restart(
-    isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+    isolated_home: Path, older_pid: int
 ) -> None:
-    older_pid = _start_older_build_daemon(isolated_home, monkeypatch)
     replacement_pid: int | None = None
     try:
         daemon = Daemon(home=isolated_home, in_process=False, startup_timeout_s=30)
@@ -130,28 +149,21 @@ def test_a_daemon_from_another_build_is_reported_and_replaced_by_restart(
     finally:
         with contextlib.suppress(Exception):
             Daemon(home=isolated_home, in_process=False).stop()
-        for pid in (older_pid, replacement_pid):
-            if pid is not None and _alive(pid):
-                # Test cleanup of processes this test started, if a stop failed.
-                with contextlib.suppress(ProcessLookupError):
-                    os.kill(pid, signal.SIGKILL)
+        if replacement_pid is not None and _alive(replacement_pid):
+            # Test cleanup of the process this test started, if a stop failed.
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(replacement_pid, signal.SIGKILL)
 
 
 def test_daemon_stop_reaches_a_daemon_from_another_build(
-    isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+    isolated_home: Path, older_pid: int
 ) -> None:
-    older_pid = _start_older_build_daemon(isolated_home, monkeypatch)
-    try:
-        stopped = CliRunner().invoke(cli_main.app, ["--json", "daemon", "stop"])
-        deadline = time.monotonic() + 5
-        while _alive(older_pid) and time.monotonic() < deadline:
-            time.sleep(0.05)
+    stopped = CliRunner().invoke(cli_main.app, ["--json", "daemon", "stop"])
+    deadline = time.monotonic() + 5
+    while _alive(older_pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
 
-        assert stopped.exit_code == 0, stopped.stdout
-        assert json.loads(stopped.stdout)["detail"] == "daemon stopped"
-        assert not _alive(older_pid)
-        assert not (isolated_home / "discovery.json").exists()
-    finally:
-        if _alive(older_pid):
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(older_pid, signal.SIGKILL)
+    assert stopped.exit_code == 0, stopped.stdout
+    assert json.loads(stopped.stdout)["detail"] == "daemon stopped"
+    assert not _alive(older_pid)
+    assert not (isolated_home / "discovery.json").exists()
