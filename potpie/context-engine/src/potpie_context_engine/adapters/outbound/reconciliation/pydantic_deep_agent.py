@@ -199,6 +199,42 @@ def _pydantic_deep_version() -> str:
         return "unknown"
 
 
+# OrcaRouter is OpenAI-compatible and exposes a provider/model namespace the
+# same way OpenRouter does, so the reconciliation agent can target it as a
+# named provider instead of an anonymous custom base URL. The model id keeps
+# the ``orcarouter:`` prefix (e.g. ``orcarouter:anthropic/claude-sonnet-4``)
+# while the OpenAI SDK is pointed at the gateway's base URL.
+_ORCAROUTER_MODEL_PREFIX = "orcarouter:"
+_ORCAROUTER_BASE_URL = "https://api.orcarouter.ai/v1"
+
+
+def _resolve_reconciliation_model(model: str) -> str | Any:
+    """Return a pydantic-ai model for the configured reconciliation model id.
+
+    A literal ``model=...`` (e.g. a pydantic-ai ``TestModel`` in tests, or any
+    other ``Model`` instance) is passed through untouched. String ids keep the
+    pydantic-deep string path except for the ``orcarouter:`` prefix, which is
+    built into an ``OpenAIChatModel`` backed by an ``OpenAIProvider`` pointed at
+    the OrcaRouter gateway so users can use it with ``ORCAROUTER_API_KEY`` alone.
+    """
+    if not isinstance(model, str) or not model.startswith(_ORCAROUTER_MODEL_PREFIX):
+        return model
+    try:
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+    except ImportError as exc:  # pragma: no cover - pydantic-ai is a hard dep
+        raise RuntimeError(
+            "pydantic-ai with the openai extra is required to use the "
+            "orcarouter reconciliation model"
+        ) from exc
+    model_name = model[len(_ORCAROUTER_MODEL_PREFIX) :]
+    provider = OpenAIProvider(
+        base_url=_ORCAROUTER_BASE_URL,
+        api_key=os.getenv("ORCAROUTER_API_KEY") or "api-key-not-set",
+    )
+    return OpenAIChatModel(model_name, provider=provider)
+
+
 # Procedure skills shipped beside this adapter. Each is a trusted, in-repo
 # SKILL.md (instructions only — no executable scripts) carrying the *how* for a
 # recurring procedure: the backfill enumerate-then-drain loop, the mutation-plan
@@ -667,9 +703,13 @@ class PydanticDeepReconciliationAgent:
         # gpt-5 family models reject function tools + reasoning_effort on
         # /v1/chat/completions ("openai:" prefix). The Responses endpoint
         # ("openai-responses:" prefix) supports the combination.
-        self._model = model or os.getenv(
+        self._model_id = model or os.getenv(
             "CONTEXT_ENGINE_RECONCILIATION_MODEL", "openai-responses:gpt-5.4-mini"
         )
+        # ``orcarouter:`` ids are resolved to an OpenAI-compatible model backed
+        # by the OrcaRouter gateway; every other id stays a string for
+        # pydantic-deep's own provider inference.
+        self._model = _resolve_reconciliation_model(self._model_id)
         self._instructions = instructions or _RECONCILIATION_INSTRUCTIONS
         self._tools_port: ReconciliationToolsPort | None = tools
         self._context_graph: ContextGraphPort | None = None
@@ -710,7 +750,7 @@ class PydanticDeepReconciliationAgent:
             "agent": "pydantic-deep",
             "version": _pydantic_deep_version(),
             "toolset_version": "batch-tools-v1",
-            "model": self._model,
+            "model": self._model_id,
             "has_context_tools": self._tools_port is not None,
             "has_context_graph": self._context_graph is not None,
         }
@@ -1015,7 +1055,7 @@ class PydanticDeepReconciliationAgent:
                 CostEvent(
                     pot_id=ctx.pot_id,
                     kind="agent",
-                    model=self._model,
+                    model=self._model_id,
                     input_tokens=_int_or_none(usage_payload.get("input_tokens")),
                     output_tokens=_int_or_none(usage_payload.get("output_tokens")),
                     total_tokens=_int_or_none(usage_payload.get("total_tokens")),
