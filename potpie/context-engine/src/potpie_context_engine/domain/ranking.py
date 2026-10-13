@@ -117,7 +117,7 @@ class RankingService:
         ``breakdown`` so readers can surface "why this ranked high" if
         the agent asks.
         """
-        now = context.now or datetime.now(tz=timezone.utc)
+        now = _ensure_utc(context.now) or datetime.now(tz=timezone.utc)
         ranked: list[RankedItem] = []
         for cand in candidates:
             breakdown = self._score_one(cand, now=now, context=context)
@@ -176,6 +176,20 @@ class RankingService:
 # ---------------------------------------------------------------------------
 
 
+def _ensure_utc(value: datetime | None) -> datetime | None:
+    """Treat a naive datetime as UTC so aware/naive inputs never mix.
+
+    ``TaskContext.now`` is caller-supplied (e.g. an agent's ``as_of``); a naive
+    value would otherwise raise ``TypeError`` when subtracted from the
+    tz-normalized ``valid_at`` in :func:`_recency_score`.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
 def _clamp(value: float | None, *, default: float) -> float:
     if value is None:
         return default
@@ -198,8 +212,7 @@ def _recency_score(
     """Exponential decay; freshness preference shifts the half-life."""
     if valid_at is None:
         return 0.5
-    if valid_at.tzinfo is None:
-        valid_at = valid_at.replace(tzinfo=timezone.utc)
+    valid_at = _ensure_utc(valid_at)
     age = max(now - valid_at, timedelta(0))
 
     effective_half_life = half_life
