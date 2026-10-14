@@ -418,12 +418,13 @@ items. Two layers:
    auto-supersede and conflict findings).
 2. **Workbench read-only** `GraphWorkbenchService.quality(report=…)` scans `ClaimRow`s via
    `backend.claim_query` to emit `GraphQualityFinding`s for `summary | duplicate-candidates |
-   stale-facts | conflicting-claims | orphan-entities | low-confidence | projection-drift`
+   stale-facts | conflicting-claims | orphan-entities | low-confidence | projection-drift |
+   entity-label-drift`
    (status ok/watch/degraded). The same summary snapshot powers `commit --verify` regression
    detection (§5).
 
 CLI: `graph quality <summary|duplicate-candidates|stale-facts|conflicting-claims|orphan-entities|
-low-confidence|projection-drift> [--threshold 0.5] [--subgraph] [--limit]`.
+low-confidence|projection-drift|entity-label-drift> [--threshold 0.5] [--subgraph] [--limit]`.
 
 ---
 
