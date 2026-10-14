@@ -1,4 +1,5 @@
 {
   "spokeId": "potpie",
-  "docsPath": "docs"
+  "docsPath": "docs",
+  "documentationContractVersion": 1
 }
