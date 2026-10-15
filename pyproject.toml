@@ -36,7 +36,7 @@ dependencies = [
     "keyring>=25.0.0",
     "pillow>=12.3.0",
     "potpie-context-engine[all]==0.2.0",
-    "pydantic-ai-slim>=1.106.0",
+    "pydantic-ai-slim>=2.53.0",
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.15.0",
     "rich>=13.0",
@@ -120,8 +120,8 @@ override-dependencies = [
     "urllib3>=2.8.0",
     "virtualenv>=21.7.13",
     "pydantic-settings>=2.14.2",
-    # CVE-2026-54249: floor at 1.106.0 (vulnerable: >=1.65.0, <1.106.0).
-    "pydantic-ai-slim>=1.106.0",
+    # Vanta pydantic-ai-slim advisories: 2.53.0 clears the affected 1.x and 2.x ranges.
+    "pydantic-ai-slim>=2.53.0",
     # CVE-2025-3000: torch <= 2.12.1; 2.13.0 is the first patched release on PyPI.
     "torch>=2.13.0",
     # GHSA-8xx6-hgc6-gc2m and related httpx2/httpcore2 advisories: keep the
