@@ -96,6 +96,7 @@ from potpie_context_engine.domain.ports.context_graph_job_queue import (
 )
 from potpie_context_engine.domain.ports.policy import PolicyPort
 from potpie_context_engine.core.ports.pot_resolution import PotResolutionPort
+from potpie_context_engine.core.ports.resource_store import ResourceStorePort
 from potpie_context_engine.domain.ports.pot_source_listing import PotSourceListingPort
 from potpie_context_engine.domain.ports.observability import (
     NoOpObservability,
@@ -157,6 +158,11 @@ class IngestionServerContainer:
     reconciliation_config: ReconciliationConfig = field(
         default_factory=reconciliation_config_from_env
     )
+    resource_store: ResourceStorePort | None = None
+    """The document payload store a hard reset purges after the graph.
+
+    ``None`` on a server that holds no documents: the reset then clears the
+    graph and ledgers only, which is everything such a server owns."""
 
     def policy(self) -> PolicyPort:
         """Return the centralized authorization port for this container.

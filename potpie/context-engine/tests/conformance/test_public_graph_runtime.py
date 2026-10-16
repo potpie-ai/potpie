@@ -1,4 +1,11 @@
-"""Internal graph-runtime conformance behind the public ContextEngine facade."""
+"""Conformance of the supported graph-runtime builder for embedding hosts.
+
+The builder, the runtime type and every contract the scenarios exercise are
+imported from ``potpie_context_engine.api``. Only the extension fixture, the
+reconciliation context probe and host-side adapters come from elsewhere:
+``GraphExtension`` is deliberately not public, and backends and stores are what
+a host brings.
+"""
 
 from __future__ import annotations
 
@@ -6,43 +13,46 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from potpie_context_engine.core.api import (
+import pytest
+
+from potpie_context_engine.api import (
     DEFAULT_GRAPH_DEFINITION,
+    AsyncClaimQueryPort,
+    AsyncGraphInboxStorePort,
+    AsyncGraphPlanStorePort,
+    Candidate,
     ClaimQueryFilter,
+    ClaimQueryPort,
     EdgeTypeSpec,
     EntityTypeSpec,
+    GraphBackend,
     GraphCatalogRequest,
     GraphDescribeRequest,
+    GraphInboxStorePort,
     GraphMutationPlanStatus,
+    GraphMutationPort,
+    GraphPlanStorePort,
     GraphReadRequest,
     GraphReaderSpec,
+    GraphRuntime,
     GraphViewSpec,
     IdentityClass,
+    MutationBatch,
+    MutationResult,
+    ProvenanceContext,
+    RankedItem,
+    ReadResponse,
     ReconciliationConfig,
     SemanticMutationRequest,
+    build_graph_runtime,
 )
+
+# Extension registration is not a public contract (CE-018); the fixture builds
+# its extended definition from the internal type.
 from potpie_context_engine.core.definition import GraphExtension
-from potpie_context_engine.core.runtime import build_graph_runtime
-from potpie_context_engine.core.graph_mutations import ProvenanceContext
-from potpie_context_engine.core.ports.claim_query import (
-    AsyncClaimQueryPort,
-    ClaimQueryPort,
-)
-from potpie_context_engine.core.ports.graph.backend import GraphBackend
-from potpie_context_engine.core.ports.graph.inbox_store import (
-    AsyncGraphInboxStorePort,
-    GraphInboxStorePort,
-)
-from potpie_context_engine.core.ports.graph.mutation import GraphMutationPort
-from potpie_context_engine.core.ports.graph.plan_store import (
-    AsyncGraphPlanStorePort,
-    GraphPlanStorePort,
-)
-from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
 from potpie_context_engine.core.reconciliation_config import (
     current_reconciliation_config,
 )
-from potpie_context_engine.api import Candidate, RankedItem, ReadResponse
 from potpie_context_engine.testing import (
     InMemoryGraphBackend,
     InMemoryGraphInboxStore,
@@ -51,6 +61,9 @@ from potpie_context_engine.testing import (
 )
 from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
     EmbeddedGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+    LocalJsonGraphPlanStore,
 )
 
 
@@ -212,6 +225,7 @@ def test_public_runtime_extension_round_trip_and_status() -> None:
 def test_runtime_bridges_satisfy_advertised_runtime_protocols() -> None:
     runtime = build_test_graph_runtime(definition=_definition())
 
+    assert isinstance(runtime, GraphRuntime)
     assert isinstance(runtime.backend, GraphBackend)
     assert isinstance(runtime.backend.mutation, GraphMutationPort)
     assert isinstance(runtime.backend.claim_query, ClaimQueryPort)
@@ -332,6 +346,34 @@ def test_public_runtime_retracts_extension_predicate() -> None:
     )
     assert len(history) == 1
     assert history[0].invalid_at is not None
+
+
+def test_public_runtime_uses_embedded_atomic_version_across_instances(tmp_path) -> None:
+    graph_home = tmp_path / "graph"
+    first = build_graph_runtime(
+        EmbeddedGraphBackend(home=graph_home),
+        LocalJsonGraphPlanStore(home=tmp_path / "plans-a"),
+    )
+    second = build_graph_runtime(
+        EmbeddedGraphBackend(home=graph_home),
+        LocalJsonGraphPlanStore(home=tmp_path / "plans-b"),
+    )
+    payload = {
+        "operations": [
+            {
+                "op": "upsert_entity",
+                "subject": {"key": "service:atomic-runtime", "type": "Service"},
+            }
+        ]
+    }
+    first_plan = first.propose(payload, pot_id="pot:atomic-runtime")
+    second_plan = second.propose(payload, pot_id="pot:atomic-runtime")
+
+    assert first.commit(first_plan.plan_id, pot_id="pot:atomic-runtime").ok
+    stale = second.commit(second_plan.plan_id, pot_id="pot:atomic-runtime")
+
+    assert stale.ok is False
+    assert stale.status == "conflict"
 
 
 def test_quality_uses_extension_singleton_predicates() -> None:
@@ -742,3 +784,73 @@ def test_old_sync_mutation_signature_supports_runtime_mutation_and_commit() -> N
     assert commit.ok
     assert backend.mutation.seen_configs == [config, config]
     assert current_reconciliation_config() is None
+
+
+@pytest.mark.parametrize("mode", ["sync", "async", "async_only_ports"])
+def test_public_runtime_defers_verification_and_recovers_receipt(mode: str) -> None:
+    async def journey() -> None:
+        runtime = build_graph_runtime(
+            _AsyncOnlyBackend()
+            if mode == "async_only_ports"
+            else InMemoryGraphBackend(),
+            _AsyncStore(InMemoryGraphPlanStore())
+            if mode == "async_only_ports"
+            else InMemoryGraphPlanStore(),
+            InMemoryGraphInboxStore(),
+            _definition(),
+        )
+
+        async def call(method, *args, **kwargs):
+            if mode == "sync":
+                return getattr(runtime, method)(*args, **kwargs)
+            return await getattr(runtime, method + "_async")(*args, **kwargs)
+
+        proposal = await call(
+            "propose",
+            {
+                "operations": [
+                    {
+                        "op": "assert_claim",
+                        "subject": {"key": "widget:deferred-a", "type": "Widget"},
+                        "predicate": "CONNECTS_WIDGET",
+                        "object": {"key": "widget:deferred-b", "type": "Widget"},
+                        "truth": "agent_claim",
+                        "description": "A durable claim verified after receiving its receipt.",
+                    }
+                ]
+            },
+            pot_id="pot:widgets",
+        )
+        committed = await call(
+            "commit",
+            proposal.plan_id,
+            pot_id="pot:widgets",
+            verify=True,
+            defer_verification=True,
+        )
+        assert committed.ok and committed.verification is None
+        receipt = await call("commit_status", proposal.plan_id, pot_id="pot:widgets")
+        assert receipt.ok and receipt.mutation_id == committed.mutation_id
+        verification = await call(
+            "verify_commit", proposal.plan_id, pot_id="pot:widgets"
+        )
+        assert verification.ok, verification.to_dict()
+        assert verification.readback_count == 1
+        assert verification.readback_claim_keys == proposal.claim_keys
+        assert not verification.missing_claim_keys
+        replay = await call(
+            "commit",
+            proposal.plan_id,
+            pot_id="pot:widgets",
+            verify=True,
+            defer_verification=True,
+        )
+        assert replay.ok and replay.mutation_id == receipt.mutation_id
+        assert (
+            await call("commit_status", proposal.plan_id, pot_id="pot:other")
+        ).status == "not_found"
+        assert (
+            await call("verify_commit", proposal.plan_id, pot_id="pot:other")
+        ).status == "not_committed"
+
+    asyncio.run(journey())

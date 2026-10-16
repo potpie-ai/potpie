@@ -30,6 +30,7 @@ from potpie.cli.commands import (
     telemetry,
 )
 from potpie.cli.commands import query as query_cmds
+from potpie.cli.commands import resource as resource_cmds
 from potpie.cli.commands import skills as skills_cmds
 from potpie.cli.commands import ui as ui_cmds
 from potpie.cli.commands._common import (
@@ -142,6 +143,7 @@ def build_app() -> typer.Typer:
     app.add_typer(graph.timeline_app, name="timeline")
     app.add_typer(graph.backend_app, name="backend")
     app.add_typer(skills_cmds.skills_app, name="skills")
+    app.add_typer(resource_cmds.resource_app, name="resource")
     # Keep cloud discoverable but below the local happy path — managed routing
     # is still in development (see cli-flow.md).
     app.add_typer(
@@ -183,8 +185,11 @@ def run_cli(argv: list[str] | None = None) -> None:
     from potpie.cli.ui.output import (
         configure_cli_logging,
         configure_error_output,
+        configure_output_streams,
     )
 
+    # Help is eager: the root callback runs too late to protect its rendering.
+    configure_output_streams()
     args = list(argv if argv is not None else sys.argv[1:])
     bootstrap_output_flags_from_argv(args)
     if is_json():

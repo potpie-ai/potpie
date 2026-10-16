@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -228,6 +229,12 @@ def test_local_identity_remains_no_auth(runtime) -> None:
     assert runtime.root.auth.logout() is None
 
 
+def test_agent_context_reports_quality_through_the_composed_workbench(
+    runtime,
+) -> None:
+    assert runtime.engine.agent_context.workbench is runtime.engine.graph_workbench
+
+
 def test_agent_context_delegates_and_composes_status(runtime) -> None:
     graph = MagicMock()
     pots = MagicMock()
@@ -254,8 +261,22 @@ def test_agent_context_delegates_and_composes_status(runtime) -> None:
     assert service.resolve(resolve_request) is resolve_result
     assert service.search(search_request) is search_result
     assert service.record(record_request) is record_result
-    graph.resolve.assert_called_once_with(resolve_request)
-    graph.search.assert_called_once_with(search_request)
+    # The agent door fills an unset intent and says it did; everything else
+    # reaches the graph service unchanged.
+    graph.resolve.assert_called_once_with(
+        replace(
+            resolve_request,
+            intent="feature",
+            metadata={"intent_source": "inferred"},
+        )
+    )
+    graph.search.assert_called_once_with(
+        replace(
+            search_request,
+            intent="unknown",
+            metadata={"intent_source": "inferred"},
+        )
+    )
     graph.record.assert_called_once_with(record_request)
 
     pots.aggregate_status.return_value = SimpleNamespace(
@@ -407,3 +428,63 @@ def test_ledger_query_is_read_only_and_pull_does_not_write(
     assert [event.event_id for event in queried.events] == ["pr1"]
     assert len(pulled.events) == 2
     assert len(envelope.items) == 0
+
+
+# --- the protocol ontology is opt-in through `graph.protocols` --------------------
+
+
+def _protocol_surface(runtime) -> tuple[dict, bool]:
+    from potpie_context_engine.core.ports.graph_service import GraphCatalogRequest
+
+    graph = runtime.engine.graph
+    catalog = graph.catalog(GraphCatalogRequest(pot_id="p"))
+    return dict(catalog.extensions), "protocols" in graph.backed_includes
+
+
+def _composed(tmp_path, monkeypatch, *, protocols: str | None = None, **kwargs):
+    from potpie.config.local import LocalConfigService
+
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
+    if protocols is not None:
+        LocalConfigService(home=tmp_path).set("graph.protocols", protocols)
+    return build_local_runtime(backend=InMemoryGraphBackend(), **kwargs)
+
+
+def test_local_runtime_leaves_the_protocol_ontology_off_by_default(
+    tmp_path, monkeypatch
+) -> None:
+    assert _protocol_surface(_composed(tmp_path, monkeypatch)) == ({}, False)
+    assert _protocol_surface(_composed(tmp_path, monkeypatch, protocols="off")) == (
+        {},
+        False,
+    )
+
+
+def test_graph_protocols_on_composes_the_protocol_definition(
+    tmp_path, monkeypatch
+) -> None:
+    from potpie_context_engine.core.ports.graph_service import GraphDescribeRequest
+
+    runtime = _composed(tmp_path, monkeypatch, protocols="on")
+
+    assert _protocol_surface(runtime) == ({"protocols": "1"}, True)
+    described = runtime.engine.graph.describe(
+        GraphDescribeRequest(subgraph="protocols", view="message_context")
+    )
+    assert described["view"]["required_scope"] == ["anchor_entity_key"]
+
+
+def test_an_explicit_definition_wins_over_the_config_key(tmp_path, monkeypatch) -> None:
+    from potpie_context_engine.api import DEFAULT_GRAPH_DEFINITION, protocols_definition
+
+    forced_off = _composed(
+        tmp_path, monkeypatch, protocols="on", definition=DEFAULT_GRAPH_DEFINITION
+    )
+    forced_on = _composed(
+        tmp_path / "other", monkeypatch, definition=protocols_definition()
+    )
+
+    assert _protocol_surface(forced_off) == ({}, False)
+    assert _protocol_surface(forced_on) == ({"protocols": "1"}, True)

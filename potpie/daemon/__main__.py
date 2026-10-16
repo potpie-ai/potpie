@@ -18,9 +18,10 @@ from potpie.daemon.discovery import (
 )
 from potpie.daemon.http.ui import build_ui_app
 from potpie.runtime import CanonicalDaemonRuntime, DaemonBuild, RuntimeEndpoint
-from potpie.runtime.clients import TypedEngineOperationHandler
+from potpie.runtime.clients import LocalEngineClient, TypedEngineOperationHandler
 from potpie.runtime.composition import LocalRuntimeComposition, build_local_runtime
 from potpie.runtime.local_engine import build_local_resource_manager
+from potpie.runtime.resource_manager import ContextResourceManager, ContextSelector
 from potpie.runtime.server import run_foreground
 from potpie_context_engine.bootstrap.logging_setup import configure_logging
 
@@ -76,9 +77,15 @@ async def _run() -> None:
     stamp = build_info.build_stamp()
 
     composition = build_local_runtime()
+    # The daemon serves engine operations for its whole life, so it owns the
+    # resource-index drain: pending embeddings from earlier imports resume here.
+    composition.start_background_work()
     resource_manager = build_local_resource_manager(composition.engine)
     ui_server = _build_ui_server(
-        composition=composition, port=ui_port, bearer_token=bearer_token
+        composition=composition,
+        port=ui_port,
+        bearer_token=bearer_token,
+        resource_manager=resource_manager,
     )
     ui_task = asyncio.create_task(ui_server.serve())
     runtime = CanonicalDaemonRuntime(
@@ -91,7 +98,9 @@ async def _run() -> None:
         ),
         ownership_lock_path=home / "daemon.runtime.lock",
         instance_id=instance_id,
-        shutdown_resources=_then_stop_embedded_graph_servers(resource_manager.shutdown),
+        shutdown_resources=_then_stop_embedded_graph_servers(
+            _then_close_composition(resource_manager.shutdown, composition)
+        ),
         after_ownership_acquired=lambda _ownership: write_daemon_credential(
             home, bearer_token
         ),
@@ -119,6 +128,28 @@ async def _run() -> None:
             await ui_task
         with contextlib.suppress(Exception):
             await runtime.stop()
+
+
+def _then_close_composition(
+    release_resources: Callable[[], Awaitable[object]],
+    composition: LocalRuntimeComposition,
+) -> Callable[[], Awaitable[object]]:
+    """Release the engine leases, then stop the drain and close the index.
+
+    After the leases, so no operation is mid-write when the index database
+    closes; the drain finishes its current batch or leaves it pending.
+    """
+
+    async def shutdown() -> object:
+        try:
+            return await release_resources()
+        finally:
+            try:
+                await asyncio.to_thread(composition.close)
+            except Exception:  # noqa: BLE001 - shutdown must not be what fails
+                logger.debug("runtime composition close failed", exc_info=True)
+
+    return shutdown
 
 
 def _then_stop_embedded_graph_servers(
@@ -162,7 +193,11 @@ def _stop_embedded_graph_servers() -> None:
 
 
 def _build_ui_server(
-    *, composition: LocalRuntimeComposition, port: int, bearer_token: str
+    *,
+    composition: LocalRuntimeComposition,
+    port: int,
+    bearer_token: str,
+    resource_manager: ContextResourceManager,
 ) -> uvicorn.Server:
     # The explorer takes the same per-boot secret as the typed endpoint: the
     # CLI reads it from the owner-only credential file and spends it on a
@@ -172,6 +207,7 @@ def _build_ui_server(
         graph=composition.engine.graph,
         backend=composition.engine.backend,
         bearer_token=bearer_token,
+        engine_client=_ui_engine_client(composition, resource_manager),
     )
     config = uvicorn.Config(
         app,
@@ -183,6 +219,28 @@ def _build_ui_server(
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     return server
+
+
+def _ui_engine_client(
+    composition: LocalRuntimeComposition, resource_manager: ContextResourceManager
+) -> Callable[[str], LocalEngineClient]:
+    """Typed clients for explorer routes, on the daemon's own manager and locks.
+
+    The explorer's commit routes send the same typed operations the CLI does,
+    so selection, archived-pot refusal and operation locking are shared with
+    every daemon request rather than reimplemented for the browser.
+    """
+
+    def build(pot_id: str) -> LocalEngineClient:
+        return LocalEngineClient(
+            selector=ContextSelector(kind="explicit", value=pot_id),
+            authentication={"kind": "daemon_ui"},
+            resource_manager=resource_manager,
+            coordinator=composition.coordinator,
+            context_free_handler=composition.graph_metadata,
+        )
+
+    return build
 
 
 async def _wait_for_ui_start(

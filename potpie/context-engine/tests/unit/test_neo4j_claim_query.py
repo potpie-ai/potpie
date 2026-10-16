@@ -111,8 +111,10 @@ def test_row_parsing_maps_reserved_and_extras() -> None:
             fact="web is owned by platform",
             code_scope=json.dumps({"language": "py"}),
             policy_kind="ownership",
+            __potpie_snapshot_properties_v2='{"code_scope":"{}"}',
         )
     )
+    assert "__potpie_snapshot_properties_v2" not in row.properties
     assert row.predicate == "OWNED_BY"
     assert row.subject_key == "service:web"
     assert row.object_key == "team:platform"
@@ -142,6 +144,21 @@ def test_row_parsing_maps_reserved_and_extras() -> None:
     assert "claim_key" not in row.properties
     assert row.properties["code_scope"] == {"language": "py"}
     assert row.properties["policy_kind"] == "ownership"
+
+
+def test_entity_properties_hide_snapshot_encoding_metadata() -> None:
+    driver = _FakeDriver(
+        [
+            {
+                "props": {
+                    "name": "A",
+                    "__potpie_snapshot_properties_v2": '{"nested":"{}"}',
+                }
+            }
+        ]
+    )
+    store = Neo4jClaimQueryStore(settings=object(), driver=driver)  # type: ignore[arg-type]
+    assert store.entity_properties(pot_id="p1", entity_key="a") == {"name": "A"}
 
 
 def test_find_claims_builds_params_and_parses_rows() -> None:

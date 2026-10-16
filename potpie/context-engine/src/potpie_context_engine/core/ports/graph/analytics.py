@@ -12,13 +12,36 @@ from typing import Any, Mapping, Protocol, Sequence
 
 
 @dataclass(frozen=True, slots=True)
+class RepairFinding:
+    """A detect-only repair result: counted and sampled, never mutated.
+
+    Some drift cannot be fixed in place — rewriting an entity key would
+    orphan every claim citing the old one, and no backend can rewire claim
+    edges. Those targets report instead of repairing, so ``count`` is what
+    was *found* and ``recommended_next_action`` is what the operator does
+    about it.
+    """
+
+    target: str
+    count: int
+    samples: tuple[str, ...] = ()
+    detail: str = ""
+    recommended_next_action: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RepairReport:
-    """Outcome of a ``repair`` run (e.g. semantic-index rebuild)."""
+    """Outcome of a ``repair`` run (e.g. semantic-index rebuild).
+
+    ``repaired`` counts what changed; ``findings`` carries detect-only
+    targets, which never contribute to ``repaired``.
+    """
 
     pot_id: str
     targets: tuple[str, ...]
     repaired: Mapping[str, int] = field(default_factory=dict)
     detail: str | None = None
+    findings: tuple[RepairFinding, ...] = ()
 
 
 class GraphAnalyticsPort(Protocol):
@@ -41,4 +64,4 @@ class GraphAnalyticsPort(Protocol):
         ...
 
 
-__all__ = ["GraphAnalyticsPort", "RepairReport"]
+__all__ = ["GraphAnalyticsPort", "RepairFinding", "RepairReport"]

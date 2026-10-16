@@ -187,7 +187,10 @@ def test_quiet_transformer_progress_suppresses_loader_noise(
     assert list(recwarn) == []
 
 
-def test_setup_config_persists_embedding_defaults(tmp_path) -> None:
+def test_setup_config_persists_embedding_defaults(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_embedding_env(monkeypatch)
     service = LocalConfigService(home=tmp_path)
 
     service.write_defaults(
@@ -203,14 +206,95 @@ def test_setup_config_persists_embedding_defaults(tmp_path) -> None:
     assert data["embedding_cache"] == str(tmp_path / "models" / "sentence-transformers")
 
 
+@pytest.mark.parametrize("mode", ["none", "off", "local", "hashing", "default"])
+def test_a_mode_that_caches_nothing_records_no_cache_location(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, mode
+) -> None:
+    """A path nothing will ever write to is a guess, not a location: the
+    hashing embedder and ``--embeddings none`` hold no model weights."""
+    _clear_embedding_env(monkeypatch)
+    service = LocalConfigService(home=tmp_path)
+
+    service.write_defaults(SetupPlan(embeddings=mode))
+
+    data = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert "embedding_cache" not in data
+
+
+def test_the_recorded_cache_is_the_one_the_runtime_resolves(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The environment override wins at runtime, so it is what config records."""
+    _clear_embedding_env(monkeypatch)
+    override = tmp_path / "shared-weights"
+    monkeypatch.setenv(local_embedder.EMBEDDING_CACHE_ENV, str(override))
+    service = LocalConfigService(home=tmp_path)
+
+    service.write_defaults(SetupPlan(embeddings="sentence-transformers"))
+
+    data = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert data["embedding_cache"] == str(override)
+    assert local_embedder.default_sentence_transformer_cache() == str(override)
+
+
 def test_setup_reports_semantic_alias_hashing_fallback() -> None:
     orchestrator = _setup_orchestrator_with_embedder(HashingEmbedder())
 
     step = orchestrator._embedding_model(SetupPlan(embeddings="auto"))  # noqa: SLF001
 
     assert step.state == FAILED
-    assert step.detail == "sentence-transformers is unavailable; using local-hashing-v1"
+    assert step.detail.startswith(
+        "sentence-transformers is unavailable; using local-hashing-v1"
+    )
+    assert "potpie[embeddings]" in step.detail
     assert step.metadata["fallback"] == "local-hashing-v1"
+
+
+def test_explicit_sentence_transformers_without_the_extra_names_it(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    _clear_embedding_env(monkeypatch)
+    monkeypatch.setenv("CONTEXT_ENGINE_EMBEDDER", "sentence-transformers")
+    monkeypatch.setattr(
+        local_embedder, "_sentence_transformers_installed", lambda: False
+    )
+
+    with caplog.at_level(logging.WARNING, logger=local_embedder.logger.name):
+        embedder = local_embedder.build_embedder()
+
+    assert isinstance(embedder, HashingEmbedder)
+    assert "potpie[embeddings]" in caplog.text
+
+
+def test_auto_without_the_extra_falls_back_quietly(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`auto` is the setup default; it must not warn on every command."""
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    _clear_embedding_env(monkeypatch)
+    monkeypatch.setenv("CONTEXT_ENGINE_EMBEDDER", "auto")
+    monkeypatch.setattr(
+        local_embedder, "_sentence_transformers_installed", lambda: False
+    )
+
+    with caplog.at_level(logging.WARNING, logger=local_embedder.logger.name):
+        embedder = local_embedder.build_embedder()
+
+    assert isinstance(embedder, HashingEmbedder)
+    assert caplog.text == ""
+
+
+def test_setup_defaults_to_auto_embeddings(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from potpie.cli.commands.bootstrap import _setup_embeddings_choice
+
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
+    _clear_embedding_env(monkeypatch)
+
+    assert _setup_embeddings_choice(None) == "auto"
+    assert _setup_embeddings_choice("sbert") == "sentence-transformers"
 
 
 def test_setup_embedding_model_metadata_preserves_resolved_model() -> None:

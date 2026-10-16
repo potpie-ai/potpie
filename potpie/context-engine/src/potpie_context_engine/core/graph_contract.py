@@ -26,7 +26,9 @@ import cycle.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from enum import StrEnum
+from types import MappingProxyType
 
 # --- Versions ---------------------------------------------------------------
 
@@ -36,17 +38,38 @@ ONTOLOGY_VERSION = "2026-06-graph"
 # Contract versions a V1.5 daemon will accept on an inbound mutation payload.
 SUPPORTED_GRAPH_CONTRACT_VERSIONS: frozenset[str] = frozenset({"v1.5"})
 
+# Spellings that name the same data-plane contract. The workbench surface
+# reports its own contract as ``v2`` (``graph catalog`` and ``graph status``
+# print it), and a caller that copied that value into a mutation payload was
+# refused with ``unsupported_contract_version`` — a failed propose for doing
+# exactly what the catalog seemed to ask. An alias is normalised to the
+# canonical spelling at parse time, so everything downstream sees one value.
+GRAPH_CONTRACT_VERSION_ALIASES: Mapping[str, str] = MappingProxyType({"v2": "v1.5"})
 
-def is_supported_contract_version(version: str | None) -> bool:
-    """True iff ``version`` is a contract version this build can apply.
 
-    ``None`` / empty is treated as the current version (a convenience for
-    hand-written single-op payloads); any explicit value must be in the
-    supported set.
+def normalize_contract_version(version: str | None) -> str:
+    """The canonical spelling of ``version``; unknown values pass through.
+
+    ``None`` / empty is the current version (a convenience for hand-written
+    single-op payloads). An unsupported value is returned unchanged so the
+    validator can name what it refused.
     """
     if version is None or not str(version).strip():
-        return True
-    return str(version).strip() in SUPPORTED_GRAPH_CONTRACT_VERSIONS
+        return GRAPH_CONTRACT_VERSION
+    cleaned = str(version).strip()
+    return GRAPH_CONTRACT_VERSION_ALIASES.get(cleaned, cleaned)
+
+
+def is_supported_contract_version(version: str | None) -> bool:
+    """True iff ``version`` names a contract version this build can apply."""
+    return normalize_contract_version(version) in SUPPORTED_GRAPH_CONTRACT_VERSIONS
+
+
+def accepted_contract_versions() -> tuple[str, ...]:
+    """Every spelling a payload may carry, for error messages and help."""
+    return tuple(
+        sorted(SUPPORTED_GRAPH_CONTRACT_VERSIONS | set(GRAPH_CONTRACT_VERSION_ALIASES))
+    )
 
 
 # --- Truth classes ----------------------------------------------------------
@@ -343,6 +366,7 @@ __all__ = [
     "DEFERRED_OPS",
     "EVIDENCE_REQUIRED_TRUTH_CLASSES",
     "GRAPH_CONTRACT_VERSION",
+    "GRAPH_CONTRACT_VERSION_ALIASES",
     "KNOWN_MUTATION_OPS",
     "LOW_AUTHORITY_TRUTH_CLASSES",
     "ONTOLOGY_VERSION",
@@ -356,6 +380,7 @@ __all__ = [
     "SemanticMutationOp",
     "SourceAuthority",
     "TruthClass",
+    "accepted_contract_versions",
     "canonical_key_prefix",
     "edge_identity_key",
     "entity_key_matches_type",
@@ -364,6 +389,7 @@ __all__ = [
     "is_known_op",
     "is_source_authority",
     "is_supported_contract_version",
+    "normalize_contract_version",
     "is_truth_class",
     "make_claim_key",
     "normalize_entity_key",

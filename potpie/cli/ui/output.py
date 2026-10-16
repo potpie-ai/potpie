@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -30,6 +31,18 @@ from potpie.cli.ui.format import (
 _err = Console(stderr=True)
 _out = Console()
 _json_errors = False
+
+
+def configure_output_streams() -> None:
+    """Emit UTF-8 even when Windows pipes default to a legacy code page.
+
+    Reconfigure in place so existing consoles keep the same streams. In-memory
+    streams supplied by callers already accept Unicode and need no encoder.
+    Escape malformed Unicode rather than failing after a command has completed.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def configure_error_output(*, as_json: bool) -> None:

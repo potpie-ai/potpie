@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
-import type { GraphData, GraphNode } from "./types";
+import type { GraphData, GraphEdge, GraphNode } from "./types";
 import { typeColor, UI } from "./theme";
 import { ICON_BOX, nodeIcon } from "./icons";
 
@@ -9,9 +9,16 @@ interface Props {
   selectedId: string | null;
   onSelect: (node: GraphNode | null) => void;
   onExpand: (node: GraphNode) => void;
+  fitOnLoad?: boolean;
+  onSelectEdge?: (edge: GraphEdge) => void;
+  focusOnSelect?: boolean;
 }
 
-const radius = (n: GraphNode) => 4 + Math.min(7, Math.sqrt(n.degree || 0) * 2.2);
+const diffColors: Record<string, string> = {
+  added: UI.accent, modified: "#FFD86E", invalidated: "#F15B5B", retired: "#F15B5B", reactivated: "#45C7A8", before: "#a6a6af", previous: "#F15B5B", "recorded context": "#727a74", context: "#6c716e",
+};
+
+const radius = (n: GraphNode) => (4 + Math.min(7, Math.sqrt(n.degree || 0) * 2.2)) * (n.diff_status === "context" ? 0.78 : 1);
 
 // Labels declutter by progressive disclosure: at far zoom only hubs are
 // captioned; zooming in lowers the degree bar until everything is labeled.
@@ -26,6 +33,9 @@ export default function GraphView({
   selectedId,
   onSelect,
   onExpand,
+  fitOnLoad = false,
+  onSelectEdge,
+  focusOnSelect = false,
 }: Props) {
   const fgRef = useRef<any>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -61,7 +71,7 @@ export default function GraphView({
     }
     const currentIds = new Set(data.nodes.map((node) => node.id));
     for (const id of nodeRefs.current.keys()) {
-      if (!currentIds.has(id)) nodeRefs.current.delete(id);
+      if (!fitOnLoad && !currentIds.has(id)) nodeRefs.current.delete(id);
     }
     const nodes = data.nodes.map((node) => {
       const existing = nodeRefs.current.get(node.id);
@@ -73,11 +83,26 @@ export default function GraphView({
       nodeRefs.current.set(node.id, created);
       return created;
     });
-    return {
-      nodes,
-      links: data.edges.map((e) => ({ ...e })),
-    };
-  }, [data]);
+    const links = data.edges.map(edge => ({ ...edge, curvature: 0 }));
+    const pairs = new Map<string, typeof links>();
+    for (const edge of links) {
+      const source = typeof edge.source === "string" ? edge.source : edge.source.id;
+      const target = typeof edge.target === "string" ? edge.target : edge.target.id;
+      const key = JSON.stringify([source, target].sort());
+      const group = pairs.get(key) || [];
+      group.push(edge); pairs.set(key, group);
+    }
+    for (const group of pairs.values()) {
+      group.sort((left, right) => left.id.localeCompare(right.id));
+      group.forEach((edge, index) => {
+        const source = typeof edge.source === "string" ? edge.source : edge.source.id;
+        const target = typeof edge.target === "string" ? edge.target : edge.target.id;
+        edge.curvature = source === target ? 0.45 + index * 0.2
+          : (index - (group.length - 1) / 2) * 0.35 * (source < target ? 1 : -1);
+      });
+    }
+    return { nodes, links };
+  }, [data, fitOnLoad]);
 
   // Stable camera: force-graph re-zooms to 4/cbrt(nodeCount) on EVERY data
   // update while the zoom level still equals its internal "default"
@@ -87,14 +112,51 @@ export default function GraphView({
   // moves when the user pans/zooms or uses the controls below.
   const Z100 = 1.000001;
   const [zoomPct, setZoomPct] = useState(100);
+  const zoomFrame = useRef<number | null>(null);
+  const pendingZoom = useRef(100);
   useEffect(() => {
     fgRef.current?.zoom(Z100, 0);
-  }, []);
+    if (fitOnLoad) {
+      fgRef.current?.d3Force("link")?.distance(60);
+      fgRef.current?.d3Force("charge")?.strength(-90);
+      fgRef.current?.d3ReheatSimulation();
+    }
+    return () => {
+      if (zoomFrame.current !== null) cancelAnimationFrame(zoomFrame.current);
+    };
+  }, [fitOnLoad]);
   const resetZoom = () => {
     fgRef.current?.centerAt(0, 0, 300);
     fgRef.current?.zoom(Z100, 300);
   };
-  const fitZoom = () => fgRef.current?.zoomToFit?.(300, 60);
+  const fitted = useRef(false);
+  const [initialFitPainted, setInitialFitPainted] = useState(false);
+  const graphReady = !fitOnLoad || !graphData.nodes.length || initialFitPainted;
+  useEffect(() => {
+    if (!focusOnSelect || !selectedId) return;
+    const node = graphData.nodes.find(item => item.id === selectedId);
+    const edge = graphData.links.find(item => item.id === selectedId);
+    const endpoints = edge ? [edge.source, edge.target].map(endpoint => nodeRefs.current.get(typeof endpoint === "string" ? endpoint : endpoint.id)) : [];
+    const points = (node ? [node] : endpoints).filter((point): point is GraphNode => Boolean(point && point.x !== undefined && point.y !== undefined));
+    if (!points.length) return;
+    const xs = points.map(point => point.x!);
+    const ys = points.map(point => point.y!);
+    const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys);
+    const fg = fgRef.current;
+    fg?.centerAt((left + right) / 2, (top + bottom) / 2, 250);
+    if (fg && fg.zoom() < 1) fg.zoom(Math.min(2, (dims.w - 100) / (right - left + 80), (dims.h - 100) / (bottom - top + 80)), 250);
+  }, [selectedId, focusOnSelect, graphData, dims.w, dims.h]);
+  useEffect(() => {
+    if (fitOnLoad && fitted.current) {
+      fgRef.current?.zoomToFit?.(0, 60);
+      if (fgRef.current?.zoom() > 3) fgRef.current.zoom(3, 0);
+    }
+  }, [dims.w, dims.h, fitOnLoad]);
+  const fitZoom = () => {
+    const fg = fgRef.current;
+    fg?.zoomToFit?.(fitOnLoad ? 0 : 300, 60);
+    if (fitOnLoad && fg?.zoom() > 3) fg.zoom(3, 0);
+  };
   const zoomBy = (factor: number) => {
     const fg = fgRef.current;
     if (!fg?.zoom) return;
@@ -110,15 +172,19 @@ export default function GraphView({
     emphasized = false,
   ) => {
     if (!emphasized && node.id === selectedId) return;
+    ctx.save();
+    const context = node.diff_status === "context";
+    const changed = Boolean(node.diff_status && !context && node.diff_status !== "recorded context");
+    ctx.globalAlpha = context && !emphasized ? 0.6 : node.ghost ? 0.7 : 1;
     const r = radius(node);
     const hovered = node.id === hoverRef.current?.id;
     ctx.beginPath();
     ctx.arc(node.x!, node.y!, r, 0, 2 * Math.PI);
-    ctx.fillStyle = typeColor(node.type);
+    ctx.fillStyle = diffColors[node.diff_status || ""] || typeColor(node.type);
     if (emphasized) {
       // glow renders in device space (unaffected by zoom) — a steady halo
       ctx.save();
-      ctx.shadowColor = UI.glow;
+      ctx.shadowColor = context ? "#a6a6af" : UI.glow;
       ctx.shadowBlur = 24;
       ctx.fill();
       ctx.restore();
@@ -132,6 +198,15 @@ export default function GraphView({
       ctx.stroke();
     } else {
       ctx.fill();
+      if (changed) {
+        ctx.beginPath();
+        ctx.arc(node.x!, node.y!, r + 3 / scale, 0, 2 * Math.PI);
+        ctx.strokeStyle = diffColors[node.diff_status || ""];
+        ctx.globalAlpha = 0.35;
+        ctx.lineWidth = 1 / scale;
+        ctx.stroke();
+        ctx.globalAlpha = node.ghost ? 0.7 : 1;
+      }
     }
 
     // Type glyph inside the circle — skipped while the node is too small on
@@ -149,7 +224,7 @@ export default function GraphView({
       ctx.restore();
     }
 
-    if (emphasized || hovered || (node.degree || 0) >= labelMinDegree(scale)) {
+    if (emphasized || hovered || (changed && graphData.nodes.length < 60) || (node.degree || 0) >= labelMinDegree(scale)) {
       const fontSize = Math.max(2.5, 11 / scale);
       const weight = emphasized || hovered ? "600 " : "";
       ctx.font = `${weight}${fontSize}px ${UI.font}`;
@@ -164,9 +239,10 @@ export default function GraphView({
       ctx.lineJoin = "round";
       ctx.strokeStyle = emphasized ? UI.haloStrong : UI.halo;
       ctx.strokeText(text, node.x!, y);
-      ctx.fillStyle = emphasized || hovered ? UI.labelBright : UI.label;
+      ctx.fillStyle = emphasized || hovered ? UI.labelBright : context ? "#979c98" : UI.label;
       ctx.fillText(text, node.x!, y);
     }
+    ctx.restore();
   };
 
   // Faint blueprint dot-grid, fixed in graph space so it pans/zooms with the
@@ -224,12 +300,13 @@ export default function GraphView({
   };
 
   return (
-    <div ref={wrapRef} className="graph-canvas">
+    <div ref={wrapRef} className="graph-canvas" style={{ visibility: graphReady ? "visible" : "hidden" }}>
       <ForceGraph2D
         ref={fgRef}
         width={dims.w}
         height={dims.h}
         graphData={graphData as any}
+        linkCurvature="curvature"
         backgroundColor={UI.bg}
         nodeId="id"
         nodeRelSize={5}
@@ -239,26 +316,63 @@ export default function GraphView({
           paintGrid(ctx, scale)
         }
         onRenderFramePost={(ctx: CanvasRenderingContext2D, scale: number) => {
+          // The first stop fits the camera during a frame that began at the
+          // old scale. Reveal only after a complete frame at the fitted scale.
+          if (fitOnLoad && fitted.current && !initialFitPainted && scale === fgRef.current?.zoom()) {
+            setInitialFitPainted(true);
+          }
           if (!selectedId) return;
           const n = graphData.nodes.find((x) => x.id === selectedId) as
             | GraphNode
             | undefined;
           if (n && n.x != null && n.y != null) paintNode(n, ctx, scale, true);
         }}
-        linkColor={() => UI.link}
-        linkWidth={1}
+        linkColor={(link: GraphEdge) => (link.record_id || link.id) === selectedId ? (link.diff_status === "context" ? "#a6a6af" : UI.accent) : link.diff_status === "context" ? "rgba(150,158,153,0.22)" : diffColors[link.diff_status || ""] || UI.link}
+        linkLineDash={(link: { diff_status?: string }) => ["retired", "invalidated", "previous"].includes(link.diff_status || "") ? [4, 3] : null}
+        linkWidth={(link: GraphEdge) => (link.record_id || link.id) === selectedId ? 3 : link.diff_status === "context" ? 0.7 : link.diff_status ? 2 : 1}
+        linkHoverPrecision={8}
         linkDirectionalArrowLength={3.5}
         linkDirectionalArrowRelPos={0.92}
-        linkLabel={(l: any) => l.predicate}
-        cooldownTicks={120}
+        linkLabel={(link: GraphEdge) => {
+          const label = document.createElement("span");
+          label.textContent = `${link.diff_status ? `${link.diff_status}: ` : ""}${link.predicate}`;
+          return label.innerHTML;
+        }}
+        nodeLabel={(node: GraphNode) => {
+          const label = document.createElement("span");
+          label.textContent = node.caption;
+          return label.innerHTML;
+        }}
+        warmupTicks={fitOnLoad ? 60 : 0}
+        cooldownTicks={fitOnLoad ? 0 : 120}
+        onEngineStop={() => {
+          // The engine can stop its previous (empty) data before the pending
+          // graph update has initialized the new nodes.
+          if (!fitOnLoad || !graphData.nodes.length || graphData.nodes.some(node => !Number.isFinite(node.x) || !Number.isFinite(node.y))) return;
+          // Preserve the mental map when toggling before/after or inspecting
+          // a record. Newly loaded nodes can settle around the fixed nodes.
+          for (const node of graphData.nodes) Object.assign(node, { fx: node.x, fy: node.y });
+          if (!fitted.current) {
+            fitted.current = true;
+            fgRef.current?.zoomToFit?.(0, 60);
+            if (fgRef.current?.zoom() > 3) fgRef.current.zoom(3, 0);
+          }
+        }}
         onZoom={({ k }: { k: number }) => {
-          const pct = Math.round(k * 100);
-          setZoomPct((p) => (p === pct ? p : pct));
+          // The library can emit zoom synchronously while applying new props.
+          // Defer the React update and coalesce wheel events into one frame.
+          pendingZoom.current = Math.round(k * 100);
+          if (zoomFrame.current !== null) return;
+          zoomFrame.current = requestAnimationFrame(() => {
+            zoomFrame.current = null;
+            setZoomPct(pendingZoom.current);
+          });
         }}
         onNodeHover={(n: any) => {
           hoverRef.current = (n as GraphNode) || null;
         }}
         onNodeClick={(n: any) => onSelect(n as GraphNode)}
+        onLinkClick={onSelectEdge ? (edge: GraphEdge) => onSelectEdge(edge) : undefined}
         onNodeRightClick={(n: any) => onExpand(n as GraphNode)}
         onBackgroundClick={(e: MouseEvent) => {
           // Fires for genuine empty clicks everywhere, and for *every* click in

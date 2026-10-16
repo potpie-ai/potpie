@@ -1,6 +1,6 @@
 ---
 name: potpie-project-preferences
-version: "2"
+version: "3"
 description: "Use before writing, modifying, reviewing, refactoring, or testing code so repo/project preferences surface: error handling, file structure, frameworks, logging, dependency choices, testing, security, API style, and naming. Also use after code work when a reusable project preference should be recorded."
 ---
 
@@ -17,8 +17,8 @@ task, pot, and scope; loading this skill does not repeat resolve. Use a known
 explicit pot selector on all calls and check returned pot IDs before combining
 results. Resolve ambiguous routing first.
 
-- One bounded context call — with the default `feature` intent it reads
-  preferences, features, infra, decisions, owners and docs:
+- One bounded context call — for a feature task, preferences, features, infra,
+  decisions, owners and docs as `subject PREDICATE object` triples:
 
 ```bash
 potpie resolve "<the task in the user's words>"
@@ -83,8 +83,19 @@ For those, decisions with rationale, or events, follow
 [ontology selection](../potpie-graph/SKILL.md#ontology-selection) and choose the
 appropriate entity/relation instead of recording a preference.
 
-A preference needs its policy kind and prescription, which `potpie record`
-cannot carry, so write it — one or several — as a plan:
+One preference is one call — no JSON file, no plan:
+
+```bash
+potpie record --type preference --summary "<one-line prescription>" --detail policy_kind=<error_handling|logging|testing|library_choice|file_structure> --detail prescription="<specific guidance an agent should follow>" --scope service:<service>
+```
+
+Optional details: `strength=<hard|strong|soft>`, `audience=<team|service|project|global>`.
+`--scope` takes an existing key, so reuse a key a read returned. The reply is a
+`record_id` and the mutation count; the entity key is minted from the whole
+`prescription`, so keep it short and lead with the distinctive words.
+
+The plan flow is for a batch — several preferences, or one tied to a
+`CodeAsset` with evidence:
 
 ```bash
 potpie graph mutation-template --kind preference-policy
@@ -92,13 +103,10 @@ potpie --json graph propose --file mutation.json
 potpie --json graph commit <plan_id> --verify
 ```
 
-The template carries the keys, predicates and required properties — `policy_kind`
-(`error_handling`, `logging`, `testing`, `library_choice`, `file_structure`),
+The template carries the keys, predicates and required properties — `policy_kind`,
 `prescription`, `strength` and `audience` — and targets a `CodeAsset`; point
 `POLICY_APPLIES_TO` at a repo or service instead when the rule is that broad,
-and `propose` validates the rest. Omit
-`graph_contract_version` from the payload. Anchor the preference with a key a
-read returned, and keep its name short, leading with the distinctive words.
+and `propose` validates the rest. Omit `graph_contract_version` from the payload.
 
 A good preference write includes the policy kind, prescription, strength,
 audience, scope, truth class, evidence or source refs when available, and a

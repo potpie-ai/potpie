@@ -15,19 +15,23 @@ and easy to cap.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
-from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
-    _records_from_result,
-    build_falkordb_graph,
+from potpie_context_engine.core.ports.claim_query import (
+    ClaimQueryFilter,
+    ClaimQueryPort,
 )
-from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
-from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.core.ports.graph.inspection import (
     GraphEdge,
     GraphNode,
     GraphSlice,
+)
+
+from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
+    _records_from_result,
+    build_falkordb_graph,
 )
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
@@ -39,6 +43,7 @@ _MAX_DEPTH = 4
 
 _NODES_CYPHER = """
 MATCH (e:Entity {group_id: $gid})
+WHERE coalesce(e.retired,false)=false
 RETURN e.entity_key AS key, labels(e) AS labels, properties(e) AS props
 ORDER BY CASE WHEN e.entity_key STARTS WITH 'docsection:' THEN 1 ELSE 0 END, e.entity_key
 LIMIT $limit
@@ -46,7 +51,8 @@ LIMIT $limit
 
 _EDGES_CYPHER = """
 MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
-WHERE ($include_invalid OR r.invalid_at IS NULL)
+WHERE coalesce(r.retired,false)=false AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false
+  AND ($include_invalid OR r.invalid_at IS NULL)
   AND ($preds IS NULL OR r.name IN $preds)
 RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate, properties(r) AS props
 ORDER BY CASE
@@ -59,14 +65,15 @@ LIMIT $limit
 # Edges incident (either direction) to the current BFS frontier.
 _INCIDENT_CYPHER = """
 MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
-WHERE (a.entity_key IN $frontier OR b.entity_key IN $frontier)
+WHERE coalesce(r.retired,false)=false AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false
+  AND (a.entity_key IN $frontier OR b.entity_key IN $frontier)
   AND ($include_invalid OR r.invalid_at IS NULL)
 RETURN a.entity_key AS source, b.entity_key AS target, r.name AS predicate, properties(r) AS props
 """
 
 _HYDRATE_CYPHER = """
 MATCH (e:Entity {group_id: $gid})
-WHERE e.entity_key IN $keys
+WHERE e.entity_key IN $keys AND coalesce(e.retired,false)=false
 RETURN e.entity_key AS key, labels(e) AS labels, properties(e) AS props
 """
 
@@ -162,7 +169,7 @@ class FalkorDBInspection:
         walk_in = direction in ("in", "both")
         visited: set[str] = {entity_key}
         frontier: set[str] = {entity_key}
-        edges: dict[tuple[str, str, str], GraphEdge] = {}
+        edges: dict[tuple[str, ...], GraphEdge] = {}
         truncated = False
         for _ in range(depth):
             if not frontier:
@@ -180,11 +187,20 @@ class FalkorDBInspection:
                 follows_in = walk_in and tgt in frontier
                 if not (follows_out or follows_in):
                     continue
-                edges[(src, pred, tgt)] = GraphEdge(
+                props = _clean_props(rec.get("props"))
+                # A traversal can encounter the same edge twice; distinct claims
+                # on the same endpoints must still be visible independently.
+                identity = str(
+                    props.get("record_id")
+                    or props.get("uuid")
+                    or props.get("claim_key")
+                    or ""
+                )
+                edges[(src, pred, tgt, identity)] = GraphEdge(
                     predicate=pred,
                     from_key=src,
                     to_key=tgt,
-                    properties=_clean_props(rec.get("props")),
+                    properties=props,
                 )
                 if follows_out and tgt not in visited:
                     new.add(tgt)
@@ -314,7 +330,9 @@ class FalkorDBInspection:
         cypher = (
             "MATCH (a:Entity {group_id: $gid}), (b:Entity {group_id: $gid}), "
             f"p = shortestPath((a)-[:RELATES_TO*1..{max_depth}]-(b)) "
-            "WHERE a.entity_key = $from AND b.entity_key = $to "
+            "WHERE a.entity_key = $from AND b.entity_key = $to AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false "
+            "AND all(n IN nodes(p) WHERE coalesce(n.retired,false)=false) "
+            "AND all(r IN relationships(p) WHERE coalesce(r.retired,false)=false AND r.invalid_at IS NULL) "
             "RETURN [n IN nodes(p) | n.entity_key] AS keys, "
             "[r IN relationships(p) | [startNode(r).entity_key, r.name, endNode(r).entity_key]] AS rels "
             "LIMIT 1"

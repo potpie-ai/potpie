@@ -17,18 +17,34 @@ labeled lexical scorer so old deployments degrade instead of dropping results.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
+from typing import Any
+
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
 
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     ENTITY_LABELS_CYPHER as _ENTITY_LABELS_CYPHER,
+)
+from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     FIND_CLAIMS_CYPHER as _FIND_CLAIMS_CYPHER,
+)
+from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     embedding_score as _embedding_score,
+)
+from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     iso as _iso,
+)
+from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     row_from_record as _row_from_record,
+)
+from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     stamp_scored_rows,
     stamp_similarity,
+    vector_candidate_k,
+    vector_filter_is_selective,
 )
-from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
+
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
@@ -39,16 +55,21 @@ CALL db.index.vector.queryRelationships($index_name, $k, $embedding)
 YIELD relationship AS r, score
 MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
 WHERE r.group_id = $gid
+  AND ($include_retired OR coalesce(r.retired,false)=false)
   AND ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
+  AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
-  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN coalesce(r.source_refs, []) WHERE ref IN $source_refs))
+  AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
-  AND ($include_invalid OR r.invalid_at IS NULL)
-  AND ($as_of IS NULL OR r.valid_at IS NULL OR r.valid_at <= $as_of)
+  AND ($include_invalid OR (
+    (coalesce(r.valid_from, r.valid_at) IS NULL OR coalesce(r.valid_from, r.valid_at) <= $query_time)
+    AND (r.valid_until IS NULL OR $query_time < r.valid_until)
+    AND (r.invalid_at IS NULL OR $query_time < r.invalid_at)
+  ))
   AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
   AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
   AND ($subject_label IS NULL OR $subject_label IN labels(a))
@@ -60,7 +81,7 @@ LIMIT $limit
 
 _ENTITY_PROPERTIES_CYPHER = """
 MATCH (e:Entity {group_id: $gid})
-WHERE e.entity_key = $key
+WHERE e.entity_key = $key AND coalesce(e.retired,false)=false
 RETURN properties(e) AS props
 LIMIT 1
 """
@@ -127,11 +148,19 @@ class Neo4jClaimQueryStore:
             "objects": list(filter_.object_key_in) or None,
             "claim_keys": list(filter_.claim_key_in) or None,
             "subgraphs": list(filter_.subgraph_in) or None,
+            "excluded_subgraphs": list(filter_.subgraph_not_in) or None,
             "mutation_ids": list(filter_.mutation_id_in) or None,
             "source_refs": list(filter_.source_ref_in) or None,
             "sources": list(filter_.source_system_in) or None,
+            "exact_text": [value.lower() for value in filter_.exact_text_in] or None,
+            "exact_pattern": filter_.exact_text_pattern,
+            "environments": [value.lower() for value in filter_.environment_in] or None,
+            "truths": [value.lower() for value in filter_.truth_in] or None,
+            "endpoint_label": filter_.endpoint_label,
             "include_invalid": bool(filter_.include_invalidated),
+            "include_retired": bool(filter_.include_retired),
             "as_of": _iso(filter_.as_of),
+            "query_time": _iso(filter_.as_of or datetime.now(timezone.utc)),
             "va_after": _iso(filter_.valid_at_after),
             "va_before": _iso(filter_.valid_at_before),
             "subject_label": filter_.subject_label,
@@ -172,7 +201,9 @@ class Neo4jClaimQueryStore:
                 "embedding": [
                     float(x) for x in self._embedder.embed(filter_.fact_query)
                 ],
-                "k": max(limit * 5, 50),
+                "k": vector_candidate_k(
+                    limit, selective=vector_filter_is_selective(filter_)
+                ),
                 "limit": limit,
             }
             driver = self._get_driver()
@@ -207,7 +238,7 @@ class Neo4jClaimQueryStore:
         query = "MATCH (e:Entity {group_id: $gid}) WHERE e.entity_key IN $keys RETURN e.entity_key AS key, properties(e) AS props"
         with self._get_driver().session() as session:
             records = list(session.run(query, gid=pot_id, keys=keys))
-        return {rec["key"]: dict(rec["props"]) for rec in records}
+        return {rec["key"]: _public_entity_properties(rec["props"]) for rec in records}
 
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
         driver = self._get_driver()
@@ -222,15 +253,25 @@ class Neo4jClaimQueryStore:
         if not records:
             return {}
         props = records[0].get("props")
-        return dict(props) if isinstance(props, Mapping) else {}
+        return _public_entity_properties(props)
+
+
+def _public_entity_properties(props: Any) -> dict[str, Any]:
+    if not isinstance(props, Mapping):
+        return {}
+    return {
+        key: value
+        for key, value in props.items()
+        if key != "__potpie_snapshot_properties_v2"
+    }
 
 
 __all__ = [
-    "Neo4jClaimQueryStore",
     "_ENTITY_LABELS_CYPHER",
     "_ENTITY_PROPERTIES_CYPHER",
     "_FIND_CLAIMS_CYPHER",
     "_VECTOR_CLAIMS_CYPHER",
+    "Neo4jClaimQueryStore",
     "_embedding_score",
     "_iso",
     "_row_from_record",

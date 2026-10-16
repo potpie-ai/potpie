@@ -1,31 +1,47 @@
 ---
 name: "potpie-graph"
-version: "6"
-description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions and responding to nudges."
+version: "9"
+description: "Use when the task can read or write the project-memory graph through the potpie CLI: discover the contract with `graph catalog`, read named views with `graph read`, resolve entity identity with `graph search-entities`, create validated plans with `graph propose`, commit plans with `graph commit --verify`, inspect quality with `graph quality`, or capture uncertain work with `graph inbox`. Also covers writing retrieval-grade descriptions, fetching ingested document chunks with `potpie resource get`, and responding to nudges."
 ---
 
 # Potpie Graph Workbench
 
-One-call `potpie record` types (a summary and a scope, nothing else):
+Supported single-record types:
 
-fix|workflow|runbook_note|incident_summary|investigation|diagnostic_signal|service_note|feature_note|integration_note|doc_reference
-
-`decision`, `preference`, `policy`, `bug_pattern` and `verification` need
-structured fields `record` cannot take, so it refuses them; write those with a
-plan (section 4).
+preference|policy|bug_pattern|fix|verification|decision|doc_reference|workflow|runbook_note|incident_summary|investigation|diagnostic_signal|service_note|feature_note|integration_note
 
 The graph is project memory: preferences, prior bugs and their fixes, infra
-topology, decisions, a timeline of changes, and document references. You are the
+topology, decisions, a timeline of changes, and ingested documents. You are the
 intelligence that reads it before acting and writes durable learnings after.
 Potpie validates, lowers, commits, audits, and ranks. It does **not** scan a
 repository or infer rich facts from prose for you.
 
-Text output for reads; `--json` for `propose`, `commit`, and anything you
-parse. `graph describe --examples` prints its examples only with `--json`, and
-they are read commands: the write payload shape is `graph mutation-template`.
+Text output for reads; `--json` for `propose`, `commit`, `resource import`,
+and anything you parse. `graph describe --examples` prints its examples only
+with `--json`, and they are read commands: the write payload shape is
+`graph mutation-template`.
 When a command's JSON is saved to a file, parse it with a JSON decoder (for
 example, `json.load`) and print only the fields needed for the task. Do not
 regex-match or reprint an entire minified JSON object to inspect one field.
+
+## Protocol contracts and decoder questions
+
+Protocol memory is an opt-in extension, off unless the user turned it on with
+`potpie config set graph.protocols on` (and restarted a running daemon). For
+telegrams, message layouts, protocol revisions, field values or decoder changes,
+check that the catalog advertises `protocols.message_context`; when it does, load
+[the shared protocol reference](references/protocols.md). Discovery is
+`potpie --json resolve '<question>' --include protocols --pot <pot>`, followed by
+the returned message reads. This replaces the default broad resolve in section 2
+for these questions: ordinary includes omit protocols. When the catalog does not
+advertise the view, the extension is off; say so rather than guessing a layout.
+
+Apply this route when a generic status/value question turns out to concern a
+protocol in a fetched source, too. A document hit alone does not select a message.
+Before assigning an unscoped value meaning, show the matching message/revision
+alternatives and distinguish integer from string values. Reuse a scope already
+selected in the conversation, stating it in the answer. The reference covers
+sourced ingestion, compact follow-ups, corrections and coverage.
 
 ## 1. Select scope without delaying discovery
 
@@ -41,9 +57,10 @@ which a repo mapping outranks). `graph read` prints `pot=<name> (<id>)`,
 `resolve` and `search` the id: when it is not the pot you expect, pass
 `--pot <name-or-id>`.
 
-`potpie graph catalog --profile read` (text) lists views and match mode; the
-full catalog exposes entity types with their key prefixes and identity policy,
-predicates, and the endpoint pairs each predicate allows. Before ingestion,
+`potpie graph catalog --profile read` (text) lists views, the inputs each
+requires and match mode; the full catalog exposes entity types with their key
+prefixes, identity policy and descriptions, predicates, and the endpoint pairs
+each predicate allows. Before ingestion,
 inspect `graph catalog --profile full` and reuse it through the task;
 `--profile read` is only a read-view index. Use `--json` when parsing the
 catalog. `--task` does not narrow it. Text `potpie graph describe <subgraph>
@@ -71,12 +88,12 @@ lookups only as needed. Targeted local file discovery can run alongside them.
 Use concurrent calls for these short reads; reserve subagents for substantial,
 independent source investigations. Inspect every result, including failures.
 
-Then follow the evidence: use returned keys for a neighborhood or named view.
-Those follow-ups can run concurrently once their inputs are known. Use a
-symptom or timeline read when coverage is missing or the task requires a full
-ordered list. Stop expanding when the task's evidence and applicable
-constraints are covered. Keep an unknown key → neighborhood dependency
-sequential.
+Then follow the evidence: use returned keys for a neighborhood or named view,
+and batch returned chunk IDs into `resource get`. Those follow-ups can run
+concurrently once their inputs are known. Use a symptom or timeline read when
+coverage is missing or the task requires a full ordered list. Stop expanding
+when the task's evidence and applicable constraints are covered. Keep unknown
+key → neighborhood and document hit → chunk fetch dependencies sequential.
 
 Broad discovery and phrase follow-up examples:
 
@@ -84,25 +101,31 @@ Broad discovery and phrase follow-up examples:
 potpie resolve "<the task in the user's words>"
 potpie resolve "<symptom and exact error text>" --intent debugging
 potpie resolve "<task>" --include prior_bugs,docs,timeline
-potpie search "<known phrase or entity>" --include docs,decisions
+potpie search "<known phrase or entity>"
 ```
 
-`resolve` reads the families of its `--intent` and returns one bounded envelope
-of `[family] fact` rows. The intent is not inferred from the task text: the
-default is `feature` (preferences, features, infra, decisions, owners, docs), so
-pass `--intent debugging` (prior bugs, infra, timeline) for a failure and
-`--intent operations` (infra, timeline, owners) for what changed or runs where.
+`resolve` infers the intent from the task text (*why / stale / failing* →
+debugging; *changed / since / recent* → operations; *how do I* → docs) and
+returns one bounded envelope of `[family] subject PREDICATE object · fact
+(truth, score)` rows, `… +N more (use --json)` when it cut the list; the header
+marks an inferred intent. `--intent` overrides the inference (*who owns* /
+*what depends on* / *review* infer `feature`; the families still come back);
+`--intent debugging` pins the failure families (prior bugs, infra, timeline).
 `--include` names families directly: `coding_preferences`, `decisions`,
-`docs`, `features`, `infra_topology`, `owners`, `prior_bugs`, `timeline`; an
-unknown name comes back as `unknown_include`. A text row prints the fact alone;
-`--json` carries each item's `subject_key`, `predicate` and `object_key`.
-`confidence` in the header is not a verdict: a small pot reads `low` with the
-right answer on top. Compare scores within a read, never across reads; a score
-is retrieval relevance, not answer probability. `search` takes the phrase as
-its positional argument — there is no `--query`. Bare, it reads only the
-`unknown` intent's families (infra, timeline, decisions), so add `--include
-<family>` for anything else; a document phrase needs `--include docs`. Two needs
-`resolve` does not serve:
+`docs`, `features`, `infra_topology`, `owners`, `prior_bugs`, `resources`,
+`timeline`; an unknown name is refused with the valid list. `docs` searches
+document section summaries and chunk text (the `resources` family is added for
+you); `resources` alone searches chunk text only. `--limit` caps the total rows
+across families. `confidence` in the header is coverage — did each family fill
+its page, how relevant is the best hit — not a verdict: a small pot reads `low`
+with the right answer on top. A score is one composite per read (similarity
+first, then scope, strength, recency): compare rows within a read, never across
+reads; a score is retrieval relevance, not answer probability. `search` takes
+the phrase as its positional argument — there is no `--query`. Bare, it is a
+broad lookup over the `unknown` intent's families (infra, timeline, decisions,
+docs, resources) and infers the definition intent for an acronym question;
+`--intent` narrows it to one intent's families, `--include docs` keeps a
+document phrase to the documents. Two needs `resolve` does not serve:
 
 | Need | Read |
 |---|---|
@@ -127,11 +150,12 @@ topology — in one flat list; `--predicate USES` narrows it.
 | `decisions.preferences_for_scope` | `--repo current`, or `--scope service:…,path:…`; no `--query` | which preferences apply to this code |
 | `debugging.prior_occurrences` | `--query` (symptom), optional `--scope service:…` | "seen this before? what fixed it" (bug + fix/PR inline) |
 | `recent_changes.timeline` | `--time-window`, or `--since`/`--until`; optional `--scope` | recent PRs/tickets/activity for the project pot |
-| `infra_topology.service_neighborhood` | `--scope service:…` `--depth` `--direction out|in|both` (any other spelling returns no rows, not an error); `--environment` only with `include_unqualified_environment:true` in the scope | dependency blast-radius, env-qualified |
-| `features.feature_context` | `--repo current`, `--scope anchor_entity_key:…`, a service, or `--query`; refused with `missing_required_scope` without one | what a repo/service does (Feature nodes via `PROVIDES` / `IMPLEMENTED_IN`) |
+| `infra_topology.service_neighborhood` | `--scope service:…` `--depth` `--direction out|in|both` (invalid values are rejected); `--environment` only with `include_unqualified_environment:true` in the scope | dependency blast-radius, env-qualified |
+| `features.feature_context` | optional `--scope anchor_entity_key:repo:…` or `--repo current` | what a repo/service does (Feature nodes via `PROVIDES` / `IMPLEMENTED_IN`) |
 | `decisions.active_decisions` | `--scope service:…` — a decision anchors on what it was linked to, usually a service; use that scope, including a repo key | active decisions |
 | `code_topology.ownership_by_path` | `--scope` | who owns a scope |
-| `knowledge.document_context` | `--query` / `--scope` | which recorded documents and doc references cover it |
+| `knowledge.document_context` | `--query` / `--scope` | which ingested document sections and doc references cover it; hits carry chunk ids, and a section can repeat once per claim about it (same chunk id) |
+| `knowledge.document_passages` | `--query` | chunk-text matches with snippets and fetch commands; weak matches are filtered relative to the best hit |
 
 Scope keys: `repo`, `path`, `file_path`, `service`, `anchor_entity_key`,
 `language`, `framework`, `audience`. A repo key is `repo:<host>/<org>/<name>`
@@ -145,24 +169,73 @@ plus its anchor). `--environment` is its own flag; the filter
 defaults to `qualified_only`, so `--environment prod` alone drops `USES`,
 `DEFINED_IN` and `OWNED_BY`. Compact rows cut the fact at about 120
 characters; `--detail full` keeps it whole when the tail matters (`resolve`
-prints facts whole). Inspect `coverage` (per view, with its `candidate_pool`)
-and `quality` before relying on results; `--json --detail full --relations full
---format raw` is for exact machine processing only.
+prints facts whole). Inspect `coverage` and `quality` before relying on
+results; `--json --detail full --relations full --format raw` is for exact
+machine processing only.
+
+A read runs once with the closest supported request and says so: a `~` line
+(JSON: `status: "adjusted"` plus `adjustments`) names a capped `--depth`, a
+canonical spelling of a view or filter, or an ignored `--time-window`. A bad
+`--format`, `--limit` or reversed window is refused before anything is read.
+Each read is bounded to one output budget; when it cut rows the reply names the
+`graph neighborhood ... --unbounded` read that returns the whole slice.
+
+### Bounded and partial reads
+
+`features.feature_context` can browse the selected pot with no selector;
+`--repo current` narrows explicitly. Inspect coverage `completeness` for
+exhaustive coverage and `page_status` for page fullness. `candidate_pool`
+counts claims or reader candidates, not distinct features. Ranking/projection
+omissions and unknown completeness do not imply a supported continuation cursor.
+
+An unsupported semantic threshold or debugging occurrence window returns a
+partial response with the unsatisfied answer empty and useful context under
+`fallback_context`; it is not evidence that the requested threshold/window was
+met. Debugging occurrence time is not yet reliably recorded. Timeline filters
+activity event time, a different question. Catalog `extra.query_threshold`
+names each view's metric and runtime requirements.
+
+### Ingested documents: find, then fetch
+
+Ingested documents are `Document` / `DocumentSection` nodes whose section
+summaries are claims, so `resolve`, `search --include docs` and
+`document_context` land on them. A section hit carries its chunk ids
+(`potpie://res/<doc>/<section>/<seq>`, optionally pinned with `@rev<N>`); fetch
+text with one batched call (up to 128 ids):
+
+```bash
+potpie resource get potpie://res/<doc>/<section>/0000 potpie://res/<doc>/<section>/0001 --with-neighbors
+```
+
+`potpie resource list --doc <name>` lists a known document's sections with
+their chunk ids and labels in one call. `document_passages` matches the chunk
+text itself and returns chunk ids with snippets — for a phrase you know is in
+the document that no summary surfaced; it filters relative to the best hit, so
+fewer than `--limit` rows may return. Fetch the strongest supporting passages.
+`resource get` output is bounded, requested chunks before neighbors; `--full`
+lifts the budget. A batch where some ids fail keeps the successful `chunks`,
+reports per-id `outcomes` in request order, and exits nonzero: follow up the
+failed ids only. Candidate ids listed for a missing chunk are choices to
+inspect, never a replacement picked for you.
+
+`SECTION_OF` holds a document together; `DOCUMENTS` points a document (or one
+section) at what it covers — assert it when reference material lands. New
+documents go through the per-format `potpie-resource-*` skills and
+`potpie resource import`; payloads never enter the graph.
 
 ### Query expansion
 
 The local embedder is small; recall depends on the query. Expand the user's
-words for `prior_occurrences` and `document_context` — "add retry to the
-payments client" → also "timeout, flaky, tenacity, backoff, external call".
-Those two views rank their pool and return up to `--limit` rows however weak
-(`--query-threshold` does nothing there), so a full list is not evidence that
-the question was answered: judge each row by its score and text.
-
-`preferences_for_scope` and `timeline` filter instead: a row stays only when it
-contains every word of the query or its similarity clears `--query-threshold`
-(default 0.7), which a task sentence rarely does. Never pass `--query` to
-`preferences_for_scope`, and narrow a timeline by window and scope before
-adding a short, literal `--query`.
+words for `prior_occurrences`, `timeline` and `document_context` — "add retry
+to the payments client" → also "timeout, flaky, tenacity, backoff, external
+call". These are ranked candidates, not guaranteed answers. Document reads and
+the timeline filter relative to the pool's best match (`--query-threshold` does
+nothing there); bugs may retain weak candidates. `--query-threshold` is an
+absolute floor only on preference reads; on `document_passages` an explicit
+value is refused unless the index reports calibrated similarity, and a high
+threshold can discard exact identifiers. Judge source text and match metadata;
+a full list is not evidence that the question was answered. Never pass `--query`
+to `preferences_for_scope`.
 
 ## 3. Resolve identity — `graph search-entities`
 
@@ -218,7 +291,7 @@ decision, and policy claims only when the source supports each one.
 | Explicit reusable guidance about future work | `Preference`/`Policy`, `POLICY_APPLIES_TO`; preserve the prescription and its source |
 | Failure, attempted remedy, observed outcome | `BugPattern`, `Fix`, verification `Activity`; distinguish `REPRODUCES`, `RESOLVED`, `ATTEMPTED_FIX_FAILED`, `VERIFIED` |
 | Something happened at a source time | Timeline `Activity`, actor/scope links and `Period` as supported; use an event template |
-| Source document or runbook | a `doc_reference` or `runbook_note` record pointing at the source; model facts stated inside it separately |
+| Source document or runbook | `Document`/`DocumentSection` via `potpie resource import` for the text, `SECTION_OF`/`DOCUMENTS` for structure and coverage; a `doc_reference` record when only a pointer is wanted; model facts stated inside it separately |
 
 For example, “the worker uses Redis” is a topology fact; “we chose Redis to
 reduce latency” is a decision; “all workers must use Redis” is a policy only
@@ -226,29 +299,33 @@ when the source actually prescribes it. “The reconciler exports CSV to S3”
 describes a capability, not a logging preference merely because it mentions
 an audit log. Do not infer a prescription from implementation alone.
 
-`record` is a convenience for one learning, not the full ontology.
+`record` is a convenience for supported learning shapes, not the full ontology.
 `feature_note`, `service_note`, `workflow`, `runbook_note`, `integration_note`,
 `incident_summary`, `investigation`, `diagnostic_signal`, and `doc_reference`
 are free-form records: they do not create the corresponding feature, topology,
 or event relationships. Use semantic plans for those facts even for one claim.
 Use notes for supplemental context and `graph inbox` for unresolved candidates.
 
-One fix (the bug pattern it resolves is minted with it) or one free-form note is
-one call, no JSON file:
+One structured fix, decision, or preference can use one call, no JSON file:
 
 ```bash
-potpie record --type fix --summary "<symptom → fix, in the words a searcher would type>" --scope service:<name>
-potpie record --type service_note --summary "<what a future reader needs to know>" --scope service:<name>
+potpie record --type fix --summary "<symptom → fix>" --detail root_cause="<cause>" --detail fix_steps="<step>" --scope service:<name>
+potpie record --type decision --summary "<the decision>" --detail rationale="<why>" --scope service:<name>
+potpie record --type preference --summary "<prescription>" --detail policy_kind=<kind> --detail prescription="<guidance>" --scope service:<name>
 ```
 
-`record` takes `--type`, `--summary` and `--scope` only. The reply is a
-`record_id` and the mutation count. A `fix` key is minted from the whole
-summary, so keep it short and lead with the distinctive symptom. `--scope`
-takes an existing key: reuse one a read returned rather than inventing one.
+`--type` help lists the `--detail` keys each type requires (`bug_pattern`:
+`kind`; `preference` / `policy`: `policy_kind`; `decision`: `rationale`;
+`verification`: `target_ref`, `outcome`; `fix`: none); a repeated key builds a
+list. A refused record exits non-zero and says why. `--scope` takes an existing
+key: reuse one a read returned rather than inventing one. The reply is a
+`record_id` and the mutation count. `fix`, `bug_pattern` and `decision` keys
+are minted from the whole summary and a `preference` key from its
+`prescription`, so keep both short and lead with the distinctive words.
 
-Decisions, preferences, bug patterns, verifications, topology, timeline events,
-features, and multi-op batches use a **semantic** plan (never raw graph CRUD):
-`propose` creates a server-held plan, `commit` applies exactly that `plan_id`.
+Topology, timeline events, features, and multi-op batches use a
+**semantic** plan (never raw graph CRUD): `propose` creates a server-held plan,
+`commit` applies exactly that `plan_id`.
 
 ```bash
 potpie graph mutation-template --kind bug-fix
@@ -257,8 +334,10 @@ potpie --json graph commit mutation-plan:01JY8T5C --verify
 potpie --json graph history --plan mutation-plan:01JY8T5C
 ```
 
-`graph mutation-template` is an unscoped, offline schema helper with no
-`--pot`; select the target pot on `graph propose`. Its kinds: `repo-baseline`,
+`graph mutation-template` is an unscoped, offline schema helper. It accepts
+`--pot <pot>` for uniform command invocation, but ignores the selector and does
+not resolve or validate it; select the target pot on `graph propose`. Its
+kinds: `repo-baseline`,
 `feature`, `preference`, `preference-policy`, `infra-snapshot`, `bug-fix`,
 `decision`, `timeline-event`, `timeline-change` — placeholders you fill from
 sources you actually read; `propose` validates every op and names a rejected
@@ -266,11 +345,14 @@ one by index. Three traps the template does not show:
 
 - Omit `graph_contract_version`; `pot_id` is overridden by the CLI's resolved
   pot, so any placeholder works.
-- A plan `propose` returns as `review_required` (a medium- or high-risk batch,
-  such as a `user_decision` claim or an audited correction) commits only with
-  approval: ask the user, then run
+- `review_required` (a medium- or high-risk batch: a `user_decision` claim or
+  a correction op — `patch_entity`, `retract_claim`, `end_relation_validity`,
+  `transition_state`, `supersede_claim`, `merge_duplicate_entities`) needs the
+  user's approval. Ask, then re-run
+  `potpie --json graph propose --file mutation.json --approved-by <user-ref>`
+  and commit it with `--verify`, or approve the plan you have with
   `potpie --json graph commit <plan_id> --approved-by <user-ref> --verify`;
-  `commit` without it answers `review_required` again.
+  `commit` alone answers `review_required` again.
 - `conflict` on commit means another write moved the graph in between: re-run
   `propose` with the same file. `commit --verify` prints the plan id, readback
   and quality status; `graph history --plan <plan_id>` is for later inspection.

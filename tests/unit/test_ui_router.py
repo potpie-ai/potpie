@@ -100,6 +100,40 @@ def test_slice_to_graph_shape() -> None:
     assert g["truncated"] is False
 
 
+def test_parallel_claims_get_distinct_edge_ids() -> None:
+    """The explorer selects and diffs edges by id; two claims on the same
+    endpoints and predicate must not collapse into one."""
+    edges = (
+        GraphEdge(
+            predicate="DEPENDS_ON",
+            from_key="service:a",
+            to_key="service:b",
+            properties={"claim_key": "claim:one"},
+        ),
+        GraphEdge(
+            predicate="DEPENDS_ON",
+            from_key="service:a",
+            to_key="service:b",
+            properties={"claim_key": "claim:two"},
+        ),
+        GraphEdge(
+            predicate="DEPENDS_ON",
+            from_key="service:a",
+            to_key="service:b",
+            properties={"record_id": "record-3", "claim_key": "claim:three"},
+        ),
+    )
+    sl = GraphSlice(pot_id="p", nodes=(), edges=edges, truncated=False)
+
+    ids = [edge["id"] for edge in _slice_to_graph(sl)["edges"]]
+
+    assert ids == [
+        "service:a|DEPENDS_ON|service:b|claim:one",
+        "service:a|DEPENDS_ON|service:b|claim:two",
+        "record-3",
+    ]
+
+
 def test_parse_scope() -> None:
     assert _parse_scope("repo:o/r,path:src/a.py") == {"repo": "o/r", "path": "src/a.py"}
     assert _parse_scope(None) == {}

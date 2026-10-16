@@ -349,3 +349,20 @@ def test_skill_support_files_install_and_refresh_with_the_skill(tmp_path):
         tmp_path, skill_ids=["potpie-graph"], support_files=False, force=True
     )
     assert extra.read_text(encoding="utf-8") == packaged
+
+
+def test_graph_protocol_reference_installs_and_refreshes_with_skill(tmp_path):
+    """The protocol reference ships inside the potpie-graph skill directory."""
+    from potpie.skills.installer import install_agent_bundle
+
+    install_agent_bundle(tmp_path, skill_ids=["potpie-graph"], support_files=False)
+    skill = tmp_path / ".agents/skills/potpie-graph"
+    reference = skill / "references/protocols.md"
+    assert reference.exists()
+    assert "protocols.message_context" in reference.read_text(encoding="utf-8")
+    reference.write_text("outdated", encoding="utf-8")
+    install_agent_bundle(
+        tmp_path, skill_ids=["potpie-graph"], support_files=False, force=True
+    )
+    assert "protocols.message_context" in reference.read_text(encoding="utf-8")
+    assert "references/protocols.md" in (skill / "SKILL.md").read_text(encoding="utf-8")

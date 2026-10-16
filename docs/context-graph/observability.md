@@ -5,8 +5,6 @@ description: "Logs, traces, metrics, and the backend-neutral observability port.
 
 ## Overview
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
-
 Observability is a thin, backend-neutral **port** (`domain/ports/observability.py
 ObservabilityPort`) that the domain and application layers emit spans and metrics
 through. They never import `opentelemetry` directly — that import lives only inside
@@ -101,7 +99,6 @@ the spans actually emitted today.
 
 | Span | Kind | Meaning | Code boundary |
 |---|---|---|---|
-| `daemon.health`, `daemon.rpc`, `daemon.attr` | server | Local daemon health probe + RPC dispatch. | `potpie/daemon/main.py` |
 | `graph.<command>` | internal | One workbench command: `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.neighborhood`, **`graph.propose`**, **`graph.commit`**, `graph.bulk`, `graph.history`, `graph.inbox` (carries `operation`), `graph.quality` (carries `report`), plus the legacy `graph.mutate` / `graph.mutation_template` / `graph.nudge`. | `potpie/cli/commands/graph.py` (`_graph_command`) |
 | `ingest.submit` | server | Inbound episode/event/record normalized and submitted. | `application/services/ingestion_submission_service.py` |
 | `HTTP <method> <route>`, `http.ready` | server | Ingestion HTTP server request + readiness. | `adapters/inbound/http/_hardening.py`, `adapters/inbound/http/api/router.py` |
@@ -116,7 +113,7 @@ commits. See [writing.md](./writing.md).
 Notes:
 
 - **Reads do not emit per-reader spans.** The `subgraph`/`view`/`match_mode` ride as
-  attributes on `graph.read`; the read trunk (`ReadOrchestrator` → 9 readers →
+  attributes on `graph.read`; the read trunk (`ReadOrchestrator` → 10 readers →
   `EnvelopeBuilder`) is described in [querying.md](./querying.md).
 - The per-event **`reconciliation_run`** is a durable ledger row
   (`context_reconciliation_runs`), *not* a span. It is linked to `batch.process` by

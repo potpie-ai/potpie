@@ -17,6 +17,7 @@ from potpie.cli.commands import (
     ledger,
     pots,
     query,
+    resource,
     skills,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "ledger",
     "pots",
     "query",
+    "resource",
     "skills",
 ]

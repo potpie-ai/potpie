@@ -11,12 +11,14 @@ from uuid import uuid4
 from potpie.runtime.coordinator import OperationCoordinator
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
+    DaemonControlOperation,
     EngineOperation,
     SafetyClass,
     operation_capabilities,
     operation_catalog_fingerprint,
 )
 from potpie.runtime.protocol import (
+    CONTROL_TICKET_OPERATIONS,
     PROTOCOL_MAX_VERSION,
     PROTOCOL_MIN_VERSION,
     PROTOCOL_VERSION,
@@ -49,10 +51,15 @@ from potpie.runtime.resource_manager import (
 )
 from potpie_context_engine import ContextEngine, Failure, Outcome, Success
 from potpie_context_engine.requests import (
+    ApplyPreviewRequest,
     CatalogRequest,
     CommitRequest,
+    CommitShowRequest,
+    CommitStatusRequest,
+    CommitsRequest,
     DataPlaneStatusRequest,
     DescribeRequest,
+    DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
     HistoryRequest,
@@ -65,6 +72,7 @@ from potpie_context_engine.requests import (
     InboxMarkRejectedRequest,
     InboxShowRequest,
     InspectRequest,
+    JournalStatusRequest,
     MutateRequest,
     NeighborhoodRequest,
     NudgeRequest,
@@ -72,14 +80,26 @@ from potpie_context_engine.requests import (
     ProposeRequest,
     QualityRequest,
     ReadRequest,
+    RebuildCommitsRequest,
     RecordRequest,
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    ResourceGetRequest,
+    ResourceImportRequest,
+    ResourceIndexBuildRequest,
+    ResourceIndexRebuildRequest,
+    ResourceIndexStatusRequest,
+    ResourceListRequest,
+    ResourceRmRequest,
+    ResourceStatusRequest,
+    RevertPreviewRequest,
+    RollbackPreviewRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
+    VerifyCommitRequest,
 )
 
 
@@ -231,6 +251,78 @@ class EngineClient(ABC):
 
     async def nudge(self, request: NudgeRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.NUDGE, request)
+
+    async def resource_import(self, request: ResourceImportRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_IMPORT, request)
+
+    async def resource_get(self, request: ResourceGetRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_GET, request)
+
+    async def resource_list(self, request: ResourceListRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_LIST, request)
+
+    async def resource_rm(
+        self,
+        request: ResourceRmRequest,
+        *,
+        confirmation: DestructiveConfirmation | None = None,
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_RM, request, confirmation)
+
+    async def resource_status(self, request: ResourceStatusRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_STATUS, request)
+
+    async def resource_index_status(
+        self, request: ResourceIndexStatusRequest
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_INDEX_STATUS, request)
+
+    async def resource_index_build(
+        self, request: ResourceIndexBuildRequest
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_INDEX_BUILD, request)
+
+    async def resource_index_rebuild(
+        self, request: ResourceIndexRebuildRequest
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_INDEX_REBUILD, request)
+
+    async def commit_status(self, request: CommitStatusRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.COMMIT_STATUS, request)
+
+    async def verify_commit(self, request: VerifyCommitRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.VERIFY_COMMIT, request)
+
+    async def journal_status(self, request: JournalStatusRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.JOURNAL_STATUS, request)
+
+    async def commits(self, request: CommitsRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.COMMITS, request)
+
+    async def commit_show(self, request: CommitShowRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.COMMIT_SHOW, request)
+
+    async def revert_preview(self, request: RevertPreviewRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.REVERT_PREVIEW, request)
+
+    async def rollback_preview(self, request: RollbackPreviewRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.ROLLBACK_PREVIEW, request)
+
+    async def apply_preview(
+        self,
+        request: ApplyPreviewRequest,
+        *,
+        confirmation: DestructiveConfirmation | None = None,
+    ) -> ClientOutcome:
+        return await self._dispatch(
+            EngineOperation.APPLY_PREVIEW, request, confirmation
+        )
+
+    async def disable_rollback(self, request: DisableRollbackRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.DISABLE_ROLLBACK, request)
+
+    async def rebuild_commits(self, request: RebuildCommitsRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.REBUILD_COMMITS, request)
 
 
 EngineHandler: TypeAlias = Callable[
@@ -384,6 +476,114 @@ async def _nudge(engine: ContextEngine, request: EngineRequest) -> Outcome[objec
     return await engine.nudge(cast(NudgeRequest, request))
 
 
+async def _resource_import(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_import(cast(ResourceImportRequest, request))
+
+
+async def _resource_get(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_get(cast(ResourceGetRequest, request))
+
+
+async def _resource_list(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_list(cast(ResourceListRequest, request))
+
+
+async def _resource_rm(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_rm(cast(ResourceRmRequest, request))
+
+
+async def _resource_status(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_status(cast(ResourceStatusRequest, request))
+
+
+async def _resource_index_status(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_index_status(cast(ResourceIndexStatusRequest, request))
+
+
+async def _resource_index_build(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_index_build(cast(ResourceIndexBuildRequest, request))
+
+
+async def _resource_index_rebuild(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.resource_index_rebuild(
+        cast(ResourceIndexRebuildRequest, request)
+    )
+
+
+async def _commit_status(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.commit_status(cast(CommitStatusRequest, request))
+
+
+async def _verify_commit(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.verify_commit(cast(VerifyCommitRequest, request))
+
+
+async def _journal_status(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.journal_status(cast(JournalStatusRequest, request))
+
+
+async def _commits(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
+    return await engine.commits(cast(CommitsRequest, request))
+
+
+async def _commit_show(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.commit_show(cast(CommitShowRequest, request))
+
+
+async def _revert_preview(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.revert_preview(cast(RevertPreviewRequest, request))
+
+
+async def _rollback_preview(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.rollback_preview(cast(RollbackPreviewRequest, request))
+
+
+async def _apply_preview(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.apply_preview(cast(ApplyPreviewRequest, request))
+
+
+async def _disable_rollback(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.disable_rollback(cast(DisableRollbackRequest, request))
+
+
+async def _rebuild_commits(
+    engine: ContextEngine, request: EngineRequest
+) -> Outcome[object]:
+    return await engine.rebuild_commits(cast(RebuildCommitsRequest, request))
+
+
 _ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
     EngineOperation.RESOLVE: _resolve,
     EngineOperation.SEARCH: _search,
@@ -415,6 +615,24 @@ _ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
     EngineOperation.SUBMIT_ARTIFACT: _submit_artifact,
     EngineOperation.PROCESSING_STATUS: _processing_status,
     EngineOperation.NUDGE: _nudge,
+    EngineOperation.RESOURCE_IMPORT: _resource_import,
+    EngineOperation.RESOURCE_GET: _resource_get,
+    EngineOperation.RESOURCE_LIST: _resource_list,
+    EngineOperation.RESOURCE_RM: _resource_rm,
+    EngineOperation.RESOURCE_STATUS: _resource_status,
+    EngineOperation.RESOURCE_INDEX_STATUS: _resource_index_status,
+    EngineOperation.RESOURCE_INDEX_BUILD: _resource_index_build,
+    EngineOperation.RESOURCE_INDEX_REBUILD: _resource_index_rebuild,
+    EngineOperation.COMMIT_STATUS: _commit_status,
+    EngineOperation.VERIFY_COMMIT: _verify_commit,
+    EngineOperation.JOURNAL_STATUS: _journal_status,
+    EngineOperation.COMMITS: _commits,
+    EngineOperation.COMMIT_SHOW: _commit_show,
+    EngineOperation.REVERT_PREVIEW: _revert_preview,
+    EngineOperation.ROLLBACK_PREVIEW: _rollback_preview,
+    EngineOperation.APPLY_PREVIEW: _apply_preview,
+    EngineOperation.DISABLE_ROLLBACK: _disable_rollback,
+    EngineOperation.REBUILD_COMMITS: _rebuild_commits,
 }
 
 if set(_ENGINE_HANDLERS) != set(ENGINE_OPERATION_CATALOG):
@@ -664,7 +882,14 @@ class DaemonEngineClient(EngineClient):
 
 
 class DaemonControlClient:
-    """Finite typed client for live daemon handshake and shutdown control."""
+    """Finite typed client for live daemon handshake and shutdown control.
+
+    :meth:`handshake` establishes full compatibility, which is what readiness
+    means for this client. A daemon whose operation catalog differs still
+    answers with a ticket scoped to daemon control; the client keeps it, so
+    :meth:`status` and :meth:`shutdown` reach a daemon from another build
+    while every context operation stays refused.
+    """
 
     def __init__(
         self,
@@ -677,12 +902,82 @@ class DaemonControlClient:
         self._expected_instance_id = expected_instance_id
         self._request_id_factory = request_id_factory or (lambda: str(uuid4()))
         self._handshake_result: HandshakeResult | None = None
+        self._control_result: HandshakeResult | None = None
 
     @property
     def handshake_result(self) -> HandshakeResult | None:
+        """The fully compatible handshake, if one succeeded."""
         return self._handshake_result
 
+    @property
+    def control_result(self) -> HandshakeResult | None:
+        """The handshake whose ticket reaches status and shutdown, if any."""
+        return self._handshake_result or self._control_result
+
+    @property
+    def catalog_compatible(self) -> bool | None:
+        """Whether the daemon serves this client's operation catalog.
+
+        ``None`` until a handshake has been answered.
+        """
+        if self._handshake_result is not None:
+            return True
+        if self._control_result is not None:
+            return False
+        return None
+
     async def handshake(
+        self,
+    ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
+        exchanged = await self._exchange_handshake()
+        if isinstance(exchanged, Failure):
+            return exchanged
+        result = exchanged.value
+        validation_error = _validate_handshake_result(
+            result,
+            expected_instance_id=self._expected_instance_id,
+        )
+        if validation_error is not None:
+            if (
+                _validate_control_handshake_result(
+                    result, expected_instance_id=self._expected_instance_id
+                )
+                is None
+            ):
+                self._control_result = result
+            return Failure(validation_error)
+        self._handshake_result = result
+        return Success(result)
+
+    async def control_handshake(
+        self,
+    ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
+        """A handshake good enough for status and shutdown, reusing one held."""
+
+        held = self.control_result
+        if held is not None:
+            return Success(held)
+        exchanged = await self._exchange_handshake()
+        if isinstance(exchanged, Failure):
+            return exchanged
+        result = exchanged.value
+        validation_error = _validate_control_handshake_result(
+            result, expected_instance_id=self._expected_instance_id
+        )
+        if validation_error is not None:
+            return Failure(validation_error)
+        if (
+            _validate_handshake_result(
+                result, expected_instance_id=self._expected_instance_id
+            )
+            is None
+        ):
+            self._handshake_result = result
+        else:
+            self._control_result = result
+        return Success(result)
+
+    async def _exchange_handshake(
         self,
     ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
         request = HandshakeRequest(
@@ -713,19 +1008,13 @@ class DaemonControlClient:
                     message="daemon handshake returned an invalid result",
                 )
             )
-        validation_error = _validate_handshake_result(
-            result,
-            expected_instance_id=self._expected_instance_id,
-        )
-        if validation_error is not None:
-            return Failure(validation_error)
-        self._handshake_result = result
         return Success(result)
 
     async def shutdown(
         self, *, reason: str = "client_requested"
     ) -> Success[ShutdownResult] | Failure[RuntimeBoundaryError]:
-        if self._handshake_result is None:
+        handshake = self.control_result
+        if handshake is None:
             return Failure(
                 ProtocolError(
                     code="handshake_required",
@@ -738,7 +1027,7 @@ class DaemonControlClient:
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
             payload=ShutdownPayload(reason=reason),
-            compatibility_ticket=self._handshake_result.compatibility_ticket,
+            compatibility_ticket=handshake.compatibility_ticket,
         )
         response_or_error = await _send_protocol_request(
             transport=self._transport,
@@ -763,7 +1052,8 @@ class DaemonControlClient:
     async def status(
         self,
     ) -> Success[DaemonStatusResult] | Failure[RuntimeBoundaryError]:
-        if self._handshake_result is None:
+        handshake = self.control_result
+        if handshake is None:
             return Failure(
                 ProtocolError(
                     code="handshake_required",
@@ -776,7 +1066,7 @@ class DaemonControlClient:
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
             payload=DaemonStatusPayload(),
-            compatibility_ticket=self._handshake_result.compatibility_ticket,
+            compatibility_ticket=handshake.compatibility_ticket,
         )
         response_or_error = await _send_protocol_request(
             transport=self._transport,
@@ -920,6 +1210,77 @@ def _validate_handshake_result(
     *,
     expected_instance_id: str | None,
 ) -> ProtocolError | None:
+    """Full compatibility: readiness for every operation in this catalog."""
+
+    identity_error = _validate_handshake_identity(
+        result, expected_instance_id=expected_instance_id
+    )
+    if identity_error is not None:
+        return identity_error
+    if result.operation_catalog_fingerprint != operation_catalog_fingerprint():
+        return ProtocolError(
+            code="operation_catalog_mismatch",
+            message="daemon and client operation catalogs do not match",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    if not result.compatibility_ticket:
+        return ProtocolError(
+            code="compatibility_ticket_missing",
+            message="daemon handshake did not return a compatibility ticket",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    missing = sorted(set(operation_capabilities()) - set(result.capabilities))
+    if missing:
+        return ProtocolError(
+            code="daemon_capability_missing",
+            message="daemon does not support the required operation catalog",
+            details={"missing_capabilities": tuple(missing)},
+            recommended_next_action="install compatible Potpie versions",
+        )
+    return None
+
+
+def _validate_control_handshake_result(
+    result: HandshakeResult,
+    *,
+    expected_instance_id: str | None,
+) -> ProtocolError | None:
+    """Enough for daemon status and shutdown, whatever the catalog.
+
+    Those operations' wire semantics follow the protocol version, so a daemon
+    whose catalog differs still answers them under a control-scoped ticket.
+    """
+
+    identity_error = _validate_handshake_identity(
+        result, expected_instance_id=expected_instance_id
+    )
+    if identity_error is not None:
+        return identity_error
+    if not result.compatibility_ticket:
+        return ProtocolError(
+            code="compatibility_ticket_missing",
+            message="daemon handshake did not return a compatibility ticket",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    required = {DaemonControlOperation.HANDSHAKE.value} | {
+        operation.value for operation in CONTROL_TICKET_OPERATIONS
+    }
+    missing = sorted(required - set(result.capabilities))
+    if missing:
+        return ProtocolError(
+            code="daemon_capability_missing",
+            message="daemon does not support daemon status and shutdown",
+            details={"missing_capabilities": tuple(missing)},
+            recommended_next_action="install compatible Potpie versions",
+        )
+    return None
+
+
+def _validate_handshake_identity(
+    result: HandshakeResult,
+    *,
+    expected_instance_id: str | None,
+) -> ProtocolError | None:
     if expected_instance_id is not None and result.instance_id != expected_instance_id:
         return ProtocolError(
             code="daemon_instance_mismatch",
@@ -943,26 +1304,6 @@ def _validate_handshake_result(
                 "daemon_min": result.protocol_min,
                 "daemon_max": result.protocol_max,
             },
-            recommended_next_action="install compatible Potpie versions",
-        )
-    if result.operation_catalog_fingerprint != operation_catalog_fingerprint():
-        return ProtocolError(
-            code="operation_catalog_mismatch",
-            message="daemon and client operation catalogs do not match",
-            recommended_next_action="restart with a compatible Potpie version",
-        )
-    if not result.compatibility_ticket:
-        return ProtocolError(
-            code="compatibility_ticket_missing",
-            message="daemon handshake did not return a compatibility ticket",
-            recommended_next_action="restart with a compatible Potpie version",
-        )
-    missing = sorted(set(operation_capabilities()) - set(result.capabilities))
-    if missing:
-        return ProtocolError(
-            code="daemon_capability_missing",
-            message="daemon does not support the required operation catalog",
-            details={"missing_capabilities": tuple(missing)},
             recommended_next_action="install compatible Potpie versions",
         )
     return None

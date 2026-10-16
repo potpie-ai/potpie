@@ -44,6 +44,18 @@ API_CALLS: dict[tuple[str, str], dict[str, Any]] = {
     ("GET", "/ui/api/neighborhood"): {"params": {"key": "repo:x"}},
     ("GET", "/ui/api/read"): {"params": {"subgraph": "code", "view": "features"}},
     ("POST", "/ui/api/telemetry/session"): {"json": {"had_graph": True}},
+    ("GET", "/ui/api/commits"): {},
+    ("GET", "/ui/api/commit"): {"params": {"commit_id": "c1"}},
+    ("GET", "/ui/api/journal"): {},
+    ("GET", "/ui/api/mutation-history"): {},
+    ("POST", "/ui/api/rollback/preview"): {
+        "json": {
+            "pot": "pot_1",
+            "target_commit_id": "c1",
+            "expected_head": "c1",
+            "mode": "revert",
+        }
+    },
 }
 
 
@@ -120,6 +132,44 @@ class _Backend:
     inspection = _Inspection()
 
 
+class _Document:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self._payload)
+
+
+class _EngineClient:
+    """Answers every commit-history operation the explorer sends."""
+
+    def __init__(self, pot_id: str) -> None:
+        self.pot_id = pot_id
+
+    async def _ok(self, payload: dict[str, Any]) -> Any:
+        from potpie_context_engine import Success
+
+        return Success(_Document({"ok": True, **payload}))
+
+    async def commits(self, request: Any) -> Any:
+        return await self._ok({"headers": [], "coverage": {}})
+
+    async def commit_show(self, request: Any) -> Any:
+        return await self._ok({"changes": []})
+
+    async def journal_status(self, request: Any) -> Any:
+        return await self._ok({"state": None})
+
+    async def history(self, request: Any) -> Any:
+        return await self._ok({"entries": []})
+
+    async def revert_preview(self, request: Any) -> Any:
+        return await self._ok({"preview": {"preview_id": "p1"}})
+
+    async def rollback_preview(self, request: Any) -> Any:
+        return await self._ok({"preview": {"preview_id": "p1"}})
+
+
 @pytest.fixture
 def pots() -> _Pots:
     return _Pots()
@@ -127,7 +177,11 @@ def pots() -> _Pots:
 
 def _app(pots: _Pots, *, token: str = TOKEN) -> FastAPI:
     return build_ui_app(
-        pots=pots, graph=_Graph(), backend=_Backend(), bearer_token=token
+        pots=pots,
+        graph=_Graph(),
+        backend=_Backend(),
+        bearer_token=token,
+        engine_client=_EngineClient,
     )
 
 
@@ -618,3 +672,72 @@ def test_built_assets_are_refused_under_a_rebound_host_name(
     )
 
     assert response.status_code == 403
+
+
+# --- commit history --------------------------------------------------------
+#
+# A browser session reads history and asks for previews; applying one changes
+# the graph and stays with the daemon credential on the CLI.
+
+
+def test_a_browser_session_reads_commits_and_previews_a_rollback(
+    anonymous: TestClient, authorized: TestClient
+) -> None:
+    _sign_in(anonymous, authorized)
+
+    assert anonymous.get("/ui/api/commits").status_code == 200
+    preview = anonymous.post(
+        "/ui/api/rollback/preview",
+        json=API_CALLS[("POST", "/ui/api/rollback/preview")]["json"],
+        headers={"Origin": ORIGIN},
+    )
+
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["preview"]["preview_id"] == "p1"
+
+
+def test_the_explorer_has_no_route_that_applies_a_preview(
+    app: FastAPI, authorized: TestClient
+) -> None:
+    assert not any("apply" in path for _method, path in _api_routes(app))
+    response = authorized.post(
+        "/ui/api/rollback/apply", json={"pot": "pot_1", "preview_id": "p1"}
+    )
+
+    assert response.status_code in {404, 405}
+
+
+def test_a_cross_origin_preview_is_refused_even_with_a_session(
+    anonymous: TestClient, authorized: TestClient
+) -> None:
+    _sign_in(anonymous, authorized)
+
+    response = anonymous.post(
+        "/ui/api/rollback/preview",
+        json=API_CALLS[("POST", "/ui/api/rollback/preview")]["json"],
+        headers={"Origin": "http://evil.example"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_a_preview_body_cannot_name_its_own_actor(authorized: TestClient) -> None:
+    body = {**API_CALLS[("POST", "/ui/api/rollback/preview")]["json"]}
+
+    response = authorized.post(
+        "/ui/api/rollback/preview", json={**body, "actor": "forged"}
+    )
+
+    assert response.status_code == 422
+
+
+def test_commit_routes_without_a_typed_client_are_unavailable(pots: _Pots) -> None:
+    app = build_ui_app(
+        pots=pots, graph=_Graph(), backend=_Backend(), bearer_token=TOKEN
+    )
+    client = TestClient(app, base_url=ORIGIN, headers=BEARER)
+
+    response = client.get("/ui/api/commits")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["status"] == "unavailable"

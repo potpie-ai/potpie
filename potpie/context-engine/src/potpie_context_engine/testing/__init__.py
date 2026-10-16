@@ -2,26 +2,60 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
+import hashlib
+import json
+from pathlib import Path
 import threading
 from typing import Callable
 
 from potpie_context_engine.core.api import (
+    Chunk,
     ClaimQueryFilter,
     DEFAULT_GRAPH_DEFINITION,
+    DocumentManifest,
     GraphDefinition,
     GraphInboxItem,
     GraphMutationPlanRecord,
+    ResourceStoreStatus,
+    SectionManifest,
+    parse_resource_id,
+    ImportFiles,
+    import_source,
+    require_resource_slug,
 )
 from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
+from potpie_context_engine.adapters.outbound.resources import (
+    build_chunk,
+    build_import_manifest,
+    chunk_not_found,
+    document_not_found,
+    find_chunk_ref,
+    read_source_document,
+    section_not_found,
+)
+from potpie_context_engine.adapters.outbound.resources.local_resource_store import (
+    _document_fingerprint,
+    _with_pending_review,
+)
 from potpie_context_engine.testing.conformance import (
     GraphBackendConformanceMixin,
+    ResourceStoreConformanceMixin,
     run_graph_backend_conformance,
+    run_resource_store_conformance,
+    write_import_directory,
 )
+
+
+def _request_fingerprint(payload) -> str:
+    normalized = dict(payload)
+    normalized.pop("expected_subgraph_versions", None)
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=20).hexdigest()
 
 
 @dataclass(slots=True)
@@ -34,6 +68,35 @@ class InMemoryGraphPlanStore:
     def save(self, record: GraphMutationPlanRecord) -> None:
         with self._lock:
             self._records[(record.pot_id, record.plan_id)] = record
+
+    def reserve_idempotency(
+        self,
+        *,
+        record: GraphMutationPlanRecord,
+        idempotency_key: str,
+        request_fingerprint: str,
+    ) -> tuple[GraphMutationPlanRecord, bool]:
+        with self._lock:
+            for (pot_id, _), existing in self._records.items():
+                if pot_id != record.pot_id:
+                    continue
+                key = str(
+                    existing.original_payload.get("idempotency_key") or ""
+                ).strip()
+                if key != idempotency_key or not existing.reserves_idempotency:
+                    continue
+                if (
+                    _request_fingerprint(existing.original_payload)
+                    != request_fingerprint
+                ):
+                    raise ValueError(
+                        f"idempotency_key {idempotency_key!r} is already bound to "
+                        f"plan {existing.plan_id!r} with different content"
+                    )
+                if existing.status not in {"conflict", "error", "expired"}:
+                    return existing, False
+            self._records[(record.pot_id, record.plan_id)] = record
+            return record, True
 
     def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
         with self._lock:
@@ -80,6 +143,9 @@ class InMemoryGraphPlanStore:
     async def save_async(self, record: GraphMutationPlanRecord) -> None:
         self.save(record)
 
+    async def reserve_idempotency_async(self, **kwargs):
+        return self.reserve_idempotency(**kwargs)
+
     async def get_async(
         self, *, pot_id: str, plan_id: str
     ) -> GraphMutationPlanRecord | None:
@@ -106,6 +172,20 @@ class InMemoryGraphInboxStore:
 
     def get(self, *, pot_id: str, item_id: str) -> GraphInboxItem | None:
         return self._items.get((pot_id, item_id))
+
+    def compare_and_set(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool:
+        key = (expected.pot_id, expected.item_id)
+        if key != (replacement.pot_id, replacement.item_id):
+            raise ValueError("inbox compare-and-set cannot change item identity")
+        if self._items.get(key) != expected:
+            return False
+        self._items[key] = replacement
+        return True
 
     def list(
         self,
@@ -142,8 +222,337 @@ class InMemoryGraphInboxStore:
     async def get_async(self, *, pot_id: str, item_id: str) -> GraphInboxItem | None:
         return self.get(pot_id=pot_id, item_id=item_id)
 
+    async def compare_and_set_async(
+        self,
+        *,
+        expected: GraphInboxItem,
+        replacement: GraphInboxItem,
+    ) -> bool:
+        return self.compare_and_set(expected=expected, replacement=replacement)
+
     async def list_async(self, **kwargs):
         return self.list(**kwargs)
+
+
+@dataclass(frozen=True, slots=True)
+class _StoredResource:
+    manifest: DocumentManifest
+    texts: dict[tuple[str, int], str]
+
+
+@dataclass(slots=True)
+class InMemoryResourceStore:
+    """Reference ``ResourceStorePort`` with no filesystem behind it.
+
+    Shares the import-directory validator with ``LocalResourceStore``, so the
+    two answer the same contract. Atomicity comes for free: validation raises
+    before any state is touched, leaving a prior revision intact. Pot isolation
+    is structural — every document is keyed by ``(pot_id, doc)``.
+    """
+
+    _documents: dict[tuple[str, str], _StoredResource] = field(default_factory=dict)
+    _versions: dict[tuple[str, str, int], _StoredResource] = field(default_factory=dict)
+    _revision_counters: dict[tuple[str, str], int] = field(default_factory=dict)
+    _lock: threading.RLock = field(default_factory=threading.RLock)
+
+    def import_dir(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        source_dir: Path | None = None,
+        files: ImportFiles | None = None,
+        source_ref: str | None = None,
+        source_kind: str | None = None,
+    ) -> DocumentManifest:
+        doc = require_resource_slug(slug, kind="document")
+        with import_source(source_dir, files) as root:
+            source = read_source_document(root)
+        with self._lock:
+            stored = self._documents.get((pot_id, doc))
+            manifest = build_import_manifest(
+                pot_id=pot_id,
+                doc=doc,
+                source=source,
+                prior=stored.manifest if stored else None,
+                source_ref=source_ref,
+                source_kind=source_kind,
+            )
+            if stored is not None and stored.manifest.pending_review_refs:
+                manifest = replace(
+                    manifest,
+                    pending_review_refs=stored.manifest.pending_review_refs,
+                    pending_review_sections=stored.manifest.pending_review_sections,
+                    pending_review_reason=stored.manifest.pending_review_reason,
+                )
+            if (
+                stored is not None
+                and manifest.revision == stored.manifest.revision
+                and _document_fingerprint(manifest, source.texts)
+                != _document_fingerprint(stored.manifest, stored.texts)
+            ):
+                manifest = replace(
+                    manifest,
+                    revision=stored.manifest.revision + 1,
+                    sections_kept=(),
+                )
+            counter = self._revision_counters.get((pot_id, doc), 0)
+            if stored is None and manifest.revision <= counter:
+                manifest = replace(manifest, revision=counter + 1)
+            if stored is not None and stored.manifest.revision != manifest.revision:
+                self._versions[(pot_id, doc, stored.manifest.revision)] = stored
+            manifest = _with_pending_review(
+                stored.manifest if stored else None, manifest
+            )
+            self._documents[(pot_id, doc)] = _StoredResource(
+                # The diff and warning fields report on one import; only the
+                # structure is durable state.
+                manifest=DocumentManifest(
+                    pot_id=manifest.pot_id,
+                    doc=manifest.doc,
+                    revision=manifest.revision,
+                    source_ref=manifest.source_ref,
+                    source_kind=manifest.source_kind,
+                    sections=manifest.sections,
+                    pending_review_refs=manifest.pending_review_refs,
+                    pending_review_sections=manifest.pending_review_sections,
+                    pending_review_reason=manifest.pending_review_reason,
+                ),
+                texts=dict(source.texts),
+            )
+            self._revision_counters[(pot_id, doc)] = manifest.revision
+        return manifest
+
+    def get(self, *, pot_id: str, resource_id: str) -> Chunk:
+        return self.get_many(pot_id=pot_id, resource_ids=(resource_id,))[0]
+
+    def get_many(
+        self, *, pot_id: str, resource_ids: tuple[str, ...]
+    ) -> tuple[Chunk, ...]:
+        chunks: list[Chunk] = []
+        with self._lock:
+            for resource_id in resource_ids:
+                resource = parse_resource_id(resource_id)
+                stored = self._documents.get((pot_id, resource.doc))
+                if stored is None:
+                    raise chunk_not_found(resource_id)
+                if resource.revision is None and (
+                    stored.manifest.revision > 1
+                    or any(key[:2] == (pot_id, resource.doc) for key in self._versions)
+                ):
+                    from potpie_context_engine.core.ports.resource_store import (
+                        RESOURCE_REVISION_AMBIGUOUS,
+                        ResourceStoreError,
+                    )
+
+                    raise ResourceStoreError(
+                        RESOURCE_REVISION_AMBIGUOUS,
+                        f"unversioned resource id is ambiguous after {resource.doc!r} changed: {resource_id}",
+                        recommended_next_action=(
+                            "Use the immutable @revN id from resource list or search."
+                        ),
+                    )
+                if (
+                    resource.revision is not None
+                    and resource.revision != stored.manifest.revision
+                ):
+                    stored = self._versions.get(
+                        (pot_id, resource.doc, resource.revision)
+                    )
+                    if stored is None:
+                        raise chunk_not_found(resource_id)
+                ref = find_chunk_ref(
+                    stored.manifest, section=resource.section, seq=resource.seq
+                )
+                text = stored.texts.get((resource.section, resource.seq))
+                if ref is None or text is None:
+                    raise chunk_not_found(resource_id)
+                chunks.append(
+                    build_chunk(
+                        manifest=stored.manifest, resource=resource, ref=ref, text=text
+                    )
+                )
+        return tuple(chunks)
+
+    def get_batch(
+        self,
+        *,
+        pot_id: str,
+        resource_ids: tuple[str, ...],
+        with_neighbors: bool = False,
+    ):
+        from potpie_context_engine.core.resource_reads import (
+            read_batch,
+            resource_choices,
+        )
+        from potpie_context_engine.core.ports.resource_store import ResourceStoreError
+
+        def read(resource_id):
+            try:
+                return self.get(pot_id=pot_id, resource_id=resource_id)
+            except ResourceStoreError as error:
+                try:
+                    resource = parse_resource_id(resource_id)
+                    stored = self._documents.get((pot_id, resource.doc))
+                    if stored:
+                        selected = self._versions.get(
+                            (pot_id, resource.doc, resource.revision), stored
+                        )
+                        error.detail = resource_choices(selected.manifest, resource)
+                except ResourceStoreError:
+                    pass
+                raise
+
+        def sections(chunk):
+            stored = self._documents.get((pot_id, chunk.doc))
+            if stored.manifest.revision != chunk.revision:
+                stored = self._versions[(pot_id, chunk.doc, chunk.revision)]
+            return stored.manifest.sections
+
+        with self._lock:
+            return read_batch(
+                resource_ids,
+                pot_id=pot_id,
+                read=read,
+                sections=sections,
+                with_neighbors=with_neighbors,
+            )
+
+    def list(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        section: str | None = None,
+        revision: int | None = None,
+    ) -> tuple[SectionManifest, ...]:
+        doc = require_resource_slug(slug, kind="document")
+        with self._lock:
+            stored = self._documents.get((pot_id, doc))
+            if stored is not None and revision not in (None, stored.manifest.revision):
+                stored = self._versions.get((pot_id, doc, revision))
+        if stored is None:
+            raise document_not_found(doc)
+        if section is None:
+            return tuple(
+                replace(row, revision=stored.manifest.revision)
+                for row in stored.manifest.sections
+            )
+        wanted = require_resource_slug(section, kind="section")
+        rows = tuple(row for row in stored.manifest.sections if row.slug == wanted)
+        if not rows:
+            raise section_not_found(doc, wanted)
+        return tuple(replace(row, revision=stored.manifest.revision) for row in rows)
+
+    def current_manifest(self, *, pot_id: str, slug: str) -> DocumentManifest:
+        doc = require_resource_slug(slug, kind="document")
+        with self._lock:
+            stored = self._documents.get((pot_id, doc))
+        if stored is None:
+            raise document_not_found(doc)
+        return stored.manifest
+
+    def set_pending_review(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        refs: tuple[str, ...],
+        sections: tuple[str, ...],
+        reason: str,
+        expected_revision: int | None = None,
+    ) -> DocumentManifest:
+        return self._update_pending_review(
+            pot_id=pot_id,
+            slug=slug,
+            refs=refs,
+            sections=sections,
+            reason=reason,
+            expected_revision=expected_revision,
+        )
+
+    def clear_pending_review(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        expected_revision: int | None = None,
+        expected_refs: tuple[str, ...] = (),
+    ) -> DocumentManifest:
+        return self._update_pending_review(
+            pot_id=pot_id,
+            slug=slug,
+            refs=(),
+            sections=(),
+            reason=None,
+            expected_revision=expected_revision,
+            expected_refs=expected_refs,
+        )
+
+    def _update_pending_review(
+        self,
+        *,
+        pot_id: str,
+        slug: str,
+        refs: tuple[str, ...],
+        sections: tuple[str, ...],
+        reason: str | None,
+        expected_revision: int | None = None,
+        expected_refs: tuple[str, ...] = (),
+    ) -> DocumentManifest:
+        doc = require_resource_slug(slug, kind="document")
+        with self._lock:
+            stored = self._documents.get((pot_id, doc))
+            if stored is None:
+                raise document_not_found(doc)
+            if (
+                expected_revision is not None
+                and stored.manifest.revision != expected_revision
+            ):
+                return stored.manifest
+            if expected_refs and stored.manifest.pending_review_refs != expected_refs:
+                return stored.manifest
+            manifest = replace(
+                stored.manifest,
+                pending_review_refs=tuple(dict.fromkeys(refs)),
+                pending_review_sections=tuple(dict.fromkeys(sections)),
+                pending_review_reason=reason,
+            )
+            self._documents[(pot_id, doc)] = _StoredResource(
+                manifest=manifest, texts=stored.texts
+            )
+            return manifest
+
+    def delete(self, *, pot_id: str, slug: str) -> bool:
+        doc = require_resource_slug(slug, kind="document")
+        with self._lock:
+            return self._documents.pop((pot_id, doc), None) is not None
+
+    def purge_pot(self, pot_id: str) -> bool:
+        with self._lock:
+            owned = [key for key in self._documents if key[0] == pot_id]
+            for key in owned:
+                del self._documents[key]
+            versioned = [key for key in self._versions if key[0] == pot_id]
+            for key in versioned:
+                del self._versions[key]
+            return bool(owned)
+
+    def status(self, *, pot_id: str | None = None) -> ResourceStoreStatus:
+        with self._lock:
+            documents = (
+                sum(1 for key in self._documents if key[0] == pot_id)
+                if pot_id
+                else None
+            )
+        # Nothing to be unready about: the store is the process it runs in.
+        return ResourceStoreStatus(
+            kind="in_memory",
+            ready=True,
+            location=None,
+            documents=documents,
+            detail="resources are lost when the process exits",
+        )
 
 
 def build_test_backend(
@@ -193,8 +602,12 @@ __all__ = [
     "InMemoryGraphBackend",
     "InMemoryGraphInboxStore",
     "InMemoryGraphPlanStore",
+    "InMemoryResourceStore",
+    "ResourceStoreConformanceMixin",
     "assert_graph_backend_conforms",
     "build_test_backend",
     "build_test_graph_runtime",
     "run_graph_backend_conformance",
+    "run_resource_store_conformance",
+    "write_import_directory",
 ]

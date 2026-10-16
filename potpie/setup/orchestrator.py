@@ -20,15 +20,16 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse
 
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.domain.embedding_modes import (
     EMBEDDING_MODEL_PREP_SKIPPED_ALIASES,
     SEMANTIC_EMBEDDER_ALIASES,
+    SEMANTIC_EMBEDDINGS_INSTALL_HINT,
     normalize_embedding_mode,
 )
-from potpie_context_engine.domain.git_probe import run_git_probe
+from potpie_context_engine.domain.git_probe import current_git_remote
+from potpie_context_engine.domain.repo_identity import repo_identity_key
 from potpie_context_engine.core.lifecycle import (
     DONE,
     FAILED,
@@ -323,7 +324,8 @@ class DefaultSetupOrchestrator:
                 return StepResult(
                     "embeddings.model",
                     FAILED,
-                    "sentence-transformers is unavailable; using local-hashing-v1",
+                    "sentence-transformers is unavailable; using local-hashing-v1 "
+                    f"— {SEMANTIC_EMBEDDINGS_INSTALL_HINT}",
                     metadata={
                         "mode": plan.embeddings,
                         "model": plan.embedding_model,
@@ -367,15 +369,61 @@ class DefaultSetupOrchestrator:
         active = self.pots.active_pot()
         if active is None:
             return StepResult("source", SKIPPED, "no active pot")
-        existing = self.pots.list_sources(pot_id=active.pot_id)
-        if any(s.kind == "repo" and s.name == plan.repo for s in existing):
-            return StepResult(
-                "source", SKIPPED, f"repo '{plan.repo}' already registered"
-            )
+        # Resolve first, then match on the repo identity key: the raw flag
+        # (``--repo .``) never equals the stored resolved location, so comparing
+        # the two appended another source on every re-run, and the same repo
+        # spelled two ways must stay one row.
         location = _resolve_setup_repo_location(plan.repo)
-        self.pots.add_source(pot_id=active.pot_id, kind="repo", location=location)
+        repo_key = repo_identity_key(location)
+        existing = _matching_repo_source(
+            self.pots.list_sources(pot_id=active.pot_id), repo_key=repo_key
+        )
+        if existing is not None:
+            self._converge_repo_default(location=location, pot_id=active.pot_id)
+            return StepResult(
+                "source",
+                SKIPPED,
+                f"repo '{location}' already registered ({existing.source_id})",
+                metadata={
+                    "source_id": existing.source_id,
+                    "location": location,
+                    "repo_key": repo_key,
+                    "already_registered": True,
+                },
+            )
+        source = self.pots.add_source(
+            pot_id=active.pot_id, kind="repo", location=location
+        )
         self.pots.set_repo_default(repo=location, pot_id=active.pot_id)
-        return StepResult("source", DONE, f"registered repo '{location}'")
+        return StepResult(
+            "source",
+            DONE,
+            f"registered repo '{location}'",
+            metadata={
+                "source_id": getattr(source, "source_id", None),
+                "location": location,
+                "repo_key": repo_key,
+                "already_registered": False,
+            },
+        )
+
+    def _converge_repo_default(self, *, location: str, pot_id: str) -> None:
+        """Bind the repo to this pot only if nothing usable is bound already.
+
+        A run that registers the source owns the routing decision. A re-run that
+        finds the source already there must not undo a deliberate ``potpie pot
+        default set``: re-running setup is how people respond to a failure, not
+        how they re-point a repo. The exceptions are the two states that are not
+        a decision: no binding at all, and a binding to a pot that no longer
+        exists (a run that stopped between ``add_source`` and the binding).
+        """
+        try:
+            current = self.pots.repo_default(repo=location)
+            if current and any(p.pot_id == current for p in self.pots.list_pots()):
+                return
+            self.pots.set_repo_default(repo=location, pot_id=pot_id)
+        except Exception:  # noqa: BLE001 - routing repair must not fail a soft step
+            return
 
     def _skills(self, plan: SetupPlan) -> str | StepResult:
         if plan.agent.strip().lower() == "default":
@@ -393,6 +441,26 @@ def _describe(result: object) -> str | None:
 __all__ = ["DefaultSetupOrchestrator"]
 
 
+def _matching_repo_source(sources, *, repo_key: str | None):
+    """The already-registered row for this repo, matched by identity key.
+
+    Both ``location`` and ``name`` are inspected: rows written before sources
+    carried a separate ``location`` hold the ref in ``name`` alone.
+    """
+    if not repo_key:
+        return None
+    for source in sources or []:
+        if getattr(source, "kind", None) != "repo":
+            continue
+        refs = (
+            str(getattr(source, "location", "") or "").strip(),
+            str(getattr(source, "name", "") or "").strip(),
+        )
+        if any(repo_identity_key(ref) == repo_key for ref in refs if ref):
+            return source
+    return None
+
+
 def _resolve_setup_repo_location(location: str) -> str:
     raw = (location or "").strip()
     if raw.lower() in (".", "current"):
@@ -405,23 +473,7 @@ def _resolve_setup_repo_location(location: str) -> str:
 
 
 def _current_git_remote(cwd: Path) -> str | None:
-    remote = run_git_probe(["remote", "get-url", "origin"], cwd=cwd, timeout=2)
-    if not remote:
-        return None
-    return _normalize_repo_ref(remote)
-
-
-def _normalize_repo_ref(value: str) -> str | None:
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    if raw.endswith(".git"):
-        raw = raw[:-4]
-    if raw.startswith("git@") and ":" in raw:
-        host, path = raw[4:].split(":", 1)
-        return f"{host}/{path}".strip("/")
-    if "://" in raw:
-        parsed = urlparse(raw)
-        if parsed.netloc and parsed.path:
-            return f"{parsed.netloc}/{parsed.path.strip('/')}"
-    return raw
+    # The shared probe and normalizer: ``source add repo .`` stores the same
+    # lower-cased key for the same repository, so the dedup above can compare
+    # stored refs.
+    return current_git_remote(cwd)

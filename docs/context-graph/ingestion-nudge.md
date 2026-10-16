@@ -5,8 +5,6 @@ description: How source events enter the graph and how session nudges fire.
 
 ## Overview
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
-
 This doc covers how source events get *into* the Context Graph, and how the
 zero-token **nudge** model gets the *right slice back out* to an in-session agent
 at the right moment. Both subsystems have drifted hard from their original

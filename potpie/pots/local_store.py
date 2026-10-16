@@ -68,26 +68,66 @@ class LocalPotStore:
         """Create a pot. Repo registration belongs on ``add_source`` via the CLI."""
         _ = repo
         with local_json_transaction(self._path, default_factory=_empty_state) as state:
-            # Reuse an existing pot by name (idempotent setup).
+            # Reuse an existing pot by name (idempotent setup), but never an
+            # archived one: reuse would hand back a pot whose graph state was
+            # cleared, under a name the caller expected to be fresh, and quietly
+            # make it active again.
             for pid, row in state.get("pots", {}).items():
-                if row.get("name") == name:
+                if row.get("name") == name and not row.get("archived"):
                     if use:
                         state["active"] = pid
-                    return {**row, "active": state.get("active") == pid}
+                    return {
+                        **row,
+                        "active": state.get("active") == pid,
+                        "created": False,
+                    }
             pot_id = f"pot_{uuid.uuid4().hex[:12]}"
             row = {"pot_id": pot_id, "name": name, "archived": False}
             state.setdefault("pots", {})[pot_id] = row
             if use or state.get("active") is None:
                 state["active"] = pot_id
-            return {**row, "active": state.get("active") == pot_id}
+            return {**row, "active": state.get("active") == pot_id, "created": True}
 
-    def _resolve_ref(self, state: dict[str, Any], ref: str) -> str | None:
-        if ref in state.get("pots", {}):
-            return ref
-        for pid, row in state.get("pots", {}).items():
-            if row.get("name") == ref:
-                return pid
+    def _resolve_ref(
+        self, state: dict[str, Any], ref: str, *, include_archived: bool = False
+    ) -> str | None:
+        """The pot id a ref names; a live pot always wins over an archived one.
+
+        Archived pots are excluded unless ``include_archived``: they cannot be
+        selected, written or routed to, so leaving them in the id/name space
+        would let a retired pot shadow a live one that reuses its name. The
+        lookup that decides which refusal to raise opts in to see them.
+        """
+        pots = state.get("pots", {})
+        live = [pid for pid, row in pots.items() if not row.get("archived")]
+        archived = [pid for pid, row in pots.items() if row.get("archived")]
+        for candidates in (live, archived if include_archived else []):
+            if ref in candidates:
+                return ref
+            for pid in candidates:
+                if pots[pid].get("name") == ref:
+                    return pid
         return None
+
+    def find(self, *, ref: str, include_archived: bool = True) -> dict[str, Any] | None:
+        """The row a ref names, without selecting or changing anything."""
+        state = self._load()
+        pid = self._resolve_ref(state, ref, include_archived=include_archived)
+        if pid is None:
+            return None
+        return {**state["pots"][pid], "active": state.get("active") == pid}
+
+    def names_in_use(self) -> dict[str, str]:
+        """``name -> pot_id`` for every live pot, for uniqueness checks."""
+        return {
+            str(row.get("name")): pid
+            for pid, row in self._load().get("pots", {}).items()
+            if not row.get("archived") and row.get("name")
+        }
+
+    def pot_ids(self) -> frozenset[str]:
+        """Every pot id, archived ones included (ids are never reused)."""
+        return frozenset(self._load().get("pots", {}))
 
     def use(self, *, ref: str) -> dict[str, Any] | None:
         with local_json_transaction(self._path, default_factory=_empty_state) as state:
@@ -131,6 +171,32 @@ class LocalPotStore:
 
     def list_sources(self, *, pot_id: str) -> list[dict[str, Any]]:
         return self._load().get("sources", {}).get(pot_id, [])
+
+    def list_repo_sources(self) -> list[dict[str, Any]]:
+        """Repo sources of every live pot, joined to their pot, from one load.
+
+        Pot order follows :meth:`list_pots`, so a caller picking "the single
+        matching pot" sees the order the per-pot walk produced. Archived pots
+        are left out: they are not routing candidates for a repo.
+        """
+        state = self._load()
+        sources = state.get("sources", {})
+        rows: list[dict[str, Any]] = []
+        for pot_id, pot in state.get("pots", {}).items():
+            if pot.get("archived"):
+                continue
+            for row in sources.get(pot_id, []):
+                if row.get("kind") != "repo":
+                    continue
+                rows.append(
+                    {
+                        "pot_id": pot_id,
+                        "pot_name": pot.get("name", pot_id),
+                        "name": row.get("name", row.get("location", "")),
+                        "location": row.get("location"),
+                    }
+                )
+        return rows
 
     def remove_source(self, *, pot_id: str, source_id: str) -> None:
         with local_json_transaction(self._path, default_factory=_empty_state) as state:

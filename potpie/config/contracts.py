@@ -35,6 +35,15 @@ class ConfigService(Protocol):
 
     def set(self, key: str, value: str) -> None: ...
 
+    def unset(self, key: str) -> bool:
+        """Remove ``key`` if present; return whether it was there.
+
+        Deliberately accepts any key, including ones the write catalog no
+        longer knows, so stranded values (credentials among them) can be
+        cleared.
+        """
+        ...
+
     def probe(self) -> Mapping[str, Any]:
         """Cheap state for ``doctor``/``status`` (home path, config presence)."""
         ...

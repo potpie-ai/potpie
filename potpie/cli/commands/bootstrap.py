@@ -8,6 +8,7 @@ from all three services via ``context_status``.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import click
@@ -37,6 +38,7 @@ from potpie.cli.commands._common import (
     is_json,
     repo_default_pot_id,
     repo_effective_pot_info,
+    require_text,
     resolve_pot_id,
     run_engine_operation,
     use_pot_selection,
@@ -58,8 +60,20 @@ from potpie_context_engine.adapters.outbound.intelligence.local_embedder import 
     configured_embedder_choice,
     configured_embedding_model,
 )
+from potpie.agent_context import (
+    LOW_CONFIDENCE_THRESHOLD,
+    QUALITY_SUMMARY_LIMIT,
+    QualitySummaryUnavailable,
+    quality_block,
+    status_next_action,
+)
 from potpie.config.local import (
+    GRAPH_PROTOCOLS_KEY,
     KNOWN_CONFIG_KEYS,
+    SWITCH_VALUES,
+    is_known_config_key,
+    is_secret_config_key,
+    normalize_switch,
     public_config_value,
 )
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
@@ -67,7 +81,7 @@ from potpie_context_engine.domain.embedding_modes import normalize_embedding_mod
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.lifecycle import SetupPlan, SetupReport
 from potpie_context_engine.core.ports.agent_context import StatusReport
-from potpie_context_engine.requests import DataPlaneStatusRequest
+from potpie_context_engine.requests import DataPlaneStatusRequest, QualityRequest
 
 
 def _embedded_graph_servers(profile: str) -> dict | None:
@@ -142,7 +156,9 @@ def register(root: typer.Typer) -> None:
             "--embeddings",
             help=(
                 "Embedding mode for local semantic search "
-                "(sentence-transformers, auto, local, none)."
+                "(auto, sentence-transformers, local, none). Defaults to auto: "
+                "sentence-transformers when the potpie[embeddings] extra is "
+                "installed, otherwise the bundled hashing embedder."
             ),
         ),
         embedding_model: str = typer.Option(
@@ -401,8 +417,9 @@ def register(root: typer.Typer) -> None:
 
                 shell = get_root_runtime()
                 pot_id = resolve_pot_id(shell, pot)
+                client = get_engine_client(pot)
                 data_plane = run_engine_operation(
-                    get_engine_client(pot).data_plane_status(DataPlaneStatusRequest())
+                    client.data_plane_status(DataPlaneStatusRequest())
                 )
                 report = _build_context_status_report(
                     shell,
@@ -410,6 +427,7 @@ def register(root: typer.Typer) -> None:
                     intent=intent,
                     harness=harness,
                     data_plane=data_plane,
+                    quality_summary=_status_quality_summary(client),
                 )
             emit(
                 {
@@ -446,8 +464,11 @@ def register(root: typer.Typer) -> None:
 
             cli_install = collect_cli_install_status()
             embedded_servers = _embedded_graph_servers(host.backend.profile)
+            resources, resource_index = _resource_doctor_blocks(pot_id)
             emit(
                 {
+                    "resources": resources,
+                    "resource_index": resource_index,
                     "daemon": daemon_status,
                     "embedded_graph_servers": embedded_servers,
                     "cli_install": cli_install,
@@ -493,6 +514,8 @@ def register(root: typer.Typer) -> None:
                         if embedded_servers and embedded_servers.get("detail")
                         else ""
                     )
+                    + "\n"
+                    + _resource_doctor_human(resources, resource_index)
                 ),
             )
 
@@ -542,8 +565,10 @@ def register(root: typer.Typer) -> None:
 
     config_app = typer.Typer(
         help=(
-            "Local config get/set/list (persisted to <home>/config.json). "
-            f"Known keys: {', '.join(KNOWN_CONFIG_KEYS)}."
+            "Local config get/set/unset/list (persisted to <home>/config.json). "
+            f"Known keys: {', '.join(KNOWN_CONFIG_KEYS)}. "
+            "`set` accepts only those; `unset` accepts any key, so a value "
+            "stored before the catalog was enforced can still be removed."
         )
     )
 
@@ -580,20 +605,223 @@ def register(root: typer.Typer) -> None:
             if key is None:
                 _emit_config_list()
                 return
+            # Distinct from the omitted argument above: `config get ''` reads a
+            # key that cannot exist and must not answer like an unset one.
+            key = require_text(key, argument="key", example="potpie config get backend")
             value = get_config_service().get(key)
             value = public_config_value(key, value)
             emit({key: value}, human=f"{key}={value}")
 
     @config_app.command("set")
     def config_set(key: str, value: str) -> None:
+        """Persist one known config key. The write keeps the value; the echo does not.
+
+        The catalog check turns a typo into a refusal instead of a persisted key
+        nothing reads, and keeps ``config.json`` from becoming a secret store.
+        The echo shares ``get``/``list`` redaction, including a credential typed
+        inside a URL value.
+        """
         with contract():
-            get_config_service().set(key, value)
-            emit(
-                {"key": key, "value": value, "persisted": True},
-                human=f"set {key}={value}",
+            key = require_text(
+                key, argument="key", example="potpie config set backend embedded"
             )
+            if not is_known_config_key(key):
+                fail(
+                    code="validation_error",
+                    message=f"unknown config key {key!r}",
+                    detail={"key": key, "known_keys": list(KNOWN_CONFIG_KEYS)},
+                    # Names the exit too: a key stored under this name before
+                    # the gate existed is read by nothing, and `unset` is the
+                    # only command that can still clear it.
+                    next_action=(
+                        f"use one of: {', '.join(KNOWN_CONFIG_KEYS)} — "
+                        "a key already stored under this name is read by nothing; "
+                        f"remove it with 'potpie config unset {key}'"
+                    ),
+                    exit_code=EXIT_VALIDATION,
+                )
+            if key == "resource_index":
+                value = _require_resource_index_profile(value)
+            if key == GRAPH_PROTOCOLS_KEY:
+                value = _require_switch(key, value)
+            get_config_service().set(key, value)
+            shown = public_config_value(key, value)
+            payload: dict[str, object] = {
+                "key": key,
+                "value": shown,
+                "redacted": is_secret_config_key(key) or shown != value,
+                "persisted": True,
+            }
+            human = f"set {key}={shown}"
+            if key in _STARTUP_CONFIG_KEYS:
+                payload.update(_STARTUP_CONFIG_NOTE)
+                human += f"\n{_STARTUP_CONFIG_NOTE['next_action']}"
+            emit(payload, human=human)
+
+    @config_app.command("unset")
+    def config_unset(key: str) -> None:
+        """Remove one config key. Accepts keys the catalog no longer knows.
+
+        Ungated on purpose, where ``set`` is gated: the write gate strands every
+        key this file used to accept, credentials among them, and removal is the
+        only repair left. ``removed`` distinguishes "it is gone" from "there was
+        nothing here"; both exit 0.
+        """
+        with contract():
+            key = require_text(
+                key, argument="key", example="potpie config unset github_token"
+            )
+            removed = get_config_service().unset(key)
+            payload: dict[str, object] = {"key": key, "removed": removed}
+            human = (
+                f"unset {key}" if removed else f"{key} was not set (nothing removed)"
+            )
+            if removed and key in _STARTUP_CONFIG_KEYS:
+                payload.update(_STARTUP_CONFIG_NOTE)
+                human += f"\n{_STARTUP_CONFIG_NOTE['next_action']}"
+            emit(payload, human=human)
 
     root.add_typer(config_app, name="config")
+
+
+def _resource_doctor_blocks(pot_id: str) -> tuple[dict, dict]:
+    """The document store and its index, as ``doctor`` rows that never raise.
+
+    Beside each other, not merged: the bytes can be healthy while the index
+    that makes them findable is off, stale, or mid-drain, and that gap is
+    invisible until a search quietly returns less than it should. Both go
+    through the typed engine boundary, so a daemon that is down or refuses the
+    handshake becomes ``available: false`` with the reason instead of taking
+    the rest of the report with it.
+    """
+    from potpie_context_engine.requests import (
+        ResourceIndexStatusRequest,
+        ResourceStatusRequest,
+    )
+
+    if not pot_id:
+        gap = {"available": False, "detail": "no active pot; resources are per-pot"}
+        return dict(gap), dict(gap)
+
+    def probe(call, render) -> dict:
+        try:
+            return {"available": True, **render(run_engine_operation(call()))}
+        except typer.Exit:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a diagnostic row must not crash doctor
+            return {"available": False, "detail": str(exc) or type(exc).__name__}
+
+    client = None
+
+    def engine():
+        nonlocal client
+        if client is None:
+            client = get_engine_client(pot_id)
+        return client
+
+    resources = probe(
+        lambda: engine().resource_status(ResourceStatusRequest()),
+        lambda status: {
+            "kind": status.kind,
+            "ready": status.ready,
+            "location": status.location,
+            "documents": status.documents,
+            "detail": status.detail,
+        },
+    )
+    index = probe(
+        lambda: engine().resource_index_status(ResourceIndexStatusRequest()),
+        lambda status: {
+            "profile": status.profile,
+            "ready": status.ready,
+            "capabilities": list(status.capabilities),
+            "match_mode": status.match_mode,
+            "documents": status.documents,
+            "chunks": status.chunks,
+            "pending_embeddings": status.pending_embeddings,
+            "embedder": status.embedder,
+            "detail": status.detail,
+        },
+    )
+    return resources, index
+
+
+def _resource_doctor_human(resources: dict, index: dict) -> str:
+    if resources.get("available"):
+        line = f"resources: {resources['kind']} ready={resources['ready']}"
+        if resources.get("documents") is not None:
+            line += f" documents={resources['documents']}"
+        if resources.get("location"):
+            line += f" ({resources['location']})"
+    else:
+        line = f"resources: unavailable — {resources.get('detail')}"
+    if index.get("available"):
+        index_line = (
+            f"resource index: {index['profile']} ready={index['ready']} "
+            f"mode={index['match_mode']} chunks={index['chunks']}"
+        )
+        if index.get("pending_embeddings"):
+            index_line += f" pending={index['pending_embeddings']}"
+        if index.get("detail"):
+            index_line += f"\n  ! {index['detail']}"
+    else:
+        index_line = f"resource index: unavailable — {index.get('detail')}"
+    return f"{line}\n{index_line}"
+
+
+#: Keys the local runtime reads once, when it is composed. A daemon that is
+#: already running keeps serving the value it started with.
+_STARTUP_CONFIG_KEYS: frozenset[str] = frozenset({GRAPH_PROTOCOLS_KEY})
+_STARTUP_CONFIG_NOTE: dict[str, object] = {
+    "restart_required": True,
+    "next_action": (
+        "takes effect when the runtime next starts: "
+        "run 'potpie daemon restart' if a daemon is running"
+    ),
+}
+
+
+def _require_switch(key: str, value: str) -> str:
+    """``on`` or ``off`` for an on/off key, refusing anything else.
+
+    Refused here rather than read as off later: a typo would otherwise leave
+    the feature silently disabled with ``config get`` showing the typo.
+    """
+    normalized = normalize_switch(value)
+    if normalized is None:
+        fail(
+            code="validation_error",
+            message=f"{key} must be one of: {', '.join(SWITCH_VALUES)} (got {value!r})",
+            detail={"key": key, "values": list(SWITCH_VALUES)},
+            next_action=f"potpie config set {key} on",
+            exit_code=EXIT_VALIDATION,
+        )
+    return normalized
+
+
+def _require_resource_index_profile(value: str) -> str:
+    """A ``resource_index`` value the index registry will accept, normalized.
+
+    Checked here rather than at the next command: an unknown profile only
+    surfaces later as an index that reports ``ready=False``, which is a long
+    way from the typo that caused it.
+    """
+    from potpie_context_engine.adapters.outbound.resources.index import (
+        KNOWN_PROFILES,
+    )
+
+    normalized = value.strip().lower().replace("-", "_")
+    if normalized in {"off", "disabled"}:
+        normalized = "none"
+    if normalized not in KNOWN_PROFILES:
+        fail(
+            code="validation_error",
+            message=f"unknown resource index profile {value!r}",
+            detail={"key": "resource_index", "profiles": list(KNOWN_PROFILES)},
+            next_action=f"use one of: {', '.join(KNOWN_PROFILES)}",
+            exit_code=EXIT_VALIDATION,
+        )
+    return normalized
 
 
 def _build_context_status_report(
@@ -603,18 +831,19 @@ def _build_context_status_report(
     intent: str,
     harness: str,
     data_plane,
+    quality_summary=None,
 ) -> StatusReport:
     """Join root-owned status surfaces with the engine-owned data plane."""
     aggregate = get_pot_service(shell).aggregate_status(pot_id=pot_id)
     active = aggregate.active_pot
     nudge = get_skill_service(shell).nudge(agent=harness) if harness else None
     backend_ready = bool(data_plane.backend_ready)
-    if active is None:
-        next_action = "Run 'potpie setup' to create and activate a pot."
-    elif not backend_ready:
-        next_action = "Backend not ready — run 'potpie backend doctor'."
-    else:
-        next_action = "Run 'potpie resolve \"<task>\"' to pull context for your work."
+    quality = quality_block(dict(data_plane.quality), summary=quality_summary)
+    next_action = status_next_action(
+        has_pot=active is not None,
+        backend_ready=backend_ready,
+        quality=quality,
+    )
     return StatusReport(
         pot_id=pot_id,
         profile=shell.profile,
@@ -627,7 +856,7 @@ def _build_context_status_report(
             "reader_backed_includes": list(data_plane.reader_backed_includes),
             "counts": dict(data_plane.counts),
             "freshness": dict(data_plane.freshness),
-            "quality": dict(data_plane.quality),
+            "quality": quality,
         },
         pot_summary={
             "pot_count": aggregate.pot_count,
@@ -637,6 +866,34 @@ def _build_context_status_report(
         recommended_next_action=next_action,
         metadata={"intent": intent},
     )
+
+
+def _status_quality_summary(client):
+    """The graph-quality summary ``graph quality summary`` reports, for status.
+
+    The backend's quality projection only counts claims, so without it status
+    reports a healthy graph however many findings are open. A failure here
+    never fails status; it is reported as an unavailable quality block.
+    """
+    from potpie.cli.commands._common import EngineClientError
+
+    try:
+        return run_engine_operation(
+            client.quality(
+                QualityRequest(
+                    report="summary",
+                    limit=QUALITY_SUMMARY_LIMIT,
+                    confidence_threshold=LOW_CONFIDENCE_THRESHOLD,
+                )
+            )
+        )
+    except EngineClientError as exc:
+        message = str(getattr(exc.error, "message", exc))
+        return QualitySummaryUnavailable(
+            detail=f"quality summary unavailable: {message}"
+        )
+    except Exception as exc:  # noqa: BLE001 - status must survive a bad probe
+        return QualitySummaryUnavailable(detail=f"quality summary unavailable: {exc}")
 
 
 def _nudge_dict(nudge) -> dict[str, object] | None:
@@ -685,9 +942,13 @@ def _status_human(report) -> str:
         f"profile={report.profile} daemon={'up' if report.daemon_up else 'down'} "
         f"pot={report.active_pot} backend_ready={report.backend_ready}",
     ]
-    counts = dict(report.data_plane).get("counts") or {}
+    data_plane = dict(report.data_plane)
+    counts = data_plane.get("counts") or {}
     if counts:
         lines.append(f"  graph: {counts}")
+    quality_line = _quality_line(data_plane.get("quality"))
+    if quality_line:
+        lines.append(quality_line)
     if report.skills and (report.skills.missing or report.skills.outdated):
         lines.append(
             f"  skills: missing={list(report.skills.missing)} → {report.skills.install_command}"
@@ -695,6 +956,24 @@ def _status_human(report) -> str:
     if report.recommended_next_action:
         lines.append(f"  next: {report.recommended_next_action}")
     return "\n".join(lines)
+
+
+def _quality_line(quality) -> str | None:
+    """The graph-quality summary as one human line, or ``None`` if there is none.
+
+    Whatever the JSON quality block knows, the prose says: the open findings,
+    or why they could not be counted.
+    """
+    if not isinstance(quality, Mapping):
+        return None
+    status = quality.get("findings_status") or quality.get("status")
+    if quality.get("findings_status") == "unavailable":
+        detail = quality.get("detail")
+        return f"  quality: unavailable{f' — {detail}' if detail else ''}"
+    if "open_findings" not in quality:
+        return f"  quality: {status}" if status else None
+    open_findings = int(quality.get("open_findings") or 0)
+    return f"  quality: {status or 'unknown'} ({open_findings} open findings)"
 
 
 def _emit_setup_run_metric(plan: SetupPlan, *, result: str, dry_run: bool) -> None:
@@ -726,8 +1005,12 @@ def _setup_embeddings_choice(raw: str | None) -> str:
     if raw is not None:
         choice = normalize_embedding_mode(raw)
     else:
+        # `auto`, not `sentence-transformers`: the base install leaves the
+        # embeddings extra out, and an explicit choice it cannot honour warns on
+        # every later command. `auto` uses sentence-transformers once the extra
+        # is installed; setup reports the fallback, and the extra, once.
         configured = configured_embedder_choice()
-        choice = normalize_embedding_mode(configured or "sentence-transformers")
+        choice = normalize_embedding_mode(configured or "auto")
     aliases = {
         "legacy": "sentence-transformers",
         "sbert": "sentence-transformers",

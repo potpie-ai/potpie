@@ -35,6 +35,11 @@ CE_DIR := potpie/context-engine
 UI_FRONTEND_DIR := potpie/daemon/http/ui/frontend
 CLI_TOOL := potpie
 CLI_PYTHON ?= >=3.12,<3.14
+# Extras for the editable install. The base package leaves out embeddings
+# (torch), ingestion, telemetry and the CLI logo; a dev checkout wants them all.
+# `make cli-install CLI_EXTRAS=` installs the lean base instead.
+CLI_EXTRAS ?= all
+CLI_TARGET := $(if $(strip $(CLI_EXTRAS)),.[$(strip $(CLI_EXTRAS))],.)
 
 ui-build: ## Build the graph-explorer SPA (npm install + vite) into frontend/dist
 	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not installed — see https://nodejs.org/"; exit 1; }
@@ -51,7 +56,7 @@ cli-install: ui-build ## Install potpie + potpie-daemon globally from the root p
 	@# Stop any old detached daemon before replacing the tool env; otherwise the
 	@# fresh CLI can still talk to a daemon running the previous Python/backend.
 	-@if command -v potpie >/dev/null 2>&1; then potpie daemon stop >/dev/null 2>&1; fi
-	uv tool install --python '$(CLI_PYTHON)' --force --editable "."
+	uv tool install --python '$(CLI_PYTHON)' --force --editable "$(CLI_TARGET)"
 	@case ":$$PATH:" in \
 	  *":$$HOME/.local/bin:"*) echo "✓ potpie installed (editable). Try: potpie --help";; \
 	  *) echo "✓ installed, but $$HOME/.local/bin is not on PATH — run: uv tool update-shell, then restart your shell";; \
