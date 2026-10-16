@@ -533,7 +533,7 @@ def _make_event_stream_handler(
                     )
 
                 elif isinstance(event, FunctionToolResultEvent):
-                    r = event.result
+                    r = event.part
                     await asyncio.to_thread(
                         sink.emit,
                         "tool_result",

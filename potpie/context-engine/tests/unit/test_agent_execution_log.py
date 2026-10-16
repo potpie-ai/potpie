@@ -217,7 +217,7 @@ class TestEventStreamHandler:
                 handler,
                 [
                     FunctionToolCallEvent(part=call),
-                    FunctionToolResultEvent(result=ret),
+                    FunctionToolResultEvent(part=ret),
                 ],
             )
         )
