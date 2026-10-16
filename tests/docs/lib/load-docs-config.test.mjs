@@ -17,16 +17,20 @@ describe('loadDocsConfig', () => {
     const path = writeConfig({
       spokeId: 'potpie',
       docsPath: 'docs',
+      documentationContractVersion: 1,
     });
     const cfg = loadDocsConfig(path);
     assert.equal(cfg.spokeId, 'potpie');
     assert.equal(cfg.docsPath, 'docs');
+    assert.equal(cfg.documentationContractVersion, 1);
+    assert.equal('versioning' in cfg, false);
   });
 
   test('ignores leftover user-facing / exception fields', () => {
     const path = writeConfig({
       spokeId: 'potpie',
       docsPath: 'docs',
+      documentationContractVersion: 1,
       userFacingPaths: ['src/**'],
       excludedPaths: ['**/*.test.*'],
       docsNotRequiredLabel: 'docs-not-required',
@@ -38,7 +42,7 @@ describe('loadDocsConfig', () => {
   });
 
   test('rejects invalid spokeId', () => {
-    const path = writeConfig({ spokeId: 'Not Valid' });
+    const path = writeConfig({ spokeId: 'Not Valid', documentationContractVersion: 1 });
     assert.throws(() => loadDocsConfig(path), /spokeId/);
   });
 
@@ -46,6 +50,7 @@ describe('loadDocsConfig', () => {
     const path = writeConfig({
       spokeId: 'potpie',
       docsPath: '/etc/passwd',
+      documentationContractVersion: 1,
     });
     assert.throws(() => loadDocsConfig(path), /docsPath/);
   });
@@ -54,6 +59,7 @@ describe('loadDocsConfig', () => {
     const path = writeConfig({
       spokeId: 'potpie',
       docsPath: '../outside',
+      documentationContractVersion: 1,
     });
     assert.throws(() => loadDocsConfig(path), /docsPath/);
   });
@@ -63,14 +69,29 @@ describe('loadDocsConfig', () => {
       const path = writeConfig({
         spokeId: 'potpie',
         docsPath,
+        documentationContractVersion: 1,
       });
       assert.throws(() => loadDocsConfig(path), /docsPath/);
     }
   });
 
   test('defaults missing docsPath to docs', () => {
-    const path = writeConfig({ spokeId: 'potpie' });
+    const path = writeConfig({ spokeId: 'potpie', documentationContractVersion: 1 });
     const cfg = loadDocsConfig(path);
     assert.equal(cfg.docsPath, 'docs');
+  });
+
+  test('rejects unsupported release contract metadata', () => {
+    const path = writeConfig({ spokeId: 'potpie', documentationContractVersion: 2 });
+    assert.throws(() => loadDocsConfig(path), /documentationContractVersion/);
+  });
+
+  test('rejects the superseded contract fields', () => {
+    const path = writeConfig({
+      spokeId: 'potpie',
+      contractVersion: 1,
+      versioning: { enabled: true },
+    });
+    assert.throws(() => loadDocsConfig(path), /documentationContractVersion/);
   });
 });

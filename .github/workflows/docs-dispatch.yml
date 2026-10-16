@@ -94,6 +94,7 @@ jobs:
                 branch: process.env.BRANCH,
                 sha: process.env.SHA,
                 spoke_id: config.spokeId,
+                channel: "next",
               },
             }));
           ')"
