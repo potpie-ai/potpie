@@ -40,7 +40,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | 8 | fix(graph): preserve claim incarnations and scoped supersession | Historical intervals and source/environment isolation | Approved by independent shared/adapter reviewer. Shared history and source policy, physical identity and endpoint guards; detailed local/native evidence below. |
 | 9 | fix(graph): freeze correction targets and dependent effects | Preview/commit/verify targets identical; stale conflicts | Independent shared review approved. Engine core/unit 2265 passed 3 unrelated skips; Falkor server/Lite 472 passed 1 restart-opt-in skip; Neo 111 passed 1 restart-opt-in skip. Details below. |
 | 10 | fix(graph): normalize temporal writes and query semantics | Offset/boundary/occurrence/query-limit parity | Independent review approved; 2329 unit/core, 108 live temporal, 142 public API/CLI cases passed. Details below. |
-| 11 | fix(graph): separate execution success from current verification | Current lifecycle results independent of execution receipt | Pending |
+| 11 | fix(graph): separate execution success from current verification | Current lifecycle results independent of execution receipt | Checkpoint B approved. 2399 unit/core, 112 Falkor server/Lite, 24 Neo native, 115 root CLI/API cases passed; details below. |
 | 12 | feat(graph): add resumable legacy graph repair | Dry-run, resumability, ambiguity rejection, receipt preservation | Pending |
 | 13 | test(graph): require full backend and public API acceptance | Live native matrix, supported Windows, independent review/QA | Pending |
 
@@ -342,3 +342,130 @@ Workers' broader native gates passed 582 Falkor server/Lite cases and 128 Neo4j
 cases (each left the separate opt-in restart test unselected; restarts were already
 proven in steps 5/8). Independent reviewer reran 83 focused and 48 native cases.
 Scoped formatting, Ruff and whitespace checks pass. No step 10 blocker remains.
+
+# Step 11 / I9 design for review
+
+Receipt schema 2, batch fingerprint 1, prepared schema 4 remain frozen. No execution or driver framework changes.
+
+## Result contract
+Add commit verification_state = not_requested / deferred / completed / unsupported. verify=False is not_requested; requested but deferred is deferred. Detailed report adds state (completed/deferred/unsupported), outcome (matching/superseded_retracted/mismatched/inconclusive), checked_revision (nullable), verified_at (UTC), and per-incarnation outcomes in content_readback. Defaults on legacy decoded reports must not invent historical evidence. Existing status/quality fields remain compatible. Current quality regression may fail verification independently of lifecycle outcome; commit ok/status/receipt remain execution facts.
+
+## Ownership and coherence
+mutation_verification is the sole verification coordinator. Extract its existing content comparison to mutation_verification_content, replacing duplicated queries with one exact record_id_in query covering frozen assertions, closures, and automatic superseded predecessors. It owns only comparing intended fields/current lifecycle, not selecting or writing claims. Entity reads, protocol extension checks and quality reads are inside authoritative revision checks before and after the complete read set. A changed revision produces deferred/inconclusive with checked_revision=None, discarding any coherent-success claim. Unsupported revision/read capability produces unsupported/inconclusive. Exceptions/timeouts/explicit asyncio.CancelledError while doing post-commit checks produce deferred/inconclusive and cannot hide the receipt. Catch neither KeyboardInterrupt nor SystemExit. Async bridge cancellation propagation stays unchanged; receipt remains recoverable.
+
+Use one UTC verification instant for lifecycle classification. Missing physical records are mismatched (including reset); new incarnation with same logical key cannot satisfy the old one. Legacy assertions without frozen physical identity are inconclusive; do not fall back to logical-key success. Empty frozen batches can match with no_claims status, entity-only batches compare entity content.
+
+## Content/lifecycle
+Compare claim identity/endpoints, subgraph, truth, confidence, fact/description, environment, scalar source system/reference, evidence/source refs, observed_at, original valid_at, authored extras; intervals come from frozen resolution, not raw asserted start. Continue structured native-JSON normalization and compare contract timestamps as UTC instants. Metadata-review writes verify only explicitly patched properties and preserved interval, not invented default truth fields. Explicit corrections verify exact closure identities and after intervals. Automatic superseded predecessors verify exact record IDs/end-at-effective-time; do not invent unknown prior content.
+
+Immutable/content differences take precedence over lifecycle. If content still matches but a current interval endpoint was shortened or retirement is now set, report superseded_retracted; expose observed endpoint and whether effective now or scheduled. This reports current closure/retirement, not its cause or authorization. Exact expected intervals are matching even if naturally expired; expose lifecycle separately. Removed/widened closure or changed start is mismatched. A later reasserted incarnation does not change the earlier row's verification.
+
+## Recovery and boundaries
+Standalone verify_commit first uses existing commit_status authoritative receipt validation/reconciliation; it never calls commit/apply. Only a completed receipt permits checking current graph. Unsupported/ambiguous execution yields inconclusive (unsupported/deferred), absent yields not_committed. Workflow status alone is not evidence. Reconcile interrupted plan finalization before verification. Preserve workbench wrapper injection so existing tests/plugins have one invocation owner.
+
+Execution coordinator passes verify/defer intent into completion instead of collapsing both to False. It uses the shared safe verification invoker; standalone verification uses the same one. Precommit quality baseline collection is optional and errors leave baseline unavailable; no postcommit result can rewrite the receipt. CLI deferred verify attachment copies report state and marks transport failures deferred. Generic typed DTO decoder must roundtrip new fields.
+
+## Acceptance
+Injected verification exception/cancellation after apply preserves original receipt and revision. Deferred/notrequested/unsupported/completed states roundtrip public transports. Assert/retract/reassert: old receipt unchanged, old exact incarnation superseded_retracted; current incarnation matching. Source/start corruption mismatches. Delete-only and keyless closure verification reads exact physical IDs, including frozen empty no-op. Reset between read stages yields deferred/inconclusive, never checked revision false success. Unsupported query invoked once. Standalone verifies authoritative receipt after workflow interruption, and never applies absent request. Active-loop public cancellation followed by receipt lookup. Native conformance exercises assertions/closures/lifecycle with shared verifier, no adapter-private verification implementation.
+
+## Accepted freeze clarifications
+- Automatic predecessors also verify the asserting edge's frozen pot/subject/predicate/subgraph/environment/source scope, but no invented previous object/start/content.
+- Preapply CancelledError propagates; only postreceipt cancellation is represented as deferred.
+- Aggregate precedence mismatched > inconclusive > superseded_retracted > matching. Coherent matching/observed closure can be ok=true unless quality fails. No authorization/cause is inferred.
+- Standalone direct receipt lookup is owned by execution_service and reuses existing lookup/completion, never apply.
+- Entity comparisons report authored logical/content evidence; backend-generated entity physical identity is not always frozen and cannot be invented.
+- Revision checks use declared capability and direct authoritative current_version, without fallback defaults.
+Design reviewer approved this freeze.
+
+### Checkpoint B verification review clarifications
+
+The independent reviewer reproduced false success from missing frozen correction
+endpoint checks, malformed or contradictory stored timestamps hidden by hydration,
+empty entity patches after reset, and a checked revision older than the receipt.
+Verification now compares every known frozen selector, requires logical entity
+existence, and checks the receipt revision floor. ClaimRow.temporal_diagnostics
+is additive read evidence from one canonical codec, including the JSON loader;
+it reports malformed/naive/contradictory times and unsupported precision without
+changing tolerant read values or canonical persistence/fingerprint bytes. Such
+rows are inconclusive with unknown lifecycle unless independent content proves a
+mismatch. Legacy decoded verification defaults to deferred. A reconciliation
+compare-and-set loss preserves requested verification as deferred, never unrequested.
+
+Full raw legacy timestamp preservation and ordinary-write guards remain explicit
+step 12 blockers: diagnostic fields alone do not prevent a later lossy rewrite.
+They must be resolved before release; no historical value may be invented.
+
+## Step 12 audit findings to resolve before release
+
+These are invariant blockers, not optional follow-ups. Read-only memory/native
+workers reproduced them while step 11 was under review:
+
+- Ordinary entity upserts currently accept changed record_id/uuid. Memory/JSON
+  rewrite them; journal memory silently restores the old values while reporting
+  success. Reject conflicting identity authoring inside every atomic boundary,
+  including property-only projections and entity-only batches. Preserve legitimate
+  existing distinct record_id/uuid; aliases reused across different records are
+  ambiguous and must be reported. Existing entity-summary repair carries unchanged
+  identity fields, so compare against current values instead of banning all fields.
+- JSON hydration converts invalid timestamp strings to None, and an unrelated
+  write can persist null over the raw evidence. Step 11 adds read diagnostics, but
+  repair needs raw inventory and ordinary persistence must not erase unresolved
+  raw values. Avoid a typed ClaimRow-only migration scan.
+- Journal activation migrate_ids assigns missing IDs without a revision/receipt.
+  Replace this hidden repair with the explicit reviewed migration contract, retaining
+  supported mode restrictions and existing journal identity/history.
+- Snapshot import is merge-only and is unsuitable as repair. Normalization can
+  synthesize identities; Falkor snapshot export omits retired records while Neo
+  includes them. Migration inventory must include retired records, missing-label
+  entities, aliases and malformed endpoints. Do not use export/import to mutate
+  legacy existing rows.
+- Existing repair wrappers generate hidden new UUIDs per attempt and skip receipts
+  for no work; a recoverable migration needs frozen chunk identities and unchanged
+  request content. Bound chunks at 5000 effects, replay receipt before rechecking
+  exact before-images, and advance revision only for actual new work.
+- Native Neo elementId and Falkor internal IDs are not durable migration identities.
+  Resolve uniquely from full raw before-images inside the transaction/WATCH read
+  boundary; ephemeral internal locators may only live within that boundary. Reject
+  ambiguous duplicate missing-ID records instead of choosing one.
+- Neo typed DateTime can carry nanoseconds; converting to Python datetime silently
+  loses sub-microsecond precision. Report unsupported precision for explicit
+  resolution, alongside naive/invalid/contradictory times. Do not guess timezone,
+  missing start/end, or destroyed historical intervals.
+
+Recommended direction awaiting step 12 design review: explicit typed repair effects
+in existing MutationBatch/atomic owners, shared pure scan/planning policy, durable
+frozen workflow checkpoints using existing persistence primitives, authoritative
+chunk receipts for resume. All existing receipts and journal identities remain
+immutable. No private backend migration policy or second execution framework.
+
+User updated delegation preference: choose model strength per assignment; GPT-6.1
+xhigh is no longer mandatory for every subagent. Keep stronger reasoning for shared
+transaction design and independent review, lighter models for bounded mechanical
+work. The four-agent concurrency and ownership rules still apply.
+
+## Step 11 / checkpoint B acceptance
+
+Execution receipt and current verification are independent. Public commit results
+report not_requested/deferred/completed/unsupported. Detailed results include the
+checked revision, one UTC verification instant, exact physical target outcomes,
+and matching/superseded_retracted/mismatched/inconclusive content outcomes. Entity
+checks report only frozen logical/content evidence. Quality remains separate.
+
+One safe verifier contains postreceipt exceptions, timeout and cancellation while
+preserving the execution result; preapply cancellation still propagates. All read
+stages are revision-bracketed, including extension and quality checks. Standalone
+verification validates authoritative execution and reconciles workflow state before
+checking current data, without ever applying an absent mutation. CLI deferred
+verification carries the same state. Existing async bridge/driver ownership is intact.
+
+Independent thermo-nuclear review approved step 11 and checkpoint B after all
+reproduced false-success cases above were fixed. Final engine unit/core: 2399
+passed, 3 unrelated skips, one existing utcnow warning. Native verification:
+FalkorDB 4.16 server/Lite ordinary/journal 112 passed without skips; Neo4j 5.26
+24 passed without skips. Root CLI/API: 115 passed. Independent reviewer ran 308
+lifecycle/correction/temporal/snapshot cases, 84 verification/recovery/quality,
+15 preparation, 29 diagnostic, and all 136 native verification cases. These gates
+overlap and are not additive counts. Ruff, formatting and diff checks pass.
+
+No step 11 blocker remains. The raw legacy persistence and identity migration
+blockers recorded under step 12 still prevent release acceptance.

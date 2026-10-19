@@ -101,6 +101,95 @@ def normalize_timestamp(value: Any, *, field: str) -> str:
     return _as_utc(parsed).isoformat()
 
 
+def stored_temporal_diagnostics(
+    properties: Mapping[str, Any], *, canonical_fields: Mapping[str, Any] | None = None
+) -> dict[str, str]:
+    """Keep tolerant legacy reads from asserting that malformed times are absent."""
+    if canonical_fields is not None:
+        names = (
+            "valid_at",
+            "valid_from",
+            "invalid_at",
+            "valid_until",
+            "observed_at",
+            "occurred_at",
+        )
+        canonical = {
+            name: canonical_fields[name] for name in names if name in canonical_fields
+        }
+        diagnostics = {
+            **stored_temporal_diagnostics(properties),
+            **stored_temporal_diagnostics(canonical),
+            **stored_temporal_diagnostics({**properties, **canonical}),
+        }
+        for name in canonical.keys() & properties.keys():
+            try:
+                left = (
+                    normalize_timestamp(properties[name], field=name)
+                    if properties[name] is not None
+                    else None
+                )
+                right = (
+                    normalize_timestamp(canonical[name], field=name)
+                    if canonical[name] is not None
+                    else None
+                )
+                if left != right:
+                    diagnostics[name] = (
+                        "stored canonical and property timestamps disagree"
+                    )
+            except ValueError:
+                pass  # Already reported by the individual source checks.
+        return diagnostics
+    diagnostics = {}
+    instants = {}
+    for name in (
+        "valid_at",
+        "valid_from",
+        "invalid_at",
+        "valid_until",
+        "observed_at",
+        "occurred_at",
+    ):
+        value = properties.get(name)
+        if value is None:
+            continue
+        try:
+            instants[name] = parse_dt(normalize_timestamp(value, field=name))
+        except ValueError as exc:
+            diagnostics[name] = str(exc)
+            continue
+        # Native Neo4j timestamps can contain nanoseconds; Python's datetime
+        # would silently truncate them. Readback cannot prove exact equality.
+        nanosecond = getattr(value, "nanosecond", None)
+        if isinstance(nanosecond, int) and nanosecond % 1000:
+            diagnostics[name] = (
+                "stored timestamp exceeds supported microsecond precision"
+            )
+        if isinstance(value, str):
+            import re
+
+            fraction = re.search(r"[T ]\d{2}:\d{2}:\d{2}[.,](\d+)", value)
+            if fraction and any(c != "0" for c in fraction.group(1)[6:]):
+                diagnostics[name] = (
+                    "stored timestamp exceeds supported microsecond precision"
+                )
+    if (
+        "valid_at" in instants
+        and "valid_from" in instants
+        and instants["valid_at"] != instants["valid_from"]
+    ):
+        diagnostics["valid_at"] = diagnostics["valid_from"] = (
+            "stored validity aliases disagree"
+        )
+    start = instants.get("valid_from", instants.get("valid_at"))
+    if start is not None:
+        for name in ("invalid_at", "valid_until"):
+            if name in instants and instants[name] <= start:
+                diagnostics[name] = "stored validity interval is not positive"
+    return diagnostics
+
+
 def normalize_claim_times(properties: Mapping[str, Any]) -> dict[str, Any]:
     """Normalize the temporal contract without changing unrelated annotations."""
     props = dict(properties)
@@ -294,6 +383,7 @@ def row_from_record(rec: Mapping[str, Any]) -> ClaimRow:
         ontology_version=_coerce_str(props.get("ontology_version")),
         record_id=str(props.get("record_id") or props.get("uuid") or ""),
         retired=bool(props.get("retired", False)),
+        temporal_diagnostics=stored_temporal_diagnostics(props),
     )
 
 

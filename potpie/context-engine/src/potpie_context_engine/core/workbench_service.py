@@ -39,7 +39,6 @@ from potpie_context_engine.core.graph_plans import (
     GraphIngestionVerificationResult,
     GraphMutationCommitResult,
     GraphMutationPlanRecord,
-    GraphMutationPlanStatus,
     GraphMutationProposal,
 )
 from potpie_context_engine.core.graph_quality import (
@@ -91,6 +90,7 @@ from .mutation_execution_service import (
 )
 from .mutation_execution_service import (
     commit_status as mutation_commit_status,
+    verify_commit as verify_committed_mutation,
 )
 from .mutation_preparation import propose_mutation
 from .mutation_state import (
@@ -244,21 +244,11 @@ class GraphWorkbenchService(GraphCommitSurface):
         self, plan_id: str, *, pot_id: str
     ) -> GraphIngestionVerificationResult:
         """Verify a committed plan without applying its mutations again."""
-        record = self.plan_store.get(pot_id=pot_id, plan_id=plan_id)
-        if record is None or record.status != GraphMutationPlanStatus.committed.value:
-            return GraphIngestionVerificationResult(
-                ok=False,
-                status="not_committed",
-                plan_id=plan_id,
-                pot_id=pot_id,
-                detail="Only a durably committed plan can be verified.",
-            )
-        return _verify_ingestion_commit(
-            self.backend,
+        return verify_committed_mutation(
+            self,
+            plan_id,
             pot_id=pot_id,
-            record=record,
-            before_quality=record.verification_quality_before,
-            definition=self.definition,
+            verify_receipt=_verify_ingestion_commit,
         )
 
     def history(

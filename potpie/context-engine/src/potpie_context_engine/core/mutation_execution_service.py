@@ -48,6 +48,9 @@ from .mutation_state import (
     _version_conflict,
 )
 from .mutation_verification import (
+    capture_quality_baseline,
+    inconclusive_verification,
+    verify_completed_execution,
     _quality_count_map,
     _verification_next_action,
 )
@@ -98,7 +101,8 @@ def commit_mutation(
             self,
             record,
             result=lookup.result,
-            verify=verify and not defer_verification,
+            verify=verify,
+            defer_verification=defer_verification,
             verify_receipt=verify_receipt,
         )
     if record.status == GraphMutationPlanStatus.committed.value:
@@ -243,7 +247,8 @@ def commit_mutation(
         )
 
     quality_before = (
-        quality_snapshot(
+        capture_quality_baseline(
+            quality_snapshot,
             self.backend,
             pot_id=pot_id,
             definition=self.definition,
@@ -401,7 +406,8 @@ def commit_mutation(
         self,
         record,
         result=result,
-        verify=verify and not defer_verification,
+        verify=verify,
+        defer_verification=defer_verification,
         verify_receipt=verify_receipt,
     )
 
@@ -413,6 +419,7 @@ def _complete_execution(
     result: MutationResult,
     verify: bool,
     verify_receipt: Callable[..., GraphIngestionVerificationResult],
+    defer_verification: bool = False,
 ) -> GraphMutationCommitResult:
     """Finalize workflow bookkeeping exclusively from immutable backend metadata."""
     execution = result.execution
@@ -435,23 +442,39 @@ def _complete_execution(
     if committed != record and not self.plan_store.compare_and_set(
         expected=record, replacement=committed
     ):
-        return _commit_state_changed_result(
+        changed = _commit_state_changed_result(
             self.plan_store.get(pot_id=record.pot_id, plan_id=record.plan_id) or record
         )
+        if verify:
+            return replace(
+                changed,
+                verification_state="deferred",
+                verification=inconclusive_verification(
+                    plan_id=record.plan_id,
+                    pot_id=record.pot_id,
+                    detail="workflow ownership changed during reconciliation; requested verification was deferred",
+                ),
+            )
+        return changed
     verification = (
-        verify_receipt(
+        verify_completed_execution(
+            verify_receipt,
             self.backend,
             pot_id=record.pot_id,
             record=committed,
-            before_quality=record.verification_quality_before,
             definition=self.definition,
         )
-        if verify
+        if verify and not defer_verification
         else None
     )
     return replace(
         _committed_plan_result(committed),
         verification=verification,
+        verification_state=(
+            verification.state
+            if verification is not None
+            else "deferred" if verify else "not_requested"
+        ),
         detail="returned the backend's authoritative execution receipt",
         recommended_next_action=_verification_next_action(verification),
     )
@@ -541,4 +564,45 @@ def commit_status(self, plan_id: str, *, pot_id: str) -> GraphMutationCommitResu
         ok=False,
         detail=record.detail or f"plan is {record.status}",
         recommended_next_action=next_action,
+    )
+
+
+def verify_commit(self, plan_id: str, *, pot_id: str, verify_receipt):
+    """Recover execution evidence before readback; never execute an absent plan."""
+    record = self.plan_store.get(pot_id=pot_id, plan_id=plan_id)
+    if record is None:
+        return inconclusive_verification(
+            plan_id=plan_id,
+            pot_id=pot_id,
+            status="not_committed",
+            detail="No authoritative execution receipt was found for this plan.",
+        )
+    record.validate_prepared()
+    lookup = _lookup_mutation_execution(self.backend, record)
+    if lookup.state != MutationExecutionState.completed.value:
+        unsupported = (
+            ({"capability": "mutation.lookup_execution"},)
+            if lookup.state == MutationExecutionState.unsupported.value
+            else ()
+        )
+        return inconclusive_verification(
+            plan_id=plan_id,
+            pot_id=pot_id,
+            unsupported=unsupported,
+            status=(
+                "not_committed"
+                if lookup.state == MutationExecutionState.absent.value
+                else None
+            ),
+            detail=f"authoritative execution state is {lookup.state}; current verification was not attempted",
+        )
+    result = _complete_execution(
+        self, record, result=lookup.result, verify=True, verify_receipt=verify_receipt
+    )
+    if result.verification is not None:
+        return result.verification
+    return inconclusive_verification(
+        plan_id=plan_id,
+        pot_id=pot_id,
+        detail="execution completed but workflow ownership changed during reconciliation",
     )

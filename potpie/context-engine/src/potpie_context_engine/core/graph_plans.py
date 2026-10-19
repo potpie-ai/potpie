@@ -415,6 +415,10 @@ class GraphIngestionVerificationResult:
     detail: str | None = None
     recommended_next_action: str | None = None
     subgraph_versions: Mapping[str, int] = field(default_factory=dict)
+    state: str = "deferred"
+    outcome: str = "inconclusive"
+    checked_revision: int | None = None
+    verified_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -437,6 +441,10 @@ class GraphIngestionVerificationResult:
             "warnings": list(self.warnings),
             "unsupported": [dict(item) for item in self.unsupported],
             "subgraph_versions": dict(self.subgraph_versions),
+            "state": self.state,
+            "outcome": self.outcome,
+            "checked_revision": self.checked_revision,
+            "verified_at": self.verified_at.isoformat() if self.verified_at else None,
         }
         if self.detail:
             out["detail"] = self.detail
@@ -466,10 +474,12 @@ class GraphMutationCommitResult:
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
     ontology_version: str = ONTOLOGY_VERSION
     execution: ExecutionMetadata | None = None
+    verification_state: str = "not_requested"
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "execution": self.execution.to_dict() if self.execution else None,
+            "verification_state": self.verification_state,
             "ok": self.ok,
             "plan_id": self.plan_id,
             "status": self.status,

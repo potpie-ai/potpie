@@ -56,6 +56,8 @@ class ClaimRow:
     ontology_version: str | None = None
     record_id: str = ""
     retired: bool = False
+    temporal_diagnostics: Mapping[str, str] = field(default_factory=dict)
+    """Read evidence about malformed legacy values; never authored claim data."""
 
 
 @dataclass(frozen=True, slots=True)

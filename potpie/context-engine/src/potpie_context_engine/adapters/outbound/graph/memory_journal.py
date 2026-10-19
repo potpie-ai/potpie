@@ -89,7 +89,7 @@ def records_from_store(store, pot_id: str) -> dict[str, JournalRecord]:
         body = {
             f.name: deepcopy(getattr(row, f.name))
             for f in fields(row)
-            if f.name not in {"pot_id", "record_id", "retired"}
+            if f.name not in {"pot_id", "record_id", "retired", "temporal_diagnostics"}
         }
         body["active"] = not row.retired
         for name, key in (

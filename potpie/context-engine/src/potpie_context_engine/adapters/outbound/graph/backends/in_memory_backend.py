@@ -29,6 +29,7 @@ from potpie_context_engine.core.claim_lifecycle import (
     resolve_claim_assertion,
 )
 from potpie_context_engine.core.claim_preparation import assertion_row
+from potpie_context_engine.core.claim_codec import stored_temporal_diagnostics
 from potpie_context_engine.core.claim_corrections import apply_claim_closure
 from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
 from potpie_context_engine.core.graph_entity_summary import (
@@ -984,6 +985,9 @@ def _row_from_dict(pot_id: str, raw: Mapping[str, Any]) -> ClaimRow:
     embedding = raw.get("fact_embedding")
     source_refs = raw.get("source_refs") or ()
     truth = _coerce_str(raw.get("truth"))
+    temporal_diagnostics = stored_temporal_diagnostics(
+        raw.get("properties", {}), canonical_fields=raw
+    )
     return ClaimRow(
         pot_id=pot_id,
         predicate=raw["predicate"],
@@ -1013,6 +1017,7 @@ def _row_from_dict(pot_id: str, raw: Mapping[str, Any]) -> ClaimRow:
         ontology_version=_coerce_str(raw.get("ontology_version")),
         record_id=str(raw.get("record_id") or ""),
         retired=bool(raw.get("retired", False)),
+        temporal_diagnostics=temporal_diagnostics,
     )
 
 

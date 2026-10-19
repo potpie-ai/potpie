@@ -111,15 +111,15 @@ def commit_with_recovery(
             recommended_next_action=history_command,
         )
     if result.ok and verify:
+        verification = _verify(
+            client,
+            plan_id=plan_id,
+            pot_id=pot_id,
+            retry_command=retry_command,
+            run=run,
+        )
         result = replace(
-            result,
-            verification=_verify(
-                client,
-                plan_id=plan_id,
-                pot_id=pot_id,
-                retry_command=retry_command,
-                run=run,
-            ),
+            result, verification=verification, verification_state=verification.state
         )
     return result
 
@@ -163,6 +163,8 @@ def _verify(
     return GraphIngestionVerificationResult(
         ok=False,
         status="unknown_completion" if outcome_unknown(error) else "error",
+        state="deferred",
+        outcome="inconclusive",
         plan_id=plan_id,
         pot_id=pot_id,
         detail=f"The commit is durable; verification did not complete: {message}",

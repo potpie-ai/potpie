@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .mutation_execution import MutationPersistenceError
+
 from potpie_context_engine.core.mutation_execution import (
     PreparedMutation,
     MutationCapabilities,
@@ -70,7 +72,12 @@ def _subgraph_versions(backend: GraphBackend, pot_id: str) -> dict[str, int]:
         raise CapabilityNotImplemented(
             "atomic_mutation", detail="backend must expose authoritative revisions"
         )
-    return {"_global": int(current_version(pot_id))}
+    version = current_version(pot_id)
+    if type(version) is not int or version < 0:
+        raise MutationPersistenceError(
+            "backend returned an invalid authoritative revision"
+        )
+    return {"_global": version}
 
 
 def _apply_if_current(
