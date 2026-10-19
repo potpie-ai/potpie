@@ -17,6 +17,7 @@ parse boundary and normalized into ``operations=[...]`` immediately.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable, Mapping
 from .claim_corrections import ClaimTarget
 
@@ -390,6 +391,7 @@ class SemanticMutationPlan:
     warnings: tuple[str, ...] = ()
     # Resolved against the proposal snapshot; lowering must not broaden these.
     correction_targets: dict[int, tuple[ClaimTarget, ...]] = field(default_factory=dict)
+    prepared_at: datetime | None = None
 
     @property
     def errors(self) -> tuple[SemanticMutationValidationIssue, ...]:

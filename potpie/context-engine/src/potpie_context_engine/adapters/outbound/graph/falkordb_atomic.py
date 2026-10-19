@@ -309,8 +309,14 @@ def _apply_watched(
             raise GraphMutationVersionConflict(
                 expected=expected_version, current=int(current)
             )
+        graph_updated_at = datetime.now(timezone.utc)
         validate_reconciliation_plan(
-            plan, expected_pot_id, definition=definition, config=reconciliation_config
+            plan,
+            expected_pot_id,
+            definition=definition,
+            config=reconciliation_config,
+            anchor=prepared.prepared_at if prepared else graph_updated_at,
+            provenance=provenance_context,
         )
         validate_administration(plan)
         if revision.version is None:
@@ -343,7 +349,7 @@ def _apply_watched(
                 pot_id=expected_pot_id,
                 mutation_id=mutation_id,
                 context=provenance_context,
-                graph_updated_at=datetime.now(timezone.utc),
+                graph_updated_at=graph_updated_at,
             )
             from .falkordb_claim_candidates import prepare_native_claims
 

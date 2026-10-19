@@ -7,7 +7,7 @@ from dataclasses import replace
 import hashlib
 import uuid
 
-from .claim_codec import _as_utc, iso, row_from_record, parse_dt
+from .claim_codec import _as_utc, iso, row_from_record, normalize_claim_times
 from .claim_corrections import (
     SupersessionBinding,
     prepare_claim_closures,
@@ -37,10 +37,10 @@ def assertion_row(
     stable_source: bool = False,
 ) -> ClaimRow:
     """Normalize once before policy; generated provenance never implies stability."""
-    props = dict(edge.properties)
-    for name in ("valid_at", "valid_from", "invalid_at", "valid_until", "observed_at"):
-        if props.get(name) is not None and parse_dt(props[name]) is None:
-            raise ClaimLifecycleConflict(f"invalid assertion timestamp: {name}")
+    try:
+        props = normalize_claim_times(edge.properties)
+    except ValueError as exc:
+        raise ClaimLifecycleConflict(str(exc)) from exc
     props.setdefault(
         "source_identity_stable",
         bool(stable_source or props.get("source_ref") and props.get("source_system")),
@@ -155,6 +155,10 @@ def prepare_assertions_from_rows(
                 to_key=edge.to_entity_key,
                 provenance=provenance,
             )
+        try:
+            props = normalize_claim_times(props)
+        except ValueError as exc:
+            raise ClaimLifecycleConflict(str(exc)) from exc
         incoming = assertion_row(
             replace(edge, properties=props),
             pot_id=pot_id,

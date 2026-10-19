@@ -20,7 +20,10 @@ from potpie_context_engine.core.graph_mutations import (
     InvalidationOp,
     ProvenanceContext,
 )
-from potpie_context_engine.core.graph_snapshot_mutation import normalize_snapshot_import
+from potpie_context_engine.core.graph_snapshot_mutation import (
+    canonicalize_snapshot_times,
+    normalize_snapshot_import,
+)
 from potpie_context_engine.core.mutation_execution import (
     PreparedMutation,
     batch_fingerprint,
@@ -522,8 +525,8 @@ def test_snapshot_roundtrip_preserves_same_key_incarnations_and_import_replay(gr
         )
         == before
     )
-    assert backend.snapshot.export_data(pot_id=pot) == normalize_snapshot_import(
-        payload, pot_id=pot
+    assert backend.snapshot.export_data(pot_id=pot) == canonicalize_snapshot_times(
+        normalize_snapshot_import(payload, pot_id=pot)
     )
 
 

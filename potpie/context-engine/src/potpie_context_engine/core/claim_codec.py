@@ -89,6 +89,109 @@ def iso(value: datetime | None) -> str | None:
     return _as_utc(value).isoformat() if value is not None else None
 
 
+def normalize_timestamp(value: Any, *, field: str) -> str:
+    """Encode an authored new timestamp; legacy diagnostic parsing stays separate."""
+    parsed = parse_dt(value)
+    if parsed is None:
+        raise ValueError(
+            f"{field} must be a valid ISO 8601 timestamp with an explicit UTC offset"
+        )
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field} timestamp requires an explicit UTC offset")
+    return _as_utc(parsed).isoformat()
+
+
+def normalize_claim_times(properties: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize the temporal contract without changing unrelated annotations."""
+    props = dict(properties)
+    for field in (
+        "valid_at",
+        "valid_from",
+        "invalid_at",
+        "valid_until",
+        "observed_at",
+        "occurred_at",
+    ):
+        if props.get(field) is not None:
+            props[field] = normalize_timestamp(props[field], field=field)
+    starts = [
+        props[field]
+        for field in ("valid_at", "valid_from")
+        if props.get(field) is not None
+    ]
+    if len(set(starts)) > 1:
+        raise ValueError("valid_at and valid_from timestamps disagree")
+    if starts:
+        props["valid_at"] = props["valid_from"] = starts[0]
+        start = parse_dt(starts[0])
+        for field in ("invalid_at", "valid_until"):
+            if props.get(field) is not None and parse_dt(props[field]) <= start:
+                raise ValueError(f"{field} timestamp must follow the validity start")
+    return props
+
+
+ENTITY_TEMPORAL_FIELDS = frozenset(
+    {
+        "valid_at",
+        "valid_from",
+        "valid_to",
+        "invalid_at",
+        "valid_until",
+        "observed_at",
+        "occurred_at",
+        "deployed_at",
+        "merge_recorded_at",
+        "state_transition_at",
+    }
+)
+
+
+def normalize_entity_times(properties: Mapping[str, Any]) -> dict[str, Any]:
+    """Standard entity time fields share the claim timestamp syntax and aliases."""
+    props = dict(properties)
+    for field in ENTITY_TEMPORAL_FIELDS:
+        value = props.get(field)
+        if value is not None and value != "":
+            props[field] = normalize_timestamp(value, field=field)
+    # Empty required-property defaults mean unknown, not an authored instant.
+    temporal = {
+        key: value
+        for key, value in props.items()
+        if key in ENTITY_TEMPORAL_FIELDS and value != ""
+    }
+    props.update(normalize_claim_times(temporal))
+    return props
+
+
+def normalize_snapshot_claim_times(claim: Mapping[str, Any]) -> dict[str, Any]:
+    """Canonicalize one imported/comparable claim without regenerating identity."""
+    canonical = dict(claim)
+    props = dict(claim.get("properties") or {})
+    combined = dict(props)
+    fields = ("valid_at", "invalid_at", "valid_until", "observed_at")
+    for field in fields:
+        value = claim.get(field)
+        if value is not None:
+            encoded = normalize_timestamp(value, field=field)
+            if (
+                props.get(field) is not None
+                and normalize_timestamp(props[field], field=field) != encoded
+            ):
+                raise ValueError(f"snapshot {field} timestamp aliases disagree")
+            combined[field] = encoded
+    normalized = normalize_claim_times(combined)
+    for field in fields:
+        if normalized.get(field) is not None:
+            canonical[field] = normalized[field]
+        props.pop(field, None)
+    # Validity aliases are canonical fields, not independent annotations.
+    props.pop("valid_from", None)
+    if normalized.get("occurred_at") is not None:
+        props["occurred_at"] = normalized["occurred_at"]
+    canonical["properties"] = props
+    return canonical
+
+
 def vector_property(value: Any) -> tuple[float, ...] | None:
     """Coerce a stored vector property into the ClaimRow tuple shape."""
     if value is None:

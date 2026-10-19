@@ -83,13 +83,29 @@ def _stamp_property_markers(props: dict[str, Any], original: Mapping[str, Any]) 
         )
 
 
+def _export_native_times(properties: Mapping[str, Any]) -> dict[str, Any]:
+    """Encode typed native timestamps without guessing a missing timezone."""
+    from datetime import datetime
+
+    exported = dict(properties)
+    for key, value in exported.items():
+        if isinstance(value, datetime):
+            exported[key] = value.isoformat()
+        elif callable(getattr(value, "to_native", None)):
+            # Neo4j temporal values provide their exact ISO representation.
+            native = value.to_native()
+            if isinstance(native, datetime):
+                exported[key] = value.iso_format()
+    return exported
+
+
 def entity_row(
     key: Any, labels: Iterable[Any], props: Mapping[str, Any]
 ) -> dict[str, Any]:
     properties = dict(props)
     properties.pop("entity_key", None)
     properties.pop("group_id", None)
-    properties = _restore_snapshot_properties(properties)
+    properties = _export_native_times(_restore_snapshot_properties(properties))
     return {
         "key": str(key),
         "labels": sorted(str(label) for label in labels),
@@ -113,7 +129,7 @@ def claim_row(props: Mapping[str, Any]) -> dict[str, Any]:
         stored_embedding = raw.get("fact_embedding")
         if _same_numeric_vector(stored_embedding, original_embedding):
             raw["fact_embedding"] = original_embedding
-    raw = _restore_snapshot_properties(raw)
+    raw = _export_native_times(_restore_snapshot_properties(raw))
     record_id = raw.pop("record_id", None) or raw.get("uuid")
     fields = {
         name: raw.pop(name, None)

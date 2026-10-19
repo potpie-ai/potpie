@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from uuid import uuid4
+from .claim_codec import normalize_entity_times, normalize_timestamp
 
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
@@ -26,6 +27,7 @@ from potpie_context_engine.core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,
+    ProvenanceContext,
 )
 from potpie_context_engine.core.ontology import (
     BASE_GRAPH_LABELS,
@@ -52,9 +54,6 @@ MAX_GENERIC_ENTITY_UPSERTS = 5000
 MAX_GENERIC_EDGES = 10000
 MAX_INVALIDATIONS = 2000
 
-_TEMPORAL_PROPERTY_KEYS = frozenset(
-    {"valid_at", "valid_from", "valid_to", "observed_at", "deployed_at"}
-)
 _OBSERVATION_FALLBACK = "Observation"
 
 
@@ -64,7 +63,18 @@ def validate_reconciliation_plan(
     *,
     definition: GraphDefinition | None = None,
     config: ReconciliationConfig | None = None,
+    anchor: datetime | None = None,
+    provenance: ProvenanceContext | None = None,
 ) -> None:
+    anchor = anchor or datetime.now(timezone.utc)
+    if provenance is not None:
+        for field in ("event_occurred_at", "event_received_at"):
+            value = getattr(provenance, field)
+            if value is not None:
+                try:
+                    normalize_timestamp(value, field=field)
+                except ValueError as exc:
+                    raise MutationBatchValidationError(str(exc)) from exc
     # Batches are mutable: validate administrative exclusivity again at the write boundary.
     try:
         plan.__post_init__()
@@ -131,7 +141,7 @@ def validate_reconciliation_plan(
 
     soft = config.ontology_soft_fail and not config.ontology_strict
     if soft:
-        _apply_soft_ontology_downgrades(plan)
+        _apply_soft_ontology_downgrades(plan, anchor=anchor, provenance=provenance)
 
     if plan.ontology_downgrades and _quality_issue_attach_room(plan):
         _attach_ontology_downgrade_quality_issues(plan)
@@ -215,27 +225,20 @@ def _validate_temporal_strings(plan: MutationBatch) -> None:
 
 
 def _assert_iso_temporal_props(props: dict[str, object], ref: str) -> None:
-    for key in _TEMPORAL_PROPERTY_KEYS:
-        raw = props.get(key)
-        if raw is None:
-            continue
-        if isinstance(raw, datetime):
-            continue
-        s = str(raw).strip()
-        if not s:
-            continue
-        try:
-            datetime.fromisoformat(s.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise MutationBatchValidationError(
-                f"{ref}: {key!r} must be a valid ISO 8601 timestamp"
-            ) from exc
+    try:
+        props.update(normalize_entity_times(props))
+    except ValueError as exc:
+        raise MutationBatchValidationError(f"{ref}: {exc}") from exc
 
 
-def _apply_soft_ontology_downgrades(plan: MutationBatch) -> None:
+def _apply_soft_ontology_downgrades(
+    plan: MutationBatch, *, anchor: datetime, provenance: ProvenanceContext | None
+) -> None:
     out = plan.ontology_downgrades
     allowed_nc = BASE_GRAPH_LABELS | CODE_GRAPH_LABELS
-    _backfill_edge_required_temporal_props(plan, out)
+    _backfill_edge_required_temporal_props(
+        plan, out, anchor=anchor, provenance=provenance
+    )
     for ent in plan.entity_upserts:
         props = dict(ent.properties)
         ent.properties = props
@@ -254,7 +257,12 @@ def _apply_soft_ontology_downgrades(plan: MutationBatch) -> None:
             )
         if not ent.preserve_labels and not canonical_entity_labels(ent.labels):
             if not _try_adr_document_fallback(ent, removed, out):
-                _observation_fallback(ent, out)
+                _observation_fallback(
+                    ent,
+                    out,
+                    anchor=(provenance.event_received_at if provenance else None)
+                    or anchor,
+                )
         for label in canonical_entity_labels(ent.labels):
             _coerce_lifecycle_for_label(ent, label, out)
         for label in canonical_entity_labels(ent.labels):
@@ -315,7 +323,9 @@ def _try_adr_document_fallback(
     return True
 
 
-def _observation_fallback(ent: EntityUpsert, out: list[dict[str, str]]) -> None:
+def _observation_fallback(
+    ent: EntityUpsert, out: list[dict[str, str]], *, anchor: datetime
+) -> None:
     labels = list(ent.labels)
     for mark in (_OBSERVATION_FALLBACK, "Entity"):
         if mark not in labels:
@@ -324,7 +334,7 @@ def _observation_fallback(ent: EntityUpsert, out: list[dict[str, str]]) -> None:
     if not ent.properties.get("summary"):
         ent.properties["summary"] = (ent.entity_key or "unknown")[:500]
     if not ent.properties.get("observed_at"):
-        ent.properties["observed_at"] = datetime.now(timezone.utc).isoformat()
+        ent.properties["observed_at"] = normalize_timestamp(anchor, field="observed_at")
     out.append(
         {
             "entity_uuid": ent.entity_key,
@@ -367,7 +377,11 @@ def _coerce_lifecycle_for_label(
 
 
 def _backfill_edge_required_temporal_props(
-    plan: MutationBatch, out: list[dict[str, str]]
+    plan: MutationBatch,
+    out: list[dict[str, str]],
+    *,
+    anchor: datetime,
+    provenance: ProvenanceContext | None,
 ) -> None:
     """Fill ``valid_from`` / ``valid_at`` / ``observed_at`` with apply time when missing.
 
@@ -375,8 +389,13 @@ def _backfill_edge_required_temporal_props(
     without the required temporal anchor. Stamp ``now()`` rather than rejecting
     the whole batch — the caller can override via explicit edge properties.
     """
-    anchor = datetime.now(timezone.utc)
-    anchor_iso = anchor.isoformat()
+    occurred_at = provenance.event_occurred_at if provenance else None
+    received_at = provenance.event_received_at if provenance else None
+    defaults = {
+        "valid_at": occurred_at or anchor,
+        "valid_from": occurred_at or anchor,
+        "observed_at": received_at or anchor,
+    }
 
     for edge in plan.edge_upserts:
         spec = EDGE_TYPES.get(edge.edge_type)
@@ -390,7 +409,15 @@ def _backfill_edge_required_temporal_props(
             current = props.get(prop)
             if current and str(current).strip():
                 continue
-            props[prop] = anchor_iso
+            value = (
+                (props.get("valid_at") or props.get("valid_from"))
+                if prop in {"valid_at", "valid_from"}
+                else None
+            )
+            default = value or defaults[prop]
+            props[prop] = (
+                default.isoformat() if isinstance(default, datetime) else default
+            )
             backfilled.append(prop)
         if backfilled:
             edge.properties = props

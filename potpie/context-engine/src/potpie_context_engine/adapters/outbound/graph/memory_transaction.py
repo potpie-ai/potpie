@@ -93,6 +93,12 @@ def apply_transaction(
             expected_pot_id,
             definition=owner.definition,
             config=reconciliation_config,
+            anchor=(
+                provenance.prepared.prepared_at
+                if provenance and provenance.prepared
+                else applied_at
+            ),
+            provenance=provenance,
         )
         writer = replace(
             owner,

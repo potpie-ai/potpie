@@ -53,6 +53,47 @@ def claim_matches_time_filter(
     )
 
 
+def claim_matches_post_filter(
+    row: ClaimRow, filter_: ClaimQueryFilter, *, query_time: datetime
+) -> bool:
+    """Hydrated predicates that must run before ranking and the result limit."""
+    if not claim_matches_time_filter(row, filter_, query_time=query_time):
+        return False
+    for values, actual in (
+        (filter_.environment_in, row.environment),
+        (filter_.truth_in, row.truth),
+    ):
+        if values and (actual or "").lower() not in {value.lower() for value in values}:
+            return False
+    if filter_.exact_text_in or filter_.exact_text_pattern:
+        import re
+
+        haystack = " ".join(
+            str(value)
+            for value in (
+                row.subject_key,
+                row.object_key,
+                row.claim_key,
+                row.fact,
+                row.description,
+                row.source_ref,
+                row.source_refs,
+                row.properties,
+            )
+            if value is not None
+        ).lower()
+        if filter_.exact_text_in and not any(
+            needle.lower() in haystack for needle in filter_.exact_text_in
+        ):
+            return False
+        if (
+            filter_.exact_text_pattern
+            and re.fullmatch(filter_.exact_text_pattern, haystack) is None
+        ):
+            return False
+    return True
+
+
 def embedding_score(fact: str | None, query: str) -> float:
     """Token-overlap stand-in for native vector similarity."""
     if not fact:
@@ -107,22 +148,7 @@ WHERE ($include_retired OR (coalesce(r.retired,false)=false AND coalesce(a.retir
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
   AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
-  AND ($exact_text IS NULL OR any(needle IN $exact_text WHERE
-    toLower(coalesce(r.subject_key, '') + ' ' + coalesce(r.object_key, '') + ' ' +
-      coalesce(r.claim_key, '') + ' ' + coalesce(r.fact, '') + ' ' +
-      coalesce(r.description, '') + ' ' + coalesce(r.source_ref, '') + ' ' +
-      reduce(text = '', ref IN [] + coalesce(r.source_refs, []) | text + ' ' + ref))
-    CONTAINS needle))
-  AND ($environments IS NULL OR toLower(coalesce(r.environment, '')) IN $environments)
-  AND ($truths IS NULL OR toLower(coalesce(r.truth, '')) IN $truths)
   AND ($endpoint_label IS NULL OR $endpoint_label IN labels(a) OR $endpoint_label IN labels(b))
-  AND ($include_invalid OR (
-    (coalesce(r.valid_from, r.valid_at) IS NULL OR coalesce(r.valid_from, r.valid_at) <= $query_time)
-    AND (r.valid_until IS NULL OR $query_time < r.valid_until)
-    AND (r.invalid_at IS NULL OR $query_time < r.invalid_at)
-  ))
-  AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
-  AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
   AND ($subject_label IS NULL OR $subject_label IN labels(a))
   AND ($object_label IS NULL OR $object_label IN labels(b))
 RETURN r{.*, fact_embedding: NULL} AS props

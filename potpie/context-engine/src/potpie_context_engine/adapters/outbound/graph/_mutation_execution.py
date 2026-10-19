@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from potpie_context_engine.core.mutation_execution import PREPARATION_SCHEMA_VERSION
+
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
@@ -106,7 +108,11 @@ def validate_prepared_execution(
 
 def validate_new_preparation(provenance: ProvenanceContext | None) -> None:
     """Call only after authoritative lookup has proved no receipt exists."""
-    if provenance and provenance.prepared and provenance.prepared.schema_version < 3:
+    if (
+        provenance
+        and provenance.prepared
+        and provenance.prepared.schema_version < PREPARATION_SCHEMA_VERSION
+    ):
         raise MutationExecutionReuseError(
             "migration_required: unexecuted legacy preparation needs a fresh identity"
         )

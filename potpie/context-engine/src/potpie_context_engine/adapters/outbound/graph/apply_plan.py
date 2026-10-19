@@ -120,11 +120,18 @@ async def apply_mutation_batch(
     Returns a :class:`MutationResult` carrying the caller-reserved mutation id,
     or a generated UUID when no reservation was supplied.
     """
+    graph_updated_at = datetime.now(timezone.utc)
     validate_reconciliation_plan(
         plan,
         expected_pot_id,
         definition=definition,
         config=reconciliation_config,
+        anchor=(
+            provenance_context.prepared.prepared_at
+            if provenance_context and provenance_context.prepared
+            else graph_updated_at
+        ),
+        provenance=provenance_context,
     )
 
     mutation_id = (
@@ -132,7 +139,6 @@ async def apply_mutation_batch(
         if provenance_context is not None and provenance_context.mutation_id
         else str(uuid4())
     )
-    graph_updated_at = datetime.now(timezone.utc)
     prov = _build_provenance(
         plan,
         pot_id=expected_pot_id,

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 FINGERPRINT_VERSION = 1
-PREPARATION_SCHEMA_VERSION = 3
+PREPARATION_SCHEMA_VERSION = 4
 EXECUTION_SCHEMA_VERSION = 2
 
 
@@ -140,7 +140,7 @@ class PreparedMutation:
 
     def __post_init__(self) -> None:
         if (
-            self.schema_version not in {1, 2, PREPARATION_SCHEMA_VERSION}
+            self.schema_version not in {1, 2, 3, PREPARATION_SCHEMA_VERSION}
             or self.fingerprint_version != FINGERPRINT_VERSION
         ):
             raise MutationPersistenceError("unsupported prepared mutation version")

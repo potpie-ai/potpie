@@ -9,7 +9,10 @@ from potpie_context_engine.core.graph_snapshot import (
     snapshot_claim_identity,
     validate_snapshot_merge,
 )
-from potpie_context_engine.core.graph_snapshot_mutation import normalize_snapshot_import
+from potpie_context_engine.core.graph_snapshot_mutation import (
+    canonicalize_snapshot_times,
+    normalize_snapshot_import,
+)
 from potpie_context_engine.core.mutation_execution import MutationPersistenceError
 from potpie_context_engine.core.reconciliation import MutationResult, MutationSummary
 
@@ -38,6 +41,7 @@ async def merge_snapshot(
     """Validate the complete merge before applying exact missing native records."""
     if normalize_snapshot_import(incoming, pot_id=pot_id) != incoming:
         raise ValueError("snapshot import requires normalized stable record identities")
+    incoming = canonicalize_snapshot_times(incoming)
     validate_native_snapshot_properties(incoming)
     for entity in incoming["entities"]:
         labels = tuple(entity["labels"])

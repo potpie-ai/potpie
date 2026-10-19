@@ -26,6 +26,8 @@ from potpie_context_engine.core.semantic_mutations import (
 )
 
 from .claim_preparation import prepare_claim_assertions
+from .reconciliation_validation import validate_reconciliation_plan
+from .errors import MutationBatchValidationError
 from .claim_lifecycle import ClaimLifecycleConflict
 from .semantic_mutations import SemanticMutationValidationIssue
 from .mutation_execution import PreparedMutation, batch_fingerprint, request_fingerprint as _request_fingerprint
@@ -175,7 +177,15 @@ def propose_mutation(
         GraphMutationPlanStatus.conflict.value,
     }:
         try:
+            semantic_plan.prepared_at = now
             self.lowerer(request, semantic_plan)
+            validate_reconciliation_plan(
+                semantic_plan.batch,
+                pot_id,
+                definition=self.definition,
+                anchor=now,
+                provenance=semantic_plan.provenance,
+            )
             prepare_claim_assertions(
                 semantic_plan.batch,
                 pot_id=pot_id,
@@ -184,7 +194,7 @@ def propose_mutation(
                 query=self.backend.claim_query,
                 definition=self.definition,
             )
-        except ClaimLifecycleConflict as exc:
+        except (ClaimLifecycleConflict, MutationBatchValidationError) as exc:
             status = GraphMutationPlanStatus.invalid.value
             semantic_plan.issues = (
                 *semantic_plan.issues,

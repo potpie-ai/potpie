@@ -363,10 +363,13 @@ def validate_snapshot_identities(payload: Mapping[str, Any]) -> None:
 
 
 def _identity_comparison_row(row: Mapping[str, Any], *, entity: bool) -> dict[str, Any]:
-    normalized = dict(row)
-    props = dict(row.get("properties", {}))
+    from .claim_codec import normalize_snapshot_claim_times, normalize_entity_times
+
+    normalized = dict(row) if entity else normalize_snapshot_claim_times(row)
+    props = dict(normalized.get("properties", {}))
     identity = snapshot_record_id(row)
     if entity:
+        props = normalize_entity_times(props)
         if identity is not None:
             props["record_id"] = identity
     else:

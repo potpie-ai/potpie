@@ -32,7 +32,8 @@ pytestmark = pytest.mark.unit
 
 def test_write_time_normalization_makes_offsets_backend_comparable() -> None:
     assert _utc_iso("2026-01-01T05:00:00+05:30") == "2025-12-31T23:30:00+00:00"
-    assert _utc_iso("2026-01-01T00:00:00") == "2026-01-01T00:00:00+00:00"
+    with pytest.raises(ValueError, match="offset"):
+        _utc_iso("2026-01-01T00:00:00")
 
 
 def test_public_commit_verifies_future_claim_and_preserves_historical_read(
@@ -187,7 +188,7 @@ class _FalkorGraph:
 
 
 @pytest.mark.parametrize("adapter", ["neo4j", "falkordb"])
-def test_database_adapters_apply_same_validity_predicate(adapter: str) -> None:
+def test_database_adapters_do_not_compare_iso_strings(adapter: str) -> None:
     point = datetime(2026, 9, 21, tzinfo=timezone.utc)
     if adapter == "neo4j":
         driver = _Neo4jDriver()
@@ -203,9 +204,9 @@ def test_database_adapters_apply_same_validity_predicate(adapter: str) -> None:
         query, params = graph.captured[0]
 
     assert params["query_time"] == point.isoformat()
-    assert "coalesce(r.valid_from, r.valid_at) <= $query_time" in query
-    assert "$query_time < r.valid_until" in query
-    assert "$query_time < r.invalid_at" in query
+    assert "$query_time" not in query
+    assert "$va_after" not in query
+    assert "$va_before" not in query
 
 
 def test_timeline_event_date_is_identical_for_repo_service_and_source_routes() -> None:

@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Iterable, Mapping, TYPE_CHECKING
 import hashlib
 
-from .claim_codec import _as_utc, iso, parse_dt
+from .claim_codec import _as_utc, iso, parse_dt, normalize_timestamp
 from .claim_lifecycle import (
     ClaimLifecycleConflict,
     claim_scope,
@@ -239,10 +239,16 @@ def prepare_claim_closures(
         if unresolved:
             point = effective_at or anchor
             if isinstance(op, InvalidationOp) and op.valid_to is not None:
-                point = parse_dt(op.valid_to)
-                if point is None:
-                    raise ClaimLifecycleConflict("invalid correction endpoint")
-            point = _as_utc(point)
+                try:
+                    point = parse_dt(normalize_timestamp(op.valid_to, field="valid_to"))
+                except ValueError as exc:
+                    raise ClaimLifecycleConflict(str(exc)) from exc
+            try:
+                point = parse_dt(
+                    normalize_timestamp(point, field="correction effective time")
+                )
+            except ValueError as exc:
+                raise ClaimLifecycleConflict(str(exc)) from exc
             closures = []
             for row in selected:
                 before = ClaimInterval.from_row(row)

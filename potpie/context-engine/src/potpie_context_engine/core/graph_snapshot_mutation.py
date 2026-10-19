@@ -1,5 +1,6 @@
 """Canonical snapshot import intent, identity and frozen execution context."""
 
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Mapping
 import uuid
@@ -76,3 +77,20 @@ def prepare_snapshot_import(
         target_claim_record_ids=tuple(row["record_id"] for row in incoming["claims"]),
     )
     return batch, ProvenanceContext(mutation_id=identity, prepared=prepared)
+
+
+def canonicalize_snapshot_times(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Private physical import copy, strictly validated only after receipt lookup.
+
+    Original payload bytes and synthesized identities still bind the receipt.
+    Never use this helper when decoding legacy plans, exports or stored receipts.
+    """
+    from .claim_codec import normalize_snapshot_claim_times, normalize_entity_times
+
+    canonical = deepcopy(dict(payload))
+    canonical["claims"] = [
+        normalize_snapshot_claim_times(claim) for claim in canonical["claims"]
+    ]
+    for entity in canonical["entities"]:
+        entity["properties"] = normalize_entity_times(entity.get("properties") or {})
+    return canonical

@@ -11,6 +11,7 @@ from potpie_context_engine.core.graph_snapshot import (
     validate_snapshot_merge,
 )
 from potpie_context_engine.core.graph_snapshot_mutation import (
+    canonicalize_snapshot_times,
     validate_snapshot_identities,
 )
 from potpie_context_engine.core.mutation_execution import MutationPersistenceError
@@ -117,6 +118,7 @@ def _reset_effects(graph, pipe, params, clauses):
 def _snapshot_effects(graph, pipe, incoming, params, clauses):
     from .falkordb_snapshot import read_snapshot
 
+    incoming = canonicalize_snapshot_times(incoming)
     existing = read_snapshot(graph, pipe, params["pot"])
     validate_snapshot_merge(
         existing_entities=existing["entities"],

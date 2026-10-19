@@ -39,7 +39,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | 7 | fix(graph): make plan persistence and public recovery crash-safe | Corruption fail-closed, crash recovery, stale owner fencing | Checkpoint A approved by independent shared and backend reviewers. Engine unit/core + public runtime/semantic gate: 1929 passed, 3 unrelated skips. Root CLI/runtime gate: 146 passed; final reset gate: 16 passed. Native integrity: 25 passed across server/Lite/Neo4j. Detailed evidence below. |
 | 8 | fix(graph): preserve claim incarnations and scoped supersession | Historical intervals and source/environment isolation | Approved by independent shared/adapter reviewer. Shared history and source policy, physical identity and endpoint guards; detailed local/native evidence below. |
 | 9 | fix(graph): freeze correction targets and dependent effects | Preview/commit/verify targets identical; stale conflicts | Independent shared review approved. Engine core/unit 2265 passed 3 unrelated skips; Falkor server/Lite 472 passed 1 restart-opt-in skip; Neo 111 passed 1 restart-opt-in skip. Details below. |
-| 10 | fix(graph): normalize temporal writes and query semantics | Offset/boundary/occurrence/query-limit parity | Pending |
+| 10 | fix(graph): normalize temporal writes and query semantics | Offset/boundary/occurrence/query-limit parity | Independent review approved; 2329 unit/core, 108 live temporal, 142 public API/CLI cases passed. Details below. |
 | 11 | fix(graph): separate execution success from current verification | Current lifecycle results independent of execution receipt | Pending |
 | 12 | feat(graph): add resumable legacy graph repair | Dry-run, resumability, ambiguity rejection, receipt preservation | Pending |
 | 13 | test(graph): require full backend and public API acceptance | Live native matrix, supported Windows, independent review/QA | Pending |
@@ -310,3 +310,35 @@ root public graph/resource/CLI recovery 201 passed; FalkorDB 4.16 server/Lite 47
 1 optional restart skip. Actual restarts already passed steps 5/8. Independent reviewer
 111 shared/resource/prepared cases plus 4 new native reproductions passed. No known
 step 9 invariant blocker remains. Syntax/lint/whitespace gates pass.
+
+## Step 10 contract and acceptance
+
+Independent thermo-nuclear design and implementation reviews approved the shared
+UTC policy. Prepared schema 4 marks strict physical timestamp normalization;
+schemas 1–3 remain readable for completed-receipt recovery, while unexecuted old
+preparations require a fresh identity. Receipt schema 2 and fingerprint version 1
+are unchanged. New authored contract timestamps require an explicit offset, use
+UTC, agree across aliases, and form positive half-open intervals. One preparation
+anchor supplies generated defaults. Occurrence and receipt/observation times retain
+their separate meanings, including lowered structural relationships.
+
+Snapshot request identity, default identities, generated IDs, and fingerprints keep
+their original normalization bytes. Authoritative receipt lookup occurs first;
+only an absent execution permits canonicalizing a private physical-write copy.
+Same-ID merge compares equivalent instants. Legacy native datetime export preserves
+original offsets and missing-zone information without changing stored properties;
+ambiguous data remains available for explicit step 12 repair.
+
+All readers consume one shared instant-aware post-filter before final ranking and
+limiting. Native queries no longer compare ISO strings lexically. Vector queries
+retain their documented approximate candidate budget, then apply scope, endpoint
+retirement, text and temporal predicates before slicing. A zero limit is empty.
+
+Final gates: engine unit/core 2329 passed, 3 unrelated skips, one existing utcnow
+warning; combined live FalkorDB 4.16/Neo4j 5.26 temporal/conformance 108 passed;
+root API/CLI 142 passed. The added Neo4j typed DateTime export regression passed
+in its 15-case live suite and its reader/snapshot unit gate passed 18 tests.
+Workers' broader native gates passed 582 Falkor server/Lite cases and 128 Neo4j
+cases (each left the separate opt-in restart test unselected; restarts were already
+proven in steps 5/8). Independent reviewer reran 83 focused and 48 native cases.
+Scoped formatting, Ruff and whitespace checks pass. No step 10 blocker remains.

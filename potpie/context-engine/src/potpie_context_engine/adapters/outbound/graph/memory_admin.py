@@ -10,7 +10,10 @@ from potpie_context_engine.core.graph_snapshot import (
     snapshot_claim_identity,
     validate_snapshot_merge,
 )
-from potpie_context_engine.core.graph_snapshot_mutation import prepare_snapshot_import
+from potpie_context_engine.core.graph_snapshot_mutation import (
+    canonicalize_snapshot_times,
+    prepare_snapshot_import,
+)
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.journal_context import (
     JournalWriteContext,
@@ -122,6 +125,7 @@ def apply_snapshot_import(
     from .backends.in_memory_backend import _Snapshot, _row_from_dict
 
     _require_unjournaled(writer, pot_id, "snapshot import")
+    payload = canonicalize_snapshot_times(payload)
     existing = _Snapshot(writer.store, writer).export_data(pot_id=pot_id)
     validate_snapshot_merge(
         existing_entities=existing["entities"],

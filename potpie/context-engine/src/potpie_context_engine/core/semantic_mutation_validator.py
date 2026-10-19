@@ -22,7 +22,7 @@ from __future__ import annotations
 from .claim_codec import claim_preservation_snapshot as _claim_snapshot
 
 from contextvars import ContextVar
-from datetime import datetime
+from .claim_codec import normalize_timestamp, normalize_claim_times
 from typing import Mapping
 
 from potpie_context_engine.core.definition import (
@@ -329,8 +329,15 @@ def _validate_op(
         if raw and not _parses_iso(raw):
             err(
                 "bad_timestamp",
-                f"{field_name} {raw!r} is not a valid ISO 8601 timestamp",
+                f"{field_name} {raw!r} is not a valid ISO 8601 timestamp with an explicit UTC offset",
             )
+
+    try:
+        normalize_claim_times(
+            {"valid_at": op.raw.get("valid_at"), "valid_from": op.valid_from}
+        )
+    except ValueError as exc:
+        err("bad_timestamp", str(exc))
 
     # 6. evidence authorities (when present) must be known
     for ev in op.evidence:
@@ -989,7 +996,7 @@ def subgraph_for_predicate(
 
 def _parses_iso(value: str) -> bool:
     try:
-        datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        normalize_timestamp(value, field="semantic")
         return True
     except (ValueError, AttributeError):
         return False

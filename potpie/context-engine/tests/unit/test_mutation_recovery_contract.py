@@ -291,3 +291,25 @@ def test_status_never_substitutes_workflow_bookkeeping_for_authority(state):
     assert not wb.commit_status(record.plan_id, pot_id="p").ok
     assert not wb.commit(record.plan_id, pot_id="p").ok
     assert backend.mutation.current_version("p") == 1
+
+
+@pytest.mark.parametrize("schema", [1, 2, 3])
+def test_prior_preparation_requires_new_identity_only_when_receipt_absent(schema):
+    from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
+        MutationExecutionReuseError,
+    )
+
+    backend, store, wb, record = _prepared()
+    old = replace(record, prepared=replace(record.prepared, schema_version=schema))
+    store.save(old)
+    with pytest.raises(MutationExecutionReuseError, match="migration_required"):
+        _execute(backend, old)
+    rejected = wb.commit(record.plan_id, pot_id="p")
+    assert not rejected.ok and "migration_required" in rejected.detail
+    assert backend.mutation.current_version("p") == 0
+
+    receipt = _execute(backend, record)
+    assert _execute(backend, old) == receipt
+    recovered = wb.commit(record.plan_id, pot_id="p")
+    assert recovered.ok and recovered.execution == receipt.execution
+    assert backend.mutation.current_version("p") == 1

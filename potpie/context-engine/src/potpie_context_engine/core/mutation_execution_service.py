@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from potpie_context_engine.core.mutation_execution import PREPARATION_SCHEMA_VERSION
+
 import logging
 import uuid
 from collections.abc import Mapping
@@ -136,7 +138,7 @@ def commit_mutation(
     if (
         record.prepared is None
         or record.lowered_batch is None
-        or record.prepared.schema_version < 2
+        or record.prepared.schema_version < PREPARATION_SCHEMA_VERSION
     ):
         return _errored_commit_result(
             record,
