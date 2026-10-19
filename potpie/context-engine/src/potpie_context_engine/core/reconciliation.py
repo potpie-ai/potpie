@@ -7,8 +7,7 @@ agent contract — the public, agent-facing tier is
 :mod:`potpie_context_engine.core.semantic_mutations`, which lowers into a ``MutationBatch``.
 
 Naming (Graph V1.5 Step 5a): the batch reconciles nothing — it is a mutation
-batch, so the canonical name is ``MutationBatch`` (``ReconciliationPlan`` is
-kept as a thin back-compat alias for existing importers). "Reconciliation" is
+batch, so the canonical name is ``MutationBatch``. "Reconciliation" is
 reserved for genuine source-state convergence (the ledger ``reconcile()`` path
 and V2's ``reconcile_snapshot``).
 
@@ -32,13 +31,9 @@ from potpie_context_engine.core.graph_mutations import (
 )
 
 # Step 11 parked the agentic-only types into ``potpie_context_engine.core.llm_reconciliation`` so
-# this module holds only the live structural write tier. Re-exported here as a
-# thin back-compat shim for one iteration; ``MutationBatch.evidence`` keeps its
-# ``EvidenceRef`` element type through this import.
-from potpie_context_engine.core.llm_reconciliation import (  # noqa: F401  (re-export shim)
-    EvidenceRef,
-    ReconciliationRequest,
-)
+# this module holds only the live structural write tier. ``MutationBatch.evidence``
+# keeps its ``EvidenceRef`` element type through this import.
+from potpie_context_engine.core.llm_reconciliation import EvidenceRef
 
 
 @dataclass(slots=True)
@@ -64,12 +59,6 @@ class MutationBatch:
     warnings: list[str] = field(default_factory=list)
     ontology_downgrades: list[dict[str, str]] = field(default_factory=list)
     """Populated when soft ontology downgrade runs (API surface); not persisted on plan slices."""
-
-
-# Back-compat alias — the public ``SemanticMutationPlan`` keeps its name;
-# ``MutationBatch`` is the internal tier it lowers into. Existing importers of
-# ``ReconciliationPlan`` keep working; new code uses ``MutationBatch``.
-ReconciliationPlan = MutationBatch
 
 
 @dataclass(slots=True)
@@ -107,11 +96,8 @@ ReconciliationResult = MutationResult
 
 
 __all__ = [
-    "EvidenceRef",
     "MutationBatch",
     "MutationResult",
     "MutationSummary",
-    "ReconciliationPlan",
-    "ReconciliationRequest",
     "ReconciliationResult",
 ]
