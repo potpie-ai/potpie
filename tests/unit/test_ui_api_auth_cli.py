@@ -75,7 +75,7 @@ def calls(daemon, monkeypatch) -> dict[str, tuple[str, dict[str, str]]]:
 
     def _get(url: str, headers: Any = None, timeout: float | None = None) -> _Response:
         seen["get"] = (url, dict(headers or {}))
-        return _Response(200, {"pots": [], "active": None})
+        return _Response(200, {"pots": [], "active": None, "active_origin": "local"})
 
     def _post(url: str, headers: Any = None, timeout: float | None = None) -> _Response:
         seen["post"] = (url, dict(headers or {}))
@@ -99,7 +99,7 @@ def test_the_opened_url_carries_a_handoff_code_not_the_token(calls, capsys) -> N
     ui_cmd.ui_command(open_browser=False, pot=None)
 
     printed = capsys.readouterr().out
-    assert f"{BASE}/ui?k=handoff-code" in printed
+    assert f"{BASE}/ui?host=local&k=handoff-code" in printed
     assert TOKEN not in printed
     # Both daemon calls are authenticated: an anonymous probe would report a
     # working daemon as broken, and an anonymous mint would be refused.
@@ -114,8 +114,9 @@ def test_no_open_json_keeps_the_url_and_warning_contract(calls) -> None:
     payload = _run_json("--no-open")
 
     assert payload == {
-        "url": f"{BASE}/ui?k=handoff-code",
+        "url": f"{BASE}/ui?host=local&k=handoff-code",
         "pot_id": None,
+        "origin": "local",
         "warning": None,
     }
     assert TOKEN not in json.dumps(payload)
@@ -127,7 +128,7 @@ def test_the_browser_is_opened_on_the_handoff_url(calls, monkeypatch) -> None:
 
     ui_cmd.ui_command(open_browser=True, pot=None)
 
-    assert opened == [f"{BASE}/ui?k=handoff-code"]
+    assert opened == [f"{BASE}/ui?host=local&k=handoff-code"]
 
 
 def test_a_daemon_that_rejects_the_credential_is_reported(calls, monkeypatch) -> None:

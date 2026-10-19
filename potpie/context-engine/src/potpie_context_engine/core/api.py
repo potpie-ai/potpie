@@ -143,6 +143,7 @@ from potpie_context_engine.core.runtime import (
     GraphObserver,
     NoOpGraphObserver,
     RuntimeCompositionError,
+    run_in_worker_thread,
 )
 from potpie_context_engine.core.lifecycle import SetupPlan, StepResult
 from potpie_context_engine.core.serialization import from_transport, to_transport
@@ -343,6 +344,7 @@ __all__ = [
     "GraphObserver",
     "NoOpGraphObserver",
     "RuntimeCompositionError",
+    "run_in_worker_thread",
     "SetupPlan",
     "StepResult",
     "from_transport",

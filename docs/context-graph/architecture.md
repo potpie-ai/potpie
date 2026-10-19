@@ -100,11 +100,64 @@ flowchart TB
 Both roots run the same domain/application code over a swappable `GraphBackend`;
 they differ only in wiring and default storage.
 
-> **Roadmap (not yet wired):** a managed Potpie backend that hosts the same
-> service modules on hosted stores. `potpie use --managed`, `pot list --managed`,
-> and the entire `cloud` command group raise `CapabilityNotImplemented` today.
-> Local and managed are designed to share one graph model; runtime composition,
-> authorization, and storage adapters provide the deployment-specific seams.
+A third deployment serves the same typed operations remotely: a **managed
+host** (next section). The `cloud` command group is still roadmap and raises
+`CapabilityNotImplemented`.
+
+## Managed hosts: one protocol, two deployments
+
+A managed host is a hosted service that embeds the same engine and serves the
+same typed envelope as the local daemon, at `POST <base>/v1/operations` over
+HTTPS with `Authorization: Bearer <per-actor key>`. There is no second wire
+format and no other remote route.
+
+```mermaid
+flowchart LR
+  mh_cli["potpie CLI"] -->|"origin = local"| mh_daemon["local daemon<br/>UDS / loopback"]
+  mh_cli -->|"origin = managed"| mh_remote["RemoteEngineClient +<br/>ManagedPotDirectory"]
+  mh_ui["explorer page"] -->|"loopback only"| mh_daemon
+  mh_daemon -->|"?host=managed<br/>key held here"| mh_remote
+  mh_remote -->|"HTTPS · Bearer"| mh_host["managed host<br/>OperationEndpoint (serving kit)"]
+```
+
+**Client side** (root `potpie`):
+
+- `potpie.config.host_registry` — the origins, `<home>/cli_hosts.json`, the URL
+  and TLS rules, and which origin an invocation targets. It lives under
+  `config` because the daemon's explorer reads it too.
+- `potpie.runtime.remote` — `RemoteEngineClient` (the engine catalog for one
+  selector), `RemoteHostClient` (`host.*` and extension operations),
+  `ManagedPotDirectory`, and `connect()` → `HostConnection` with one pooled
+  keep-alive HTTPS client per host and event loop.
+- `potpie.pots.directory.PotDirectory` — the pot control plane of one host:
+  `LocalPotDirectory` over the in-process pot service, `ManagedPotDirectory`
+  over `host.*`. CLI pot, source, grant, `whoami` and `status` commands use it.
+- `potpie.daemon.http.ui.source.ExplorerSource` — the explorer reads either the
+  daemon's own services (local) or the remote clients (managed); the whole
+  graph is the `graph_slice` operation in both.
+
+**No lock-step.** The local daemon keeps its catalog fingerprint and per-boot
+tickets. A managed host issues no tickets and keeps no per-boot state: each
+request is checked on its own. Requests leave default-valued fields off the
+wire, a host refuses an operation or field it does not know by name, the client
+reports that as `host_outdated`, and results decode leniently. A newer client
+keeps working against an older host for every call that does not need the new
+thing.
+
+**Identity and selection.** The host authenticates the bearer before it
+decodes or selects anything, then resolves the pot selector for that actor
+(explicit, active, or repository, using only the pots the actor holds a grant
+on) and authorizes the operation for the actor's role. `host.*` operations
+(pots, sources, repo defaults, grants, `whoami`) are root-Potpie product
+operations the local daemon does not serve; `ext.<vendor>.*` names are
+registered by the embedding host.
+
+**Server side.** `potpie.runtime.hosting` is the serving kit an embedding host
+builds on: `OperationEndpoint`, the actor-aware `ContextResourceManager`,
+`CatalogSelectorResolver`, the host-operation handler protocol, extensions and
+scoped commit access. `potpie.runtime.hosting_testing` holds the client half a
+host's contract tests need. Both surfaces are provisional: names may still move
+while the managed-host contract settles.
 
 ## The daemon model
 
@@ -414,10 +467,9 @@ Two corrections worth stating here:
 The full `setup` flag set and the canonical local journey live in
 [cli-flow.md](./cli-flow.md).
 
-> **Roadmap (not yet wired):** a separate managed-backend login lifecycle
-> (`potpie login` to a configured `cloud.backend_url`, then managed pot
-> selection). The plumbing exists, but managed routing raises
-> `CapabilityNotImplemented`.
+A managed host is set up with `potpie host set <url> --token -` (key on
+stdin), not by `setup`, which always provisions this machine; see
+[cli-flow.md](./cli-flow.md#hosts-commandshostpy).
 
 ## Two ledgers: the live event store vs the external seam
 

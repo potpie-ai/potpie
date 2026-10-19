@@ -1,5 +1,6 @@
 import type {
   GraphData,
+  Origin,
   PotsResponse,
   SearchEntity,
   StatusResponse,
@@ -91,7 +92,11 @@ async function jpost<T>(path: string, payload: object): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Build a query string from defined params only. */
+/** Build a query string from defined params only.
+ *
+ * Every read is scoped by `host` as well as `pot`: a pot id means nothing
+ * without the host it was listed from, so the two always travel together.
+ */
 function qs(params: Record<string, string | number | undefined>): string {
   const parts = Object.entries(params)
     .filter(([, v]) => v !== undefined && v !== "")
@@ -99,23 +104,20 @@ function qs(params: Record<string, string | number | undefined>): string {
   return parts.length ? `?${parts.join("&")}` : "";
 }
 
-function potParam(pot?: string): string {
-  return pot ? `pot=${encodeURIComponent(pot)}` : "";
-}
-
 let sessionReported = false;
 
 export const api = {
-  mutationHistory: (pot: string, limit = 50) =>
-    jget<PlanHistoryPage>(`/mutation-history${qs({ pot, limit })}`),
+  mutationHistory: (pot: string, host?: Origin, limit = 50) =>
+    jget<PlanHistoryPage>(`/mutation-history${qs({ pot, host, limit })}`),
 
-  commits: (pot: string, cursor?: string) =>
-    jget<CommitPage>(`/commits${qs({ pot, cursor })}`),
+  commits: (pot: string, host?: Origin, cursor?: string) =>
+    jget<CommitPage>(`/commits${qs({ pot, host, cursor })}`),
 
-  commit: (commit_id: string, pot: string, offset = 0) =>
-    jget<CommitDetail>(`/commit${qs({ commit_id, pot, offset })}`),
+  commit: (commit_id: string, pot: string, host?: Origin, offset = 0) =>
+    jget<CommitDetail>(`/commit${qs({ commit_id, pot, host, offset })}`),
 
-  journal: (pot: string) => jget<JournalStatus>(`/journal${qs({ pot })}`),
+  journal: (pot: string, host?: Origin) =>
+    jget<JournalStatus>(`/journal${qs({ pot, host })}`),
 
   /** A dry run: the daemon computes what the revert or rollback would change
    * and returns a short-lived preview id. Nothing in the graph changes. */
@@ -124,21 +126,23 @@ export const api = {
     mode: "revert" | "rollback",
     expected_head: string,
     pot: string,
+    host?: Origin,
   ) =>
     jpost<PreviewResult>("/rollback/preview", {
       target_commit_id,
       expected_head,
       mode,
       pot,
+      host,
     }),
 
   pots: () => jget<PotsResponse>("/pots"),
 
-  usePot: async (ref: string) => {
+  usePot: async (ref: string, host?: Origin) => {
     const res = await request("/pots/use", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ref }),
+      body: JSON.stringify(host ? { ref, host } : { ref }),
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
@@ -147,24 +151,18 @@ export const api = {
     return res.json();
   },
 
-  status: (pot?: string) =>
-    jget<StatusResponse>(`/status${pot ? `?${potParam(pot)}` : ""}`),
+  status: (pot?: string, host?: Origin) =>
+    jget<StatusResponse>(`/status${qs({ pot, host })}`),
 
-  graph: (pot?: string) =>
-    jget<GraphData>(`/graph${pot ? `?${potParam(pot)}` : ""}`),
+  graph: (pot?: string, host?: Origin) =>
+    jget<GraphData>(`/graph${qs({ pot, host })}`),
 
-  neighborhood: (key: string, depth: number, pot?: string) =>
-    jget<GraphData>(
-      `/neighborhood?key=${encodeURIComponent(key)}&depth=${depth}${
-        pot ? `&${potParam(pot)}` : ""
-      }`,
-    ),
+  neighborhood: (key: string, depth: number, pot?: string, host?: Origin) =>
+    jget<GraphData>(`/neighborhood${qs({ key, depth, pot, host })}`),
 
-  search: (q: string, pot?: string) =>
+  search: (q: string, pot?: string, host?: Origin) =>
     jget<{ entities: SearchEntity[] }>(
-      `/search?q=${encodeURIComponent(q)}&limit=20${
-        pot ? `&${potParam(pot)}` : ""
-      }`,
+      `/search${qs({ q, limit: 20, pot, host })}`,
     ),
 
   reportSession: (hadGraph: boolean) => {

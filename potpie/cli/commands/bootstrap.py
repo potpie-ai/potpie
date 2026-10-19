@@ -23,19 +23,21 @@ from potpie.cli.commands._common import (
     EXIT_VALIDATION,
     activation_command_outcome,
     contract,
+    current_origin,
     current_repo_identity_for_cli,
     emit,
     fail,
-    get_auth_service,
     get_config_service,
     get_daemon_service,
     get_engine_client,
     get_ledger_service,
-    get_pot_service,
     get_root_runtime,
     get_setup_service,
     get_skill_service,
     is_json,
+    managed_host_report,
+    origin_from_use_flags,
+    pot_directory,
     repo_default_pot_id,
     repo_effective_pot_info,
     require_text,
@@ -78,7 +80,6 @@ from potpie.config.local import (
 )
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
 from potpie_context_engine.domain.embedding_modes import normalize_embedding_mode
-from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.lifecycle import SetupPlan, SetupReport
 from potpie_context_engine.core.ports.agent_context import StatusReport
 from potpie_context_engine.requests import DataPlaneStatusRequest, QualityRequest
@@ -169,6 +170,7 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """Idempotent first-run: provision config, storage, daemon, default pot, skills."""
         with contract():
+            _pin_setup_to_this_machine()
             json_output = is_json()
             human_output = not json_output
             interactive_onboarding = (
@@ -377,29 +379,23 @@ def register(root: typer.Typer) -> None:
             "--verify",
             help="Moved to `potpie auth status --verify`.",
         ),
-        host: bool = typer.Option(
-            False,
-            "--host",
-            help="Deprecated no-op; status reports host/pot readiness by default.",
-        ),
         intent: str = typer.Option(
             "feature",
             "--intent",
-            help="Intent for host status (use with --host or non-default harness/pot).",
+            help="Intent to report readiness for.",
         ),
         harness: str = typer.Option(
             "claude",
             "--harness",
-            help="Harness for host status (use with --host or non-default intent/pot).",
+            help="Harness to report skill readiness for.",
         ),
         pot: str = typer.Option(
             None,
             "--pot",
-            help="Pot for host status (use with --host or non-default intent/harness).",
+            help="Pot to report on (defaults to the resolved scope for this repo).",
         ),
     ) -> None:
         """context_status — host, pot, backend, and skill readiness."""
-        _ = host  # Backward-compatible flag; readiness is now the default.
         with contract():
             with activation_command_outcome(
                 command="status", result_kind="status_result"
@@ -445,11 +441,19 @@ def register(root: typer.Typer) -> None:
 
     @root.command()
     def doctor() -> None:
-        """Local diagnostics: daemon, backend capabilities, skill drift."""
+        """Diagnostics for the active host: daemon, backend, skill drift.
+
+        On a managed host the backend, pot and resource rows describe that
+        host (its handshake and status are in ``host``); the daemon, install
+        and embedded-server rows are always this machine's.
+        """
         with contract():
             host = get_root_runtime()
+            if current_origin() == "managed":
+                _managed_doctor(host)
+                return
             caps = host.backend.capabilities()
-            pot = get_pot_service(host).active_pot()
+            pot = pot_directory(runtime=host).active_pot()
             pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
             readiness = host.backend.mutation.readiness(pot_id)
             daemon_status = get_daemon_service(host).status()
@@ -467,6 +471,7 @@ def register(root: typer.Typer) -> None:
             resources, resource_index = _resource_doctor_blocks(pot_id)
             emit(
                 {
+                    "host": managed_host_report(),
                     "resources": resources,
                     "resource_index": resource_index,
                     "daemon": daemon_status,
@@ -521,9 +526,9 @@ def register(root: typer.Typer) -> None:
 
     @root.command()
     def whoami() -> None:
-        """Show the current host identity (local OSS reports a 'none' identity)."""
+        """Show who the current host believes you are (local reports 'none')."""
         with contract():
-            ident = get_auth_service().whoami()
+            ident = pot_directory().whoami()
             emit(
                 {"subject": ident.subject, "mode": ident.mode, "detail": ident.detail},
                 human=f"{ident.subject} (mode={ident.mode})"
@@ -536,9 +541,13 @@ def register(root: typer.Typer) -> None:
     @root.command()
     def use(
         ref: str,
-        local: bool = typer.Option(False, "--local", help="Force local-origin pot."),
+        local: bool = typer.Option(
+            False, "--local", help="Select a local-origin pot (same as 'local:<ref>')."
+        ),
         managed: bool = typer.Option(
-            False, "--managed", help="Select a managed-origin pot."
+            False,
+            "--managed",
+            help="Select a managed-origin pot (same as 'managed:<ref>').",
         ),
         also_default_for_current_repo: bool = typer.Option(
             False,
@@ -548,18 +557,16 @@ def register(root: typer.Typer) -> None:
     ) -> None:
         """Select the active pot by name/id (top-level alias for `pot use`)."""
         with contract():
-            if managed:
-                raise CapabilityNotImplemented(
-                    "host.pots.use_managed",
-                    detail="managed pot routing is not implemented",
-                    recommended_next_action="select a local pot; managed routing lands in HU3",
-                )
+            # The flags are origin *selectors*, exactly equivalent to qualifying
+            # the ref (`local:<ref>` / `managed:<ref>`).
+            requested_origin = origin_from_use_flags(local=local, managed=managed)
             host = get_root_runtime()
             payload, human = use_pot_selection(
                 host,
                 ref,
                 also_default_for_current_repo=also_default_for_current_repo,
-                origin="local",
+                origin=requested_origin,
+                hint_prefix="potpie use",
             )
             emit(payload, human=human)
 
@@ -833,8 +840,13 @@ def _build_context_status_report(
     data_plane,
     quality_summary=None,
 ) -> StatusReport:
-    """Join root-owned status surfaces with the engine-owned data plane."""
-    aggregate = get_pot_service(shell).aggregate_status(pot_id=pot_id)
+    """Join root-owned status surfaces with the engine-owned data plane.
+
+    The pot half comes from the current origin's pot directory and the data
+    plane from its engine; skill readiness is always this machine's.
+    """
+    origin = current_origin()
+    aggregate = pot_directory(runtime=shell).aggregate_status(pot_id=pot_id)
     active = aggregate.active_pot
     nudge = get_skill_service(shell).nudge(agent=harness) if harness else None
     backend_ready = bool(data_plane.backend_ready)
@@ -846,7 +858,7 @@ def _build_context_status_report(
     )
     return StatusReport(
         pot_id=pot_id,
-        profile=shell.profile,
+        profile="managed" if origin == "managed" else shell.profile,
         daemon_up=True,
         active_pot=active.name if active else None,
         backend_ready=backend_ready,
@@ -1047,6 +1059,145 @@ def _apply_setup_embedding_env(
         os.environ["CONTEXT_ENGINE_EMBEDDING_MODEL"] = embedding_model
     else:
         os.environ.setdefault("CONTEXT_ENGINE_EMBEDDING_MODEL", embedding_model)
+
+
+def _probe(call, default=None):
+    """``(value, problem)`` for one doctor row; a row never takes doctor down."""
+    try:
+        return call(), None
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a diagnostic row must not crash doctor
+        return default, str(exc) or type(exc).__name__
+
+
+def _managed_doctor(host) -> None:
+    """``doctor`` against a managed host: every row degrades on its own."""
+    report = managed_host_report()
+    directory_problem = None
+    pot, directory_problem = _probe(lambda: pot_directory().active_pot())
+    pot_id = getattr(pot, "pot_id", "") if pot is not None else ""
+    data_plane, plane_problem = (
+        _probe(
+            lambda: run_engine_operation(
+                get_engine_client(pot_id).data_plane_status(DataPlaneStatusRequest())
+            )
+        )
+        if pot_id
+        else (None, directory_problem or "no active pot; backend readiness is per-pot")
+    )
+    daemon_status, _ = _probe(
+        lambda: get_daemon_service(host).status(),
+        {"up": None, "mode": "unknown", "home": None, "pid": None, "detail": None},
+    )
+    repo_identity = current_repo_identity_for_cli()
+    routing, _ = _probe(
+        lambda: (
+            _effective_current_repo_pot_id(
+                host, repo_identity=repo_identity, active_pot_id=pot_id or None
+            ),
+            repo_default_pot_id(host, repo_identity),
+        ),
+        (None, None),
+    )
+    effective_current_repo_pot, default_pot_id = routing
+    cli_install = collect_cli_install_status()
+    resources, resource_index = _resource_doctor_blocks(pot_id)
+    ledger, ledger_problem = _probe(lambda: get_ledger_service(host).status())
+    profile = getattr(data_plane, "backend_profile", None)
+    ready = bool(getattr(data_plane, "backend_ready", False)) if data_plane else None
+    readiness = {
+        "profile": profile,
+        "ready": ready,
+        "capability_ready": {},
+        "detail": plane_problem,
+    }
+    next_action = None
+    if not report.get("reachable"):
+        next_action = (
+            "check the managed host with 'potpie host list', or re-point it with "
+            "'potpie host set <url> --token -'"
+        )
+    elif not ready:
+        next_action = "inspect `potpie graph status --json` on the managed host"
+    emit(
+        {
+            "host": report,
+            "resources": resources,
+            "resource_index": resource_index,
+            "daemon": daemon_status,
+            "embedded_graph_servers": None,
+            "cli_install": cli_install,
+            "backend_profile": profile,
+            "backend_ready": ready,
+            "backend_readiness": readiness,
+            "backend_capabilities": [],
+            "active_pot": pot_id or None,
+            "effective_current_repo_pot": effective_current_repo_pot,
+            "repo_default_pot": default_pot_id,
+            "recommended_next_action": next_action,
+            "ledger": {
+                "available": getattr(ledger, "available", False),
+                "binding": getattr(ledger, "binding", None),
+                **({"detail": ledger_problem} if ledger_problem else {}),
+            },
+        },
+        human=(
+            f"host: {report['label']} "
+            + (
+                f"(version={report.get('version') or 'unknown'}, "
+                f"{report.get('operations') or 0} operations)"
+                if report.get("reachable")
+                else f"unreachable — {report.get('problem')}"
+            )
+            + f"\ndaemon (this machine): {daemon_status.get('mode')} "
+            f"(up={daemon_status.get('up')})\n"
+            f"{cli_install_human(cli_install)}\n"
+            f"backend: {profile} ready={ready}"
+            + (f" — {plane_problem}" if plane_problem else "")
+            + (
+                f"\nrepo: {repo_identity} → {effective_current_repo_pot}"
+                + (
+                    f" (default={default_pot_id})"
+                    if default_pot_id
+                    else " (no repo default set)"
+                )
+                if repo_identity
+                else ""
+            )
+            + "\n"
+            + _resource_doctor_human(resources, resource_index)
+        ),
+    )
+
+
+def _pin_setup_to_this_machine() -> None:
+    """Run ``setup`` against the local host, whatever origin is active.
+
+    Setup provisions this machine (backend, daemon, default pot, skills), so
+    ``--host managed setup`` is refused rather than answered locally at exit 0.
+    A *persisted* managed pointer is no reason to refuse: setup is how its
+    owner repairs the local install, so the invocation is pinned to local.
+    """
+    from potpie.config import host_registry
+
+    if (
+        host_registry.origin_overridden()
+        and host_registry.selected_origin() != host_registry.LOCAL
+    ):
+        label = host_registry.origin_label(host_registry.selected_origin())
+        fail(
+            code="validation_error",
+            message=(
+                f"'setup' provisions the local machine and cannot target {label}: "
+                "backend, daemon, default pot and skills are all local."
+            ),
+            next_action=(
+                "run 'potpie setup' without --host to provision this machine, "
+                "or 'potpie host list' to see the configured hosts"
+            ),
+        )
+    host_registry.set_current_origin(host_registry.LOCAL)
 
 
 def _build_local_setup_host(

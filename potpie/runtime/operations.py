@@ -4,10 +4,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import abc
+from collections.abc import Iterable
 from dataclasses import MISSING, dataclass, fields, is_dataclass
+from datetime import date, datetime
 from enum import Enum, StrEnum
-from types import MappingProxyType
-from typing import Any, Mapping, get_args, get_origin, get_type_hints
+from pathlib import Path
+from types import MappingProxyType, UnionType
+from typing import (
+    Any,
+    Literal,
+    Mapping,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
+from uuid import UUID
 
 from potpie_context_engine.requests import (
     ApplyPreviewRequest,
@@ -21,6 +35,7 @@ from potpie_context_engine.requests import (
     DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
+    GraphSliceRequest,
     HistoryRequest,
     ImportSnapshotRequest,
     InboxAddRequest,
@@ -71,6 +86,7 @@ from potpie_context_engine.results import (
     DescribeResult,
     DisableRollbackResult,
     ExportSnapshotResult,
+    GraphSliceResult,
     HistoryResult,
     ImportSnapshotResult,
     InboxAddResult,
@@ -124,6 +140,7 @@ class EngineOperation(StrEnum):
     MUTATE = "mutate"
     NEIGHBORHOOD = "neighborhood"
     INSPECT = "inspect"
+    GRAPH_SLICE = "graph_slice"
     EXPORT_SNAPSHOT = "export_snapshot"
     IMPORT_SNAPSHOT = "import_snapshot"
     REPAIR = "repair"
@@ -182,8 +199,14 @@ class SafetyClass(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class OperationSpec:
-    operation: EngineOperation
-    request_type: type[EngineRequest]
+    """Protocol-visible semantics of one operation.
+
+    ``operation`` is an :class:`EngineOperation`, a host operation
+    (``host.*``) or an embedding host's extension name (``ext.<vendor>.<op>``).
+    """
+
+    operation: str
+    request_type: type[object]
     result_type: type[object]
     safety: SafetyClass
     destructive: bool = False
@@ -204,6 +227,24 @@ class OperationSpec:
             raise ValueError(
                 "resource conflict metadata is valid only for resource mutations"
             )
+
+    @property
+    def name(self) -> str:
+        """The operation's wire name."""
+
+        return str(self.operation)
+
+    @property
+    def family(self) -> str:
+        """``engine``, ``host`` or ``extension``."""
+
+        if isinstance(self.operation, EngineOperation):
+            return "engine"
+        if self.name.startswith("host."):
+            return "host"
+        if self.name.startswith("ext."):
+            return "extension"
+        return "unknown"
 
 
 _READ = SafetyClass.SHARED_CONTEXT_READ
@@ -242,6 +283,9 @@ _SPECS = (
         _READ,
     ),
     OperationSpec(EngineOperation.INSPECT, InspectRequest, InspectResult, _READ),
+    OperationSpec(
+        EngineOperation.GRAPH_SLICE, GraphSliceRequest, GraphSliceResult, _READ
+    ),
     OperationSpec(
         EngineOperation.EXPORT_SNAPSHOT,
         ExportSnapshotRequest,
@@ -626,6 +670,213 @@ def _stable_value(value: object) -> object:
     return {"type": _qualified_name(type(value)), "value": str(value)}
 
 
+#: Version of the :func:`operation_schema_document` layout, not of the protocol.
+OPERATION_SCHEMA_FORMAT = 1
+
+
+def operation_schema(
+    spec: OperationSpec, types: dict[str, dict[str, object]] | None = None
+) -> dict[str, object]:
+    """The protocol-visible contract of one operation, as plain JSON data.
+
+    Unlike the catalog fingerprint this describes the wire, not the Python
+    types: class names only key the ``types`` table, and the same wire shape
+    reads the same on every supported Python version. Dataclasses are described
+    once in ``types`` and referenced by name. It is what the committed
+    evolution baseline records and checks additive-only.
+    """
+
+    table = types if types is not None else {}
+    return {
+        "family": _operation_family(spec),
+        "safety": spec.safety.value,
+        "destructive": spec.destructive,
+        "context_required": spec.context_required,
+        "resource_type": spec.resource_type,
+        "resource_identity_fields": list(spec.resource_identity_fields),
+        "request": wire_schema(spec.request_type, table),
+        "result": wire_schema(spec.result_type, table),
+    }
+
+
+def operation_schema_document(
+    specs: Iterable[OperationSpec] | None = None,
+) -> dict[str, object]:
+    """Every engine and host operation's wire contract plus the error categories.
+
+    Extension operations belong to the embedding host that registers them and
+    are not part of this document.
+    """
+
+    from potpie.runtime.codec import ERROR_CATEGORIES
+    from potpie.runtime.host_operations import HOST_OPERATION_CATALOG
+    from potpie.runtime.protocol import PROTOCOL_VERSION
+
+    if specs is None:
+        specs = (*_SPECS, *HOST_OPERATION_CATALOG.values())
+    chosen = sorted(specs, key=_operation_name)
+    types: dict[str, dict[str, object]] = {}
+    operations = {
+        _operation_name(spec): operation_schema(spec, types) for spec in chosen
+    }
+    return {
+        "format": OPERATION_SCHEMA_FORMAT,
+        "protocol_version": PROTOCOL_VERSION,
+        "error_categories": sorted(ERROR_CATEGORIES),
+        "operations": operations,
+        "types": dict(sorted(types.items())),
+    }
+
+
+def wire_schema(
+    annotation: object, types: dict[str, dict[str, object]]
+) -> dict[str, object]:
+    """Describe how values of ``annotation`` look on the wire.
+
+    Nodes carry a ``kind``: ``ref`` (a dataclass, described once in ``types``
+    as an ``object`` with ``fields``), ``array``, ``tuple``, ``map``,
+    ``union``, ``literal``, ``enum``, a scalar kind, ``any``, or ``opaque`` (a
+    type the codec passes through unchecked).
+    """
+
+    return _wire_schema(annotation, types)
+
+
+_SCALAR_KINDS: Mapping[object, str] = MappingProxyType(
+    {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        type(None): "null",
+        bytes: "bytes",
+    }
+)
+
+
+def _wire_schema(
+    annotation: object, types: dict[str, dict[str, object]]
+) -> dict[str, object]:
+    if annotation is Any or annotation is object:
+        return {"kind": "any"}
+    if isinstance(annotation, str):
+        return {"kind": "unresolved", "name": annotation}
+    scalar = _SCALAR_KINDS.get(annotation)
+    if scalar is not None:
+        return {"kind": scalar}
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is Literal:
+        return {"kind": "literal", "values": [_json_value(item) for item in args]}
+    if origin is Union or origin is UnionType:
+        return {"kind": "union", "options": [_wire_schema(i, types) for i in args]}
+    if origin is tuple:
+        if not args or (len(args) == 2 and args[1] is Ellipsis):
+            item = args[0] if args else Any
+            return {"kind": "array", "items": _wire_schema(item, types)}
+        return {"kind": "tuple", "items": [_wire_schema(i, types) for i in args]}
+    if origin in (list, set, frozenset, abc.Sequence, abc.Set):
+        item = args[0] if args else Any
+        return {"kind": "array", "items": _wire_schema(item, types)}
+    if origin in (dict, abc.Mapping, abc.MutableMapping):
+        key, value = (args[0], args[1]) if len(args) == 2 else (Any, Any)
+        return {
+            "kind": "map",
+            "keys": _wire_schema(key, types),
+            "values": _wire_schema(value, types),
+        }
+    if origin is not None:
+        return {
+            "kind": "opaque",
+            "name": _qualified_name(origin),
+            "arguments": [_wire_schema(item, types) for item in args],
+        }
+    if annotation in (datetime, date, Path, UUID):
+        return {"kind": cast(type, annotation).__name__.lower()}
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return {
+            "kind": "enum",
+            "values": [_json_value(member.value) for member in annotation],
+        }
+    if isinstance(annotation, type) and is_dataclass(annotation):
+        name = _type_key(annotation, types)
+        if name not in types:
+            # Placeholder first, so a type that refers to itself ends.
+            types[name] = {
+                "kind": "object",
+                "python": _qualified_name(annotation),
+                "fields": [],
+            }
+            try:
+                hints = get_type_hints(annotation)
+            except (NameError, TypeError):
+                hints = {item.name: item.type for item in fields(annotation)}
+            described: list[dict[str, object]] = []
+            for item in fields(annotation):
+                record: dict[str, object] = {
+                    "name": item.name,
+                    "schema": _wire_schema(hints.get(item.name, item.type), types),
+                }
+                if item.default is not MISSING:
+                    record["default"] = _json_value(item.default)
+                elif isinstance(item.default_factory, type):
+                    # A container or dataclass factory: compare what it builds.
+                    record["default"] = _json_value(item.default_factory())
+                elif item.default_factory is not MISSING:
+                    # A computed default (a timestamp, an id) has no fixed
+                    # value; it is pinned by the function that computes it.
+                    record["default_factory"] = _qualified_name(item.default_factory)
+                else:
+                    record["required"] = True
+                described.append(record)
+            types[name] = {
+                "kind": "object",
+                "python": _qualified_name(annotation),
+                "fields": described,
+            }
+        return {"kind": "ref", "name": name}
+    return {"kind": "opaque", "name": _qualified_name(annotation)}
+
+
+def _type_key(annotation: type, types: dict[str, dict[str, object]]) -> str:
+    """A short, stable key for one dataclass in the ``types`` table."""
+
+    qualified = _qualified_name(annotation)
+    name = annotation.__name__
+    entry = types.get(name)
+    if entry is None or entry.get("python") in (None, qualified):
+        return name
+    return qualified
+
+
+def _json_value(value: object) -> object:
+    """A default or literal value as the codec would put it on the wire."""
+
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Enum):
+        return _json_value(value.value)
+    if isinstance(value, Mapping):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return [_json_value(item) for item in sorted(value, key=str)]
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            item.name: _json_value(getattr(value, item.name)) for item in fields(value)
+        }
+    return str(value)
+
+
+def _operation_name(spec: OperationSpec) -> str:
+    return spec.name
+
+
+def _operation_family(spec: OperationSpec) -> str:
+    return spec.family
+
+
 def operation_capabilities() -> tuple[str, ...]:
     """Return every finite protocol discriminator in deterministic order."""
 
@@ -640,11 +891,15 @@ def operation_capabilities() -> tuple[str, ...]:
 __all__ = [
     "DAEMON_CONTROL_SAFETY",
     "ENGINE_OPERATION_CATALOG",
+    "OPERATION_SCHEMA_FORMAT",
     "DaemonControlOperation",
     "EngineOperation",
     "OperationSpec",
     "SafetyClass",
     "operation_capabilities",
     "operation_catalog_fingerprint",
+    "operation_schema",
+    "operation_schema_document",
     "request_wire_types",
+    "wire_schema",
 ]

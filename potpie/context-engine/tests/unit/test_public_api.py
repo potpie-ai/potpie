@@ -110,6 +110,7 @@ def test_api_exports_the_embedding_host_runtime_builder() -> None:
         "NoOpGraphObserver",
         "RuntimeCompositionError",
         "build_graph_runtime",
+        "run_in_worker_thread",
     } <= set(api.__all__)
 
 

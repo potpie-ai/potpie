@@ -608,7 +608,7 @@ def test_ui_pot_option_opens_selected_pot_url(monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["pot_id"] == "p1"
-    assert payload["url"] == "http://127.0.0.1:8765/ui?pot=p1&k=code-1"
+    assert payload["url"] == "http://127.0.0.1:8765/ui?host=local&pot=p1&k=code-1"
 
 
 def test_resolve_pot_prefers_active_when_among_multiple_matches(monkeypatch) -> None:

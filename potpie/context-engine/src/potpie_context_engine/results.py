@@ -60,6 +60,7 @@ SearchEntitiesResult: TypeAlias = GraphEntitySearchResult
 MutateResult: TypeAlias = SemanticMutationResult
 NeighborhoodResult: TypeAlias = GraphSlice
 InspectResult: TypeAlias = GraphSlice
+GraphSliceResult: TypeAlias = GraphSlice
 ImportSnapshotResult: TypeAlias = SnapshotManifest
 RepairResult: TypeAlias = RepairReport
 ProposeResult: TypeAlias = GraphMutationProposal
@@ -213,9 +214,15 @@ ResultT = TypeVar("ResultT")
 
 
 def result_from_payload(result_type: type[ResultT], payload: object) -> ResultT:
-    """Reconstruct a protocol result using the operation catalog's exact type."""
+    """Reconstruct a protocol result using the operation catalog's exact type.
 
-    return decode_typed_value(payload, result_type)  # type: ignore[return-value]
+    Lenient by design: a field this build does not know is ignored and a field
+    the sender left out takes its default, so a client keeps reading the
+    answers of a host that gained result fields after it was built. Requests
+    stay strict (``request_from_payload``).
+    """
+
+    return decode_typed_value(payload, result_type, unknown="ignore")  # type: ignore[return-value]
 
 
 __all__ = [
@@ -230,6 +237,7 @@ __all__ = [
     "DisableRollbackResult",
     "ExportSnapshotResult",
     "GraphJournalResult",
+    "GraphSliceResult",
     "HistoryResult",
     "ImportSnapshotResult",
     "InboxAddResult",

@@ -51,11 +51,17 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 
 @dataclass(slots=True)
 class AgentContextService:
-    """The 4-tool agent contract, composed over the three services."""
+    """The 4-tool agent contract, composed over the three services.
+
+    ``resolve``, ``search`` and ``record`` need only the graph service. An
+    embedding host, which keeps pots and skills itself, builds this door with
+    :meth:`for_graph_runtime`; ``status`` then refuses, because pot status is
+    the host's own answer (``host.pot_status``).
+    """
 
     graph: GraphService
-    pots: PotManagementService
-    skills: SkillManager
+    pots: PotManagementService | None = None
+    skills: SkillManager | None = None
     profile: str = "local"
     workbench: Any = None
     """Optional graph workbench used to report open graph-quality findings.
@@ -64,6 +70,24 @@ class AgentContextService:
     ``status`` reports a healthy graph however many findings ``graph quality``
     has open. When it is wired, status asks the same summary question the
     quality command asks."""
+
+    @classmethod
+    def for_graph_runtime(
+        cls, runtime: Any, *, profile: str = "managed"
+    ) -> AgentContextService:
+        """The agent door over one graph runtime, with no pot or skill service.
+
+        This is ``EngineServices.agent_context`` for an embedding host:
+        ``runtime`` is the ``GraphRuntime`` from ``build_graph_runtime``.
+        """
+
+        return cls(
+            graph=runtime.graph,
+            pots=None,
+            skills=None,
+            profile=profile,
+            workbench=runtime.workbench,
+        )
 
     def resolve(self, request: ResolveRequest) -> AgentEnvelope:
         return self.graph.resolve(
@@ -85,11 +109,23 @@ class AgentContextService:
         return self.graph.record(request)
 
     def status(self, request: StatusRequest) -> StatusReport:
+        if self.pots is None:
+            raise CapabilityNotImplemented(
+                "agent_context.status",
+                detail="this host keeps pots itself and reports their status",
+                recommended_next_action=(
+                    "ask the host for pot status ('host.pot_status')"
+                ),
+            )
         agg = self.pots.aggregate_status(pot_id=request.pot_id)
         active = agg.active_pot
         pot_id = request.pot_id or (active.pot_id if active else "")
         data_plane = self.graph.data_plane_status(pot_id) if pot_id else None
-        nudge = self.skills.nudge(agent=request.harness) if request.harness else None
+        nudge = (
+            self.skills.nudge(agent=request.harness)
+            if request.harness and self.skills is not None
+            else None
+        )
         backend_ready = bool(data_plane and data_plane.backend_ready)
         quality = quality_block(
             dict(data_plane.quality) if data_plane is not None else {},

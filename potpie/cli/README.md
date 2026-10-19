@@ -7,13 +7,14 @@ services from one local runtime composition.
 - **Entrypoint:** `potpie/cli/main.py` (registered as the `potpie`
   console script in `pyproject.toml` → `[project.scripts]`).
 - **Command groups:** `potpie/cli/commands/` — one module per
-  `cli-flow.md` section (`bootstrap`, `query`, `pots`/`source`, `daemon`,
-  `ledger`, `graph`, `timeline`, `backend`, `skills`, `cloud`).
+  `cli-flow.md` section (`bootstrap`, `query`, `pots`/`source`, `host`,
+  `daemon`, `ledger`, `graph`, `timeline`, `backend`, `skills`, `cloud`).
 - **Cross-cutting contract:** `commands/_common.py` owns `--json` output, the
   exit-code map (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth), the
   structured error shape (`code`/`message`/`detail`/`recommended_next_action`),
-  and active-pot resolution. An unbuilt capability surfaces as the structured
-  not-implemented contract (`CapabilityNotImplemented`), never a traceback.
+  origin routing (local or managed host) and active-pot resolution. An unbuilt
+  capability surfaces as the structured not-implemented contract
+  (`CapabilityNotImplemented`), never a traceback.
 
 ## Agent compatibility commands
 
@@ -35,6 +36,43 @@ The CLI exposes four compatibility commands with distinct response contracts:
 
 Integration credential status is intentionally outside this four-tool surface:
 use `potpie auth status [--verify]` for local provider auth state.
+
+## Managed hosts
+
+The same commands run against a hosted context graph. The local daemon needs no
+configuration; a managed host needs its base URL and an API key, stored in
+`<home>/cli_hosts.json` (`0600`) by `potpie host set`:
+
+```bash
+printf '%s\n' "$KEY" | potpie host set https://your-host.example --token -
+potpie host use managed          # make it the active host
+potpie pot list --managed
+potpie pot use managed:<id> --also-default-for-current-repo
+potpie host use local            # back to this machine
+```
+
+- The key never travels on argv: `--token -` reads it from stdin, and a literal
+  `--token <key>` is refused. `POTPIE_MANAGED_URL` / `POTPIE_MANAGED_TOKEN`
+  override the stored host for one run.
+- One command's host is the prefix of a qualified ref (`managed:<ref>`,
+  `local:<ref>`), else the global `--host local|managed`, else the active host.
+  A bare ref resolves on that host only; when it is not there, the error names
+  the other host's match.
+- Engine commands on a managed host go through `RemoteEngineClient`
+  (`potpie.runtime.remote`); pot, source, grant, `whoami` and `status` commands
+  go through the host's `PotDirectory` (`potpie.pots.directory`). `daemon`,
+  `skills`, `setup`, integration `auth` and harness configuration always stay
+  on this machine.
+- `potpie ui --pot managed:<id>` opens the explorer served by the local daemon
+  with `?host=managed`; the daemon holds the key, the browser never sees it.
+- A host older than this client answers `not_implemented` (exit `2`) for what
+  it lacks; everything else keeps working.
+- Python callers use `potpie.runtime.connect()`: `HostConnection.engine(selector)`,
+  `.pots` (synchronous, any thread) and `.extension(name, request, result_type)`;
+  synchronous code runs them with `.run(awaitable)`.
+
+The full contract is in
+[`docs/context-graph/cli-flow.md`](../../docs/context-graph/cli-flow.md#hosts-commandshostpy).
 
 ## Authoritative reference
 

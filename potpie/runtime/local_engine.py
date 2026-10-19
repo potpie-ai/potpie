@@ -3,20 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from typing import Any, cast
 
-from potpie.cli.repo_location import repo_identity_key
 from potpie.pots.resolution import (
     ARCHIVED_POT_NEXT_ACTION,
     archived_pot_message,
     is_archived,
-    match_pot_ref,
     repo_source_index,
 )
 from potpie.runtime.clients import ClientOutcome
-from potpie.runtime.commit_access import commit_grant
+from potpie.runtime.commit_access import (
+    commit_access_for,
+    commit_grant,
+    current_authorization_scope,
+)
+from potpie.runtime.selection import CatalogSelectorResolver
 from potpie.runtime.operations import EngineOperation
 from potpie.runtime.resource_manager import (
     AuthenticatedActor,
@@ -42,7 +45,11 @@ from potpie_context_engine.application.services.resource_journal import (
     JOURNAL_CAPTURE_ACTIVE,
     refuse_while_journaling,
 )
-from potpie_context_engine.core.commit_service import CommitAccessDenied
+from potpie_context_engine.core.api import run_in_worker_thread
+from potpie_context_engine.core.commit_service import (
+    COMMIT_ACCESS_LEVELS,
+    CommitAccessDenied,
+)
 from potpie_context_engine.core.graph_journal import JournalError
 from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
@@ -64,6 +71,7 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.ports.resource_index import ResourceIndexError
 from potpie_context_engine.core.ports.resource_store import (
@@ -87,6 +95,7 @@ from potpie_context_engine.requests import (
     DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
+    GraphSliceRequest,
     HistoryRequest,
     ImportSnapshotRequest,
     InboxAddRequest,
@@ -137,8 +146,13 @@ from potpie_context_engine.results import (
 
 
 @dataclass(frozen=True, slots=True)
-class LocalEngineServices:
-    """Concrete engine-owned services used by the local typed boundary."""
+class EngineServices:
+    """Concrete engine-owned services behind the typed engine boundary.
+
+    The local runtime composes them in-process; an embedding host composes its
+    own from one graph runtime. ``pots`` is the local pot service and may be
+    ``None`` for a host that resolves pots through its own catalog.
+    """
 
     pots: Any
     agent_context: Any
@@ -152,116 +166,62 @@ class LocalEngineServices:
     """The ``ResourceFacade`` (document store + index), or ``None`` if absent."""
 
 
-class LocalContextSelectorResolver:
-    """Resolve exact, active, and repository selectors through Potpie services."""
+class LocalActorPotCatalog:
+    """The local pot catalog: one fixed actor sees every pot in this home.
+
+    A local home has one principal, so every method ignores ``actor``.
+    """
 
     def __init__(self, services: Any) -> None:
         self._services = services
 
-    async def resolve(
-        self, selector: ContextSelector
+    async def pots_for(self, actor: AuthenticatedActor) -> Sequence[Any]:
+        del actor
+        return await asyncio.to_thread(lambda: tuple(self._services.pots.list_pots()))
+
+    async def active_for(self, actor: AuthenticatedActor) -> Any | None:
+        del actor
+        return await asyncio.to_thread(self._services.pots.active_pot)
+
+    async def repo_default_for(
+        self, actor: AuthenticatedActor, repo: str
+    ) -> str | None:
+        del actor
+        return await asyncio.to_thread(
+            lambda: self._services.pots.repo_default(repo=repo)
+        )
+
+    async def repo_sources_for(self, actor: AuthenticatedActor) -> Sequence[Any]:
+        del actor
+        return await asyncio.to_thread(
+            lambda: tuple(repo_source_index(self._services.pots))
+        )
+
+
+#: The one actor of a local home, used when a local caller resolves a selector
+#: without naming an actor.
+LOCAL_ACTOR = AuthenticatedActor(actor_id="local-cli")
+
+
+class LocalContextSelectorResolver(CatalogSelectorResolver):
+    """Resolve exact, active, and repository selectors through Potpie services."""
+
+    def __init__(self, services: Any) -> None:
+        super().__init__(LocalActorPotCatalog(services))
+
+    async def resolve(  # type: ignore[override]
+        self,
+        selector: ContextSelector,
+        *,
+        actor: AuthenticatedActor = LOCAL_ACTOR,
     ) -> Success[ContextIdentity] | Failure[SelectionError]:
-        return await asyncio.to_thread(self._resolve, selector)
-
-    def _resolve(
-        self, selector: ContextSelector
-    ) -> Success[ContextIdentity] | Failure[SelectionError]:
-        try:
-            pots = tuple(self._services.pots.list_pots())
-            active = self._services.pots.active_pot()
-        except Exception:
-            return Failure(
-                SelectionError(
-                    code="context_selection_unavailable",
-                    message="Potpie could not read the local context catalog.",
-                    recommended_next_action="check daemon readiness with 'potpie doctor'",
-                    retry_posture="safe",
-                )
-            )
-
-        if selector.kind == "explicit":
-            live, archived = match_pot_ref(pots, selector.value or "")
-            if live is not None:
-                return Success(ContextIdentity(live.pot_id))
-            # An exact id always names its pot, archived or not: ids are never
-            # reused, and clearing a retired pot's graph state needs to reach it.
-            # What may run against it is decided by ``LocalCliAuthorizer``. A
-            # name never resolves to an archived pot, because a live pot may
-            # reuse that name.
-            if archived is not None and archived.pot_id == selector.value:
-                return Success(ContextIdentity(archived.pot_id))
-            if archived is not None:
-                return Failure(
-                    SelectionError(
-                        code="pot_archived",
-                        message=archived_pot_message(archived),
-                        recommended_next_action=ARCHIVED_POT_NEXT_ACTION,
-                    )
-                )
-            return Failure(
-                SelectionError(
-                    code="pot_not_found",
-                    message=f"No pot matching '{selector.value}'.",
-                    recommended_next_action="run 'potpie pot list'",
-                )
-            )
-
-        if selector.kind == "active":
-            if active is not None:
-                return Success(ContextIdentity(active.pot_id))
-            return Failure(_no_active_pot_error())
-
-        repo = selector.value or ""
-        try:
-            default_pot_id = self._services.pots.repo_default(repo=repo)
-        except Exception:
-            default_pot_id = None
-        live_ids = {pot.pot_id for pot in pots if not is_archived(pot)}
-        if default_pot_id and default_pot_id in live_ids:
-            return Success(ContextIdentity(str(default_pot_id)))
-
-        # One repo→pot index read, not one ``list_sources`` call per pot.
-        # Matching stays here; one entry per pot, in pot order.
-        try:
-            index = repo_source_index(self._services.pots)
-        except Exception:
-            index = []
-        matches: dict[str, str] = {}
-        for row in index:
-            if row.pot_id in matches:
-                continue
-            if any(
-                repo_identity_key(ref) == repo
-                for ref in (row.name, row.location)
-                if ref
-            ):
-                matches[row.pot_id] = row.pot_name
-
-        if len(matches) == 1:
-            return Success(ContextIdentity(next(iter(matches))))
-        if len(matches) > 1:
-            if active is not None and active.pot_id in matches:
-                return Success(ContextIdentity(active.pot_id))
-            names = ", ".join(f"{name} ({pot_id})" for pot_id, name in matches.items())
-            return Failure(
-                SelectionError(
-                    code="ambiguous_pot",
-                    message=f"Current repo is registered in multiple pots: {names}.",
-                    recommended_next_action=(
-                        "pick one with '--pot <id-or-name>' or set it active with "
-                        "'potpie pot use <id-or-name>'"
-                    ),
-                )
-            )
-        if active is not None:
-            return Success(ContextIdentity(active.pot_id))
-        return Failure(_no_active_pot_error())
+        return await super().resolve(selector, actor=actor)
 
 
 class LocalCliAuthenticator:
     async def authenticate(self, authentication: object):
         del authentication
-        return Success(AuthenticatedActor(actor_id="local-cli"))
+        return Success(LOCAL_ACTOR)
 
 
 class LocalCliAuthorizer:
@@ -297,7 +257,8 @@ class LocalCliAuthorizer:
                 actor_id=actor.actor_id,
                 operation=operation,
                 context=context,
-                attributes={"trust_boundary": "local_user"},
+                # The local owner holds every commit level on every pot.
+                attributes={"trust_boundary": "local_user", "commit_access": "admin"},
             )
         )
 
@@ -315,8 +276,20 @@ class LocalCliAuthorizer:
         )
 
 
-class LocalEngineOperations:
-    """Finite engine-owned operations backed by explicit local services."""
+#: The failure code for an engine operation that raised something unexpected.
+#: Transport-neutral: the local daemon and a managed host report the same one.
+ENGINE_OPERATION_FAILED = "engine_operation_failed"
+
+
+class ServiceEngineOperations:
+    """Finite engine-owned operations backed by explicit engine services.
+
+    The one implementation of every engine operation, for the local runtime
+    and for embedding hosts alike. Sync service calls run in a worker thread
+    bridged to the calling event loop (``run_in_worker_thread``), so a host
+    whose plan or inbox store is async only (an async database pool) serves
+    every operation from the loop that owns that store.
+    """
 
     def __init__(self, services: Any) -> None:
         self._services = services
@@ -495,6 +468,22 @@ class LocalEngineOperations:
     ) -> Outcome[object]:
         return await self._call(
             lambda: self._inspection_neighborhood(context=context, request=request)
+        )
+
+    async def slice(
+        self, context: ContextIdentity, request: GraphSliceRequest
+    ) -> Outcome[object]:
+        """The pot's whole graph, as the explorer draws it."""
+
+        return await self._call(
+            lambda: self._services.backend.inspection.slice(
+                pot_id=context.value,
+                filter_=ClaimQueryFilter(
+                    pot_id=context.value,
+                    include_invalidated=request.include_invalidated,
+                    limit=request.limit,
+                ),
+            )
         )
 
     async def export_snapshot(
@@ -777,7 +766,7 @@ class LocalEngineOperations:
     ) -> Outcome[object]:
         event_id = _required_value(request.event_id, "event_id")
         try:
-            event = await asyncio.to_thread(
+            event = await run_in_worker_thread(
                 self._ingestion_event_store().get_event, event_id
             )
         except Exception as exc:
@@ -1038,11 +1027,15 @@ class LocalEngineOperations:
 
         Every call that reaches here passed the resource manager, which
         authenticated the caller and authorized this operation for exactly
-        this pot, so the grant is scoped to that pot and nothing wider.
+        this pot, so the grant is scoped to that pot and nothing wider. Its
+        levels are the ones the authorized scope carries; a call made outside
+        the typed boundary (in-process, local only) keeps every level.
         """
 
+        scope = current_authorization_scope()
+        access = commit_access_for(scope) if scope is not None else COMMIT_ACCESS_LEVELS
         try:
-            with commit_grant(context.value):
+            with commit_grant(context.value, access):
                 value = await call(self._services.graph_workbench)
         except CommitAccessDenied as exc:
             return Failure(
@@ -1085,6 +1078,7 @@ class LocalEngineOperations:
             EngineOperation.MUTATE: self.mutate,
             EngineOperation.NEIGHBORHOOD: self.neighborhood,
             EngineOperation.INSPECT: self.inspect,
+            EngineOperation.GRAPH_SLICE: self.slice,
             EngineOperation.EXPORT_SNAPSHOT: self.export_snapshot,
             EngineOperation.IMPORT_SNAPSHOT: self.import_snapshot,
             EngineOperation.REPAIR: self.repair,
@@ -1128,7 +1122,7 @@ class LocalEngineOperations:
             return Failure(
                 DomainError(
                     code="operation_not_supported",
-                    message=f"{operation.value} is not supported by the local engine",
+                    message=f"{operation.value} is not supported by this engine",
                 )
             )
         return await handler(context, request)
@@ -1308,8 +1302,8 @@ class LocalEngineOperations:
     ) -> Failure[DependencyError]:
         return Failure(
             DependencyError(
-                code="local_engine_operation_failed",
-                message="the local engine operation failed",
+                code=ENGINE_OPERATION_FAILED,
+                message="the engine operation failed",
                 details={"operation": operation, "error_type": type(exc).__name__},
                 recommended_next_action="inspect runtime logs",
             )
@@ -1317,7 +1311,7 @@ class LocalEngineOperations:
 
     async def _call(self, call: Callable[[], object]) -> Outcome[object]:
         try:
-            return Success(await asyncio.to_thread(call))
+            return Success(await run_in_worker_thread(call))
         except CapabilityNotImplemented as exc:
             return Failure(
                 DomainError(
@@ -1390,19 +1384,19 @@ class LocalEngineOperations:
         except Exception as exc:
             return Failure(
                 DependencyError(
-                    code="local_engine_operation_failed",
-                    message="the local engine operation failed",
+                    code=ENGINE_OPERATION_FAILED,
+                    message="the engine operation failed",
                     details={"error_type": type(exc).__name__},
                     recommended_next_action="inspect runtime logs",
                 )
             )
 
 
-class LocalGraphMetadataOperationHandler:
-    """Shared context-free graph metadata execution for every local transport."""
+class GraphMetadataOperationHandler:
+    """Shared context-free graph metadata execution (``describe``)."""
 
-    def __init__(self, services: LocalEngineServices) -> None:
-        self._operations = LocalEngineOperations(services)
+    def __init__(self, services: EngineServices) -> None:
+        self._operations = ServiceEngineOperations(services)
 
     async def handle(
         self, operation: EngineOperation, request: EngineRequest
@@ -1419,7 +1413,14 @@ class LocalGraphMetadataOperationHandler:
         )
 
 
-class LocalContextResourceComposer:
+class ServiceResourceComposer:
+    """Compose one context-bound engine over shared engine services.
+
+    Each cached engine is a thin wrapper: every context shares the same
+    services, so composition is cheap and an evicted engine costs nothing to
+    rebuild.
+    """
+
     def __init__(self, services: Any) -> None:
         self._services = services
 
@@ -1431,7 +1432,7 @@ class LocalContextResourceComposer:
     async def compose(
         self, context: ContextIdentity, fingerprint: CompositionFingerprint
     ):
-        operations = LocalEngineOperations(self._services)
+        operations = ServiceEngineOperations(self._services)
         return Success(
             ResourceComposition(
                 fingerprint=fingerprint,
@@ -1448,12 +1449,19 @@ class LocalContextResourceComposer:
         )
 
 
+#: The local names, kept for existing callers.
+LocalEngineServices = EngineServices
+LocalEngineOperations = ServiceEngineOperations
+LocalContextResourceComposer = ServiceResourceComposer
+LocalGraphMetadataOperationHandler = GraphMetadataOperationHandler
+
+
 def build_local_resource_manager(services: Any) -> ContextResourceManager:
     return ContextResourceManager(
         resolver=LocalContextSelectorResolver(services),
         authenticator=LocalCliAuthenticator(),
         authorizer=LocalCliAuthorizer(services),
-        composer=LocalContextResourceComposer(services),
+        composer=ServiceResourceComposer(services),
     )
 
 
@@ -1480,26 +1488,20 @@ def _snapshot_document_count(resources: Mapping[str, Any]) -> int:
     return len({str(name).split("/", 1)[0] for name in files})
 
 
-def _no_active_pot_error() -> SelectionError:
-    return SelectionError(
-        code="no_active_pot",
-        message=(
-            "No active pot, and the current repo is not registered as a source "
-            "in any pot."
-        ),
-        recommended_next_action=(
-            "run 'potpie setup', or create a pot with 'potpie pot create <name> "
-            "--use' and register this repo with 'potpie source add repo .'"
-        ),
-    )
-
-
 __all__ = [
-    "LocalEngineServices",
+    "ENGINE_OPERATION_FAILED",
+    "LOCAL_ACTOR",
+    "EngineServices",
+    "GraphMetadataOperationHandler",
+    "LocalActorPotCatalog",
+    "LocalCliAuthenticator",
+    "LocalCliAuthorizer",
     "LocalContextResourceComposer",
     "LocalContextSelectorResolver",
     "LocalEngineOperations",
-    "LocalCliAuthenticator",
-    "LocalCliAuthorizer",
+    "LocalEngineServices",
+    "LocalGraphMetadataOperationHandler",
+    "ServiceEngineOperations",
+    "ServiceResourceComposer",
     "build_local_resource_manager",
 ]

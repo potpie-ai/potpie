@@ -169,6 +169,11 @@ class _EngineClient:
     async def rollback_preview(self, request: Any) -> Any:
         return await self._ok({"preview": {"preview_id": "p1"}})
 
+    async def graph_slice(self, request: Any) -> Any:
+        from potpie_context_engine import Success
+
+        return Success(_Backend.inspection.slice(pot_id=self.pot_id, filter_=None))
+
 
 @pytest.fixture
 def pots() -> _Pots:
@@ -305,7 +310,7 @@ def test_the_daemon_token_still_switches_pots(
 ) -> None:
     body = authorized.post("/ui/api/pots/use", json={"ref": "default"}).json()
 
-    assert body == {"id": "pot_1", "name": "default", "active": True}
+    assert body == {"id": "pot_1", "name": "default", "origin": "local", "active": True}
     assert pots.used == ["default"]
 
 
