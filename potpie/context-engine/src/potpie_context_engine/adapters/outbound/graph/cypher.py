@@ -511,6 +511,7 @@ async def upsert_edges_async(
             edge_props["provenance_source_event"] = provenance.source_event_id
             if provenance.mutation_id:
                 edge_props["mutation_id"] = provenance.mutation_id
+                edge_props["last_mutation_id"] = provenance.mutation_id
 
             # Semantic claims already carry a stable identity including environment
             # and evidence. Existing stored claims have this property, so matching
@@ -568,6 +569,7 @@ async def upsert_edges_async(
                     predicate=predicate,
                     from_key=item.from_entity_key,
                     winning_to_key=item.to_entity_key,
+                    mutation_id=provenance.mutation_id,
                     valid_at=valid_at,
                     now=now,
                 )
@@ -582,6 +584,7 @@ async def _supersede_singleton_predecessors(
     predicate: str,
     from_key: str,
     winning_to_key: str,
+    mutation_id: str | None,
     valid_at: str,
     now: datetime,
 ) -> int:
@@ -609,13 +612,15 @@ async def _supersede_singleton_predecessors(
         SET r.invalid_at = $new_valid_at,
             r.expired_at = $now,
             r.superseded_by_object = $winning_to_key,
-            r.supersession_reason = 'singleton_predicate'
+            r.supersession_reason = 'singleton_predicate',
+            r.last_mutation_id = $mutation_id
         RETURN count(r) AS cnt
         """,
         gid=pot_id,
         predicate=predicate,
         from_key=from_key,
         winning_to_key=winning_to_key,
+        mutation_id=mutation_id,
         new_valid_at=valid_at,
         now=now.isoformat(),
     )
@@ -674,7 +679,8 @@ async def delete_edges_async(
                 WHERE r.invalid_at IS NULL
                 SET r.invalid_at = $now,
                     r.expired_at = $now,
-                    r.deleted_by = $deleted_by
+                    r.deleted_by = $deleted_by,
+                    r.last_mutation_id = $mutation_id
                 RETURN count(r) AS cnt
                 """,
                 gid=pot_id,
@@ -683,6 +689,7 @@ async def delete_edges_async(
                 to_key=item.to_entity_key,
                 now=now.isoformat(),
                 deleted_by=provenance.source_event_id,
+                mutation_id=provenance.mutation_id,
             )
             rec = await res.single()
             await res.consume()
@@ -723,6 +730,7 @@ async def apply_invalidations_async(
                 "expired_at": now.isoformat(),
                 "invalidation_reason": item.reason,
                 "invalidated_by": provenance.source_event_id,
+                "last_mutation_id": provenance.mutation_id,
             }
 
             if item.target_claim_keys is not None:
@@ -858,7 +866,8 @@ async def _write_supersedes_claim(
             r.evidence_strength = 'deterministic',
             r.fact = $fact,
             r.observed_at = $now_iso,
-            r.reason = $reason
+            r.reason = $reason,
+            r.last_mutation_id = $mutation_id
         """,
         gid=pot_id,
         new_key=new_key,
@@ -868,6 +877,7 @@ async def _write_supersedes_claim(
         source_system=provenance.source_system or "agent",
         fact=fact,
         reason=reason,
+        mutation_id=provenance.mutation_id,
     )
 
 

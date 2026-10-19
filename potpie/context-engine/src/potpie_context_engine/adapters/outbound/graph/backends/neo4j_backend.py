@@ -30,6 +30,7 @@ from potpie_context_engine.core.definition import (
     GraphDefinition,
 )
 from potpie_context_engine.core.graph_mutations import InvalidationOp, ProvenanceContext
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
 from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 from potpie_context_engine.core.ports.graph.mutation import (
@@ -87,7 +88,7 @@ def _run_sync(coro: Any) -> Any:
     coro.close()
     raise RuntimeError(
         "Neo4jGraphBackend sync mutation cannot run inside an event loop; "
-        "use the async door (mutation.apply_async)."
+        "use the corresponding async method."
     )
 
 
@@ -96,10 +97,9 @@ class _Neo4jMutation:
     """``GraphMutationPort`` over ``Neo4jGraphWriter`` + ``apply_mutation_batch``.
 
     ``apply_async`` is the native door (it ``await``s the async writer directly);
-    ``apply`` is a loop-aware sync bridge for CLI/tests. The writer is created
-    once and reused — its async driver binds to the loop that first ``await``s
-    it, which in managed is uvicorn's single request loop (the same pattern the
-    production ``ContextGraphService`` uses with one long-lived writer).
+    ``apply`` is a loop-aware sync bridge for CLI/tests. Each operation owns and
+    closes its async driver on the caller's loop; transaction-bound writers
+    borrow that operation's transaction and never create or close a driver.
     """
 
     settings: Any
@@ -124,6 +124,16 @@ class _Neo4jMutation:
     @property
     def atomic_mutations_supported(self) -> bool:
         return callable(getattr(self._get_writer(), "in_transaction", None))
+
+    @property
+    def capabilities(self) -> MutationCapabilities:
+        native = self.atomic_mutations_supported
+        return MutationCapabilities(
+            atomic_writes=native,
+            revision_check=native,
+            execution_lookup=native,
+            durable_receipts=native,
+        )
 
     async def apply_async(
         self,
@@ -174,7 +184,7 @@ class _Neo4jMutation:
             ),
         )
 
-    def lookup_execution(
+    async def lookup_execution_async(
         self,
         plan: MutationBatch,
         *,
@@ -187,13 +197,11 @@ class _Neo4jMutation:
                 lookup_execution,
             )
 
-            return _run_sync(
-                lookup_execution(
-                    writer,
-                    plan,
-                    expected_pot_id=expected_pot_id,
-                    mutation_id=mutation_id,
-                )
+            return await lookup_execution(
+                writer,
+                plan,
+                expected_pot_id=expected_pot_id,
+                mutation_id=mutation_id,
             )
         lookup = self.execution_registry.lookup(
             plan,
@@ -209,14 +217,34 @@ class _Neo4jMutation:
             detail="Neo4j mutation receipts are not durable across processes",
         )
 
-    def current_version(self, pot_id: str) -> int:
+    def lookup_execution(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ) -> MutationExecutionLookup:
+        return _run_sync(
+            self.lookup_execution_async(
+                plan, expected_pot_id=expected_pot_id, mutation_id=mutation_id
+            )
+        )
+
+    async def current_version_async(self, pot_id: str) -> int:
         from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
             current_version,
         )
 
-        return _run_sync(current_version(self._get_writer(), pot_id))
+        if not self.atomic_mutations_supported:
+            raise NotImplementedError(
+                "injected Neo4j writer has no native revision check"
+            )
+        return await current_version(self._get_writer(), pot_id)
 
-    def compare_and_apply(
+    def current_version(self, pot_id: str) -> int:
+        return _run_sync(self.current_version_async(pot_id))
+
+    async def compare_and_apply_async(
         self,
         plan: MutationBatch,
         *,
@@ -229,19 +257,40 @@ class _Neo4jMutation:
             apply_atomic,
         )
 
+        if not self.atomic_mutations_supported:
+            raise NotImplementedError(
+                "injected Neo4j writer has no native atomic execution"
+            )
         context = replace(
             provenance_context or ProvenanceContext(),
             mutation_id=(provenance_context.mutation_id if provenance_context else None)
             or uuid.uuid4().hex,
         )
+        return await apply_atomic(
+            self._get_writer(),
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=context,
+            definition=self.definition,
+            reconciliation_config=reconciliation_config,
+        )
+
+    def compare_and_apply(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
         return _run_sync(
-            apply_atomic(
-                self._get_writer(),
+            self.compare_and_apply_async(
                 plan,
                 expected_pot_id=expected_pot_id,
                 expected_version=expected_version,
-                provenance_context=context,
-                definition=self.definition,
+                provenance_context=provenance_context,
                 reconciliation_config=reconciliation_config,
             )
         )
@@ -284,14 +333,17 @@ class _Neo4jMutation:
         )
         return result.mutation_summary.invalidations_applied
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+    async def reset_pot_async(self, pot_id: str) -> dict[str, Any]:
         if callable(getattr(self._get_writer(), "in_transaction", None)):
             from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
                 reset_atomic,
             )
 
-            return _run_sync(reset_atomic(self._get_writer(), pot_id))
-        return _run_sync(self._get_writer().reset_pot(pot_id))
+            return await reset_atomic(self._get_writer(), pot_id)
+        return await self._get_writer().reset_pot(pot_id)
+
+    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+        return _run_sync(self.reset_pot_async(pot_id))
 
     def readiness(self, pot_id: str) -> BackendReadiness:
         ready = bool(getattr(self._get_writer(), "enabled", False))

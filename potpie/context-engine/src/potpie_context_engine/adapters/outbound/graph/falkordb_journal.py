@@ -8,7 +8,6 @@ and immutable receipt are published in ONE GRAPH.QUERY. No after-write capture.
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from copy import deepcopy
 from dataclasses import replace
@@ -34,12 +33,15 @@ from potpie_context_engine.core.journal_inverse import (
 from potpie_context_engine.core.reconciliation import MutationResult, MutationSummary
 from redis.exceptions import ResponseError, WatchError
 
-from ._mutation_execution import MutationExecutionReuseError
+from ._mutation_execution import (
+    MutationExecutionReuseError,
+    complete_execution,
+)
 from .falkordb_connection import transaction_client
+from .falkordb_journal_publication import publish_query as _publish_query
 
 _STATE = "PotpieRevision"
 _RECEIPT = "PotpieMutationReceipt"
-_LABEL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _LIFECYCLE = (
     "invalid_at",
     "expired_at",
@@ -404,102 +406,6 @@ def _effect_plan(before, plan, params, definition):
     return after, counts
 
 
-def _publish_query(before, after, *, state, receipt, result=None):
-    params = {
-        "pot": state.pot_id,
-        "state": journal_json(state),
-        "generation": state.generation,
-        "old_head": receipt.parent_commit_id if receipt else state.head,
-    }
-    clauses = [f"MATCH (v:{_STATE} {{pot_id:$pot}}) WHERE v.journal=$state"]
-    changed = [after[key] for key in after if before.get(key) != after[key]]
-    for i, record in enumerate(sorted(changed, key=lambda r: r.kind != "entity")):
-        props = _props(record)
-        props["retired"] = not record.fields.get("active", True)
-        props["record_id"] = record.record_id
-        params[f"rid{i}"] = record.record_id
-        params[f"props{i}"] = props
-        if record.kind == "entity":
-            labels = record.fields["labels"]
-            old_labels = (
-                before[record.record_id].fields["labels"]
-                if record.record_id in before
-                else ()
-            )
-            if any(not _LABEL.fullmatch(label) for label in (*labels, *old_labels)):
-                raise JournalError("invalid native label")
-            remove = sorted(set(old_labels) - set(labels))
-            clauses.append(
-                f"CALL {{ WITH v MERGE (e:Entity {{group_id:$pot,record_id:$rid{i}}}) "
-                f"SET e=$props{i} "
-                + (f"REMOVE e:{':'.join(remove)} " if remove else "")
-                + (f"SET e:{':'.join(labels)} " if labels else "")
-                + f"RETURN count(e) AS count{i} }}"
-            )
-        else:
-            vector = props.pop("fact_embedding", None)
-            if vector is not None:
-                params[f"vector{i}"] = vector
-            params.update(
-                {
-                    f"src{i}": record.fields["subject_record_id"],
-                    f"dst{i}": record.fields["object_record_id"],
-                }
-            )
-            clauses.append(
-                f"CALL {{ WITH v MATCH (a:Entity {{group_id:$pot,record_id:$src{i}}}) "
-                f"MATCH (b:Entity {{group_id:$pot,record_id:$dst{i}}}) "
-                f"MERGE (a)-[r:RELATES_TO {{group_id:$pot,record_id:$rid{i}}}]->(b) SET r=$props{i} "
-                + (
-                    f"SET r.fact_embedding=vecf32($vector{i}) "
-                    if vector is not None
-                    else ""
-                )
-                + f"RETURN count(r) AS count{i} }}"
-            )
-    next_state = state
-    if receipt:
-        next_state = replace(state, sequence=receipt.sequence, head=receipt.commit_id)
-        params.update(
-            mid=receipt.commit_id,
-            fingerprint=receipt.fingerprint,
-            journal=journal_json(receipt),
-            payload=json.dumps(
-                {
-                    "mutation_summary": {
-                        "entity_upserts_applied": result.entity_upserts_applied
-                        if result
-                        else 0,
-                        "edge_upserts_applied": result.edge_upserts_applied
-                        if result
-                        else 0,
-                        "edge_deletes_applied": result.edge_deletes_applied
-                        if result
-                        else 0,
-                        "invalidations_applied": result.invalidations_applied
-                        if result
-                        else 0,
-                        "stamp_counts": {},
-                    }
-                }
-            ),
-            entities=result.entity_upserts_applied if result else 0,
-            edges=result.edge_upserts_applied if result else 0,
-            deletes=result.edge_deletes_applied if result else 0,
-            invalidations=result.invalidations_applied if result else 0,
-            sequence=receipt.sequence,
-        )
-        clauses.append(
-            f"CREATE (receipt:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid,fingerprint:$fingerprint,"
-            "payload:$payload,journal:$journal,journal_generation:$generation,sequence:$sequence,"
-            "entities:$entities,edges:$edges,deletes:$deletes,invalidations:$invalidations})"
-        )
-        clauses.append("SET v.version=v.version+1")
-    params["next_state"] = journal_json(next_state)
-    clauses.append("SET v.journal=$next_state RETURN v.version")
-    return " ".join(clauses), params
-
-
 class FalkorJournal:
     def __init__(self, graph, definition, *, profile="falkordb", resource_exists=None):
         self.graph, self.definition, self.profile = graph, definition, profile
@@ -680,7 +586,18 @@ class FalkorJournal:
 
         return capture_receipt(state, before, after, **kwargs)
 
-    def apply(self, plan, *, pipe, state, params, fingerprint, actor):
+    def apply(
+        self,
+        plan,
+        *,
+        pipe,
+        state,
+        params,
+        fingerprint,
+        actor,
+        provenance_context,
+        receipt_batch,
+    ):
         context = current_journal_context()
         if context.resource_operation_id and state.resource_guard is None:
             raise JournalError("resource operation no longer owns an active guard")
@@ -713,13 +630,38 @@ class FalkorJournal:
             actor=actor,
             message=plan.summary,
         )
+        result = complete_execution(
+            MutationResult(
+                True, receipt.commit_id, summary, downgrades=plan.ontology_downgrades
+            ),
+            receipt_batch,
+            pot_id=state.pot_id,
+            version_before=params["expected"],
+            provenance=provenance_context,
+            applied_at=datetime.fromisoformat(params["now"]),
+            record_ids=(
+                key
+                for key, value in after.items()
+                if value.kind == "claim" and before.get(key) != value
+            ),
+        )
         query, values = _publish_query(
-            before, after, state=state, receipt=receipt, result=summary
+            before,
+            after,
+            state=state,
+            receipt=receipt,
+            result=summary,
+            execution=result,
         )
-        self._execute(pipe, query, values)
-        return MutationResult(
-            True, receipt.commit_id, summary, downgrades=plan.ontology_downgrades
-        )
+        try:
+            self._execute(pipe, query, values)
+        except JournalError as exc:
+            # The batch executor re-reads its durable receipt after contention.
+            # Public restore/resource operations retain their stale-preview error.
+            if isinstance(exc.__cause__, WatchError):
+                raise exc.__cause__
+            raise
+        return result
 
     def plan_restore(self, *, pot_id, target_commit_id, expected_head, mode="revert"):
         with transaction_client(self.graph).pipeline() as pipe:

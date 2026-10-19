@@ -9,6 +9,10 @@ from datetime import datetime, timezone
 from falkordb import QueryResult
 from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION
 from potpie_context_engine.core.errors import GraphMutationVersionConflict
+from potpie_context_engine.core.mutation_execution import (
+    MutationPersistenceError,
+    batch_has_work,
+)
 from potpie_context_engine.core.ports.graph.mutation import (
     MutationExecutionLookup,
     MutationExecutionState,
@@ -20,8 +24,11 @@ from potpie_context_engine.core.reconciliation_validation import (
 from redis.exceptions import ResponseError, WatchError
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
-    MutationExecutionReuseError,
+    _mutation_result_to_dict,
+    complete_execution,
     mutation_batch_fingerprint,
+    validate_execution_replay,
+    validate_prepared_execution,
 )
 from potpie_context_engine.adapters.outbound.graph.apply_plan import _build_provenance
 from potpie_context_engine.adapters.outbound.graph.cypher import (
@@ -40,6 +47,7 @@ from potpie_context_engine.adapters.outbound.graph.cypher import (
 )
 
 from .falkordb_connection import transaction_client
+from .falkordb_receipts import RECEIPT_COLUMNS, decode_receipt
 
 _STATE = "PotpieRevision"
 _RECEIPT = "PotpieMutationReceipt"
@@ -59,14 +67,53 @@ def current_version(graph, pot_id: str) -> int:
         if "empty key" in str(exc).lower():
             return 0
         raise
-    return int(result.result_set[0][0]) if result.result_set else 0
+    if len(result.result_set) > 1:
+        raise MutationPersistenceError("duplicate native pot revision")
+    value = result.result_set[0][0] if result.result_set else 0
+    if type(value) is not int or value < 0:
+        raise MutationPersistenceError("invalid native pot revision")
+    return value
 
 
 def _ensure_state(graph, pot_id: str) -> None:
-    graph.query(
-        f"MERGE (r:{_STATE} {{pot_id:$pot}}) ON CREATE SET r.version=0",
-        params={"pot": pot_id},
-    )
+    # FalkorDB's MERGE lookup can run before the write lock is acquired.
+    # Guard even bootstrap; otherwise two fresh-pot writers can create two
+    # revision nodes before either begins its mutation transaction.
+    while True:
+        with transaction_client(graph).pipeline() as pipe:
+            try:
+                pipe.watch(graph.name)
+                try:
+                    response = pipe.execute_command(
+                        "GRAPH.RO_QUERY",
+                        graph.name,
+                        graph._build_params_header({"pot": pot_id})
+                        + f"MATCH (v:{_STATE} {{pot_id:$pot}}) RETURN v.version",
+                        "--compact",
+                    )
+                    rows = _rows(graph, response)
+                except ResponseError as exc:
+                    if "empty key" not in str(exc).lower():
+                        raise
+                    rows = []
+                if len(rows) > 1:
+                    raise MutationPersistenceError("duplicate native pot revision")
+                if rows:
+                    if type(rows[0][0]) is not int or rows[0][0] < 0:
+                        raise MutationPersistenceError("invalid native pot revision")
+                    return
+                pipe.multi()
+                pipe.execute_command(
+                    "GRAPH.QUERY",
+                    graph.name,
+                    graph._build_params_header({"pot": pot_id})
+                    + f"CREATE (v:{_STATE} {{pot_id:$pot,version:0}})",
+                    "--compact",
+                )
+                pipe.execute()
+                return
+            except WatchError:
+                continue
 
 
 def reset_pot(graph, pot_id: str) -> dict[str, int | bool]:
@@ -111,34 +158,29 @@ def reset_pot(graph, pot_id: str) -> dict[str, int | bool]:
 
 def lookup_execution(graph, plan, *, expected_pot_id, mutation_id):
     fingerprint = mutation_batch_fingerprint(plan)
-    current_version(graph, expected_pot_id)
-    result = graph.query(
-        f"MATCH (r:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid}}) "
-        "RETURN r.fingerprint,r.payload,r.entities,r.edges,r.deletes,r.invalidations",
-        params={"pot": expected_pot_id, "mid": mutation_id},
-    )
+    try:
+        result = graph.ro_query(
+            f"MATCH (r:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid}}) "
+            f"RETURN {RECEIPT_COLUMNS}",
+            params={"pot": expected_pot_id, "mid": mutation_id},
+        )
+    except ResponseError as exc:
+        if "empty key" not in str(exc).lower():
+            raise
+        return MutationExecutionLookup(
+            MutationExecutionState.absent.value, mutation_id, fingerprint
+        )
     if not result.result_set:
         return MutationExecutionLookup(
             MutationExecutionState.absent.value, mutation_id, fingerprint
         )
-    stored, payload, entities, edges, deletes, invalidations = result.result_set[0]
-    if stored != fingerprint:
-        raise MutationExecutionReuseError(
-            "mutation ID was already used with a different batch"
-        )
-    raw = json.loads(payload)
-    summary = raw["mutation_summary"]
-    summary.update(
-        entity_upserts_applied=int(entities or 0),
-        edge_upserts_applied=int(edges or 0),
-        edge_deletes_applied=int(deletes or 0),
-        invalidations_applied=int(invalidations or 0),
-    )
-    applied = MutationResult(
-        True,
-        mutation_id,
-        MutationSummary(**summary),
-        downgrades=raw.get("downgrades", []),
+    if len(result.result_set) != 1:
+        raise MutationPersistenceError("duplicate native execution receipt")
+    applied = decode_receipt(
+        result.result_set[0],
+        pot_id=expected_pot_id,
+        mutation_id=mutation_id,
+        fingerprint=fingerprint,
     )
     return MutationExecutionLookup(
         MutationExecutionState.completed.value, mutation_id, fingerprint, result=applied
@@ -149,7 +191,7 @@ def _existing(graph, pipe, pot_id, mutation_id):
     query = graph._build_params_header({"pot": pot_id, "mid": mutation_id}) + (
         f"MATCH (v:{_STATE} {{pot_id:$pot}}) "
         f"OPTIONAL MATCH (r:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid}}) "
-        "RETURN v.version,r.fingerprint,r.payload,r.entities,r.edges,r.deletes,r.invalidations"
+        f"RETURN v.version,{RECEIPT_COLUMNS}"
     )
     response = pipe.execute_command(
         "GRAPH.RO_QUERY",
@@ -158,7 +200,11 @@ def _existing(graph, pipe, pot_id, mutation_id):
         "--compact",
     )
     rows = _rows(graph, response)
-    return rows[0] if rows else (0, None, None, None, None, None, None)
+    if len(rows) > 1:
+        raise MutationPersistenceError("duplicate native revision or execution receipt")
+    if rows and (type(rows[0][0]) is not int or rows[0][0] < 0):
+        raise MutationPersistenceError("invalid native pot revision")
+    return rows[0] if rows else (0, None, None, None, None, None, None, None)
 
 
 def _compile(
@@ -169,6 +215,8 @@ def _compile(
     mutation_id,
     fingerprint,
     provenance,
+    provenance_context,
+    receipt_batch,
     definition,
     embedder=None,
 ):
@@ -179,7 +227,12 @@ def _compile(
         "fingerprint": fingerprint,
         "now": datetime.now(timezone.utc).isoformat(),
     }
-    clauses = [f"MATCH (v:{_STATE} {{pot_id:$pot}}) WHERE v.version=$expected"]
+    clauses = [
+        f"MATCH (v:{_STATE} {{pot_id:$pot}}) "
+        f"OPTIONAL MATCH (prior:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid}}) "
+        "WITH v,prior WHERE v.version=$expected AND prior IS NULL"
+    ]
+    affected = []
     counts = {"entities": 0, "edges": 0, "deletes": 0, "invalidations": 0}
     prov = provenance.to_properties()
     for i, item in enumerate(plan.entity_upserts):
@@ -289,8 +342,9 @@ def _compile(
             f"SET r.revived_at=CASE WHEN r.invalid_at IS NULL OR ($epreserve{i} AND r.invalid_at IS NOT NULL) "
             f"THEN r.revived_at ELSE $now END SET {_conditional_revive_clause(alias='r', preserve_param=f'epreserve{i}')} "
             f"SET r+= $eprop{i} "
-            f"RETURN count(r) AS xc{i} }}"
+            f"RETURN count(r) AS xc{i},collect(DISTINCT coalesce(r.record_id,r.uuid)) AS xr{i} }}"
         )
+        affected.append(f"xr{i}")
         if (
             item.edge_type in definition.singleton_predicates
             and evidence_strength_for_truth(truth) == "deterministic"
@@ -302,8 +356,9 @@ def _compile(
                 "FOREACH (_ IN CASE WHEN old IS NULL THEN [] ELSE [1] END | "
                 f"SET old.invalid_at=$ev{i},old.expired_at=$now,"
                 f"old.superseded_by_object=$et{i},old.supersession_reason='singleton_predicate') "
-                f"RETURN count(old) AS sc{i} }}"
+                f"RETURN count(old) AS sc{i},collect(DISTINCT coalesce(old.record_id,old.uuid)) AS sr{i} }}"
             )
+            affected.append(f"sr{i}")
         counts["edges"] += 1
     for i, item in enumerate(plan.edge_deletes):
         params.update(
@@ -315,8 +370,10 @@ def _compile(
         )
         clauses.append(
             f"CALL {{ WITH v OPTIONAL MATCH (:Entity {{group_id:$pot,entity_key:$df{i}}})-[r:RELATES_TO {{group_id:$pot,name:$dn{i},object_key:$dt{i}}}]->() "
-            f"FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END | SET r.invalid_at=$now,r.expired_at=$now,r.deleted_by=$mid) RETURN count(r) AS dc{i} }}"
+            f"FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END | SET r.invalid_at=$now,r.expired_at=$now,r.deleted_by=$mid) "
+            f"RETURN count(r) AS dc{i},collect(DISTINCT coalesce(r.record_id,r.uuid)) AS dr{i} }}"
         )
+        affected.append(f"dr{i}")
         counts["deletes"] += 1
     for i, item in enumerate(plan.invalidations):
         prop = {
@@ -356,9 +413,17 @@ def _compile(
             for alias in aliases
         )
         count_expr = "+".join(f"count(DISTINCT {alias})" for alias in aliases)
-        clauses.append(
-            f"CALL {{ WITH v {' '.join(matches)} {updates} RETURN {count_expr} AS ic{i} }}"
+        claim_aliases = [alias for alias in aliases if not alias.endswith("b")]
+        claim_ids = ",".join(
+            f"collect(DISTINCT coalesce({alias}.record_id,{alias}.uuid)) AS ir{i}{j}"
+            for j, alias in enumerate(claim_aliases)
         )
+        clauses.append(
+            f"CALL {{ WITH v {' '.join(matches)} {updates} RETURN {count_expr} AS ic{i}"
+            + (f",{claim_ids}" if claim_ids else "")
+            + " }"
+        )
+        affected.extend(f"ir{i}{j}" for j in range(len(claim_aliases)))
         if item.superseded_by_key:
             old_key = item.target_entity_key or (
                 item.target_edge[2] if item.target_edge else None
@@ -395,42 +460,11 @@ def _compile(
                     "ON CREATE SET s.uuid=randomUUID(),s.created_at=$now "
                     "SET s.revived_at=CASE WHEN s.invalid_at IS NULL THEN s.revived_at ELSE $now END "
                     f"SET {supersedes_revive} SET s += $isprop{i} "
-                    f"RETURN count(s) AS sic{i} }}"
+                    f"RETURN count(s) AS sic{i},collect(DISTINCT coalesce(s.record_id,s.uuid)) AS sir{i} }}"
                 )
+                affected.append(f"sir{i}")
         counts["invalidations"] += 1
-    payload = json.dumps(
-        {
-            "ok": True,
-            "mutation_id": mutation_id,
-            "mutation_summary": {
-                "entity_upserts_applied": counts["entities"],
-                "edge_upserts_applied": counts["edges"],
-                "edge_deletes_applied": counts["deletes"],
-                "invalidations_applied": counts["invalidations"],
-                "stamp_counts": {},
-            },
-            "error": None,
-            "reconciliation_errors": [],
-            "downgrades": list(plan.ontology_downgrades),
-        },
-        sort_keys=True,
-    )
-    params["payload"] = payload
-    entity_expr = "+".join(f"ec{i}" for i in range(len(plan.entity_upserts))) or "0"
-    edge_expr = "+".join(f"xc{i}" for i in range(len(plan.edge_upserts))) or "0"
-    delete_expr = "+".join(f"dc{i}" for i in range(len(plan.edge_deletes))) or "0"
-    invalid_expr = "+".join(f"ic{i}" for i in range(len(plan.invalidations))) or "0"
-    clauses += [
-        "SET v.version=v.version+1",
-        (
-            f"CREATE (receipt:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid,fingerprint:$fingerprint,payload:$payload,"
-            f"entities:{entity_expr},edges:{edge_expr},deletes:{delete_expr},invalidations:{invalid_expr}}})"
-        ),
-        f"RETURN v.version,{entity_expr} AS entities,{edge_expr} AS edges,{delete_expr} AS deletes,{invalid_expr} AS invalidations",
-    ]
-    return (
-        " ".join(clauses),
-        params,
+    result = complete_execution(
         MutationResult(
             True,
             mutation_id,
@@ -442,6 +476,32 @@ def _compile(
             ),
             downgrades=list(plan.ontology_downgrades),
         ),
+        receipt_batch,
+        pot_id=pot_id,
+        version_before=expected,
+        provenance=provenance_context,
+        applied_at=datetime.fromisoformat(params["now"]),
+    )
+    params["payload"] = json.dumps(_mutation_result_to_dict(result), sort_keys=True)
+    params["advance"] = int(batch_has_work(receipt_batch))
+    entity_expr = "+".join(f"ec{i}" for i in range(len(plan.entity_upserts))) or "0"
+    edge_expr = "+".join(f"xc{i}" for i in range(len(plan.edge_upserts))) or "0"
+    delete_expr = "+".join(f"dc{i}" for i in range(len(plan.edge_deletes))) or "0"
+    invalid_expr = "+".join(f"ic{i}" for i in range(len(plan.invalidations))) or "0"
+    record_expr = "+".join(affected) or "[]"
+    clauses += [
+        "SET v.version=v.version+$advance",
+        (
+            f"CREATE (receipt:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid,fingerprint:$fingerprint,payload:$payload,"
+            f"entities:{entity_expr},edges:{edge_expr},deletes:{delete_expr},invalidations:{invalid_expr},"
+            f"affected_claim_record_ids:{record_expr}}})"
+        ),
+        f"RETURN v.version,{RECEIPT_COLUMNS.replace('r.', 'receipt.')}",
+    ]
+    return (
+        " ".join(clauses),
+        params,
+        result,
     )
 
 
@@ -456,7 +516,43 @@ def apply_atomic(
     reconciliation_config=None,
     embedder=None,
 ):
+    validate_prepared_execution(
+        plan,
+        pot_id=expected_pot_id,
+        mutation_id=provenance_context.mutation_id,
+        provenance=provenance_context,
+    )
+    while True:
+        try:
+            return _apply_watched(
+                graph,
+                plan,
+                expected_pot_id=expected_pot_id,
+                expected_version=expected_version,
+                provenance_context=provenance_context,
+                definition=definition,
+                reconciliation_config=reconciliation_config,
+                embedder=embedder,
+            )
+        except WatchError:
+            # Re-read authoritative receipt before deciding whether this writer
+            # lost a revision race or is replaying the concurrent winner.
+            continue
+
+
+def _apply_watched(
+    graph,
+    plan,
+    *,
+    expected_pot_id,
+    expected_version,
+    provenance_context,
+    definition,
+    reconciliation_config,
+    embedder,
+):
     fingerprint = mutation_batch_fingerprint(plan)
+    receipt_batch = plan
     plan = deepcopy(plan)
     validate_reconciliation_plan(
         plan, expected_pot_id, definition=definition, config=reconciliation_config
@@ -474,28 +570,17 @@ def apply_atomic(
     pipe = transaction_client(graph).pipeline()
     try:
         pipe.watch(graph.name)
-        current, stored_fp, payload, entities, edges, deletes, invalidations = (
-            _existing(graph, pipe, expected_pot_id, mutation_id)
-        )
+        current, *stored = _existing(graph, pipe, expected_pot_id, mutation_id)
+        stored_fp = stored[0]
         if stored_fp:
-            if stored_fp != fingerprint:
-                raise MutationExecutionReuseError(
-                    "mutation ID was already used with a different batch"
-                )
-            raw = json.loads(payload)
-            summary = raw["mutation_summary"]
-            summary.update(
-                entity_upserts_applied=int(entities or 0),
-                edge_upserts_applied=int(edges or 0),
-                edge_deletes_applied=int(deletes or 0),
-                invalidations_applied=int(invalidations or 0),
+            result = decode_receipt(
+                stored,
+                pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+                fingerprint=fingerprint,
             )
-            return MutationResult(
-                True,
-                mutation_id,
-                MutationSummary(**summary),
-                downgrades=raw.get("downgrades", []),
-            )
+            validate_execution_replay(result, provenance=provenance_context)
+            return result
         if int(current) != expected_version:
             raise GraphMutationVersionConflict(
                 expected=expected_version, current=int(current)
@@ -507,6 +592,8 @@ def apply_atomic(
             mutation_id=mutation_id,
             fingerprint=fingerprint,
             provenance=provenance,
+            provenance_context=provenance_context,
+            receipt_batch=receipt_batch,
             definition=definition,
             embedder=embedder,
         )
@@ -527,7 +614,12 @@ def apply_atomic(
                 params=params,
                 fingerprint=fingerprint,
                 actor=provenance_context.actor_user_id or "system",
+                provenance_context=provenance_context,
+                receipt_batch=receipt_batch,
             )
+        from .falkordb_identity import validate_touched_claim_identities
+
+        validate_touched_claim_identities(graph, pipe, plan, params, definition)
         pipe.multi()
         pipe.execute_command(
             "GRAPH.QUERY",
@@ -536,14 +628,16 @@ def apply_atomic(
             "--compact",
         )
         responses = pipe.execute()
-        row = _rows(graph, responses[0])[0]
-        result.mutation_summary = MutationSummary(
-            int(row[1]), int(row[2]), int(row[3]), int(row[4])
-        )
-        return result
-    except WatchError:
-        raise GraphMutationVersionConflict(
-            expected=expected_version, current=current_version(graph, expected_pot_id)
+        rows = _rows(graph, responses[0])
+        if len(rows) != 1:
+            raise MutationPersistenceError(
+                "native execution guard did not publish exactly once"
+            )
+        return decode_receipt(
+            rows[0][1:],
+            pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+            fingerprint=fingerprint,
         )
     finally:
         pipe.reset()

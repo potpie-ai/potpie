@@ -23,6 +23,7 @@ from potpie_context_engine.core.errors import (
     GraphMutationVersionConflict,
 )
 from potpie_context_engine.core.graph_mutations import InvalidationOp, ProvenanceContext
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
 from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 from potpie_context_engine.core.ports.graph.mutation import (
@@ -35,6 +36,9 @@ from potpie_context_engine.core.reconciliation_config import ReconciliationConfi
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
+    mutation_batch_fingerprint,
+    validate_execution_replay,
+    validate_prepared_execution,
 )
 from potpie_context_engine.adapters.outbound.graph.apply_plan import (
     apply_mutation_batch,
@@ -148,6 +152,23 @@ class _FalkorDBMutation:
     def atomic_mutations_supported(self) -> bool:
         return hasattr(self.writer, "_get_graph")
 
+    @property
+    def capabilities(self) -> MutationCapabilities:
+        native = self.atomic_mutations_supported
+        return MutationCapabilities(
+            atomic_writes=native,
+            revision_check=native,
+            execution_lookup=native,
+            durable_receipts=native,
+        )
+
+    def _require_native(self) -> None:
+        if not self.atomic_mutations_supported:
+            raise CapabilityNotImplemented(
+                f"graph.{self.profile}.mutation.atomic",
+                detail="the injected writer has no authoritative native execution surface",
+            )
+
     async def apply_async(
         self,
         plan: MutationBatch,
@@ -165,8 +186,11 @@ class _FalkorDBMutation:
             provenance_context or ProvenanceContext(),
             mutation_id=mutation_id,
         )
+        validate_prepared_execution(
+            plan, pot_id=expected_pot_id, mutation_id=mutation_id, provenance=context
+        )
         if not hasattr(self.writer, "_get_graph"):
-            return await self.execution_registry.execute_async(
+            result = await self.execution_registry.execute_async(
                 plan,
                 expected_pot_id=expected_pot_id,
                 mutation_id=mutation_id,
@@ -179,6 +203,8 @@ class _FalkorDBMutation:
                     reconciliation_config=reconciliation_config,
                 ),
             )
+            validate_execution_replay(result, provenance=context)
+            return result
         return await asyncio.to_thread(
             self._compare_and_apply_sync,
             plan,
@@ -189,11 +215,33 @@ class _FalkorDBMutation:
         )
 
     def current_version(self, pot_id: str) -> int:
+        self._require_native()
         from potpie_context_engine.adapters.outbound.graph.falkordb_atomic import (
             current_version,
         )
 
         return current_version(self.writer._get_graph(), pot_id)
+
+    async def current_version_async(self, pot_id: str) -> int:
+        return await asyncio.to_thread(self.current_version, pot_id)
+
+    async def compare_and_apply_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
+        return await asyncio.to_thread(
+            self.compare_and_apply,
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
+        )
 
     def compare_and_apply(
         self,
@@ -214,6 +262,7 @@ class _FalkorDBMutation:
         )
 
     def _compare_and_apply_sync(self, plan, pot_id, expected_version, context, config):
+        self._require_native()
         from potpie_context_engine.adapters.outbound.graph.falkordb_atomic import (
             apply_atomic,
         )
@@ -236,7 +285,7 @@ class _FalkorDBMutation:
                     embedder=getattr(self.writer, "_embedder", None),
                 )
             except GraphMutationVersionConflict:
-                if expected_version is not None:
+                if expected_version is not None or context.prepared is not None:
                     raise
 
     def lookup_execution(
@@ -246,21 +295,38 @@ class _FalkorDBMutation:
         expected_pot_id: str,
         mutation_id: str,
     ) -> MutationExecutionLookup:
-        lookup = self.execution_registry.lookup(
-            plan,
-            expected_pot_id=expected_pot_id,
-            mutation_id=mutation_id,
-        )
-        if lookup.state != MutationExecutionState.absent.value:
-            return lookup
         if not self.atomic_mutations_supported:
-            return lookup
+            lookup = self.execution_registry.lookup(
+                plan, expected_pot_id=expected_pot_id, mutation_id=mutation_id
+            )
+            if lookup.state != MutationExecutionState.absent.value:
+                return lookup
+            return MutationExecutionLookup(
+                MutationExecutionState.unsupported.value,
+                mutation_id,
+                mutation_batch_fingerprint(plan),
+                detail="the injected writer has no authoritative durable receipt lookup",
+            )
         from potpie_context_engine.adapters.outbound.graph.falkordb_atomic import (
             lookup_execution,
         )
 
         return lookup_execution(
             self.writer._get_graph(),
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
+
+    async def lookup_execution_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ) -> MutationExecutionLookup:
+        return await asyncio.to_thread(
+            self.lookup_execution,
             plan,
             expected_pot_id=expected_pot_id,
             mutation_id=mutation_id,
