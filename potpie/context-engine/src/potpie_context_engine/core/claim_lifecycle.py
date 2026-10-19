@@ -187,16 +187,35 @@ def _same_logical_claim(left: ClaimRow, right: ClaimRow) -> bool:
     )
 
 
-def validate_incarnation_history(rows: Iterable[ClaimRow]) -> None:
+def validate_incarnation_history(
+    rows: Iterable[ClaimRow], *, singleton_predicates: Iterable[str] = ()
+) -> None:
     """Imports must preserve the same nonoverlapping logical history as writes."""
     groups: dict[tuple, list[ClaimRow]] = {}
+    singleton = set(singleton_predicates)
     for row in rows:
-        peers = groups.setdefault((*claim_scope(row), row.object_key), [])
+        peers = groups.setdefault(claim_scope(row), [])
         if any(
             _same_logical_claim(row, peer) and _overlaps(row, peer) for peer in peers
         ):
             raise ClaimLifecycleConflict(
                 "snapshot incarnation conflicts with target: overlapping logical history"
+            )
+        if row.predicate in singleton and any(
+            row.object_key != peer.object_key
+            and has_stable_source(row)
+            and has_stable_source(peer)
+            and (
+                row.evidence_strength == "deterministic"
+                or peer.evidence_strength == "deterministic"
+            )
+            and not row.retired
+            and not peer.retired
+            and _overlaps(row, peer)
+            for peer in peers
+        ):
+            raise ClaimLifecycleConflict(
+                "correction overlaps same-source singleton history"
             )
         peers.append(row)
 

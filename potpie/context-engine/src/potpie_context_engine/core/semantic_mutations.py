@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
+from .claim_corrections import ClaimTarget
 
 from potpie_context_engine.core.graph_contract import (
     GRAPH_CONTRACT_VERSION,
@@ -165,6 +166,9 @@ class SemanticMutation:
     reason: str | None = None
     superseded_by: GraphEntityRef | None = None
     target_claim_keys: tuple[str, ...] = ()
+    target_claim_record_ids: tuple[str, ...] = ()
+    target_source_system: str | None = None
+    target_source_ref: str | None = None
 
     # patch_entity / transition_state
     patch: Mapping[str, Any] = field(default_factory=dict)
@@ -238,6 +242,11 @@ class SemanticMutation:
             target_claim_keys=tuple(
                 str(key) for key in _as_list(raw.get("target_claim_keys"))
             ),
+            target_claim_record_ids=tuple(
+                str(key) for key in _as_list(raw.get("target_claim_record_ids"))
+            ),
+            target_source_system=_opt_str(raw.get("target_source_system")),
+            target_source_ref=_opt_str(raw.get("target_source_ref")),
             patch=patch,
             expected_entity_version=_opt_str(
                 raw.get("expected_entity_version")
@@ -380,7 +389,7 @@ class SemanticMutationPlan:
     provenance: Any = None
     warnings: tuple[str, ...] = ()
     # Resolved against the proposal snapshot; lowering must not broaden these.
-    correction_targets: dict[int, tuple[str, ...]] = field(default_factory=dict)
+    correction_targets: dict[int, tuple[ClaimTarget, ...]] = field(default_factory=dict)
 
     @property
     def errors(self) -> tuple[SemanticMutationValidationIssue, ...]:
@@ -410,6 +419,7 @@ class SemanticMutationResult:
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
     ontology_version: str = ONTOLOGY_VERSION
     plan_id: str | None = None
+    review_required_claim_keys: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -436,6 +446,8 @@ class SemanticMutationResult:
                 out["mutation_id"] = self.mutation_id
         if self.claim_keys:
             out["claim_keys"] = list(self.claim_keys)
+        if self.review_required_claim_keys:
+            out["review_required_claim_keys"] = list(self.review_required_claim_keys)
         if self.subgraphs:
             out["subgraphs"] = list(self.subgraphs)
         if self.detail:

@@ -8,9 +8,12 @@ from typing import Any
 import uuid
 
 from potpie_context_engine.core.claim_codec import claim_properties, row_from_record
+from potpie_context_engine.core.claim_corrections import (
+    ClaimClosureResolution,
+    apply_claim_closure,
+)
 from potpie_context_engine.core.claim_lifecycle import (
     ClaimLifecycleConflict,
-    close_claim_at,
     resolve_claim_assertion,
 )
 from potpie_context_engine.core.claim_preparation import assertion_row
@@ -81,25 +84,7 @@ async def write_claim(
     )
     expected = {key: 1 for key in resolution.superseded_record_ids}
     expected[resolution.record_id] = int(resolution.existing)
-    result = await session.run(
-        "MATCH (n:Entity {group_id:$gid}) "
-        "WHERE coalesce(n.record_id,n.uuid) IN $identities "
-        "RETURN coalesce(n.record_id,n.uuid) AS identity, count(n) AS cnt, 'entity' AS kind "
-        "UNION ALL MATCH ()-[r:RELATES_TO {group_id:$gid}]->() "
-        "WHERE coalesce(r.record_id,r.uuid) IN $identities "
-        "RETURN coalesce(r.record_id,r.uuid) AS identity, count(r) AS cnt, 'claim' AS kind",
-        gid=pot_id,
-        identities=list(expected),
-    )
-    actual = {key: 0 for key in expected}
-    async for record in result:
-        if record["kind"] == "entity":
-            raise ClaimLifecycleConflict(
-                "claim incarnation collides with an entity identity"
-            )
-        actual[record["identity"]] = int(record["cnt"])
-    if actual != expected:
-        raise ClaimLifecycleConflict("claim incarnation is missing or ambiguous")
+    await _validate_claim_identities(session, pot_id, expected)
     props = {
         **({} if resolution.metadata_review else edge.properties),
         **claim_properties(row),
@@ -174,61 +159,72 @@ async def write_claim(
             raise ClaimLifecycleConflict("singleton predecessor identity changed")
 
 
+async def _validate_claim_identities(
+    session: Any, pot_id: str, expected: dict[str, int]
+) -> None:
+    result = await session.run(
+        "MATCH (n:Entity {group_id:$gid}) "
+        "WHERE coalesce(n.record_id,n.uuid) IN $identities "
+        "RETURN coalesce(n.record_id,n.uuid) AS identity, count(n) AS cnt, 'entity' AS kind "
+        "UNION ALL MATCH ()-[r:RELATES_TO {group_id:$gid}]->() "
+        "WHERE coalesce(r.record_id,r.uuid) IN $identities "
+        "RETURN coalesce(r.record_id,r.uuid) AS identity, count(r) AS cnt, 'claim' AS kind",
+        gid=pot_id,
+        identities=list(expected),
+    )
+    actual = {key: 0 for key in expected}
+    async for record in result:
+        if record["kind"] == "entity":
+            raise ClaimLifecycleConflict(
+                "claim incarnation collides with an entity identity"
+            )
+        actual[record["identity"]] = int(record["cnt"])
+    if actual != expected:
+        raise ClaimLifecycleConflict("claim incarnation is missing or ambiguous")
+
+
 async def close_claims(
     session: Any,
     *,
     pot_id: str,
-    predicate: str | None = None,
-    subject: str | None = None,
-    object_key: str | None = None,
-    claim_keys: tuple[str, ...] | None = None,
-    record_ids: tuple[str, ...] | None = None,
-    point: datetime,
-    anchor: datetime,
+    closures: tuple[ClaimClosureResolution, ...] | None,
     properties: dict[str, Any],
 ) -> int:
-    """Resolve a legacy selector or honor a frozen one, preserving past endpoints."""
+    """Persist exact reviewed intervals; the shared planner owns all selection."""
+    if closures is None:
+        raise ClaimLifecycleConflict(
+            "closure must be resolved inside the atomic mutation boundary"
+        )
+    if not closures:
+        return 0
+    identities = [closure.target.record_id for closure in closures]
+    await _validate_claim_identities(session, pot_id, dict.fromkeys(identities, 1))
     result = await session.run(
         "MATCH ()-[r:RELATES_TO {group_id:$gid}]->() "
-        "WHERE ($predicate IS NULL OR r.name=$predicate) "
-        "AND ($subject IS NULL OR r.subject_key=$subject) "
-        "AND ($object IS NULL OR r.object_key=$object) "
-        "AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys) "
-        "AND ($record_ids IS NULL OR coalesce(r.record_id,r.uuid) IN $record_ids) "
-        "RETURN properties(r) AS props",
+        "WHERE coalesce(r.record_id,r.uuid) IN $record_ids RETURN properties(r) AS props",
         gid=pot_id,
-        predicate=predicate,
-        subject=subject,
-        object=object_key,
-        claim_keys=list(claim_keys) if claim_keys is not None else None,
-        record_ids=list(record_ids) if record_ids is not None else None,
+        record_ids=identities,
     )
     rows = [row_from_record(record) async for record in result]
-    if record_ids is not None and sorted(row.record_id for row in rows) != sorted(
-        record_ids
-    ):
+    if sorted(row.record_id for row in rows) != sorted(identities):
         raise ClaimLifecycleConflict("correction incarnation is missing or ambiguous")
-    selected = []
-    for row in rows:
-        closed = close_claim_at(row, point, anchor=anchor)
-        if closed != row:
-            if not row.record_id or row.record_id in selected:
-                raise ClaimLifecycleConflict(
-                    "closure incarnation identity is missing or ambiguous"
-                )
-            selected.append(row.record_id)
-    if not selected:
-        return 0
-    result = await session.run(
-        "MATCH ()-[r:RELATES_TO {group_id:$gid}]->() "
-        "WHERE coalesce(r.record_id,r.uuid) IN $record_ids "
-        "SET r += $props RETURN count(r) AS cnt",
-        gid=pot_id,
-        record_ids=selected,
-        props={**properties, "invalid_at": point.isoformat()},
-    )
-    record = await result.single()
-    await result.consume()
-    if record is None or int(record["cnt"]) != len(selected):
-        raise ClaimLifecycleConflict("closure incarnation identity changed")
-    return len(selected)
+    by_id = {row.record_id: row for row in rows}
+    count = 0
+    for closure in closures:
+        apply_claim_closure(by_id[closure.target.record_id], closure)
+        if closure.before == closure.after:
+            continue
+        result = await session.run(
+            "MATCH ()-[r:RELATES_TO {group_id:$gid}]->() "
+            "WHERE coalesce(r.record_id,r.uuid)=$record_id "
+            "SET r += $props RETURN count(r) AS cnt",
+            gid=pot_id,
+            record_id=closure.target.record_id,
+            props={**properties, **closure.after.to_dict()},
+        )
+        record = await result.single()
+        await result.consume()
+        if record is None or int(record["cnt"]) != 1:
+            raise ClaimLifecycleConflict("closure incarnation identity changed")
+        count += 1
+    return count

@@ -12,6 +12,12 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from uuid import uuid4
+from copy import deepcopy
+from potpie_context_engine.core.claim_corrections import (
+    SupersessionBinding,
+    prepare_claim_closures,
+)
+from potpie_context_engine.core.claim_preparation import prepare_assertions_from_rows
 
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_engine.core.reconciliation_validation import (
@@ -137,17 +143,39 @@ async def apply_mutation_batch(
 
     summary = MutationSummary()
     try:
+        plan = deepcopy(plan)
+        if plan.edge_upserts or plan.edge_deletes or plan.invalidations:
+            bindings: list[SupersessionBinding] = []
+            rows = await graph_writer.claim_rows(expected_pot_id)
+            rows = prepare_claim_closures(
+                plan,
+                rows,
+                anchor=graph_updated_at,
+                bindings=bindings,
+                effective_at=prov.event_occurred_at or prov.valid_from,
+                singleton_predicates=definition.singleton_predicates,
+            )
+            prepare_assertions_from_rows(
+                plan,
+                rows,
+                pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+                anchor=graph_updated_at,
+                definition=definition,
+                provenance=prov,
+                bindings=bindings,
+            )
         summary.entity_upserts_applied = await graph_writer.upsert_entities(
             expected_pot_id, plan.entity_upserts, prov
-        )
-        summary.edge_upserts_applied = await graph_writer.upsert_edges(
-            expected_pot_id, plan.edge_upserts, prov
         )
         summary.edge_deletes_applied = await graph_writer.delete_edges(
             expected_pot_id, plan.edge_deletes, prov
         )
         summary.invalidations_applied = await graph_writer.invalidate(
             expected_pot_id, plan.invalidations, prov
+        )
+        summary.edge_upserts_applied = await graph_writer.upsert_edges(
+            expected_pot_id, plan.edge_upserts, prov
         )
     except Exception as exc:
         raise ReconciliationApplyError(str(exc)) from exc

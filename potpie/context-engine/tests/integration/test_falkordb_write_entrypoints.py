@@ -11,6 +11,7 @@ from potpie_context_engine.adapters.outbound.graph import falkordb_atomic
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionReuseError,
 )
+from potpie_context_engine.core.claim_lifecycle import ClaimLifecycleConflict
 from potpie_context_engine.core.graph_mutations import EntityUpsert, ProvenanceContext
 from potpie_context_engine.core.graph_snapshot_mutation import prepare_snapshot_import
 from potpie_context_engine.core.mutation_execution import MutationPersistenceError
@@ -298,12 +299,16 @@ def test_exact_invalidation_does_not_expand_entity_or_alias_keys(graph):
     store, plan = backend(graph), batch()
     plan.edge_upserts[0].properties["claim_key"] = "dependency"
     store.mutation.apply(plan, expected_pot_id="p", provenance_context=context(plan))
-    assert (
+    before = snapshot(graph)
+    version = store.mutation.current_version("p")
+    with pytest.raises(ClaimLifecycleConflict, match="missing or outside"):
         store.mutation.invalidate(
             pot_id="p", claim_keys=("service:web",), reason="exact"
         )
-        == 0
-    )
+    assert snapshot(graph) == before
+    assert store.mutation.current_version("p") == version
+    assert store.mutation.invalidate(pot_id="p", claim_keys=(), reason="empty") == 0
+    assert snapshot(graph)[:3] == before[:3]
     assert graph.ro_query(
         "MATCH ()-[r:RELATES_TO {claim_key:'dependency'}]->() RETURN r.invalid_at"
     ).result_set == [[None]]

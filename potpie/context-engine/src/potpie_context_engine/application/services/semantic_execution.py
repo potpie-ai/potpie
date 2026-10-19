@@ -96,5 +96,19 @@ def mutate_prepared(
         operations_applied=len(accepted) if result.ok else 0,
         mutations_applied=counts if result.ok else {},
         detail=result.detail,
+        review_required_claim_keys=(
+            tuple(
+                sorted(
+                    {
+                        edge.properties["claim_key"]
+                        for edge in record.lowered_batch.edge_upserts
+                        if edge.metadata_review_record_id
+                        and edge.properties.get("claim_key")
+                    }
+                )
+            )
+            if result.ok and record and record.lowered_batch
+            else ()
+        ),
         **common,
     )

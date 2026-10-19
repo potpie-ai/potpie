@@ -161,6 +161,11 @@ class DependentClaim:
     subject_key: str
     object_key: str
     subgraph: str = RESOURCE_SUBGRAPH
+    claim_key: str | None = None
+    record_id: str | None = None
+    environment: str | None = None
+    source_system: str | None = None
+    source_ref: str | None = None
 
 
 def document_key(doc: str) -> str:
@@ -192,6 +197,11 @@ def _dependent_retractions(
             "subject": {"key": claim.subject_key},
             "object": {"key": claim.object_key},
             "reason": reason,
+            "environment": claim.environment,
+            "target_claim_keys": [claim.claim_key] if claim.claim_key else [],
+            "target_claim_record_ids": [claim.record_id] if claim.record_id else [],
+            "target_source_system": claim.source_system,
+            "target_source_ref": claim.source_ref,
         }
         for claim in claims
     ]

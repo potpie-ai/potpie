@@ -1116,7 +1116,7 @@ def test_supersede_claim_requires_approval_then_replaces_live_claim() -> None:
     assert proposal.ok is True
     assert proposal.status == "review_required"
     assert proposal.risk == "high"
-    assert proposal.diff.edge_upserts == 1
+    assert proposal.diff.edge_upserts == 2  # replacement and reviewed SUPERSEDES effect
     assert proposal.diff.invalidations == 1
     blocked = workbench.commit(proposal.plan_id, pot_id=POT)
     assert blocked.ok is False
@@ -1130,13 +1130,16 @@ def test_supersede_claim_requires_approval_then_replaces_live_claim() -> None:
 
     assert committed.ok is True
     live_rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
-    assert len(live_rows) == 1
+    assert len(live_rows) == 2
+    assert any(row.predicate == "SUPERSEDES" for row in live_rows)
+    live_rows = [row for row in live_rows if row.predicate == "DEPENDS_ON"]
     assert live_rows[0].predicate == "DEPENDS_ON"
     assert live_rows[0].object_key == "service:ledger-v2"
     all_rows = backend.claim_query.find_claims(
         ClaimQueryFilter(pot_id=POT, include_invalidated=True)
     )
-    assert len(all_rows) == 2
+    assert len(all_rows) == 3
+    all_rows = [row for row in all_rows if row.predicate == "DEPENDS_ON"]
     assert any(
         row.object_key == "service:ledger-api" and row.invalid_at for row in all_rows
     )

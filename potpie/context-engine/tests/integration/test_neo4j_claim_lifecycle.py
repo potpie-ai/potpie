@@ -477,11 +477,13 @@ def test_lifecycle_effects_roll_back_with_revision_and_receipt(graph, monkeypatc
     _apply(graph, _batch(_edge(JAN)), "original")
     before = _raw_claims(graph)
     version = backend.mutation.current_version(pot)
+    original_write = Neo4jGraphWriter.upsert_edges
 
-    async def fail_after_assertions(*args):
+    async def fail_after_assertions(self, *args):
+        await original_write(self, *args)
         raise RuntimeError("injected after lifecycle writes")
 
-    monkeypatch.setattr(Neo4jGraphWriter, "delete_edges", fail_after_assertions)
+    monkeypatch.setattr(Neo4jGraphWriter, "upsert_edges", fail_after_assertions)
     batch = _batch(_edge(MAR, target="team:blue"))
     with pytest.raises(ReconciliationApplyError, match="injected after lifecycle"):
         _apply(graph, batch, "failed-replacement")

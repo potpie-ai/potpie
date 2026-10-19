@@ -70,6 +70,9 @@ class _Writer:
     async def ensure_indexes(self) -> bool:
         return True
 
+    async def claim_rows(self, pot_id):
+        return []
+
     async def upsert_entities(self, pot_id, items, provenance: ProvenanceRef) -> int:
         self.entities.extend(items)
         return len(items)

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import threading
-import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -27,10 +26,10 @@ from potpie_context_engine.core.definition import (
 from potpie_context_engine.core.claim_lifecycle import (
     ClaimLifecycleConflict,
     apply_claim_to_rows,
-    close_claim_at,
     resolve_claim_assertion,
 )
 from potpie_context_engine.core.claim_preparation import assertion_row
+from potpie_context_engine.core.claim_corrections import apply_claim_closure
 from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
 from potpie_context_engine.core.graph_entity_summary import (
     merge_entity_display_properties,
@@ -38,8 +37,9 @@ from potpie_context_engine.core.graph_entity_summary import (
 )
 from potpie_context_engine.core.graph_mutations import (
     EdgeUpsert,
+    EdgeDelete,
+    InvalidationOp,
     ProvenanceContext,
-    ProvenanceRef,
 )
 from potpie_context_engine.core.mutation_execution import MutationCapabilities
 from potpie_context_engine.core.graph_snapshot import (
@@ -210,9 +210,6 @@ class _Mutation:
         provenance: ProvenanceContext | None = None,
         applied_at: datetime | None = None,
     ) -> MutationResult:
-        from potpie_context_engine.adapters.outbound.graph.apply_plan import (
-            _build_provenance,
-        )
         from potpie_context_engine.adapters.outbound.graph.memory_admin import (
             apply_reset,
             apply_snapshot_import,
@@ -228,13 +225,6 @@ class _Mutation:
                 mutation_id=mutation_id,
             )
         applied_at = applied_at or datetime.now(timezone.utc)
-        source = _build_provenance(
-            plan,
-            pot_id=expected_pot_id,
-            mutation_id=mutation_id,
-            context=provenance,
-            graph_updated_at=applied_at,
-        )
         anchor = (
             provenance.prepared.prepared_at
             if provenance and provenance.prepared
@@ -242,21 +232,39 @@ class _Mutation:
         )
         summary = MutationSummary()
         for ent in plan.entity_upserts:
-            self.store.set_entity_label(
-                pot_id=expected_pot_id, entity_key=ent.entity_key, labels=ent.labels
-            )
+            if ent.preserve_labels:
+                endpoint = (expected_pot_id, ent.entity_key)
+                if (
+                    endpoint not in self.store.entity_label_index
+                    and endpoint not in self.store.entity_property_index
+                ):
+                    raise ClaimLifecycleConflict("entity projection target is missing")
+            else:
+                self.store.set_entity_label(
+                    pot_id=expected_pot_id, entity_key=ent.entity_key, labels=ent.labels
+                )
             self.store.set_entity_properties(
                 pot_id=expected_pot_id,
                 entity_key=ent.entity_key,
-                properties=merge_entity_display_properties(
-                    ent.properties,
-                    existing=self.store.entity_property_index.get(
-                        (expected_pot_id, ent.entity_key), {}
-                    ),
-                    entity_key=ent.entity_key,
+                properties=(
+                    ent.properties
+                    if ent.preserve_labels
+                    else merge_entity_display_properties(
+                        ent.properties,
+                        existing=self.store.entity_property_index.get(
+                            (expected_pot_id, ent.entity_key), {}
+                        ),
+                        entity_key=ent.entity_key,
+                    )
                 ),
             )
             summary.entity_upserts_applied += 1
+        summary.edge_deletes_applied = self._apply_closures(
+            plan.edge_deletes, pot_id=expected_pot_id
+        )
+        summary.invalidations_applied = self._apply_closures(
+            plan.invalidations, pot_id=expected_pot_id
+        )
         for edge in plan.edge_upserts:
             for key in (edge.from_entity_key, edge.to_entity_key):
                 endpoint = (expected_pot_id, key)
@@ -271,18 +279,10 @@ class _Mutation:
                 edge,
                 pot_id=expected_pot_id,
                 mutation_id=mutation_id,
-                provenance=source,
                 anchor=anchor,
             )
             self._upsert_claim_row(row, edge=edge, anchor=anchor)
             summary.edge_upserts_applied += 1
-        closed_at = source.valid_from or applied_at
-        summary.edge_deletes_applied = self._apply_edge_deletes(
-            plan, pot_id=expected_pot_id, closed_at=closed_at, anchor=anchor
-        )
-        summary.invalidations_applied = self._apply_invalidations(
-            plan, pot_id=expected_pot_id, closed_at=closed_at, anchor=anchor
-        )
         return MutationResult(
             ok=True, mutation_id=mutation_id, mutation_summary=summary
         )
@@ -293,36 +293,16 @@ class _Mutation:
         *,
         pot_id: str,
         mutation_id: str,
-        provenance: ProvenanceRef,
         anchor: datetime,
     ) -> ClaimRow:
-        from potpie_context_engine.adapters.outbound.graph.cypher import (
-            _stable_source_ref,
-        )
-
+        assert edge.resolution is not None
         props = dict(edge.properties)
         props["mutation_id"] = mutation_id
-        props.setdefault(
-            "valid_at", props.get("valid_from") or _dt_iso(provenance.valid_from)
-        )
-        props.setdefault(
-            "observed_at", _dt_iso(provenance.event_received_at) or _dt_iso(anchor)
-        )
         row = assertion_row(
             replace(edge, properties=props),
             pot_id=pot_id,
-            record_id=edge.resolution.record_id
-            if edge.resolution
-            else uuid.uuid4().hex,
+            record_id=edge.resolution.record_id,
             anchor=anchor,
-            source_system=provenance.source_system,
-            source_ref=_stable_source_ref(
-                predicate=edge.edge_type,
-                from_key=edge.from_entity_key,
-                to_key=edge.to_entity_key,
-                provenance=provenance,
-            ),
-            stable_source=bool(provenance.source_system and provenance.source_ref),
         )
         # Embed the retrieval card on write so reads use a real vector.
         if self.embedder is not None and row.fact_embedding is None:
@@ -355,87 +335,28 @@ class _Mutation:
             )
         self.store.rows[:] = apply_claim_to_rows(self.store.rows, row, resolution)
 
-    def _apply_edge_deletes(
-        self, plan: MutationBatch, *, pot_id: str, closed_at: datetime, anchor: datetime
+    def _apply_closures(
+        self, operations: Iterable[EdgeDelete | InvalidationOp], *, pot_id: str
     ) -> int:
-        targets = {
-            (edge.edge_type.upper(), edge.from_entity_key, edge.to_entity_key)
-            for edge in plan.edge_deletes
-        }
         count = 0
-        for index, row in enumerate(self.store.rows):
-            if (
-                row.pot_id == pot_id
-                and not row.retired
-                and (row.predicate.upper(), row.subject_key, row.object_key) in targets
-            ):
-                closed = close_claim_at(row, closed_at, anchor=anchor)
-                if closed != row:
-                    self.store.rows[index] = closed
-                    count += 1
-        return count
-
-    def _apply_invalidations(
-        self, plan: MutationBatch, *, pot_id: str, closed_at: datetime, anchor: datetime
-    ) -> int:
-        if not plan.invalidations:
-            return 0
-        for inv in plan.invalidations:
-            identities = inv.target_claim_record_ids
-            if identities is None:
-                continue
-            if (
-                any(
-                    not isinstance(identity, str) or not identity
-                    for identity in identities
-                )
-                or len(set(identities)) != len(identities)
-                or sorted(
-                    row.record_id
-                    for row in self.store.rows
-                    if row.pot_id == pot_id and row.record_id in identities
-                )
-                != sorted(identities)
-            ):
-                raise ClaimLifecycleConflict(
-                    "invalidation incarnation is missing or ambiguous"
-                )
-        edge_targets: dict[tuple[str, str, str], datetime] = {}
-        entity_targets: dict[str, datetime] = {}
-        claim_targets: dict[str, datetime] = {}
-        record_targets: dict[str, datetime] = {}
-        for inv in plan.invalidations:
-            invalid_at = _coerce_dt(inv.valid_to) or closed_at
-            if inv.target_claim_record_ids is not None:
-                record_targets.update(
-                    {key: invalid_at for key in inv.target_claim_record_ids}
-                )
-                continue
-            if inv.target_claim_keys is not None:
-                claim_targets.update({key: invalid_at for key in inv.target_claim_keys})
-                continue
-            if inv.target_edge:
-                pred, subj, obj = inv.target_edge
-                edge_targets[(pred.upper(), subj, obj)] = invalid_at
-            if inv.target_entity_key:
-                entity_targets[inv.target_entity_key] = invalid_at
-        count = 0
-        for index, row in enumerate(self.store.rows):
-            if row.retired or row.pot_id != pot_id:
-                continue
-            triple = (row.predicate.upper(), row.subject_key, row.object_key)
-            invalid_at = (
-                record_targets.get(row.record_id)
-                or claim_targets.get(row.claim_key)
-                or edge_targets.get(triple)
-                or entity_targets.get(row.subject_key)
-                or entity_targets.get(row.object_key)
-            )
-            if invalid_at is not None:
-                closed = close_claim_at(row, invalid_at, anchor=anchor)
-                if closed != row:
-                    self.store.rows[index] = closed
-                    count += 1
+        for operation in operations:
+            assert operation.closures is not None
+            for closure in operation.closures:
+                matches = [
+                    index
+                    for index, row in enumerate(self.store.rows)
+                    if row.pot_id == pot_id
+                    and row.record_id == closure.target.record_id
+                ]
+                if len(matches) != 1:
+                    raise ClaimLifecycleConflict(
+                        "frozen correction incarnation missing or ambiguous"
+                    )
+                index = matches[0]
+                previous = self.store.rows[index]
+                updated = apply_claim_closure(previous, closure)
+                self.store.rows[index] = updated
+                count += int(updated != previous)
         return count
 
     async def apply_async(

@@ -19,7 +19,10 @@ including supersession (T6), point-in-time queries (T4), corroboration
 
 from __future__ import annotations
 
-import hashlib
+from potpie_context_engine.core.claim_preparation import (
+    stable_source_ref as _stable_source_ref,  # noqa: F401 - compatibility export
+)
+
 import json
 import logging
 import re
@@ -134,7 +137,9 @@ def _is_valid_predicate(
     """
     if not isinstance(name, str) or not _PREDICATE_RE.match(name):
         return False
-    return name in definition.edge_types
+    from potpie_context_engine.core.ontology import SYSTEM_EDGE_TYPES
+
+    return name in definition.edge_types or name in SYSTEM_EDGE_TYPES
 
 
 def _clean_entity_text(value: Any) -> str:
@@ -143,38 +148,6 @@ def _clean_entity_text(value: Any) -> str:
         return ""
     text = value if isinstance(value, str) else str(value)
     return " ".join(text.strip().split())
-
-
-def _stable_source_ref(
-    *,
-    predicate: str,
-    from_key: str,
-    to_key: str,
-    provenance: ProvenanceRef,
-) -> str:
-    """Derive a deterministic ``source_ref`` when the caller did not supply one.
-
-    The MERGE key includes ``source_ref`` so corroborating writes from
-    different sources stay distinct; without it every claim from the
-    same predicate triple would collide and look like a single source.
-    When the caller provides ``source_ref`` explicitly via
-    ``EdgeUpsert.properties``, we honor that.
-
-    The fallback is ``provenance.source_ref`` if set, else a hash over the
-    source_event_id + the edge triple. This stays stable across re-scans
-    of the same event and stays unique across distinct events.
-    """
-    if provenance.source_ref:
-        return provenance.source_ref
-    digest = hashlib.sha256()
-    digest.update(provenance.source_event_id.encode())
-    digest.update(b"\x00")
-    digest.update(predicate.encode())
-    digest.update(b"\x00")
-    digest.update(from_key.encode())
-    digest.update(b"\x00")
-    digest.update(to_key.encode())
-    return f"event:{provenance.source_event_id}:{digest.hexdigest()[:12]}"
 
 
 def _render_fact(
@@ -318,6 +291,25 @@ async def upsert_entities_async(
     prov_props = provenance.to_properties()
     async with driver.session() as session:
         for item in items:
+            if item.preserve_labels:
+                result = await session.run(
+                    "MATCH (e:Entity {group_id:$gid,entity_key:$key}) SET e += $props RETURN count(e) AS cnt",
+                    gid=pot_id,
+                    key=item.entity_key,
+                    props=_coerce_props_for_neo4j({**item.properties, **prov_props}),
+                )
+                record = await result.single()
+                await result.consume()
+                if record is None or int(record["cnt"]) != 1:
+                    from potpie_context_engine.core.claim_lifecycle import (
+                        ClaimLifecycleConflict,
+                    )
+
+                    raise ClaimLifecycleConflict(
+                        "entity projection target is missing or ambiguous"
+                    )
+                count += 1
+                continue
             labels = coherent_entity_labels(
                 item.entity_key,
                 item.labels,
@@ -429,36 +421,23 @@ async def delete_edges_async(
     *,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
-    """Soft-close current incarnations without changing earlier intervals."""
     from .cypher_claim_writes import close_claims
-
     _require_valid_pot_id(pot_id)
     anchor = provenance.graph_updated_at or _utc_now()
-    point = provenance.event_occurred_at or provenance.valid_from or anchor
     count = 0
     async with driver.session() as session:
         for item in items:
-            if _is_valid_predicate(item.edge_type, definition=definition):
-                count += await close_claims(
-                    session,
-                    pot_id=pot_id,
-                    predicate=item.edge_type,
-                    subject=item.from_entity_key,
-                    object_key=item.to_entity_key,
-                    point=point,
-                    anchor=anchor,
-                    properties={
-                        "expired_at": anchor.isoformat(),
-                        "deleted_by": provenance.source_event_id,
-                        "last_mutation_id": provenance.mutation_id,
-                    },
-                )
+            count += await close_claims(
+                session,
+                pot_id=pot_id,
+                closures=item.closures,
+                properties={
+                    "expired_at": anchor.isoformat(),
+                    "deleted_by": provenance.source_event_id,
+                    "last_mutation_id": provenance.mutation_id,
+                },
+            )
     return count
-
-
-# ----------------------------------------------------------------------
-# Invalidations — entity and edge with bitemporal stamps + SUPERSEDES
-# ----------------------------------------------------------------------
 
 
 async def apply_invalidations_async(
@@ -469,105 +448,25 @@ async def apply_invalidations_async(
     *,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
-    """Close selected incarnations; frozen empty selections remain empty."""
+    """Apply frozen claim intervals. Derived effects are ordinary batch writes."""
     from .cypher_claim_writes import close_claims
-    from potpie_context_engine.core.claim_codec import parse_dt, _as_utc
-
     _require_valid_pot_id(pot_id)
     anchor = provenance.graph_updated_at or _utc_now()
     count = 0
     async with driver.session() as session:
         for item in items:
-            point = _as_utc(parse_dt(item.valid_to) or anchor)
-            props = {
-                "invalid_at": point.isoformat(),
-                "expired_at": anchor.isoformat(),
-                "invalidation_reason": item.reason,
-                "invalidated_by": provenance.source_event_id,
-                "last_mutation_id": provenance.mutation_id,
-            }
-            matched = 0
-            if (
-                item.target_claim_record_ids is not None
-                or item.target_claim_keys is not None
-                or item.target_edge
-            ):
-                predicate, subject, object_key = item.target_edge or (None, None, None)
-                if predicate is not None and not _is_valid_predicate(
-                    predicate, definition=definition
-                ):
-                    continue
-                matched = await close_claims(
-                    session,
-                    pot_id=pot_id,
-                    predicate=predicate,
-                    subject=subject,
-                    object_key=object_key,
-                    claim_keys=item.target_claim_keys,
-                    record_ids=item.target_claim_record_ids,
-                    point=point,
-                    anchor=anchor,
-                    properties=props,
-                )
-            if item.target_entity_key:
-                result = await session.run(
-                    "MATCH (e:Entity {group_id:$gid,entity_key:$key}) SET e += $props RETURN count(e) AS cnt",
-                    gid=pot_id,
-                    key=item.target_entity_key,
-                    props=props,
-                )
-                record = await result.single()
-                await result.consume()
-                matched += int(record["cnt"]) if record is not None else 0
-            if matched and item.superseded_by_key:
-                old_key = item.target_entity_key or (
-                    item.target_edge[2] if item.target_edge else None
-                )
-                if old_key:
-                    await _write_supersedes_claim(
-                        session,
-                        pot_id=pot_id,
-                        new_key=item.superseded_by_key,
-                        old_key=old_key,
-                        reason=item.reason,
-                        now=point,
-                        provenance=provenance,
-                        definition=definition,
-                    )
-            count += matched
+            count += await close_claims(
+                session,
+                pot_id=pot_id,
+                closures=item.closures,
+                properties={
+                    "expired_at": anchor.isoformat(),
+                    "invalidation_reason": item.reason,
+                    "invalidated_by": provenance.source_event_id,
+                    "last_mutation_id": provenance.mutation_id,
+                },
+            )
     return count
-
-
-async def _write_supersedes_claim(
-    session: Any,
-    *,
-    pot_id: str,
-    new_key: str,
-    old_key: str,
-    reason: str,
-    now: datetime,
-    provenance: ProvenanceRef,
-    definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
-) -> None:
-    from .cypher_claim_writes import write_claim
-
-    await write_claim(
-        session,
-        pot_id=pot_id,
-        provenance=provenance,
-        definition=definition,
-        edge=EdgeUpsert(
-            "SUPERSEDES",
-            new_key,
-            old_key,
-            {
-                "fact": f"{new_key} supersedes {old_key}: {reason}",
-                "reason": reason,
-                "valid_at": now.isoformat(),
-                "observed_at": now.isoformat(),
-            },
-        ),
-    )
 
 
 # ----------------------------------------------------------------------

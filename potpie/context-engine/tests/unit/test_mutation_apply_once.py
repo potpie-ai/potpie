@@ -251,13 +251,12 @@ def test_embedded_stale_lifecycle_writes_preserve_newer_graph_and_receipt(
         provenance_context=_context(),
     )
 
-    assert (
-        stale.mutation.invalidate(
-            pot_id=POT,
-            claim_keys=("claim:does-not-exist",),
-        )
-        == 0
-    )
+    from potpie_context_engine.core.claim_lifecycle import ClaimLifecycleConflict
+
+    version = writer.mutation.current_version(POT)
+    with pytest.raises(ClaimLifecycleConflict, match="missing"):
+        stale.mutation.invalidate(pot_id=POT, claim_keys=("claim:does-not-exist",))
+    assert writer.mutation.current_version(POT) == version
     reset = stale.mutation.reset_pot("different-pot")
     assert reset["removed_claims"] == 0
     assert reset["mutation_id"]

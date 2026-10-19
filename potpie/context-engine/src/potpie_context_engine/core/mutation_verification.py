@@ -193,6 +193,7 @@ def _claim_content_readback(
     if batch is None:
         return {}
     expected: dict[str, dict[str, Any]] = {}
+    claim_keys_by_identity = {}
     for edge in batch.edge_upserts:
         props = dict(edge.properties)
         if edge.resolution is not None:
@@ -204,7 +205,9 @@ def _claim_content_readback(
         claim_key = str(props.get("claim_key") or "")
         if not claim_key:
             continue
-        expected[claim_key] = {
+        identity = edge.resolution.record_id if edge.resolution else claim_key
+        claim_keys_by_identity[identity] = claim_key
+        expected[identity] = {
             "predicate": edge.edge_type,
             "subject_key": edge.from_entity_key,
             "object_key": edge.to_entity_key,
@@ -232,18 +235,26 @@ def _claim_content_readback(
     )
     if not expected and not retracted and not batch.entity_upserts:
         return {}
-    requested_keys = tuple(expected) + tuple(
-        key for key in retracted if key not in expected
+    closures = tuple(
+        c
+        for op in (*batch.edge_deletes, *batch.invalidations)
+        for c in (op.closures or ())
+    )
+    requested_keys = tuple(
+        dict.fromkeys((*claim_keys_by_identity.values(), *retracted))
     )
     rows = backend.claim_query.find_claims(
         ClaimQueryFilter(
             pot_id=pot_id,
             claim_key_in=requested_keys,
             include_invalidated=True,
-            limit=max(20, len(requested_keys) * 2),
+            include_retired=True,
         )
     )
     by_key = {str(row.claim_key): row for row in rows if row.claim_key}
+    by_id = {row.record_id: row for row in rows}
+    if len(by_id) != len(rows):
+        return {"mismatches": ({"identity": "duplicate physical claim identity"},)}
     mismatches: list[dict[str, Any]] = []
     checked_entities: list[str] = []
     for entity in batch.entity_upserts:
@@ -271,9 +282,21 @@ def _claim_content_readback(
             mismatches.append(
                 {"entity_key": entity.entity_key, "fields": entity_differences}
             )
-    for claim_key, intended in expected.items():
-        row = by_key.get(claim_key)
+    for identity, intended in expected.items():
+        claim_key = claim_keys_by_identity[identity]
+        row = by_id.get(identity) or (
+            by_key.get(claim_key) if identity == claim_key else None
+        )
         if row is None:
+            mismatches.append(
+                {
+                    "claim_key": claim_key,
+                    "record_id": identity,
+                    "fields": {
+                        "incarnation": {"expected": "present", "actual": "missing"}
+                    },
+                }
+            )
             continue
         actual = {
             "predicate": row.predicate,
@@ -312,40 +335,71 @@ def _claim_content_readback(
             elif _comparable_value(value) != _comparable_value(actual_value):
                 differences[field] = {"expected": value, "actual": actual_value}
         if differences:
-            mismatches.append({"claim_key": claim_key, "fields": differences})
-    valid_to_by_key = {
-        key: invalidation.valid_to
-        for invalidation in batch.invalidations
-        for key in (getattr(invalidation, "target_claim_keys", None) or ())
-    }
-    for claim_key in retracted:
-        row = by_key.get(claim_key)
-        expected_invalid_at = valid_to_by_key.get(claim_key) or "set"
-        actual_invalid_at = (
-            row.invalid_at.isoformat() if row and row.invalid_at else None
-        )
+            mismatches.append(
+                {"claim_key": claim_key, "record_id": identity, "fields": differences}
+            )
+    from .claim_corrections import ClaimInterval
+
+    for closure in closures:
+        row = by_id.get(closure.target.record_id)
+        actual = ClaimInterval.from_row(row) if row else None
         if (
             row is None
-            or row.invalid_at is None
-            or (
-                expected_invalid_at != "set"
-                and _comparable_value(expected_invalid_at)
-                != _comparable_value(actual_invalid_at)
-            )
+            or row.claim_key != closure.target.claim_key
+            or actual != closure.after
         ):
             mismatches.append(
                 {
-                    "claim_key": claim_key,
+                    "claim_key": closure.target.claim_key,
+                    "record_id": closure.target.record_id,
                     "fields": {
-                        "invalid_at": {
-                            "expected": expected_invalid_at,
-                            "actual": actual_invalid_at,
+                        "interval": {
+                            "expected": closure.after.to_dict(),
+                            "actual": actual.to_dict() if actual else None,
                         }
                     },
                 }
             )
+    if not closures:
+        valid_to_by_key = {
+            key: invalidation.valid_to
+            for invalidation in batch.invalidations
+            for key in (getattr(invalidation, "target_claim_keys", None) or ())
+        }
+        for claim_key in retracted:
+            row = by_key.get(claim_key)
+            expected_invalid_at = valid_to_by_key.get(claim_key) or "set"
+            actual_invalid_at = (
+                row.invalid_at.isoformat() if row and row.invalid_at else None
+            )
+            if (
+                row is None
+                or row.invalid_at is None
+                or (
+                    expected_invalid_at != "set"
+                    and _comparable_value(expected_invalid_at)
+                    != _comparable_value(actual_invalid_at)
+                )
+            ):
+                mismatches.append(
+                    {
+                        "claim_key": claim_key,
+                        "fields": {
+                            "invalid_at": {
+                                "expected": expected_invalid_at,
+                                "actual": actual_invalid_at,
+                            }
+                        },
+                    }
+                )
     return {
-        "checked_claim_keys": tuple(expected),
+        "checked_claim_keys": tuple(claim_keys_by_identity.values()),
+        "checked_claim_record_ids": tuple(
+            identity
+            for identity, key in claim_keys_by_identity.items()
+            if identity != key
+        ),
+        "checked_correction_targets": tuple(c.target.to_dict() for c in closures),
         "checked_entities": tuple(checked_entities),
         "checked_retracted_claim_keys": retracted,
         "mismatches": tuple(mismatches),

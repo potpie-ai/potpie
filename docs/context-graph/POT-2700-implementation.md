@@ -38,7 +38,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | 6 | refactor(graph): unify supported graph write entry points | Entry-point inventory covered; repair/reset revision semantics | 1736 unit/core passed (3 unrelated skips), plus 10 isolated Falkor wiring tests. Neo4j 80 passed; Falkor server/Lite 154 passed. Native restart guards unselected here; actual restarts proven in step5. Direct semantics share prepared workbench; empty commits get receipts; reset/import/repair share native execution; reset returns retry identity. |
 | 7 | fix(graph): make plan persistence and public recovery crash-safe | Corruption fail-closed, crash recovery, stale owner fencing | Checkpoint A approved by independent shared and backend reviewers. Engine unit/core + public runtime/semantic gate: 1929 passed, 3 unrelated skips. Root CLI/runtime gate: 146 passed; final reset gate: 16 passed. Native integrity: 25 passed across server/Lite/Neo4j. Detailed evidence below. |
 | 8 | fix(graph): preserve claim incarnations and scoped supersession | Historical intervals and source/environment isolation | Approved by independent shared/adapter reviewer. Shared history and source policy, physical identity and endpoint guards; detailed local/native evidence below. |
-| 9 | fix(graph): freeze correction targets and dependent effects | Preview/commit/verify targets identical; stale conflicts | Pending |
+| 9 | fix(graph): freeze correction targets and dependent effects | Preview/commit/verify targets identical; stale conflicts | Independent shared review approved. Engine core/unit 2265 passed 3 unrelated skips; Falkor server/Lite 472 passed 1 restart-opt-in skip; Neo 111 passed 1 restart-opt-in skip. Details below. |
 | 10 | fix(graph): normalize temporal writes and query semantics | Offset/boundary/occurrence/query-limit parity | Pending |
 | 11 | fix(graph): separate execution success from current verification | Current lifecycle results independent of execution receipt | Pending |
 | 12 | feat(graph): add resumable legacy graph repair | Dry-run, resumability, ambiguity rejection, receipt preservation | Pending |
@@ -232,3 +232,81 @@ collision reproductions twice. Each rejected with unchanged canonical data and
 receipts, revision zero. Final legacy UUID promotion guard: 44 native cases passed.
 General entity-ID overwrite and raw observation-time issues remain explicitly
 assigned to steps 12 and 10; step 8 approval does not waive those release gates.
+
+## Step 9 contract freeze (2026-10-19)
+
+
+Status: APPROVED by independent thermo-nuclear design review; shared interfaces are being implemented. I7 primary; depends on I2/I5/I6/I8.
+
+## One execution representation
+
+- Add immutable `ClaimTarget(claim_key: str | None, record_id: str)` and `ClaimInterval(valid_at, invalid_at, valid_until)` plus `ClaimClosureResolution(target, before, after)`. Optional logical key preserves raw structural claims that lack semantic keys; semantic correction selection continues to require logical keys.
+- Add `closures: tuple[ClaimClosureResolution, ...] | None` to existing `InvalidationOp` and `EdgeDelete`. None means unresolved raw input, empty tuple means frozen no claims. Existing target-key/record-ID fields are validated against closures, never competing authorities.
+- Frozen closure execution validates exact identity and prior interval, applies the intended after interval, and never uses execution time to decide whether to close. Start remains immutable; positive intervals and nonoverlapping logical history are required. Explicit historical correction can change endpoints; ordinary raw deletion preserves closed intervals.
+- Prepared schema 3 requires frozen closures and assertions. Versions 1/2 remain readable for unconditional completed-receipt recovery; unexecuted older preparation requires fresh identity. Receipt schema 2 and fingerprint version 1 remain unchanged. Serializers omit absent new fields to retain old batch digests.
+
+## Preparation and selection
+
+- Extend the existing preparation owner with one pure correction/effect planner over a consistent claim/entity read set. Semantic validation resolves exact target pairs; raw adapters use the same selector within their atomic boundary. No adapter-local correction policy.
+- Semantic selectors add optional physical IDs and explicit target-source filters. Missing environment selects missing environment only. Evidence and correcting actor describe replacement provenance, never implicitly filter the old source.
+- Endpoint/subgraph/source/environment/logical-key/physical-ID axes intersect. Reject missing requested IDs, duplicate physical IDs, key-only ambiguity between incarnations, and legacy semantic claims without identity. Explicit physical IDs allow selecting closed history. Resolved empty selections remain empty.
+- Stage closures/deletes before preparing assertions against the resulting virtual state. Execute the same phase order: entity writes, closures/deletes, assertions. This prevents replacement assertion policy from reselecting the old active incarnation or closing it twice.
+- Freeze one cutover time for supersede: old closes at that time, replacement starts there, and never inherits the old endpoint. If both supplied valid_from and valid_until imply different cutovers, reject and explain; separate operations can express an intentional gap. One generated preparation anchor supplies missing times.
+- Lower SUPERSEDES bookkeeping to ordinary internal EdgeUpsert with frozen timestamps, source scope and references to exact old targets. Remove backend-generated SUPERSEDES paths. Shared structural validation permits system-generated effects; public semantic assertion still cannot author arbitrary system predicates.
+
+## Projections and dependencies
+
+- Semantic retract_claim targets claims. Native-only implicit entity stamping is removed. Any intentionally supported raw structural entity invalidation must become an explicit, reviewed EntityUpsert projection patch through the shared effect planner, with identity/revision fencing. Explicit empty claim selection produces no derived entity stamp or SUPERSEDES edge.
+- Resource dependent selection carries record ID, logical key, environment, subgraph and source into each semantic retraction, deduplicating by physical ID rather than endpoint triple.
+- Evidence-only conclusions stay active and receive exact metadata review. Compose graph review annotations with graph structure cleanup in the same prepared graph mutation where both result from one resource revision. Resource bytes/index/ledger retain their existing ordered workflow; no cross-store atomicity claim.
+- Preview and minimal correction verification report exact target pairs/intervals; step 11 still owns full current verification states. Prepared descriptor target IDs and receipt affected IDs are populated from actual frozen effects.
+
+## Acceptance and delegation
+
+Primary owns DTOs/serialization, shared pure policy/preparation, semantic/resource lowering, preview/verification, shared Cypher and conformance cases. Backend workers consume the frozen contract and remove their duplicated selection/generation branches. No backend edits before review/freeze.
+
+Required cases: later incarnation after preview conflicts; exact one among same-key physical rows; absent/prod/stage/source isolation; empty entity selection has no hidden effects; explicit closed-history endpoint correction; delayed execution across an endpoint uses frozen intent; supersede starts at cutover and remains live; resource dependents preserve each scope; failure after closure/system/projection work rolls back graph/revision/receipt. Include live native and ordinary/journal profiles.
+
+Review questions: verify historical endpoint-extension semantics, raw entity projection compatibility, and whether a smaller immutable closure shape provides the same guarantee. Reject private execution branches, repeated timestamp ownership, and new wire fingerprints for old receipts.
+
+## Accepted review clarifications
+
+- Raw closure injection is rejected even for `()`. Prepared 3 requires every closure; old plans are read only for completed-receipt recovery.
+- Canonical phases are entity writes, edge deletions, invalidations, assertions. Duplicate physical closure targets across operations are rejected.
+- Explicit end T updates invalid_at=T and existing valid_until=T (otherwise None), retaining the start. Validate final touched history including deterministic stable-source singleton conflicts across objects; joint corrections may resolve overlap.
+- SUPERSEDES identity includes the old physical ID and carries old/replacement references. Remove adapter-private generation.
+- Combined resource graph review and cleanup are resolved lazily once, and pending review is cleared only after the combined authoritative receipt.
+
+Step 9 projection clarification (independent design approval): EntityUpsert gains
+`preserve_labels=False`, serialized only when true. A true projection carries no
+authored labels and patches one existing entity, preserving registered/base/custom
+labels. Canonical inference must not rewrite it. Generic label upsert/repair
+semantics remain unchanged. This avoids weakening repair while making the derived
+entity effect explicit in the frozen batch.
+
+
+## Step 9 acceptance
+
+Prepared schema 3 freezes closure target pairs and before/after intervals. Explicit
+empty selections stay empty. Missing, duplicate or contradictory nonempty selectors
+fail; derived selectors retain keyless IDs and unique logical keys across distinct
+incarnations. Preparation-only typed supersession bindings attach exact replacement
+IDs before fingerprinting, including raw keyless replacements. Snapshot/imported
+legacy receipt bytes and fingerprint 1 remain unchanged.
+
+Resource review markers, exact removed-section relationships and dependent claim
+closures share the one graph mutation. Property-only entity projections explicitly
+preserve labels and unmentioned display properties. External resource stores retain
+the separately documented ordered workflow.
+
+Independent thermo-nuclear review approved shared ownership after fixing source
+association, duplicate/missing selectors, keyless repeated validation, native
+cross-kind closure identity guards, and raw assertion final-history parity. The
+resource facade shrank, and backend-specific correction selection was removed.
+
+Validation: engine unit/core 2265 passed, 3 unrelated skips, one existing utcnow warning;
+root public graph/resource/CLI recovery 201 passed; FalkorDB 4.16 server/Lite 472 passed,
+1 optional restart skip, 64 non-Falkor cases deselected; Neo4j 5.26 native 111 passed,
+1 optional restart skip. Actual restarts already passed steps 5/8. Independent reviewer
+111 shared/resource/prepared cases plus 4 new native reproductions passed. No known
+step 9 invariant blocker remains. Syntax/lint/whitespace gates pass.

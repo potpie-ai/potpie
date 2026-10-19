@@ -65,6 +65,21 @@ def validate_prepared_execution(
     provenance: ProvenanceContext | None,
 ) -> None:
     prepared = provenance.prepared if provenance else None
+    closures = (*plan.edge_deletes, *plan.invalidations)
+    if (prepared is None or prepared.schema_version < 3) and any(
+        op.closures is not None for op in closures
+    ):
+        raise MutationExecutionReuseError(
+            "frozen closures require a version-3 prepared mutation"
+        )
+    if (
+        prepared is not None
+        and prepared.schema_version >= 3
+        and any(op.closures is None for op in closures)
+    ):
+        raise MutationExecutionReuseError(
+            "prepared correction is missing its frozen closures"
+        )
     if (prepared is None or prepared.schema_version < 2) and any(
         edge.resolution is not None for edge in plan.edge_upserts
     ):
@@ -91,7 +106,7 @@ def validate_prepared_execution(
 
 def validate_new_preparation(provenance: ProvenanceContext | None) -> None:
     """Call only after authoritative lookup has proved no receipt exists."""
-    if provenance and provenance.prepared and provenance.prepared.schema_version < 2:
+    if provenance and provenance.prepared and provenance.prepared.schema_version < 3:
         raise MutationExecutionReuseError(
             "migration_required: unexecuted legacy preparation needs a fresh identity"
         )

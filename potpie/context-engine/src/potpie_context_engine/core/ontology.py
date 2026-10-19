@@ -1336,6 +1336,11 @@ def validate_entity_upsert(item: EntityUpsert) -> list[str]:
     if not item.entity_key or not item.entity_key.strip():
         errors.append("entity_key is required")
 
+    if item.preserve_labels:
+        if item.labels:
+            errors.append("property-only entity projection cannot author labels")
+        return errors
+
     labels = tuple(label for label in item.labels if label)
     if not labels:
         errors.append(
@@ -1444,7 +1449,7 @@ def _validate_edge(
         errors.append("edge_type is required")
         return errors
     spec = EDGE_TYPES.get(edge_type)
-    if spec is None:
+    if spec is None and edge_type not in SYSTEM_EDGE_TYPES:
         errors.append(f"{edge_type}: unknown canonical edge type")
         return errors
 
@@ -1452,6 +1457,9 @@ def _validate_edge(
         errors.append(f"{edge_type}: from_entity_key is required")
     if not to_entity_key or not to_entity_key.strip():
         errors.append(f"{edge_type}: to_entity_key is required")
+
+    if spec is None:
+        return errors
 
     missing = sorted(
         prop for prop in spec.required_properties if prop not in properties

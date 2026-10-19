@@ -275,6 +275,29 @@ def test_response_loss_recovers_receipt_without_reselecting_dependencies(
 ):
     assert _import(host, _source(host, "one")).graph_written
     _documents_claim(host)
+    conclusion = host.runtime.graph.mutate(
+        SemanticMutationRequest.parse(
+            {
+                "operations": [
+                    {
+                        "op": "assert_claim",
+                        "subgraph": "infra_topology",
+                        "predicate": "DEPENDS_ON",
+                        "subject": {"key": "service:consumer", "type": "Service"},
+                        "object": {"key": "service:provider", "type": "Service"},
+                        "truth": "source_observation",
+                        "description": "Consumer depends on provider",
+                        "evidence": [
+                            {"source_ref": f"potpie://res/{DOC}/one/0000@rev1"}
+                        ],
+                    }
+                ]
+            },
+            pot_id=POT,
+        )
+    )
+    assert conclusion.ok
+    revision_before = host.backend.mutation.current_version(POT)
     replacement_source = _source(host, "two")
     mutation_type = type(host.backend.mutation)
     apply = mutation_type.compare_and_apply
@@ -295,11 +318,22 @@ def test_response_loss_recovers_receipt_without_reselecting_dependencies(
 
     assert len(receipts) == 1 and receipts[0].ok
     assert not interrupted.graph.ok
+    assert host.backend.mutation.current_version(POT) == revision_before + 1
+    assert host.store.current_manifest(pot_id=POT, slug=DOC).pending_review_refs
     if action == "delete":
         assert not interrupted.removed
         _assert_bytes(host, "one", revision=1)
     frozen = host.record(interrupted)
     assert frozen.prepared is not None
+    assert any(
+        edge.metadata_review_record_id for edge in frozen.lowered_batch.edge_upserts
+    )
+    assert frozen.lowered_batch.invalidations
+    marked = host.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id=POT, claim_key_in=conclusion.claim_keys)
+    )
+    assert len(marked) == 1 and marked[0].properties["evidence_review_required"] is True
+    assert marked[0].invalid_at is None  # evidence-only conclusions survive cleanup
     assert (
         host.backend.claim_query.find_claims(
             ClaimQueryFilter(pot_id=POT, predicate_in=("DOCUMENTS",))
@@ -312,6 +346,9 @@ def test_response_loss_recovers_receipt_without_reselecting_dependencies(
 
     with monkeypatch.context() as patch:
         patch.setattr(ResourceFacade, "_dependent_claims", _reject_dependency_lookup)
+        patch.setattr(
+            resource_graph_mutations, "review_operations", _reject_dependency_lookup
+        )
         recovered = (
             _import(host, replacement_source)
             if action == "replace"
@@ -319,6 +356,7 @@ def test_response_loss_recovers_receipt_without_reselecting_dependencies(
         )
 
     assert recovered.graph.ok and recovered.graph.status == "applied"
+    assert recovered.review_required_claim_keys == conclusion.claim_keys
     assert recovered.graph.plan_id == frozen.plan_id
     assert recovered.graph.mutation_id == frozen.mutation_id
     completed = host.record(recovered)
@@ -331,6 +369,7 @@ def test_response_loss_recovers_receipt_without_reselecting_dependencies(
         assert recovered.removed and host.sections() == set()
     else:
         assert recovered.graph_written
+        assert not host.store.current_manifest(pot_id=POT, slug=DOC).pending_review_refs
         assert host.sections() == {f"docsection:{DOC}:two"}
 
 
@@ -512,3 +551,53 @@ def test_dependency_selection_is_inside_the_first_preparation_revision_bracket(
     assert host.backend.mutation.current_version(POT) == before_version + 1
     assert host.sections() == {f"docsection:{DOC}:one"}
     _assert_bytes(host, "two", revision=2)
+
+
+def test_resource_cleanup_preserves_each_source_environment_incarnation(host):
+    assert _import(host, _source(host, "one")).graph_written
+    for environment, source in (
+        ("prod", "source:a"),
+        ("stage", "source:b"),
+        (None, "source:c"),
+    ):
+        result = host.runtime.graph.mutate(
+            SemanticMutationRequest.parse(
+                {
+                    "operations": [
+                        {
+                            "op": "assert_claim",
+                            "subgraph": "knowledge",
+                            "predicate": "DOCUMENTS",
+                            "subject": {
+                                "key": f"docsection:{DOC}:one",
+                                "type": "DocumentSection",
+                            },
+                            "object": {"key": "service:reader", "type": "Service"},
+                            "environment": environment,
+                            "evidence": [{"source_ref": source}],
+                            "description": "Reader docs",
+                        }
+                    ]
+                },
+                pot_id=POT,
+            )
+        )
+        assert result.ok
+    before = host.backend.claim_query.find_claims(
+        ClaimQueryFilter(pot_id=POT, predicate_in=("DOCUMENTS",))
+    )
+    assert len(before) == 3
+    replaced = _import(host, _source(host, "two"))
+    assert replaced.graph_written
+    targets = {
+        c.target.record_id
+        for op in host.record(replaced).lowered_batch.invalidations
+        for c in op.closures
+    }
+    assert {row.record_id for row in before} <= targets
+    assert (
+        host.backend.claim_query.find_claims(
+            ClaimQueryFilter(pot_id=POT, predicate_in=("DOCUMENTS",))
+        )
+        == []
+    )

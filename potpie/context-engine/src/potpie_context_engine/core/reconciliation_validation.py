@@ -32,6 +32,7 @@ from potpie_context_engine.core.ontology import (
     CODE_GRAPH_LABELS,
     EDGE_TYPES,
     ENTITY_TYPES,
+    SYSTEM_EDGE_TYPES,
     canonical_entity_labels,
     validate_structural_mutations,
 )
@@ -163,6 +164,15 @@ validate_mutation_batch = validate_reconciliation_plan
 
 
 def _validate_hard(plan: MutationBatch, expected_pot_id: str) -> None:
+    for entity in plan.entity_upserts:
+        if (
+            type(entity.preserve_labels) is not bool
+            or entity.preserve_labels
+            and entity.labels
+        ):
+            raise MutationBatchValidationError(
+                "property-only entity projection must preserve labels without authoring labels"
+            )
     # ``event_ref`` is optional (Step 5a): non-event writes carry no event
     # frame. Only cross-check the pot when an event frame is present.
     if plan.event_ref is not None and plan.event_ref.pot_id != expected_pot_id:
@@ -242,7 +252,7 @@ def _apply_soft_ontology_downgrades(plan: MutationBatch) -> None:
                     "to": "dropped",
                 }
             )
-        if not canonical_entity_labels(ent.labels):
+        if not ent.preserve_labels and not canonical_entity_labels(ent.labels):
             if not _try_adr_document_fallback(ent, removed, out):
                 _observation_fallback(ent, out)
         for label in canonical_entity_labels(ent.labels):
@@ -396,7 +406,7 @@ def _backfill_edge_required_temporal_props(
 
 def _maybe_rewrite_unknown_edge(edge: EdgeUpsert, out: list[dict[str, str]]) -> None:
     et = edge.edge_type
-    if et in EDGE_TYPES:
+    if et in EDGE_TYPES or et in SYSTEM_EDGE_TYPES:
         return
     old = et
     props = dict(edge.properties)
@@ -482,7 +492,9 @@ def _validate_invalidations(
         if (
             not item.target_entity_key
             and not item.target_edge
-            and not item.target_claim_keys
+            and item.target_claim_keys is None
+            and item.target_claim_record_ids is None
+            and item.closures is None
         ):
             errors.append(
                 "invalidation must set target_entity_key, target_edge or target_claim_keys"

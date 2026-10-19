@@ -13,6 +13,7 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
     InMemoryGraphBackend,
     _Mutation,
 )
+from potpie_context_engine.core.claim_lifecycle import ClaimLifecycleConflict
 from potpie_context_engine.core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
@@ -77,7 +78,24 @@ def test_direct_invalidation_targets_claim_keys_only(backend, journal):
     if journal:
         backend.journal.activate(pot_id=POT)
     backend.mutation.apply(_plan(), expected_pot_id=POT)
-    assert backend.mutation.invalidate(pot_id=POT, claim_keys=["service:a"]) == 0
+    before = deepcopy(backend.snapshot.export_data(pot_id=POT))
+    version = backend.mutation.current_version(POT)
+    journal_before = backend.journal.journal_state(POT)
+    disk_before = (
+        (backend.home / "graph.json").read_bytes()
+        if isinstance(backend, EmbeddedGraphBackend)
+        else None
+    )
+    with pytest.raises(
+        ClaimLifecycleConflict,
+        match="correction claim key is missing or outside its selected scope",
+    ):
+        backend.mutation.invalidate(pot_id=POT, claim_keys=["service:a"])
+    assert backend.snapshot.export_data(pot_id=POT) == before
+    assert backend.mutation.current_version(POT) == version
+    assert backend.journal.journal_state(POT) == journal_before
+    if disk_before is not None:
+        assert (backend.home / "graph.json").read_bytes() == disk_before
     assert all(
         row.invalid_at is None
         for row in backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))

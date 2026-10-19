@@ -10,6 +10,11 @@ from typing import TYPE_CHECKING
 import uuid
 
 from potpie_context_engine.core.errors import GraphMutationVersionConflict
+from potpie_context_engine.core.claim_corrections import (
+    SupersessionBinding,
+    prepare_claim_closures,
+)
+from potpie_context_engine.core.claim_preparation import prepare_assertions_from_rows
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.ports.graph.mutation import MutationExecutionState
 from potpie_context_engine.core.ports.claim_query import ClaimRow
@@ -99,6 +104,14 @@ def apply_transaction(
                 owner.execution_registry.completed()
             ),
         )
+        _prepare_claim_effects(
+            writer,
+            validated,
+            pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+            provenance=provenance,
+            applied_at=applied_at,
+        )
         journal = MemoryJournal(writer)
         if journal.journal_state(expected_pot_id) is not None:
             result = journal.apply(
@@ -149,6 +162,50 @@ def apply_transaction(
         owner.journal_data.update(writer.journal_data)
     owner._notify()
     return returned
+
+
+def _prepare_claim_effects(
+    writer: _Mutation,
+    plan: MutationBatch,
+    *,
+    pot_id: str,
+    mutation_id: str,
+    provenance: ProvenanceContext | None,
+    applied_at: datetime,
+) -> None:
+    from .apply_plan import _build_provenance
+
+    source = _build_provenance(
+        plan,
+        pot_id=pot_id,
+        mutation_id=mutation_id,
+        context=provenance,
+        graph_updated_at=applied_at,
+    )
+    anchor = (
+        provenance.prepared.prepared_at
+        if provenance and provenance.prepared
+        else applied_at
+    )
+    bindings: list[SupersessionBinding] = []
+    rows = prepare_claim_closures(
+        plan,
+        (row for row in writer.store.rows if row.pot_id == pot_id),
+        anchor=anchor,
+        effective_at=source.event_occurred_at or source.valid_from or applied_at,
+        bindings=bindings,
+        singleton_predicates=writer.definition.singleton_predicates,
+    )
+    prepare_assertions_from_rows(
+        plan,
+        rows,
+        pot_id=pot_id,
+        mutation_id=mutation_id,
+        anchor=anchor,
+        definition=writer.definition,
+        bindings=bindings,
+        provenance=source,
+    )
 
 
 def _affected_claim_ids(

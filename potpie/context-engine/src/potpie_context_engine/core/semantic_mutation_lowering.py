@@ -109,9 +109,13 @@ def _lower_semantic_request(
         )
         if outcome.op_index in plan.correction_targets:
             for invalidation in batch.invalidations[first_invalidation:]:
-                invalidation.target_claim_keys = plan.correction_targets[
-                    outcome.op_index
-                ]
+                targets = plan.correction_targets[outcome.op_index]
+                invalidation.target_claim_keys = tuple(
+                    target.claim_key for target in targets
+                )
+                invalidation.target_claim_record_ids = tuple(
+                    target.record_id for target in targets
+                )
         new_accepted.append(
             LoweredOperation(
                 op_index=outcome.op_index,
@@ -390,11 +394,28 @@ def _lower_supersede_claim(
         return []
 
     predicate = op.predicate.strip().upper()
+    cutover = (
+        _utc_iso(op.valid_until or op.valid_from)
+        if op.valid_until or op.valid_from
+        else _now_iso()
+    )
+    if (
+        op.valid_until
+        and op.valid_from
+        and _utc_iso(op.valid_until) != _utc_iso(op.valid_from)
+    ):
+        from .claim_lifecycle import ClaimLifecycleConflict
+
+        raise ClaimLifecycleConflict(
+            "supersede valid_from and valid_until must name the same cutover; use separate operations for a gap"
+        )
     replacement_op = replace(
         op,
         op=SemanticMutationOp.assert_claim.value,
         object=op.superseded_by,
         superseded_by=None,
+        valid_from=cutover,
+        valid_until=None,
     )
     claim_keys = _lower_claim(
         replacement_op,
@@ -423,7 +444,8 @@ def _lower_supersede_claim(
             target_edge=(predicate, old_subject_key, old_object_key),
             reason=reason,
             superseded_by_key=replacement_key,
-            valid_to=_utc_iso(op.valid_until) if op.valid_until else _now_iso(),
+            valid_to=cutover,
+            replacement_claim_key=claim_keys[0],
         )
     )
     return claim_keys

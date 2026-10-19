@@ -7,6 +7,7 @@ resends the mutation payload at commit time.
 
 from __future__ import annotations
 
+from .claim_corrections import ClaimClosureResolution
 from .claim_lifecycle import ClaimWriteResolution
 
 from dataclasses import dataclass, field
@@ -68,6 +69,7 @@ class GraphMutationDiff:
     invalidations: int = 0
     claim_keys: tuple[str, ...] = ()
     retracted_claim_keys: tuple[str, ...] = ()
+    claim_closures: tuple[ClaimClosureResolution, ...] = ()
 
     @classmethod
     def from_batch(
@@ -80,6 +82,11 @@ class GraphMutationDiff:
             edge_upserts=len(batch.edge_upserts),
             edge_deletes=len(batch.edge_deletes),
             invalidations=len(batch.invalidations),
+            claim_closures=tuple(
+                c
+                for op in (*batch.edge_deletes, *batch.invalidations)
+                for c in (op.closures or ())
+            ),
             claim_keys=claim_keys,
             retracted_claim_keys=tuple(
                 dict.fromkeys(
@@ -100,6 +107,7 @@ class GraphMutationDiff:
             "claims_retracted": len(self.retracted_claim_keys),
             "claim_keys": list(self.claim_keys),
             "retracted_claim_keys": list(self.retracted_claim_keys),
+            "claim_closures": [closure.to_dict() for closure in self.claim_closures],
         }
 
     @classmethod
@@ -113,6 +121,10 @@ class GraphMutationDiff:
             claim_keys=tuple(str(k) for k in data.get("claim_keys") or ()),
             retracted_claim_keys=tuple(
                 str(k) for k in data.get("retracted_claim_keys") or ()
+            ),
+            claim_closures=tuple(
+                ClaimClosureResolution.from_dict(c)
+                for c in data.get("claim_closures", ())
             ),
         )
 
@@ -562,6 +574,7 @@ def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:
             {
                 "entity_key": item.entity_key,
                 "labels": list(item.labels),
+                **({"preserve_labels": True} if item.preserve_labels else {}),
                 "properties": _json_safe(item.properties),
             }
             for item in batch.entity_upserts
@@ -590,15 +603,30 @@ def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:
                 "edge_type": item.edge_type,
                 "from_entity_key": item.from_entity_key,
                 "to_entity_key": item.to_entity_key,
+                **(
+                    {"closures": [closure.to_dict() for closure in item.closures]}
+                    if item.closures is not None
+                    else {}
+                ),
             }
             for item in batch.edge_deletes
         ],
         "invalidations": [
             {
+                **(
+                    {"closures": [closure.to_dict() for closure in item.closures]}
+                    if item.closures is not None
+                    else {}
+                ),
                 "target_entity_key": item.target_entity_key,
                 "target_edge": list(item.target_edge) if item.target_edge else None,
                 "reason": item.reason,
                 "superseded_by_key": item.superseded_by_key,
+                **(
+                    {"replacement_claim_key": item.replacement_claim_key}
+                    if item.replacement_claim_key is not None
+                    else {}
+                ),
                 "valid_to": item.valid_to,
                 "target_claim_keys": (
                     list(item.target_claim_keys)
@@ -635,6 +663,7 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
             EntityUpsert(
                 entity_key=str(item.get("entity_key") or ""),
                 labels=tuple(str(label) for label in item.get("labels") or ()),
+                preserve_labels=item.get("preserve_labels", False),
                 properties=dict(item.get("properties") or {}),
             )
             for item in raw.get("entity_upserts") or ()
@@ -661,18 +690,29 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
                 edge_type=str(item.get("edge_type") or ""),
                 from_entity_key=str(item.get("from_entity_key") or ""),
                 to_entity_key=str(item.get("to_entity_key") or ""),
+                closures=(
+                    tuple(ClaimClosureResolution.from_dict(c) for c in item["closures"])
+                    if item.get("closures") is not None
+                    else None
+                ),
             )
             for item in raw.get("edge_deletes") or ()
             if isinstance(item, Mapping)
         ],
         invalidations=[
             InvalidationOp(
+                closures=(
+                    tuple(ClaimClosureResolution.from_dict(c) for c in item["closures"])
+                    if item.get("closures") is not None
+                    else None
+                ),
                 target_entity_key=str(item.get("target_entity_key") or "") or None,
                 target_edge=(
                     tuple(item.get("target_edge")) if item.get("target_edge") else None
                 ),
                 reason=str(item.get("reason") or ""),
                 superseded_by_key=str(item.get("superseded_by_key") or "") or None,
+                replacement_claim_key=item.get("replacement_claim_key"),
                 valid_to=str(item.get("valid_to") or "") or None,
                 target_claim_keys=(
                     tuple(item["target_claim_keys"])

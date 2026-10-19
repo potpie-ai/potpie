@@ -160,6 +160,8 @@ def _effect_plan(before, plan, params, definition):
     counts = MutationSummary()
     for i, item in enumerate(plan.entity_upserts):
         old = entities.get(item.entity_key)
+        if item.preserve_labels and old is None:
+            raise JournalError("entity projection target is missing or ambiguous")
         props = (
             _props(old)
             if old
@@ -189,6 +191,8 @@ def _effect_plan(before, plan, params, definition):
             ("summary", f"eas{i}"),
             ("description", f"ead{i}"),
         ):
+            if item.preserve_labels:
+                continue
             value = params[param]
             if value:
                 props[prop] = value
@@ -199,14 +203,15 @@ def _effect_plan(before, plan, params, definition):
         )
         props.pop("retired", None)
         labels = set(old.fields["labels"] if old else ("Entity",))
-        labels.difference_update(definition.entity_types)
         from .cypher import coherent_entity_labels
 
-        labels.update(
-            coherent_entity_labels(
-                item.entity_key, item.labels, entity_types=definition.entity_types
+        if not item.preserve_labels:
+            labels.difference_update(definition.entity_types)
+            labels.update(
+                coherent_entity_labels(
+                    item.entity_key, item.labels, entity_types=definition.entity_types
+                )
             )
-        )
         record = JournalRecord(
             record_id,
             params["pot"],
@@ -247,19 +252,6 @@ def _effect_plan(before, plan, params, definition):
     counts.edge_upserts_applied = params["claim_edges"]
     counts.edge_deletes_applied = params["claim_deletes"]
     counts.invalidations_applied = params["claim_invalidations"]
-    for i, item in enumerate(plan.invalidations):
-        if item.target_entity_key and item.target_entity_key in entities:
-            old = entities[item.target_entity_key]
-            props = _props(old)
-            props.update(
-                {
-                    key: value
-                    for key, value in params[f"ip{i}"].items()
-                    if value is not None
-                }
-            )
-            after[old.record_id] = _replace_props(old, props)
-            counts.invalidations_applied += 1
     return after, counts
 
 
@@ -466,18 +458,6 @@ class FalkorJournal:
         ) != (state.resource_guard.operation_id, state.resource_guard.owner):
             raise JournalError("resource operation owns the pot write guard")
         keys = {item.entity_key for item in plan.entity_upserts}
-        keys.update(
-            k
-            for item in (*plan.edge_upserts, *plan.edge_deletes)
-            for k in (item.from_entity_key, item.to_entity_key)
-        )
-        for item in plan.invalidations:
-            keys.update(item.target_claim_keys or ())
-            keys.update(
-                k for k in (item.target_entity_key, item.superseded_by_key) if k
-            )
-            if item.target_edge:
-                keys.update(item.target_edge[1:])
         for write in params["claim_writes"]:
             keys.update((write["record_id"], write["source"], write["target"]))
         before = _records(self.graph, state.pot_id, pipe, keys=keys)

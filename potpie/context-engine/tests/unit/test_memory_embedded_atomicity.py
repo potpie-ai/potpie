@@ -175,6 +175,8 @@ def test_partial_json_write_leaves_original_state_and_receipts(tmp_path, monkeyp
     )
     before = (tmp_path / "graph.json").read_bytes()
     second = deepcopy(plan)
+    for edge in second.edge_upserts:
+        edge.resolution = None
     second_context = _context(second, mutation_id="second", version=1, backend=backend)
 
     from potpie_context_engine.adapters.outbound.graph import _local_json_atomic

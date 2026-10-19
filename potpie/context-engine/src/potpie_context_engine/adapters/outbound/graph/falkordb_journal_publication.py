@@ -41,11 +41,12 @@ def publish_query(before, after, *, state, receipt, result=None, execution=None)
             if any(not _LABEL.fullmatch(label) for label in (*labels, *old_labels)):
                 raise JournalError("invalid native label")
             remove = sorted(set(old_labels) - set(labels))
+            add = sorted(set(labels) - set(old_labels))
             clauses.append(
                 f"CALL {{ WITH v MERGE (e:Entity {{group_id:$pot,record_id:$rid{i}}}) "
                 f"SET e=$props{i} "
                 + (f"REMOVE e:{':'.join(remove)} " if remove else "")
-                + (f"SET e:{':'.join(labels)} " if labels else "")
+                + (f"SET e:{':'.join(add)} " if add else "")
                 + f"RETURN count(e) AS count{i} }}"
             )
         else:

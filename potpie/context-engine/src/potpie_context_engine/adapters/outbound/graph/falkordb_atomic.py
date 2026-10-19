@@ -146,6 +146,15 @@ def _compile(
     prov = provenance.to_properties()
     for i, item in enumerate(plan.entity_upserts):
         key, props = f"ek{i}", f"ep{i}"
+        if item.preserve_labels:
+            params[key] = item.entity_key
+            params[props] = _coerce_props_for_neo4j({**item.properties, **prov})
+            clauses.append(
+                f"CALL {{ WITH v MATCH (e:Entity {{group_id:$pot,entity_key:${key}}}) "
+                f"SET e+=${props} RETURN count(e) AS ec{i} }}"
+            )
+            counts["entities"] += 1
+            continue
         labels = coherent_entity_labels(
             item.entity_key,
             item.labels,
@@ -182,10 +191,7 @@ def _compile(
         counts["entities"] += 1
     from .falkordb_claims import publication_clauses
 
-    clauses.extend(publication_clauses(plan))
-    for i, item in enumerate(plan.invalidations):
-        if item.target_entity_key:
-            params[f"iek{i}"] = item.target_entity_key
+    clauses.extend(publication_clauses())
     counts.update(
         edges=len(plan.edge_upserts),
         deletes=len(plan.edge_deletes),
@@ -214,9 +220,7 @@ def _compile(
     entity_expr = "+".join(f"ec{i}" for i in range(len(plan.entity_upserts))) or "0"
     edge_expr = "$claim_edges"
     delete_expr = "$claim_deletes"
-    invalid_expr = "$claim_invalidations" + "".join(
-        f"+ic{i}" for i, item in enumerate(plan.invalidations) if item.target_entity_key
-    )
+    invalid_expr = "$claim_invalidations"
     record_expr = "$claim_affected"
     clauses += [
         "SET v.version=v.version+$advance",
@@ -283,12 +287,8 @@ def _apply_watched(
     fingerprint = mutation_batch_fingerprint(plan)
     receipt_batch = plan
     plan = deepcopy(plan)
-    validate_reconciliation_plan(
-        plan, expected_pot_id, definition=definition, config=reconciliation_config
-    )
     from .falkordb_admin import validate_administration
 
-    validate_administration(plan)
     mutation_id = provenance_context.mutation_id
     pipe = transaction_client(graph).pipeline()
     try:
@@ -309,6 +309,10 @@ def _apply_watched(
             raise GraphMutationVersionConflict(
                 expected=expected_version, current=int(current)
             )
+        validate_reconciliation_plan(
+            plan, expected_pot_id, definition=definition, config=reconciliation_config
+        )
+        validate_administration(plan)
         if revision.version is None:
             _ensure_state(graph, expected_pot_id)
             # Bootstrap itself changed the watched key. Start a fresh bracket
@@ -341,6 +345,17 @@ def _apply_watched(
                 context=provenance_context,
                 graph_updated_at=datetime.now(timezone.utc),
             )
+            from .falkordb_claim_candidates import prepare_native_claims
+
+            original_claims, final_rows = prepare_native_claims(
+                graph,
+                pipe,
+                plan,
+                pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+                provenance=provenance,
+                definition=definition,
+            )
             query, params, result = _compile(
                 plan,
                 pot_id=expected_pot_id,
@@ -353,10 +368,18 @@ def _apply_watched(
                 definition=definition,
                 embedder=embedder,
             )
-            from .falkordb_claims import normalize_assertions, resolve_native_effects
+            from .falkordb_claims import encode_native_claims
 
-            assertions = normalize_assertions(plan, params, provenance, embedder)
-            resolve_native_effects(graph, pipe, plan, params, definition, assertions)
+            encode_native_claims(
+                graph,
+                pipe,
+                plan,
+                params,
+                provenance,
+                embedder,
+                original_claims,
+                final_rows,
+            )
             params["journal_generated_event"] = (
                 plan.event_ref is None and provenance_context.source_event_id is None
             )

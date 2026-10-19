@@ -50,6 +50,10 @@ def test_apply_mutation_batch_uses_provenance_context_without_event_ref() -> Non
     captured: dict[str, ProvenanceRef] = {}
 
     class _Writer:
+
+        async def claim_rows(self, pot_id):
+            return []
+
         async def upsert_entities(
             self, pot_id: str, items: list[EntityUpsert], provenance: ProvenanceRef
         ) -> int:

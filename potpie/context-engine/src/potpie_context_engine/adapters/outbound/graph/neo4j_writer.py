@@ -26,6 +26,8 @@ from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
 )
+from potpie_context_engine.core.claim_codec import row_from_record
+from potpie_context_engine.core.ports.claim_query import ClaimRow
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -128,6 +130,21 @@ class Neo4jGraphWriter(GraphWriterPort):
                 definition=self._definition,
             )
         )
+
+    async def claim_rows(self, pot_id: str) -> list[ClaimRow]:
+        """Read complete claim history through the mutation's borrowed transaction."""
+        _require_valid_pot_id(pot_id)
+
+        async def read(driver: Any) -> list[ClaimRow]:
+            async with driver.session() as session:
+                result = await session.run(
+                    "MATCH ()-[r:RELATES_TO {group_id:$pot}]->() "
+                    "RETURN properties(r) AS props",
+                    pot=pot_id,
+                )
+                return [row_from_record(record) async for record in result]
+
+        return await self._with_driver(read)
 
     async def upsert_edges(
         self, pot_id: str, items: list[EdgeUpsert], provenance: ProvenanceRef

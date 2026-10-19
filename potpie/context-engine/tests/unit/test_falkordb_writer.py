@@ -32,6 +32,7 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     shutdown_embedded_servers,
 )
 from potpie_context_engine.core.errors import GraphSubstrateUnavailable
+from potpie_context_engine.core.claim_lifecycle import ClaimLifecycleConflict
 from potpie_context_engine.core.api import (
     DEFAULT_GRAPH_DEFINITION,
     EdgeTypeSpec,
@@ -401,7 +402,9 @@ async def test_writer_never_embeds_unsafe_registered_labels_in_cypher() -> None:
     assert all("Bad-Label" not in query for query, _ in graph.queries)
 
 
-async def test_writer_uses_bound_extension_predicate_for_invalidation() -> None:
+async def test_writer_uses_bound_extension_predicate_and_requires_resolved_invalidation() -> (
+    None
+):
     definition = DEFAULT_GRAPH_DEFINITION.extend(
         GraphExtension(
             name="widgets",
@@ -432,21 +435,17 @@ async def test_writer_uses_bound_extension_predicate_for_invalidation() -> None:
         definition=definition,
     )
 
-    await writer.invalidate(
-        "p1",
-        [
-            InvalidationOp(
-                target_entity_key=None,
-                target_edge=("CONNECTS_WIDGET", "widget:a", "widget:b"),
-                reason="superseded",
-            )
-        ],
-        ProvenanceRef(pot_id="p1", source_event_id="e1"),
+    operation = InvalidationOp(
+        None, ("CONNECTS_WIDGET", "widget:a", "widget:b"), "superseded"
     )
-
-    assert any(
-        params.get("predicate") == "CONNECTS_WIDGET" for _, params in graph.queries
-    )
+    provenance = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    with pytest.raises(
+        ClaimLifecycleConflict, match="resolved inside the atomic mutation boundary"
+    ):
+        await writer.invalidate("p1", [operation], provenance)
+    operation.closures = ()
+    assert await writer.invalidate("p1", [operation], provenance) == 0
+    assert not graph.queries
 
 
 async def test_upsert_edges_writes_falkordb_vecf32_embedding() -> None:

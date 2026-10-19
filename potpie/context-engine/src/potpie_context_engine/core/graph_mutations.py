@@ -8,6 +8,7 @@ from typing import Any
 
 from .mutation_execution import PreparedMutation
 from .claim_lifecycle import ClaimWriteResolution
+from .claim_corrections import ClaimClosureResolution
 
 @dataclass(frozen=True, slots=True)
 class ProvenanceRef:
@@ -125,6 +126,8 @@ class EntityUpsert:
     entity_key: str
     labels: tuple[str, ...]
     properties: dict[str, Any] = field(default_factory=dict)
+    preserve_labels: bool = False
+    """An explicit property-only projection onto an existing entity."""
 
 
 @dataclass(slots=True)
@@ -160,6 +163,7 @@ class EdgeDelete:
     edge_type: str
     from_entity_key: str
     to_entity_key: str
+    closures: tuple[ClaimClosureResolution, ...] | None = None
 
 
 @dataclass(slots=True)
@@ -181,3 +185,6 @@ class InvalidationOp:
     target_claim_keys: tuple[str, ...] | None = None
     target_claim_record_ids: tuple[str, ...] | None = None
     """Frozen incarnation selector. None is legacy; empty selects no records."""
+    closures: tuple[ClaimClosureResolution, ...] | None = None
+    replacement_claim_key: str | None = None
+    """Exact association to this correction's replacement assertion, if any."""

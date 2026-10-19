@@ -8,6 +8,7 @@ intentionally storage-adapter internal: application services depend on
 from __future__ import annotations
 
 from typing import Any, Protocol
+from potpie_context_engine.core.ports.claim_query import ClaimRow
 
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
@@ -26,6 +27,10 @@ class GraphWriterPort(Protocol):
 
     async def ensure_indexes(self) -> bool:
         """Idempotently create entity / claim / vector indexes."""
+        ...
+
+    async def claim_rows(self, pot_id: str) -> list[ClaimRow]:
+        """Read complete history within the writer's atomic boundary."""
         ...
 
     async def upsert_entities(

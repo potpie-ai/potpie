@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -633,7 +634,12 @@ def test_exact_invalidation_validates_physical_identity_cardinality(backend, sel
         assert receipt.mutation_summary.invalidations_applied == 0
         assert _rows(backend) == before
         return
-    with pytest.raises(ClaimLifecycleConflict, match="missing or ambiguous"):
+    message = {
+        "missing": "missing or outside its selected scope",
+        "duplicate-request": "duplicate correction incarnation target",
+        "duplicate-record": "missing or ambiguous",
+    }[selector]
+    with pytest.raises(ClaimLifecycleConflict, match=message):
         _apply(backend, "exact", plan)
     assert _rows(backend) == before
     assert backend.mutation.current_version(POT) == version
@@ -647,22 +653,14 @@ def test_exact_invalidation_validates_physical_identity_cardinality(backend, sel
 
 @pytest.mark.parametrize("mode", ["raw", "frozen"])
 @pytest.mark.parametrize("entity_field", ["record_id", "uuid"])
-def test_assertion_id_cannot_collide_with_entity_identity(
-    backend, monkeypatch, mode, entity_field
-):
-    from uuid import UUID
-
+def test_assertion_id_cannot_collide_with_entity_identity(backend, mode, entity_field):
     plan = _batch(_edge())
     if mode == "frozen":
         context = _freeze(backend, plan, "collision")
         collision = plan.edge_upserts[0].resolution.record_id
     else:
-        collision = "a" * 32
+        collision = str(uuid5(NAMESPACE_URL, f"potpie:claim:{POT}:collision:0"))
         context = ProvenanceContext(mutation_id="collision")
-        monkeypatch.setattr(
-            "potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend.uuid.uuid4",
-            lambda: UUID(hex=collision),
-        )
     plan.entity_upserts[0].properties[entity_field] = collision
     if context.prepared is not None:
         context = replace(
@@ -768,21 +766,15 @@ def test_retired_endpoint_rejects_assertion_until_same_batch_reactivation(
 
 @pytest.mark.parametrize("mode", ["raw", "frozen"])
 def test_historical_entity_uuid_is_preserved_without_owning_record_identity(
-    backend, monkeypatch, mode
+    backend, mode
 ):
-    from uuid import UUID
-
     plan = _batch(_edge())
     if mode == "frozen":
         context = _freeze(backend, plan, "historical-alias")
         identity = plan.edge_upserts[0].resolution.record_id
     else:
-        identity = "b" * 32
+        identity = str(uuid5(NAMESPACE_URL, f"potpie:claim:{POT}:historical-alias:0"))
         context = ProvenanceContext(mutation_id="historical-alias")
-        monkeypatch.setattr(
-            "potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend.uuid.uuid4",
-            lambda: UUID(hex=identity),
-        )
     plan.entity_upserts[0].properties.update(record_id="entity:source", uuid=identity)
     plan.entity_upserts[1].properties.update(record_id="entity:target")
     if context.prepared is not None:

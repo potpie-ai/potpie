@@ -1,7 +1,7 @@
 """Native reliability evidence shared by isolated FalkorDB server and Lite."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import subprocess
@@ -98,12 +98,15 @@ def batch(value="before"):
 
 
 def context(plan, mid="m1", *, version=0, request="request-one", query=None):
-    if any(edge.resolution is None for edge in plan.edge_upserts):
+    if any(edge.resolution is None for edge in plan.edge_upserts) or any(
+        op.closures is None for op in (*plan.edge_deletes, *plan.invalidations)
+    ):
         prepare_claim_assertions(
             plan,
             pot_id="p",
             mutation_id=mid,
-            anchor=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            anchor=datetime(2026, 1, 1, tzinfo=timezone.utc)
+            + timedelta(seconds=version),
             query=query or SimpleNamespace(find_claims=lambda _: []),
             definition=DEFAULT_GRAPH_DEFINITION,
         )
@@ -242,6 +245,19 @@ def test_concurrent_identical_and_changed_batches_have_one_receipt(graph, journa
 
 def test_runtime_failure_after_graph_and_receipt_writes_rolls_back(graph, monkeypatch):
     port, seed = backend(graph).mutation, batch()
+    seed.entity_upserts.append(EntityUpsert("service:cache", ("Service",)))
+    seed.edge_upserts.append(
+        EdgeUpsert(
+            "DEPENDS_ON",
+            "service:web",
+            "service:cache",
+            {
+                "claim_key": "cache",
+                "source_ref": "other-config",
+                "truth": "source_observation",
+            },
+        )
+    )
     port.compare_and_apply(
         seed, expected_pot_id="p", expected_version=0, provenance_context=context(seed)
     )
@@ -251,7 +267,7 @@ def test_runtime_failure_after_graph_and_receipt_writes_rolls_back(graph, monkey
     failing.edge_deletes.append(EdgeDelete("DEPENDS_ON", "service:web", "service:db"))
     failing.invalidations.append(
         InvalidationOp(
-            target_entity_key="service:db", target_edge=None, reason="rollback"
+            target_entity_key="service:cache", target_edge=None, reason="rollback"
         )
     )
     compile_query = falkordb_atomic._compile
@@ -402,7 +418,7 @@ def test_touched_legacy_claim_without_identity_requires_migration(graph, operati
             mutation,
             expected_pot_id="p",
             expected_version=1,
-            provenance_context=context(mutation, "legacy", version=1),
+            provenance_context=ProvenanceContext(mutation_id="legacy"),
         )
     assert snapshot(graph) == before
     assert (

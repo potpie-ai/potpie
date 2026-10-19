@@ -407,6 +407,10 @@ class GraphDefinition:
                         f"{', '.join(missing)}"
                     )
         for edge in (*tuple(edge_upserts), *tuple(edge_deletes)):
+            from .ontology import SYSTEM_EDGE_TYPES
+
+            if edge.edge_type in SYSTEM_EDGE_TYPES:
+                continue
             spec = self.edge_types.get(edge.edge_type)
             if spec is None:
                 errors.append(f"unknown edge type {edge.edge_type!r}")

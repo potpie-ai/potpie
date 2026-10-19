@@ -174,8 +174,8 @@ def propose_mutation(
         GraphMutationPlanStatus.invalid.value,
         GraphMutationPlanStatus.conflict.value,
     }:
-        self.lowerer(request, semantic_plan)
         try:
+            self.lowerer(request, semantic_plan)
             prepare_claim_assertions(
                 semantic_plan.batch,
                 pot_id=pot_id,
@@ -249,6 +249,18 @@ def propose_mutation(
             batch_fingerprint=batch_fingerprint(semantic_plan.batch),
             expected_version=expected_versions["_global"],
             prepared_at=now,
+            target_claim_record_ids=tuple(
+                sorted(
+                    {
+                        closure.target.record_id
+                        for op in (
+                            *semantic_plan.batch.edge_deletes,
+                            *semantic_plan.batch.invalidations,
+                        )
+                        for closure in (op.closures or ())
+                    }
+                )
+            ),
         )
         if semantic_plan.batch is not None
         else None
