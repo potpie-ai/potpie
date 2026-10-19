@@ -17,9 +17,9 @@ Two framing rules up front:
   (`GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`; the workbench *envelope*
   stamps `graph_contract_version="v2"` only as a transport version string). There is no
   "future Graph V2" write surface — propose/commit are live.
-- **The canonical write door is `graph propose` → `graph commit --verify`.** `graph mutate` is a
-  **legacy wrapper** that internally calls propose+commit; the immediate-apply path
-  (`DefaultGraphService.mutate`) is now reached only through `record` / `context_record`.
+- **The canonical write door is `graph propose` → `graph commit --verify`.**
+  `graph mutate`, direct semantic writes, and `record` / `context_record` use the
+  same persisted preparation and authoritative execution contract.
 
 ---
 

@@ -47,7 +47,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | 10 | fix(graph): normalize temporal writes and query semantics | Offset/boundary/occurrence/query-limit parity | Independent review approved; 2329 unit/core, 108 live temporal, 142 public API/CLI cases passed. Details below. |
 | 11 | fix(graph): separate execution success from current verification | Current lifecycle results independent of execution receipt | Checkpoint B approved. 2399 unit/core, 112 Falkor server/Lite, 24 Neo native, 115 root CLI/API cases passed; details below. |
 | 12 | feat(graph): add resumable legacy graph repair | Dry-run, resumability, ambiguity rejection, receipt preservation | Independent shared/public review approved; raw repair manifests, exact bounded native publication, strict identity/time policy and authorized CLI/API. 2481 engine unit/core; final native repair 81 passed, 2 restart opt-ins separately proven. Details below. |
-| 13 | test(graph): require full backend and public API acceptance | Live native matrix, supported Windows, independent review/QA | Implementation and independent source reviews complete; local final gates below. Hosted Linux/Windows evidence pending. |
+| 13 | test(graph): require full backend and public API acceptance | Live native matrix, supported Windows, independent review/QA | Complete. All 23 hosted checks passed on the validated implementation commit; Linux native/restart and Windows required selections have zero skips. Final evidence below. |
 
 Checkpoint A follows step 7, B follows step 11, release acceptance follows 13.
 Each behavior change includes regression tests. No permanent expected failures.
@@ -599,11 +599,11 @@ Local evidence (macOS, Python 3.13.10; counts overlap):
 | Final full root unit/characterization suite | 2644 passed | Includes daemon/socket lifecycle with local process access |
 | Final engine unit/core suite | 2506 passed, 3 unrelated skips | One existing naive-datetime deprecation warning |
 | Broad engine suite with native fixtures | 3708 passed, 41 optional skips; 3 stale assertions subsequently fixed and passing | Separate 22-case surface/public recovery and 12-case live Lite roundtrip reruns passed |
-| Windows selection exercised locally | 166 passed; no skips | macOS only; actual Windows result still required |
+| Windows selection exercised locally | 166 passed; no skips | macOS preflight; hosted Windows acceptance is recorded below |
 
 The exact required commands live in `.github/workflows/test.yml` and load
-`tests.required_acceptance`. Full root/engine final regression results and hosted
-run links are recorded after execution. No production store was migrated or
+`tests.required_acceptance`. Final hosted regression results and run links are
+recorded below. No production store was migrated or
 deployed. The rollout guide explicitly requires excluding every old writer;
 schema markers alone cannot fence old binaries that ignored them.
 
@@ -619,7 +619,7 @@ schema markers alone cannot fence old binaries that ignored them.
 | I8 | claim_codec / temporal helpers / shared legacy policy | semantic_temporal_contract, native temporal suites, legacy repair suites | Temporal + migration release reviews approved |
 | I9 | mutation_verification / immutable receipt | Memory/native verification suites, public commit cancellation | Checkpoint B approved |
 | I10 | strict persistence / legacy_repair_service | plan_storage_reliability, legacy_repair_workflow, native repair restart | Migration release review approved |
-| I11 | Explicit ports / runtime bridges / typed transports | public_graph_runtime, public_semantic_mutation_reliability, host-kit, required CI selections | Release QA approved; hosted platform evidence pending |
+| I11 | Explicit ports / runtime bridges / typed transports | public_graph_runtime, public_semantic_mutation_reliability, host-kit, required CI selections | Release QA approved; required Linux and Windows platform gates passed |
 
 ### Hosted acceptance follow-up
 
@@ -628,12 +628,57 @@ The first hosted run exposed a Windows-only process-lock bug (164 passed,
 2 failed). The helper read the lock byte before acquiring its mandatory range
 lock, which fails when another process owns the range. Acquisition now seeks to
 offset zero and locks directly, without reading or initializing the byte.
-[Python's documented locking contract](https://docs.python.org/3/library/msvcrt.html#msvcrt.locking)
-permits locking beyond EOF and preserves explicit failure after exhausted retries.
+[Windows byte-range locks](https://learn.microsoft.com/en-us/windows/win32/fileio/locking-and-unlocking-byte-ranges-in-files)
+permit locking beyond EOF; [Python's locking contract](https://docs.python.org/3/library/msvcrt.html#msvcrt.locking)
+preserves explicit failure after exhausted retries.
 The critical section never runs after failed acquisition. Independent review
 approved the fix; local storage/atomic/workbench validation passed 109 tests.
-The unchanged competing-process scenarios remain required on the Windows rerun.
+The unchanged competing-process scenarios passed on the Windows rerun below.
 
 The docs check also required lowercase page filenames and YAML frontmatter.
 Those publication fixes pass the local docs contract and all 96 validator tests.
 The native implementation and receipt formats are unchanged by this follow-up.
+
+The corrected Windows job passed on commit `d3bf8a5d5847ed95a80afd082f402376c0c8a78f`:
+167 required memory/JSON persistence cases, zero skips, Windows 2025 runner
+(`windows-2025-vs2026`), Python 3.12.10. The existing Windows lifecycle suite also
+passed 61 cases with three unrelated platform selections skipped.
+[Windows evidence](https://github.com/potpie-ai/potpie/actions/runs/39266427963/job/118107089144).
+
+All three Linux public-runtime jobs passed on that commit. Python 3.12.15 on
+Ubuntu 24.04 reports 2687 passed, four optional skips and one premerge-journey
+deselection; the separate premerge CLI journey passed. Python 3.13 and 3.14 root
+jobs also passed.
+[Linux runtime evidence](https://github.com/potpie-ai/potpie/actions/runs/39266427963/job/118107089019).
+
+Local native dependencies match the frozen lock: FalkorDB client 1.6.1,
+FalkorDBLite 0.10.0 and Neo4j driver 6.2.0. Local platform is macOS 26.1 arm64,
+Python 3.13.10. The disposable server fixtures use FalkorDB 4.16.0 with AOF and
+Neo4j 5.26 Community. All three local containers were removed after validation.
+
+### Release acceptance complete
+
+Validated implementation commit: `d3bf8a5d5847ed95a80afd082f402376c0c8a78f`.
+All 23 PR checks passed, including the complete regression workflow, docs,
+pre-commit, isolated packages, parsing, sandbox, UI and premerge CLI journey.
+[Complete regression run](https://github.com/potpie-ai/potpie/actions/runs/39266427963).
+
+| Hosted platform | Full engine package suite | Required five-backend gate | Actual restart/forced-kill gate |
+| --- | --- | --- | --- |
+| [Ubuntu 24.04 / Python 3.12.15](https://github.com/potpie-ai/potpie/actions/runs/39266427963/job/118107089186) | 3714 passed, 39 optional skips | 946 passed, zero skips | 12 passed, zero skips |
+| [Ubuntu 24.04 / Python 3.13.16](https://github.com/potpie-ai/potpie/actions/runs/39266427963/job/118107089063) | 3714 passed, 39 optional skips | 946 passed, zero skips | 12 passed, zero skips |
+| [Ubuntu 24.04 / Python 3.14.8](https://github.com/potpie-ai/potpie/actions/runs/39266427963/job/118107089136) | 3714 passed, 39 optional skips | 946 passed, zero skips | 12 passed, zero skips |
+
+The five-backend selection deselects six restart cases; the serialized 12-case
+gate explicitly runs those native/public restart cases plus six journal
+writer/server forced-kill cases. The separate Windows required selection passed
+167 cases without skips as recorded above. Broad-suite optional skips do not
+substitute for any required backend/platform scenario.
+
+All thirteen implementation steps and checkpoints A, B and release review are
+complete. The additional Windows correction was discovered by the required
+platform gate, independently reviewed and validated on Windows before acceptance.
+There is no known unresolved invariant violation. Capability limits and the
+coordinated migration procedure remain documented in reliable-mutations.md.
+Production rollout, backups and migration have not been performed. Final evidence
+documentation after this validated commit changes no executable source or tests.
