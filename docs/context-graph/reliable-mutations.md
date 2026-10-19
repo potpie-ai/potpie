@@ -1,3 +1,8 @@
+---
+title: Reliable mutations, recovery and legacy repair
+description: "Execution guarantees, retry and verification semantics, supported backends, and the coordinated legacy repair rollout."
+---
+
 # Reliable mutations, recovery and legacy repair
 
 Graph execution is complete only when the backend has an authoritative receipt.
@@ -137,5 +142,5 @@ validated full-backup restoration while all writers are stopped. An uncoordinate
 binary downgrade is unsupported. Historical intervals erased before this change
 remain unavailable.
 
-The [implementation ledger](./POT-2700-implementation.md) records actual local and
+The [implementation ledger](./pot-2700-implementation.md) records actual local and
 CI evidence separately, including incomplete platform gates.

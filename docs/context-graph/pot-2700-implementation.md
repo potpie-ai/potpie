@@ -1,3 +1,8 @@
+---
+title: POT-2700 implementation tracker
+description: "Invariant ownership, implementation milestones, review findings, and acceptance evidence for reliable graph mutations."
+---
+
 # POT-2700 implementation tracker
 
 Baseline: `c6b306ba`. This document is the alignment and evidence ledger for
@@ -585,7 +590,7 @@ Local evidence (macOS, Python 3.13.10; counts overlap):
 
 | Gate | Result | Environment |
 | --- | --- | --- |
-| Five-backend required reliability selection | 870 passed, 6 restart cases deselected; no skips | Memory, embedded JSON, FalkorDB 4.16.0 server/Lite, Neo4j 5.26 Community |
+| Five-backend required reliability selection | 946 passed, 6 restart cases deselected; no skips | Memory, embedded JSON, FalkorDB 4.16.0 server/Lite, Neo4j 5.26 Community |
 | YAML-derived native restart and forced-kill selection | 12 passed; no skips | Actual AOF server restart, Lite process restart, Neo4j restart, public repair recovery, killed journal writers/server |
 | Independent migration review | 164 passed plus expired-partial/reset-replay probes | Shared repair policy and workflow |
 | Independent public cancellation/API | 11 passed | Active event loop and reopened JSON plans |
@@ -594,7 +599,7 @@ Local evidence (macOS, Python 3.13.10; counts overlap):
 | Final full root unit/characterization suite | 2644 passed | Includes daemon/socket lifecycle with local process access |
 | Final engine unit/core suite | 2506 passed, 3 unrelated skips | One existing naive-datetime deprecation warning |
 | Broad engine suite with native fixtures | 3708 passed, 41 optional skips; 3 stale assertions subsequently fixed and passing | Separate 22-case surface/public recovery and 12-case live Lite roundtrip reruns passed |
-| Windows selection exercised locally | 163 passed before latest record additions | macOS only; actual Windows result still required |
+| Windows selection exercised locally | 166 passed; no skips | macOS only; actual Windows result still required |
 
 The exact required commands live in `.github/workflows/test.yml` and load
 `tests.required_acceptance`. Full root/engine final regression results and hosted
@@ -615,3 +620,20 @@ schema markers alone cannot fence old binaries that ignored them.
 | I9 | mutation_verification / immutable receipt | Memory/native verification suites, public commit cancellation | Checkpoint B approved |
 | I10 | strict persistence / legacy_repair_service | plan_storage_reliability, legacy_repair_workflow, native repair restart | Migration release review approved |
 | I11 | Explicit ports / runtime bridges / typed transports | public_graph_runtime, public_semantic_mutation_reliability, host-kit, required CI selections | Release QA approved; hosted platform evidence pending |
+
+### Hosted acceptance follow-up
+
+Draft PR: [#1094](https://github.com/potpie-ai/potpie/pull/1094).
+The first hosted run exposed a Windows-only process-lock bug (164 passed,
+2 failed). The helper read the lock byte before acquiring its mandatory range
+lock, which fails when another process owns the range. Acquisition now seeks to
+offset zero and locks directly, without reading or initializing the byte.
+[Python's documented locking contract](https://docs.python.org/3/library/msvcrt.html#msvcrt.locking)
+permits locking beyond EOF and preserves explicit failure after exhausted retries.
+The critical section never runs after failed acquisition. Independent review
+approved the fix; local storage/atomic/workbench validation passed 109 tests.
+The unchanged competing-process scenarios remain required on the Windows rerun.
+
+The docs check also required lowercase page filenames and YAML frontmatter.
+Those publication fixes pass the local docs contract and all 96 validator tests.
+The native implementation and receipt formats are unchanged by this follow-up.

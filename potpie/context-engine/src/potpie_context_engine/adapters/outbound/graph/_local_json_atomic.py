@@ -50,10 +50,8 @@ def _acquire_process_lock(lock_file) -> None:
         _fcntl.flock(lock_file.fileno(), _fcntl.LOCK_EX)
         return
     if _msvcrt is not None:
-        lock_file.seek(0)
-        if not lock_file.read(1):
-            lock_file.write(b"\0")
-            lock_file.flush()
+        # Windows permits locking beyond EOF. Reading or initializing this byte
+        # first would fail while another process holds its mandatory range lock.
         lock_file.seek(0)
         _msvcrt.locking(lock_file.fileno(), _msvcrt.LK_LOCK, 1)
         return

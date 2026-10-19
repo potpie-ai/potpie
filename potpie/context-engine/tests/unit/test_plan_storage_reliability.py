@@ -153,6 +153,37 @@ def test_process_lock_unavailable_refuses_storage(tmp_path, monkeypatch):
             pytest.fail("must not enter an unprotected critical section")
 
 
+def test_windows_lock_does_not_access_another_process_locked_byte(monkeypatch):
+    from types import SimpleNamespace
+
+    calls = []
+
+    class MandatoryRangeFile:
+        def seek(self, position):
+            calls.append(("seek", position))
+
+        def fileno(self):
+            return 7
+
+        def read(self, *_):
+            raise PermissionError("another process holds this byte")
+
+        def write(self, *_):
+            raise PermissionError("another process holds this byte")
+
+    crt = SimpleNamespace(
+        LK_LOCK=1,
+        LK_UNLCK=0,
+        locking=lambda fd, mode, size: calls.append(("lock", fd, mode, size)),
+    )
+    monkeypatch.setattr(atomic, "_fcntl", None)
+    monkeypatch.setattr(atomic, "_msvcrt", crt)
+    stream = MandatoryRangeFile()
+    atomic._acquire_process_lock(stream)
+    atomic._release_process_lock(stream)
+    assert calls == [("seek", 0), ("lock", 7, 1, 1), ("seek", 0), ("lock", 7, 0, 1)]
+
+
 def test_abrupt_process_exit_after_reservation_preserves_request_identity(tmp_path):
     script = """
 import os, sys
