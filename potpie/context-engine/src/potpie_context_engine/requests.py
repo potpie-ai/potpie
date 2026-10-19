@@ -193,7 +193,8 @@ class RepairRequest(EngineRequest):
 
 @dataclass(frozen=True, slots=True)
 class ResetContextRequest(EngineRequest):
-    pass
+    mutation_id: str | None = None
+    """Identity returned by an earlier reset, for graph execution recovery."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +213,7 @@ class CommitRequest(EngineRequest):
     # Return the durable receipt before the slow readback; the caller verifies
     # it separately so a failed check cannot hide a write that landed.
     defer_verification: bool = False
+    recover_stale: bool = True
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,6 +17,7 @@ from potpie_context_engine.core.graph_plans import (
     GraphMutationProposal,
 )
 from potpie_context_engine.core.graph_quality import GraphQualityResult
+from potpie_context_engine.core.mutation_execution import ExecutionMetadata
 from potpie_context_engine.core.ports.agent_context import RecordReceipt
 from potpie_context_engine.core.ports.graph.analytics import RepairReport
 from potpie_context_engine.core.ports.graph.inspection import GraphSlice
@@ -116,8 +117,13 @@ class ResetContextResult:
     resources_purged: bool | None = None
     """The resource store's own answer, after the graph reset succeeded.
 
-    ``None`` means no resource store is composed, which is neither a purge nor
-    a failed one."""
+    ``None`` means no purge was attempted in this call. Graph retries cannot
+    establish whether the original, separate resource purge completed."""
+    mutation_id: str | None = None
+    execution: ExecutionMetadata | None = None
+    resources_status: str = "not_configured"
+    """completed, failed, not_attempted, unknown_on_recovery, or not_configured."""
+    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -19,7 +19,7 @@ from .native_snapshot import (
     stored_entity,
     validate_native_snapshot_properties,
 )
-from .neo4j_atomic import _one
+from .neo4j_execution_state import _one
 from .neo4j_snapshot import _SNAPSHOT
 
 _LABEL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")

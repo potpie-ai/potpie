@@ -33,6 +33,7 @@ from potpie_context_engine.core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
 )
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
 from potpie_context_engine.core.ports.graph.inbox_store import GraphInboxStorePort
 from potpie_context_engine.core.ports.graph.plan_store import GraphPlanStorePort
@@ -113,17 +114,17 @@ class _MutationPortBridge:
         self._bridge = _SyncAsyncBridge(target)
 
     @property
-    def atomic_mutations_supported(self) -> bool:
-        value = getattr(self._target, "atomic_mutations_supported", None)
-        if callable(value):
-            value = value()
-        if value is not None:
-            return bool(value)
-        return all(
-            callable(getattr(self._target, name, None))
-            or callable(getattr(self._target, name + "_async", None))
-            for name in ("current_version", "compare_and_apply", "lookup_execution")
+    def capabilities(self) -> MutationCapabilities:
+        declared = getattr(self._target, "capabilities", None)
+        return (
+            declared
+            if isinstance(declared, MutationCapabilities)
+            else MutationCapabilities()
         )
+
+    @property
+    def atomic_mutations_supported(self) -> bool:
+        return self.capabilities.atomic_writes and self.capabilities.revision_check
 
     def current_version(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("current_version", *args, **kwargs)
@@ -579,7 +580,7 @@ class GraphRuntime(GraphCommitSurface):
         pot_id: str,
         approved_by: str | None = None,
         verify: bool = False,
-        recover_stale: bool = False,
+        recover_stale: bool = True,
         defer_verification: bool = False,
     ):
         result = self.workbench.commit(
@@ -715,7 +716,7 @@ class GraphRuntime(GraphCommitSurface):
         pot_id: str,
         approved_by: str | None = None,
         verify: bool = False,
-        recover_stale: bool = False,
+        recover_stale: bool = True,
         defer_verification: bool = False,
     ):
         result = await _async_call(

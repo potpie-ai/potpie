@@ -3,13 +3,16 @@
 Writers coordinating a pot must share this instance. Persistence and cross-process
 coordination require a store implementing the same atomic reservation port.
 """
+
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 import threading
 from .graph_plans import GraphMutationPlanRecord
 from .mutation_execution import request_fingerprint as _request_fingerprint
+
 
 @dataclass(slots=True)
 class InMemoryGraphPlanStore:
@@ -20,7 +23,7 @@ class InMemoryGraphPlanStore:
 
     def save(self, record: GraphMutationPlanRecord) -> None:
         with self._lock:
-            self._records[(record.pot_id, record.plan_id)] = record
+            self._records[(record.pot_id, record.plan_id)] = deepcopy(record)
 
     def reserve_idempotency(
         self,
@@ -46,13 +49,13 @@ class InMemoryGraphPlanStore:
                         f"idempotency_key {idempotency_key!r} is already bound to "
                         f"plan {existing.plan_id!r} with different content"
                     )
-                return existing, False
-            self._records[(record.pot_id, record.plan_id)] = record
-            return record, True
+                return deepcopy(existing), False
+            self._records[(record.pot_id, record.plan_id)] = deepcopy(record)
+            return deepcopy(record), True
 
     def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
         with self._lock:
-            return self._records.get((pot_id, plan_id))
+            return deepcopy(self._records.get((pot_id, plan_id)))
 
     def compare_and_set(
         self,
@@ -66,7 +69,7 @@ class InMemoryGraphPlanStore:
         with self._lock:
             if self._records.get(key) != expected:
                 return False
-            self._records[key] = replacement
+            self._records[key] = deepcopy(replacement)
             return True
 
     def list(
@@ -90,7 +93,7 @@ class InMemoryGraphPlanStore:
                 and (until is None or record.created_at <= until)
             ]
         records.sort(key=lambda record: record.created_at, reverse=True)
-        return tuple(records[:limit] if limit is not None else records)
+        return deepcopy(tuple(records[:limit] if limit is not None else records))
 
     async def save_async(self, record: GraphMutationPlanRecord) -> None:
         self.save(record)
@@ -113,5 +116,3 @@ class InMemoryGraphPlanStore:
 
     async def list_async(self, **kwargs):
         return self.list(**kwargs)
-
-

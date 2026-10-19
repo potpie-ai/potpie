@@ -52,8 +52,6 @@ from potpie_context_engine.core.resource_to_semantic import (
     ResourceDeleteResult,
     ResourceImportResult,
     document_key,
-    resource_delete_to_semantic_request,
-    resource_import_to_semantic_request,
     section_key,
 )
 from potpie_context_engine.core.semantic_mutations import (
@@ -212,18 +210,9 @@ class ResourceFacade:
                 review_required_claim_keys=review_claims,
                 review_marker_errors=review_errors,
             )
-        mutation = self.graph.mutate(
-            resource_import_to_semantic_request(
-                manifest,
-                dependent_claims=self._dependent_claims(
-                    pot_id=pot_id,
-                    section_keys=tuple(
-                        section_key(manifest.doc, slug)
-                        for slug in manifest.sections_removed
-                    ),
-                ),
-            )
-        )
+        from .resource_graph_mutations import import_graph
+
+        mutation = import_graph(self, manifest)
         return ResourceImportResult(
             manifest=manifest,
             graph=mutation,
@@ -663,7 +652,7 @@ class ResourceFacade:
         what the *graph* did instead of inferring it from the store.
         """
         try:
-            sections = self.store.list(pot_id=pot_id, slug=slug)
+            manifest = self.store.current_manifest(pot_id=pot_id, slug=slug)
         except ResourceStoreError as exc:
             if getattr(exc, "code", None) == RESOURCE_NOT_FOUND:
                 return ResourceDeleteResult(removed=False)
@@ -672,7 +661,6 @@ class ResourceFacade:
 
         if _protocols_enabled(self.graph):
             protect_protocol_source(self.store, self.claims, pot_id=pot_id, slug=slug)
-        manifest = self.store.current_manifest(pot_id=pot_id, slug=slug)
         evidence_refs = tuple(
             ref
             for section in manifest.sections
@@ -722,26 +710,26 @@ class ResourceFacade:
                 ),
             )
         graph_result = None
-        if self.graph is not None and sections:
-            slugs = tuple(section.slug for section in sections)
-            graph_result = self.graph.mutate(
-                resource_delete_to_semantic_request(
-                    pot_id=pot_id,
-                    doc=slug,
-                    section_slugs=slugs,
-                    dependent_claims=self._dependent_claims(
-                        pot_id=pot_id,
-                        section_keys=tuple(section_key(slug, s) for s in slugs),
-                    ),
+        if self.graph is not None and manifest.sections:
+            from .resource_graph_mutations import delete_graph
+
+            graph_result = delete_graph(self, manifest)
+            if not graph_result.ok or graph_result.status != "applied":
+                return ResourceDeleteResult(
+                    removed=False,
+                    graph=graph_result,
+                    review_required_claim_keys=review_claims,
+                    review_marker_errors=review_errors,
                 )
-            )
         # Before the bytes go: a chunk id that still ranks in search but no
         # longer resolves is the one failure mode a caller cannot diagnose,
         # and dropping index rows for a document that then survives a failed
         # store delete only costs a rebuild.
         self._drop_from_index(pot_id=pot_id, slug=slug)
         return ResourceDeleteResult(
-            removed=self.store.delete(pot_id=pot_id, slug=slug),
+            removed=self.store.delete(
+                pot_id=pot_id, slug=slug, expected_revision=manifest.revision
+            ),
             graph=graph_result,
             review_required_claim_keys=review_claims,
             review_marker_errors=review_errors,

@@ -41,6 +41,7 @@ from potpie_context_engine.adapters.outbound.resources.local_resource_store impo
     _document_fingerprint,
     _with_pending_review,
 )
+from potpie_context_engine.core.ports.resource_store import ResourceStoreError
 from potpie_context_engine.testing.conformance import (
     GraphBackendConformanceMixin,
     ResourceStoreConformanceMixin,
@@ -410,9 +411,21 @@ class InMemoryResourceStore:
             )
             return manifest
 
-    def delete(self, *, pot_id: str, slug: str) -> bool:
+    def delete(
+        self, *, pot_id: str, slug: str, expected_revision: int | None = None
+    ) -> bool:
         doc = require_resource_slug(slug, kind="document")
         with self._lock:
+            current = self._documents.get((pot_id, doc))
+            if (
+                current is not None
+                and expected_revision is not None
+                and current.manifest.revision != expected_revision
+            ):
+                raise ResourceStoreError(
+                    "resource_revision_changed",
+                    "Document changed before deletion; newer bytes were preserved.",
+                )
             return self._documents.pop((pot_id, doc), None) is not None
 
     def purge_pot(self, pot_id: str) -> bool:

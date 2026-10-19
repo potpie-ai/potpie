@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
-from typing import Any, Mapping
+from typing import Any
 
 from potpie_context_engine.core.definition import GraphDefinition
 from potpie_context_engine.core.errors import GraphMutationVersionConflict
@@ -18,8 +18,6 @@ from potpie_context_engine.core.ports.graph.mutation import (
 )
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     CompletedMutationExecution,
-    MutationExecutionReuseError,
-    execution_receipts_from_json,
     execution_receipts_to_json,
     mutation_batch_fingerprint,
     complete_execution,
@@ -30,6 +28,11 @@ from potpie_context_engine.adapters.outbound.graph.apply_plan import (
     apply_mutation_batch,
 )
 from potpie_context_engine.adapters.outbound.graph.neo4j_writer import Neo4jGraphWriter
+from potpie_context_engine.adapters.outbound.graph.neo4j_execution_state import (
+    _one,
+    lock_execution_state,
+    read_execution_state,
+)
 
 
 _CONSTRAINTS = (
@@ -38,41 +41,16 @@ _CONSTRAINTS = (
     "CREATE CONSTRAINT potpie_receipt_unique IF NOT EXISTS "
     "FOR (r:PotpieMutationReceipt) REQUIRE (r.pot_id, r.mutation_id) IS UNIQUE",
 )
-_REVISION = "MATCH (r:PotpieRevision {pot_id: $pot}) RETURN r.version AS version"
-_RECEIPT = "MATCH (r:PotpieMutationReceipt {pot_id: $pot, mutation_id: $mutation}) RETURN r.payload AS payload"
-_LOCK_REVISION = (
-    "MERGE (r:PotpieRevision {pot_id: $pot}) "
-    "ON CREATE SET r.version = 0, r.lock_sequence = 0 "
-    "SET r.lock_sequence = r.lock_sequence + 1 RETURN r.version AS version"
-)
 _AFFECTED_CLAIMS = (
     "MATCH ()-[r:RELATES_TO {group_id: $pot, last_mutation_id: $mutation}]->() "
     "RETURN collect(coalesce(r.record_id, r.uuid)) AS record_ids, count(r) AS count"
 )
 
 
-async def _one(session: Any, query: str, **parameters: Any) -> Mapping[str, Any] | None:
-    result = await session.run(query, **parameters)
-    records = await result.fetch(2)
-    await result.consume()
-    if len(records) > 1:
-        raise MutationPersistenceError("duplicate durable Neo4j execution state")
-    return records[0] if records else None
-
-
 async def _ensure_constraints(transaction: Any) -> None:
     for query in _CONSTRAINTS:
         result = await transaction.run(query)
         await result.consume()
-
-
-def _version(record: Mapping[str, Any] | None, *, allow_absent: bool = False) -> int:
-    if record is None and allow_absent:
-        return 0
-    value = record["version"] if record is not None else None
-    if type(value) is not int or value < 0:
-        raise MutationPersistenceError("invalid durable Neo4j pot revision")
-    return value
 
 
 async def current_version(writer: Neo4jGraphWriter, pot_id: str) -> int:
@@ -86,39 +64,11 @@ async def current_version(writer: Neo4jGraphWriter, pot_id: str) -> int:
         raise RuntimeError("neo4j_unavailable")
     try:
         async with driver.session() as session:
-            record = await _one(session, _REVISION, pot=pot_id)
-            return _version(record, allow_absent=True)
+            # Writer routing keeps these authoritative reads off lagging replicas.
+            state = await session.execute_write(read_execution_state, pot_id)
+            return state.version
     finally:
         await driver.close()
-
-
-def _decode_receipt(
-    record: Mapping[str, Any] | None,
-    *,
-    pot_id: str,
-    mutation_id: str,
-    fingerprint: str,
-) -> CompletedMutationExecution | None:
-    if record is None:
-        return None
-    try:
-        receipts = execution_receipts_from_json(json.loads(record["payload"]))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise MutationPersistenceError(
-            "invalid durable Neo4j mutation receipt"
-        ) from exc
-    if len(receipts) != 1:
-        raise MutationPersistenceError("invalid durable Neo4j mutation receipt")
-    receipt = receipts[0]
-    if receipt.pot_id != pot_id or receipt.mutation_id != mutation_id:
-        raise MutationPersistenceError(
-            "Neo4j mutation receipt identity differs from its key"
-        )
-    if receipt.batch_fingerprint != fingerprint:
-        raise MutationExecutionReuseError(
-            "mutation ID was already used with a different batch"
-        )
-    return receipt
 
 
 async def lookup_execution(
@@ -141,15 +91,8 @@ async def lookup_execution(
         raise RuntimeError("neo4j_unavailable")
     try:
         async with driver.session() as session:
-            record = await _one(
-                session, _RECEIPT, pot=expected_pot_id, mutation=mutation_id
-            )
-        receipt = _decode_receipt(
-            record,
-            pot_id=expected_pot_id,
-            mutation_id=mutation_id,
-            fingerprint=fingerprint,
-        )
+            state = await session.execute_write(read_execution_state, expected_pot_id)
+        receipt = state.completed(mutation_id, fingerprint)
         return MutationExecutionLookup(
             state=MutationExecutionState.completed.value
             if receipt
@@ -207,22 +150,9 @@ async def apply_atomic(
             await session.execute_write(_ensure_constraints)
 
             async def execute(transaction: Any) -> MutationResult:
-                # A read-dependent SET acquires Neo4j's node write lock before
-                # reading its old value. Every canonical mutation takes it.
-                revision = await _one(
-                    transaction,
-                    _LOCK_REVISION,
-                    pot=expected_pot_id,
-                )
-                current = _version(revision)
-                cached = _decode_receipt(
-                    await _one(
-                        transaction, _RECEIPT, pot=expected_pot_id, mutation=mutation_id
-                    ),
-                    pot_id=expected_pot_id,
-                    mutation_id=mutation_id,
-                    fingerprint=fingerprint,
-                )
+                state = await lock_execution_state(transaction, expected_pot_id)
+                current = state.version
+                cached = state.completed(mutation_id, fingerprint)
                 if cached:
                     validate_execution_replay(
                         cached.result, provenance=provenance_context

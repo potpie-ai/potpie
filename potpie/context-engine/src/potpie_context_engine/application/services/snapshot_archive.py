@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.graph_snapshot import (
-    normalize_snapshot_payload,
     validate_snapshot_merge,
 )
+from potpie_context_engine.core.graph_snapshot_mutation import normalize_snapshot_import
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.resource_snapshot import normalize_resource_snapshot
 
@@ -36,9 +36,9 @@ def import_archive(
 ) -> SnapshotManifest:
     if facade.snapshot is None:
         raise CapabilityNotImplemented("resources.import_snapshot")
-    graph = normalize_snapshot_payload(
+    graph = normalize_snapshot_import(
         {key: value for key, value in payload.items() if key != "resources"},
-        target_pot_id=pot_id,
+        pot_id=pot_id,
     )
     resources = normalize_resource_snapshot(payload.get("resources"))
     restorer = getattr(facade.store, "restore_snapshot", None)

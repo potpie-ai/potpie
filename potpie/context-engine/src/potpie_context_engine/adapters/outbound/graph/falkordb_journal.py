@@ -426,7 +426,9 @@ class FalkorJournal:
 
     def _execute(self, pipe, query, params):
         from .falkordb_atomic import _rows
+        from .falkordb_revision import read_revision
 
+        read_revision(self.graph, params["pot"], pipe)
         pipe.multi()
         pipe.execute_command(
             "GRAPH.QUERY",

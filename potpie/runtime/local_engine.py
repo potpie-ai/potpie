@@ -43,7 +43,6 @@ from potpie_context_engine import (
 )
 from potpie_context_engine.application.services.resource_journal import (
     JOURNAL_CAPTURE_ACTIVE,
-    refuse_while_journaling,
 )
 from potpie_context_engine.core.api import run_in_worker_thread
 from potpie_context_engine.core.commit_service import (
@@ -139,7 +138,6 @@ from potpie_context_engine.results import (
     DescribeResult,
     ExportSnapshotResult,
     GraphJournalResult,
-    ResetContextResult,
     ResourceIndexRebuildResult,
     ResourceListResult,
 )
@@ -513,35 +511,18 @@ class ServiceEngineOperations:
     async def reset_context(
         self, context: ContextIdentity, request: ResetContextRequest
     ) -> Outcome[object]:
-        del request
+        from potpie_context_engine.application.services.context_reset import (
+            reset_context,
+        )
 
-        def reset() -> ResetContextResult:
-            # A pot whose graph journal is capturing is refused before anything
-            # is touched: the graph reset and the document purge each refuse on
-            # their own, so checking once here keeps reset and archive from
-            # stopping half-way (graph cleared, documents kept).
-            refuse_while_journaling(
-                getattr(self._services.backend, "journal", None),
-                context.value,
-                "pot reset",
+        return await self._call(
+            lambda: reset_context(
+                self._services.backend,
+                self._resources_or_none(),
+                pot_id=context.value,
+                mutation_id=request.mutation_id,
             )
-            result = self._services.backend.mutation.reset_pot(context.value)
-            reset_ok = bool(result.get("ok", True))
-            # Documents go only after the graph reset succeeded: a failed reset
-            # must not leave live claims citing chunk ids that no longer exist.
-            resources = self._resources_or_none()
-            purged = (
-                bool(resources.purge_pot(context.value))
-                if reset_ok and resources is not None
-                else None
-            )
-            return ResetContextResult(
-                context_id=context.value,
-                reset=reset_ok,
-                resources_purged=purged,
-            )
-
-        return await self._call(reset)
+        )
 
     async def propose(
         self, context: ContextIdentity, request: ProposeRequest
@@ -565,6 +546,7 @@ class ServiceEngineOperations:
                 approved_by=request.approved_by,
                 verify=request.verify,
                 defer_verification=request.defer_verification,
+                recover_stale=request.recover_stale,
             )
         )
 

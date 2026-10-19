@@ -14,7 +14,7 @@ import json
 from typing import Any, Mapping, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .reconciliation import MutationBatch
+    from .reconciliation import MutationBatch, MutationResult
 
 
 FINGERPRINT_VERSION = 1
@@ -59,6 +59,34 @@ def batch_has_work(batch: MutationBatch) -> bool:
         or batch.edge_upserts
         or batch.edge_deletes
         or batch.invalidations
+    )
+
+
+def execution_matches_batch(
+    result: MutationResult | None,
+    batch: MutationBatch,
+    *,
+    pot_id: str,
+    mutation_id: str,
+    prepared: PreparedMutation | None = None,
+    allow_legacy: bool = False,
+) -> bool:
+    """Validate execution binding at workflow boundaries, including recovery."""
+    if result is None or result.ok is not True or result.mutation_id != mutation_id:
+        return False
+    execution = result.execution
+    if execution is None:
+        return allow_legacy and prepared is None
+    if (
+        execution.pot_id != pot_id
+        or execution.batch_fingerprint != batch_fingerprint(batch)
+        or execution.version_after
+        != execution.version_before + int(batch_has_work(batch))
+    ):
+        return False
+    return prepared is None or (
+        execution.request_fingerprint == prepared.request_fingerprint
+        and execution.version_before == prepared.expected_version
     )
 
 

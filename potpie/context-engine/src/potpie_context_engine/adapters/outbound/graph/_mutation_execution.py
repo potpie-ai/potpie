@@ -495,9 +495,11 @@ def _mutation_result_from_dict(raw: object) -> MutationResult | None:
     ):
         raise MutationPersistenceError("invalid administrative execution counts")
     return MutationResult(
-        execution=ExecutionMetadata.from_dict(raw["execution"])
-        if raw.get("execution") is not None
-        else None,
+        execution=(
+            ExecutionMetadata.from_dict(raw["execution"])
+            if "execution" in raw
+            else None
+        ),
         ok=True,
         administrative_summary=dict(administrative),
         mutation_id=raw["mutation_id"],

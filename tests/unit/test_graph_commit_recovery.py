@@ -1,7 +1,7 @@
 """Commit recovery through the real daemon transport, codec and CLI envelope.
 
 A lost commit response is never answered by committing again: the CLI reads
-the plan's durable receipt (a read that writes nothing) a bounded number of
+the backend's durable receipt (reconciling workflow bookkeeping) a bounded number of
 times, and ``--verify`` runs as its own read after the receipt is durable.
 """
 
@@ -236,3 +236,37 @@ def test_commit_offers_no_client_side_deadline_option(daemon):
 
     assert result.exit_code == 2
     assert daemon.calls == []
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"), [((), True), (("--no-recover-stale",), False)]
+)
+def test_cli_forwards_stale_takeover_policy_through_typed_transport(
+    daemon, flags, expected
+):
+    from potpie_context_engine.requests import CommitRequest
+
+    daemon.replies["commit"] = [_commit_result()]
+    assert _invoke(*flags).exit_code == 0
+    wire = daemon.calls[0][1]
+    assert wire.get("recover_stale", CommitRequest().recover_stale) is expected
+
+
+def test_authoritative_execution_metadata_survives_result_codec(daemon):
+    from datetime import datetime, timezone
+    from potpie_context_engine.core.mutation_execution import ExecutionMetadata
+
+    metadata = ExecutionMetadata(
+        pot_id="p",
+        applied_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        version_before=7,
+        version_after=8,
+        batch_fingerprint="frozen",
+        request_fingerprint="request",
+    )
+    daemon.replies["commit"] = [
+        replace(_commit_result(), execution=metadata, applied_at=metadata.applied_at)
+    ]
+    output = _invoke()
+    assert output.exit_code == 0, output.output
+    assert json.loads(output.output)["result"]["execution"] == metadata.to_dict()

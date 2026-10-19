@@ -36,7 +36,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | 4 | fix(graph): atomically publish memory and embedded mutations | Rollback, observer failure, coherent/fresh reads | 93 focused integration tests pass; worker broader gate 176 passed/31 unselected-native skips; 35 new rollback/concurrency/restart cases. Observer publication race required canonical CAS-loss result handling. Windows evidence remains step13. |
 | 5 | fix(graph): enforce native atomic execution and receipt metadata | Native concurrency, internal failure, restart replay | FalkorDB v4.16.0/Lite: 121 passed, 64 deselected; server AOF restart and Lite reopen pass. Neo4j 5.26: 31 passed plus actual restart test, 18 unit tests. Fresh-pot Falkor revision race fixed under native WATCH. Forced-kill durability and full platform matrix remain step13. |
 | 6 | refactor(graph): unify supported graph write entry points | Entry-point inventory covered; repair/reset revision semantics | 1736 unit/core passed (3 unrelated skips), plus 10 isolated Falkor wiring tests. Neo4j 80 passed; Falkor server/Lite 154 passed. Native restart guards unselected here; actual restarts proven in step5. Direct semantics share prepared workbench; empty commits get receipts; reset/import/repair share native execution; reset returns retry identity. |
-| 7 | fix(graph): make plan persistence and public recovery crash-safe | Corruption fail-closed, crash recovery, stale owner fencing | Pending |
+| 7 | fix(graph): make plan persistence and public recovery crash-safe | Corruption fail-closed, crash recovery, stale owner fencing | Checkpoint A approved by independent shared and backend reviewers. Engine unit/core + public runtime/semantic gate: 1929 passed, 3 unrelated skips. Root CLI/runtime gate: 146 passed; final reset gate: 16 passed. Native integrity: 25 passed across server/Lite/Neo4j. Detailed evidence below. |
 | 8 | fix(graph): preserve claim incarnations and scoped supersession | Historical intervals and source/environment isolation | Pending |
 | 9 | fix(graph): freeze correction targets and dependent effects | Preview/commit/verify targets identical; stale conflicts | Pending |
 | 10 | fix(graph): normalize temporal writes and query semantics | Offset/boundary/occurrence/query-limit parity | Pending |
@@ -126,7 +126,7 @@ No adapter may silently turn unsupported/unknown execution state into absence.
 
 Contract review caught request identity replay checks, frozen revision checks,
 strict metadata decoding, missing-vs-null legacy fields, and sync/async capability
-parity. Each has a shared contract fix; adapter integration in 4/5 is still pending.
+parity. Adapter integration in 4/5 and checkpoint A validation are complete.
 Subagents use GPT-6.1 with xhigh reasoning as requested by the user.
 
 
@@ -135,3 +135,39 @@ Subagents use GPT-6.1 with xhigh reasoning as requested by the user.
 - Step6 invariant blocker for step12: a repair delta above the existing 5000-entity batch cap must use resumable revisioned batches. Current behavior fails before writing; a native 5001-entity regression proves no partial changes. Do not truncate silently or add a private cap bypass.
 - Step7 blockers: fail-closed plan parsing, durable replacement, defensive copies in the process-local plan store, receipt lookup before workflow status/takeover checks, and original execution timestamp/revision recovery. Read-only audit independently confirmed each issue.
 - Cross-store resource purge remains the existing ordered workflow. The graph transaction does not claim to atomically commit external resource bytes or ingestion-ledger deletion.
+
+## Checkpoint A acceptance (2026-10-19)
+
+Both independent GPT-6.1 xhigh reviews approved their scopes after the concrete
+findings were fixed and reproduced against the fixes. The thermo-nuclear review
+required one execution coordinator, one receipt-binding validator, and source
+effects resolved by the existing preparation owner.
+
+| Invariant | Implementation and regression evidence | Review |
+| --- | --- | --- |
+| I1/I4 | `mutation_preparation`, `mutation_execution_service`, `mutation_state`; permanent reservation, receipt-first recovery, frozen request/batch metadata, attempt CAS. `test_mutation_recovery_contract`, `test_prepared_mutation_contract`, `test_plan_storage_reliability`. | checkpoint_a_shared approved; focused final gate 75 passed |
+| I2/I3/I10 | Strict native receipt/revision readers reject missing or regressed revisions, including modern empty receipts at zero; duplicate nested JSON fails before interpretation. `test_falkordb_revision_integrity` and `test_neo4j_revision_integrity`. | checkpoint_a_backends independently ran 25 native cases, all passed |
+| I10 | Shared strict JSON decoder and fsync/replacement helper; plan and embedded stores reject corruption, invalid schema, duplicate keys, and disappearance after observation. `test_embedded_metadata_integrity` plus plan-storage subprocess crash cases. | memory/embedded gate 236 passed, 31 unselected native skips; independent focused gate 135 passed |
+| I1/I4/I11 | Resource revisions bind stable desired intent. A host-only resolver discovers removed live sections/dependencies inside the preparation revision bracket and is not called on replay. Delete uses one manifest snapshot, requires applied graph status, and fences byte deletion by revision. `test_resource_mutation_recovery`: 40 cases across graph/store combinations. | checkpoint_a_shared approved; eight concurrent imports converge on one plan and revision |
+| I4/I11 | Typed `recover_stale=True` default with explicit opt-out; capability declarations survive runtime bridging. Typed reset returns identity/execution; recovery never repurges newer resources and reports unknown external purge outcome. `test_public_graph_runtime`, root `test_graph_commit_recovery` and `test_local_engine`. | checkpoint_a_shared approved; reset contradiction cases pass |
+
+Native backend evidence uses FalkorDB v4.16.0 with AOF persistence, Lite on macOS,
+and Neo4j 5.26 community. The revision-floor change passed actual FalkorDB server
+restart/Lite reopen and Neo4j container restart. Final duplicate-decoder native
+regressions passed without another restart; decoder changes do not alter storage.
+Receipt-floor validation currently scans a pot's receipts. An indexed floor is
+follow-up performance work requiring a migration design, not a silent bypass.
+
+The acceptance reviewer generated genuine baseline `c6b306ba` graph/plan files
+in an isolated child and reopened them with this implementation: the original
+mutation identity/fingerprint survived, unavailable metadata remained `None`,
+and graph bytes were unchanged. This does not claim restoration of erased history.
+
+Resource bytes/index/ledger remain separate ordered stores. A graph receipt proves
+graph execution only. Resource purge failures retain the reset receipt; a reset
+retry explicitly reports `unknown_on_recovery` for purge rather than deleting
+resources written after the original reset. Conflicted source preparations remain
+bound to their original identity and require an explicit fresh operation.
+
+Remaining release evidence: forced-kill durability, full supported Windows/native
+CI, and lifecycle/temporal/correction/verification/migration work in steps 8–13.

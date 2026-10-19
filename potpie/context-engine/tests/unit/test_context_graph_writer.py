@@ -119,8 +119,10 @@ def test_context_graph_reset_pot_delegates_to_backend() -> None:
         "pot_id": "pot1",
         "ok": True,
         "graph_writer": {"ok": True},
+        "mutation_id": None,
+        "execution": None,
     }
-    backend.mutation.reset_pot.assert_called_once_with("pot1")
+    backend.mutation.reset_pot.assert_called_once_with("pot1", mutation_id=None)
 
 
 def test_context_graph_reset_pot_stops_on_backend_failure() -> None:
@@ -134,6 +136,8 @@ def test_context_graph_reset_pot_stops_on_backend_failure() -> None:
         "pot_id": "pot1",
         "ok": False,
         "graph_writer": {"ok": False, "error": "bad"},
+        "mutation_id": None,
+        "execution": None,
         "error": "bad",
     }
 

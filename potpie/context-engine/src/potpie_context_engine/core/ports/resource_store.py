@@ -577,7 +577,9 @@ class ResourceStorePort(Protocol):
         """Clear a pending review descriptor after its graph marker commits."""
         ...
 
-    def delete(self, *, pot_id: str, slug: str) -> bool:
+    def delete(
+        self, *, pot_id: str, slug: str, expected_revision: int | None = None
+    ) -> bool:
         """Remove one document's chunks. Deleting what is absent is a no-op."""
         ...
 

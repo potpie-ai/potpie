@@ -39,6 +39,7 @@ from .mutation_state import (
     _concurrent_commit_result,
     _conflict_message,
     _errored_commit_result,
+    _execution_matches_record,
     _lookup_mutation_execution,
     _provenance_for_commit,
     _subgraph_versions,
@@ -49,6 +50,8 @@ from .mutation_verification import (
     _verification_next_action,
 )
 from .mutation_workflow import MutationWorkflow
+from .reconciliation import MutationResult
+from .mutation_execution import MutationPersistenceError
 
 _LOG = logging.getLogger(__name__)
 
@@ -60,7 +63,7 @@ def commit_mutation(
     pot_id: str,
     approved_by: str | None = None,
     verify: bool = False,
-    recover_stale: bool = False,
+    recover_stale: bool = True,
     defer_verification: bool = False,
     verify_receipt: Callable[..., GraphIngestionVerificationResult],
     quality_snapshot: Callable[..., Mapping[str, Any]],
@@ -85,13 +88,19 @@ def commit_mutation(
 
     record.validate_prepared()
 
+    # Receipt lookup is unconditional. A lease limits takeover, never recovery of
+    # a completed transaction (including after workflow expiry or finalization).
+    lookup = _lookup_mutation_execution(self.backend, record)
+    if lookup.state == MutationExecutionState.completed.value:
+        return _complete_execution(
+            self,
+            record,
+            result=lookup.result,
+            verify=verify and not defer_verification,
+            verify_receipt=verify_receipt,
+        )
     if record.status == GraphMutationPlanStatus.committed.value:
-        receipt = _committed_plan_result(record)
-        if verify and not defer_verification:
-            receipt = replace(
-                receipt, verification=self.verify_commit(plan_id, pot_id=pot_id)
-            )
-        return receipt
+        return _fail_unsafe_recovery(self, record, lookup=lookup)
 
     if record.status in TERMINAL_PLAN_STATUSES:
         return GraphMutationCommitResult(
@@ -108,43 +117,29 @@ def commit_mutation(
             detail=f"plan is {record.status} and cannot be committed",
             recommended_next_action="Create a fresh proposal if a write is still needed.",
         )
-    retrying_execution = (
-        record.status == GraphMutationPlanStatus.error.value
-        and record.mutation_id is not None
-    )
-    recovering_stale = False
     if record.status == GraphMutationPlanStatus.committing.value:
-        if not recover_stale:
-            return _concurrent_commit_result(record)
-        if not _commit_attempt_is_stale(
+        if not recover_stale or not _commit_attempt_is_stale(
             record,
             now=now,
             timeout_seconds=self.commit_claim_timeout_seconds,
         ):
             return _concurrent_commit_result(
                 record,
-                detail=("commit attempt is still active and cannot be recovered yet"),
+                detail="commit attempt is still active; takeover is disabled or not yet due",
             )
-        recovering_stale = True
-
-    if retrying_execution or recovering_stale:
-        lookup = _lookup_mutation_execution(self.backend, record)
-        if lookup.state == MutationExecutionState.completed.value:
-            return _complete_recovered_commit(
-                self,
-                record,
-                verify_receipt=verify_receipt,
-                lookup=lookup,
-                now=now,
-                verify=verify and not defer_verification,
-            )
-        if lookup.state == MutationExecutionState.in_flight.value:
-            return _concurrent_commit_result(
-                record,
-                detail="the backend mutation is still in flight",
-            )
-        if lookup.state != MutationExecutionState.absent.value:
-            return _fail_unsafe_recovery(self, record, lookup=lookup)
+    if lookup.state == MutationExecutionState.in_flight.value:
+        return _concurrent_commit_result(
+            record, detail="the backend mutation is still in flight"
+        )
+    if lookup.state != MutationExecutionState.absent.value:
+        return _fail_unsafe_recovery(self, record, lookup=lookup)
+    if record.prepared is None or record.lowered_batch is None:
+        return _errored_commit_result(
+            record,
+            current_subgraph_versions=record.current_subgraph_versions,
+            detail="migration_required: legacy plan has no frozen preparation contract",
+            recommended_next_action="Create a fresh proposal with a new request identity; this legacy plan was not executed.",
+        )
 
     if record.is_expired(now=now):
         expired = replace(
@@ -331,7 +326,10 @@ def commit_mutation(
                 detail=conflicted.detail,
                 recommended_next_action=_CONFLICT_NEXT_ACTION,
             )
-        final_versions = _subgraph_versions(self.backend, pot_id) if result.ok else None
+        if result.ok and not _execution_matches_record(record, result):
+            raise MutationPersistenceError(
+                "execution metadata disagrees with the frozen preparation"
+            )
     except Exception:
         _LOG.exception(
             "graph backend mutation failed unexpectedly "
@@ -393,130 +391,46 @@ def commit_mutation(
             recommended_next_action="Inspect backend readiness with `potpie graph status --json`.",
         )
 
-    assert final_versions is not None
-    committed = replace(
+    return _complete_execution(
+        self,
         record,
-        status=GraphMutationPlanStatus.committed.value,
-        mutation_id=execution_mutation_id,
-        commit_attempt_id=None,
-        commit_attempt_started_at=None,
-        committed_at=now,
-        final_subgraph_versions=final_versions,
-        approval=approval,
-    )
-    if not self.plan_store.compare_and_set(
-        expected=record,
-        replacement=committed,
-    ):
-        # Another owner may have recovered the authoritative receipt while the
-        # original caller was delivering its post-commit observer notification.
-        return _commit_state_changed_result(
-            self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-        )
-    verification = (
-        verify_receipt(
-            self.backend,
-            pot_id=pot_id,
-            record=committed,
-            before_quality=quality_before,
-            definition=self.definition,
-        )
-        if verify and not defer_verification
-        else None
-    )
-    return GraphMutationCommitResult(
-        ok=True,
-        plan_id=committed.plan_id,
-        status=committed.status,
-        risk=committed.risk,
-        pot_id=committed.pot_id,
-        mutation_id=execution_mutation_id,
-        applied_at=now,
-        expected_subgraph_versions=committed.expected_subgraph_versions,
-        current_subgraph_versions=current_versions,
-        new_subgraph_versions=final_versions,
-        diff=committed.diff,
-        claim_keys=_claim_keys_from_record(committed),
-        approval=approval,
-        verification=verification,
-        recommended_next_action=_verification_next_action(verification),
+        result=result,
+        verify=verify and not defer_verification,
+        verify_receipt=verify_receipt,
     )
 
 
-def _complete_recovered_commit(
+def _complete_execution(
     self: MutationWorkflow,
     record: GraphMutationPlanRecord,
     *,
-    lookup: MutationExecutionLookup,
-    now: datetime,
+    result: MutationResult,
     verify: bool,
     verify_receipt: Callable[..., GraphIngestionVerificationResult],
 ) -> GraphMutationCommitResult:
-    """Finalize a plan from a backend-proven completed execution receipt."""
-
-    result = lookup.result
-    if (
-        result is None
-        or not record.mutation_id
-        or result.mutation_id != record.mutation_id
-    ):
-        invalid_lookup = replace(
-            lookup,
-            state=MutationExecutionState.ambiguous.value,
-            detail=None,
-        )
-        return _fail_unsafe_recovery(self, record, lookup=invalid_lookup)
-
-    current_versions = _subgraph_versions(self.backend, record.pot_id)
-    if not result.ok:
-        errored = replace(
-            record,
-            status=GraphMutationPlanStatus.error.value,
-            current_subgraph_versions=current_versions,
-            commit_attempt_id=None,
-            commit_attempt_started_at=None,
-            detail=result.error,
-        )
-        if not self.plan_store.compare_and_set(
-            expected=record,
-            replacement=errored,
-        ):
-            return _commit_state_changed_result(
-                self.plan_store.get(
-                    pot_id=record.pot_id,
-                    plan_id=record.plan_id,
-                )
-                or record
-            )
-        return _errored_commit_result(
-            errored,
-            current_subgraph_versions=current_versions,
-            detail=result.error,
-            recommended_next_action=(
-                "Inspect backend readiness before creating a fresh proposal."
-            ),
-        )
-
+    """Finalize workflow bookkeeping exclusively from immutable backend metadata."""
+    execution = result.execution
     committed = replace(
         record,
         status=GraphMutationPlanStatus.committed.value,
         mutation_id=result.mutation_id,
+        execution=execution,
         commit_attempt_id=None,
         commit_attempt_started_at=None,
-        committed_at=now,
-        final_subgraph_versions=current_versions,
+        committed_at=execution.applied_at if execution is not None else None,
+        current_subgraph_versions=(
+            {"_global": execution.version_before} if execution else {}
+        ),
+        final_subgraph_versions=(
+            {"_global": execution.version_after} if execution else {}
+        ),
         detail=None,
     )
-    if not self.plan_store.compare_and_set(
-        expected=record,
-        replacement=committed,
+    if committed != record and not self.plan_store.compare_and_set(
+        expected=record, replacement=committed
     ):
         return _commit_state_changed_result(
-            self.plan_store.get(
-                pot_id=record.pot_id,
-                plan_id=record.plan_id,
-            )
-            or record
+            self.plan_store.get(pot_id=record.pot_id, plan_id=record.plan_id) or record
         )
     verification = (
         verify_receipt(
@@ -529,22 +443,10 @@ def _complete_recovered_commit(
         if verify
         else None
     )
-    return GraphMutationCommitResult(
-        ok=True,
-        plan_id=committed.plan_id,
-        status=committed.status,
-        risk=committed.risk,
-        pot_id=committed.pot_id,
-        mutation_id=committed.mutation_id,
-        applied_at=committed.committed_at,
-        expected_subgraph_versions=committed.expected_subgraph_versions,
-        current_subgraph_versions=current_versions,
-        new_subgraph_versions=current_versions,
-        diff=committed.diff,
-        claim_keys=_claim_keys_from_record(committed),
-        approval=committed.approval,
+    return replace(
+        _committed_plan_result(committed),
         verification=verification,
-        detail="recovered the backend's persisted mutation receipt",
+        detail="returned the backend's authoritative execution receipt",
         recommended_next_action=_verification_next_action(verification),
     )
 
@@ -587,10 +489,7 @@ def _fail_unsafe_recovery(
         current = errored
     return _errored_commit_result(
         current,
-        current_subgraph_versions=_subgraph_versions(
-            self.backend,
-            record.pot_id,
-        ),
+        current_subgraph_versions=record.current_subgraph_versions,
         detail=detail,
         recommended_next_action=(
             "Inspect graph history using the mutation_id. Create a fresh "
@@ -600,7 +499,7 @@ def _fail_unsafe_recovery(
 
 
 def commit_status(self, plan_id: str, *, pot_id: str) -> GraphMutationCommitResult:
-    """Read a durable plan receipt without touching the graph or applying work."""
+    """Read authoritative execution state and reconcile workflow bookkeeping."""
     record = self.plan_store.get(pot_id=pot_id, plan_id=plan_id)
     if record is None:
         return GraphMutationCommitResult(
@@ -610,8 +509,17 @@ def commit_status(self, plan_id: str, *, pot_id: str) -> GraphMutationCommitResu
             risk="low",
             status="not_found",
         )
+    lookup = _lookup_mutation_execution(self.backend, record)
+    if lookup.state == MutationExecutionState.completed.value:
+        return _complete_execution(
+            self,
+            record,
+            result=lookup.result,
+            verify=False,
+            verify_receipt=self.verify_commit,
+        )
     if record.status == GraphMutationPlanStatus.committed.value:
-        return _committed_plan_result(record)
+        return _fail_unsafe_recovery(self, record, lookup=lookup)
     if record.status == GraphMutationPlanStatus.committing.value:
         return _concurrent_commit_result(record)
     if record.status == GraphMutationPlanStatus.error.value:

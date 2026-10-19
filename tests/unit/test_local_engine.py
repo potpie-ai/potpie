@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # ruff: noqa: S101 - pytest unit tests use assertions intentionally.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -269,4 +269,142 @@ async def test_reset_context_uses_the_bound_backend_partition() -> None:
     assert isinstance(outcome, Success)
     assert outcome.value.context_id == "pot-1"
     assert outcome.value.reset is True
-    mutation.reset_pot.assert_called_once_with("pot-1")
+    mutation.reset_pot.assert_called_once_with("pot-1", mutation_id=None)
+
+
+@pytest.mark.anyio
+async def test_reset_retry_preserves_receipt_and_newer_resources() -> None:
+    from potpie_context_engine.testing import InMemoryGraphBackend
+    from potpie_context_engine.core.graph_mutations import EntityUpsert
+    from potpie_context_engine.core.reconciliation import MutationBatch
+
+    backend = InMemoryGraphBackend()
+    resources = SimpleNamespace(purge_pot=MagicMock(return_value=True))
+    operations = LocalEngineOperations(
+        SimpleNamespace(backend=backend, resources=resources)
+    )
+    first = await operations.reset_context(
+        ContextIdentity("pot-1"), ResetContextRequest()
+    )
+    assert isinstance(first, Success)
+    assert first.value.execution.version_after == 1
+    backend.mutation.apply(
+        MutationBatch(
+            entity_upserts=[
+                EntityUpsert(
+                    entity_key="service:new", labels=("Service",), properties={}
+                )
+            ]
+        ),
+        expected_pot_id="pot-1",
+    )
+
+    replay = await operations.reset_context(
+        ContextIdentity("pot-1"),
+        ResetContextRequest(mutation_id=first.value.mutation_id),
+    )
+
+    assert isinstance(replay, Success)
+    assert replay.value.reset is True
+    assert replay.value.execution == first.value.execution
+    assert replay.value.resources_status == "unknown_on_recovery"
+    assert replay.value.resources_purged is None
+    assert backend.mutation.current_version("pot-1") == 2
+    resources.purge_pot.assert_called_once_with("pot-1")
+
+
+@pytest.mark.anyio
+async def test_resource_purge_failure_retains_reset_receipt() -> None:
+    from potpie_context_engine.testing import InMemoryGraphBackend
+
+    backend = InMemoryGraphBackend()
+    operations = LocalEngineOperations(
+        SimpleNamespace(
+            backend=backend,
+            resources=SimpleNamespace(
+                purge_pot=MagicMock(side_effect=OSError("lost purge"))
+            ),
+        )
+    )
+    result = await operations.reset_context(
+        ContextIdentity("pot-1"), ResetContextRequest()
+    )
+    assert isinstance(result, Success)
+    assert result.value.reset is True
+    assert result.value.mutation_id
+    assert result.value.execution.version_after == 1
+    assert result.value.resources_status == "failed"
+
+
+@pytest.mark.anyio
+async def test_unknown_reset_recovery_never_reapplies() -> None:
+    from potpie_context_engine.core.mutation_execution import MutationCapabilities
+
+    mutation = SimpleNamespace(
+        capabilities=MutationCapabilities(), reset_pot=MagicMock()
+    )
+    operations = LocalEngineOperations(
+        SimpleNamespace(backend=SimpleNamespace(mutation=mutation))
+    )
+    result = await operations.reset_context(
+        ContextIdentity("pot-1"), ResetContextRequest(mutation_id="unknown")
+    )
+    assert isinstance(result, Success)
+    assert not result.value.reset
+    mutation.reset_pot.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "corruption", ["batch", "revision", "absent_identity", "result_identity"]
+)
+async def test_reset_recovery_rejects_contradictory_authority(corruption) -> None:
+    from potpie_context_engine.testing import InMemoryGraphBackend
+    from potpie_context_engine.core.mutation_execution import MutationCapabilities
+    from potpie_context_engine.core.reconciliation import MutationBatch
+
+    backend = InMemoryGraphBackend()
+    first = backend.mutation.reset_pot("pot-1")
+    lookup = backend.mutation.lookup_execution(
+        MutationBatch(reset_pot=True),
+        expected_pot_id="pot-1",
+        mutation_id=first["mutation_id"],
+    )
+    if corruption == "batch":
+        lookup = replace(
+            lookup,
+            result=replace(
+                lookup.result,
+                execution=replace(lookup.result.execution, batch_fingerprint="other"),
+            ),
+        )
+    elif corruption == "revision":
+        lookup = replace(
+            lookup,
+            result=replace(
+                lookup.result,
+                execution=replace(lookup.result.execution, version_after=0),
+            ),
+        )
+    elif corruption == "absent_identity":
+        lookup = replace(lookup, state="absent", mutation_id="another", result=None)
+    else:
+        lookup = replace(lookup, result=replace(lookup.result, mutation_id="another"))
+    mutation = SimpleNamespace(
+        capabilities=MutationCapabilities(execution_lookup=True),
+        lookup_execution=lambda *a, **k: lookup,
+        reset_pot=MagicMock(),
+    )
+    resources = SimpleNamespace(purge_pot=MagicMock())
+    operations = LocalEngineOperations(
+        SimpleNamespace(backend=SimpleNamespace(mutation=mutation), resources=resources)
+    )
+
+    outcome = await operations.reset_context(
+        ContextIdentity("pot-1"), ResetContextRequest(mutation_id=first["mutation_id"])
+    )
+
+    assert isinstance(outcome, Success)
+    assert not outcome.value.reset
+    mutation.reset_pot.assert_not_called()
+    resources.purge_pot.assert_not_called()

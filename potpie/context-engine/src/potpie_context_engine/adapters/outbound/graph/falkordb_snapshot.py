@@ -58,6 +58,9 @@ class FalkorDBSnapshot:
             pipe = transaction_client(graph).pipeline()
             try:
                 pipe.watch(graph.name)
+                from .falkordb_revision import read_revision
+
+                read_revision(graph, pot_id, pipe)
                 entities, claims = _snapshot_rows(graph, pipe, pot_id)
                 from .falkordb_journal import _state
                 from .journal_snapshot_policy import require_snapshot_identity

@@ -11,8 +11,7 @@ from potpie_context_engine.core.mutation_execution import (
     request_fingerprint as _request_fingerprint,
 )
 
-import json
-import logging
+from io import StringIO
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -21,15 +20,17 @@ from typing import Any
 from potpie_context_engine.core.graph_plans import GraphMutationPlanRecord
 from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
     locked_json_store,
+    durable_json_replace,
+    strict_json_load,
 )
 from potpie_context_engine.adapters.outbound.local_paths import default_home
 
-logger = logging.getLogger(__name__)
-
+from potpie_context_engine.core.mutation_execution import MutationPersistenceError
 
 @dataclass(slots=True)
 class LocalJsonGraphPlanStore:
     home: Path = field(default_factory=default_home)
+    _observed_state: bool = field(default=False, init=False, repr=False)
 
     @property
     def _path(self) -> Path:
@@ -54,8 +55,6 @@ class LocalJsonGraphPlanStore:
             state = self._load()
             by_pot = state.setdefault("plans", {}).setdefault(record.pot_id, {})
             for raw in by_pot.values():
-                if not isinstance(raw, dict):
-                    continue
                 existing = GraphMutationPlanRecord.from_dict(raw)
                 key = str(
                     existing.original_payload.get("idempotency_key") or ""
@@ -116,11 +115,7 @@ class LocalJsonGraphPlanStore:
         by_pot = self._load().get("plans", {}).get(pot_id, {})
         if not isinstance(by_pot, dict):
             return ()
-        records = [
-            GraphMutationPlanRecord.from_dict(raw)
-            for raw in by_pot.values()
-            if isinstance(raw, dict)
-        ]
+        records = [GraphMutationPlanRecord.from_dict(raw) for raw in by_pot.values()]
         if plan_id:
             records = [record for record in records if record.plan_id == plan_id]
         if mutation_id:
@@ -145,25 +140,54 @@ class LocalJsonGraphPlanStore:
         try:
             raw = self._path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            return {"plans": {}}
-        except OSError as exc:
-            logger.warning("graph plan store unreadable at %s: %s", self._path, exc)
-            return {"plans": {}}
+            if self._observed_state:
+                raise MutationPersistenceError(
+                    "previously observed plan store is missing"
+                )
+            return {"schema_version": 1, "plans": {}}
+        except (OSError, UnicodeError) as exc:
+            raise MutationPersistenceError(
+                f"graph plan store unreadable: {self._path}"
+            ) from exc
         try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.warning("graph plan store corrupt at %s; resetting", self._path)
-            return {"plans": {}}
-        if not isinstance(data, dict):
-            return {"plans": {}}
-        data.setdefault("plans", {})
-        return data
+            data = strict_json_load(StringIO(raw))
+            if (
+                not isinstance(data, dict)
+                or type(data.get("schema_version", 1)) is not int
+                or data.get("schema_version", 1) != 1
+            ):
+                raise ValueError("unsupported graph plan store schema")
+            if not isinstance(data.get("plans"), dict):
+                raise ValueError("graph plan store requires a plans object")
+            for pot_id, plans in data["plans"].items():
+                if (
+                    not isinstance(pot_id, str)
+                    or not pot_id
+                    or not isinstance(plans, dict)
+                ):
+                    raise ValueError("invalid pot plan collection")
+                reservations = set()
+                for plan_id, payload in plans.items():
+                    record = GraphMutationPlanRecord.from_dict(payload)
+                    if (record.pot_id, record.plan_id) != (pot_id, plan_id):
+                        raise ValueError("plan storage identity mismatch")
+                    key = str(
+                        record.original_payload.get("idempotency_key") or ""
+                    ).strip()
+                    if key and record.reserves_idempotency:
+                        if key in reservations:
+                            raise ValueError("duplicate permanent request reservation")
+                        reservations.add(key)
+            self._observed_state = True
+            return data
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise MutationPersistenceError(
+                f"graph plan store is invalid: {self._path}: {exc}"
+            ) from exc
 
     def _save(self, data: dict[str, Any]) -> None:
-        self.home.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(self._path)
+        durable_json_replace(self._path, {**data, "schema_version": 1})
+        self._observed_state = True
 
 
 def _record_in_window(

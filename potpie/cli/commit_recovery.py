@@ -64,6 +64,7 @@ def commit_with_recovery(
     retry_command: str,
     run: Runner,
     sleep: Callable[[float], None] | None = None,
+    recover_stale: bool = True,
 ) -> GraphMutationCommitResult:
     """Commit ``plan_id`` once and settle its receipt without a second write.
 
@@ -80,6 +81,7 @@ def commit_with_recovery(
                 approved_by=approved_by,
                 verify=verify,
                 defer_verification=verify,
+                recover_stale=recover_stale,
             )
         )
     )

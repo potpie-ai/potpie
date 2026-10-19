@@ -21,7 +21,7 @@ from potpie_context_engine.core.reconciliation import MutationResult, MutationSu
 from potpie_context_engine.core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
-from redis.exceptions import ResponseError, WatchError
+from redis.exceptions import WatchError
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     _mutation_result_to_dict,
@@ -48,6 +48,7 @@ from potpie_context_engine.adapters.outbound.graph.cypher import (
 
 from .falkordb_connection import transaction_client
 from .falkordb_receipts import RECEIPT_COLUMNS, decode_receipt
+from .falkordb_revision import read_revision
 
 _STATE = "PotpieRevision"
 _RECEIPT = "PotpieMutationReceipt"
@@ -58,21 +59,8 @@ def _rows(graph, response):
 
 
 def current_version(graph, pot_id: str) -> int:
-    try:
-        result = graph.ro_query(
-            f"MATCH (r:{_STATE} {{pot_id:$pot}}) RETURN r.version",
-            params={"pot": pot_id},
-        )
-    except ResponseError as exc:
-        if "empty key" in str(exc).lower():
-            return 0
-        raise
-    if len(result.result_set) > 1:
-        raise MutationPersistenceError("duplicate native pot revision")
-    value = result.result_set[0][0] if result.result_set else 0
-    if type(value) is not int or value < 0:
-        raise MutationPersistenceError("invalid native pot revision")
-    return value
+    version = read_revision(graph, pot_id).version
+    return version if version is not None else 0
 
 
 def _ensure_state(graph, pot_id: str) -> None:
@@ -83,24 +71,7 @@ def _ensure_state(graph, pot_id: str) -> None:
         with transaction_client(graph).pipeline() as pipe:
             try:
                 pipe.watch(graph.name)
-                try:
-                    response = pipe.execute_command(
-                        "GRAPH.RO_QUERY",
-                        graph.name,
-                        graph._build_params_header({"pot": pot_id})
-                        + f"MATCH (v:{_STATE} {{pot_id:$pot}}) RETURN v.version",
-                        "--compact",
-                    )
-                    rows = _rows(graph, response)
-                except ResponseError as exc:
-                    if "empty key" not in str(exc).lower():
-                        raise
-                    rows = []
-                if len(rows) > 1:
-                    raise MutationPersistenceError("duplicate native pot revision")
-                if rows:
-                    if type(rows[0][0]) is not int or rows[0][0] < 0:
-                        raise MutationPersistenceError("invalid native pot revision")
+                if read_revision(graph, pot_id, pipe).version is not None:
                     return
                 pipe.multi()
                 pipe.execute_command(
@@ -142,53 +113,15 @@ def reset_pot(graph, pot_id: str, *, mutation_id: str | None = None) -> dict:
 
 def lookup_execution(graph, plan, *, expected_pot_id, mutation_id):
     fingerprint = mutation_batch_fingerprint(plan)
-    try:
-        result = graph.ro_query(
-            f"MATCH (r:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid}}) "
-            f"RETURN {RECEIPT_COLUMNS}",
-            params={"pot": expected_pot_id, "mid": mutation_id},
-        )
-    except ResponseError as exc:
-        if "empty key" not in str(exc).lower():
-            raise
-        return MutationExecutionLookup(
-            MutationExecutionState.absent.value, mutation_id, fingerprint
-        )
-    if not result.result_set:
-        return MutationExecutionLookup(
-            MutationExecutionState.absent.value, mutation_id, fingerprint
-        )
-    if len(result.result_set) != 1:
-        raise MutationPersistenceError("duplicate native execution receipt")
-    applied = decode_receipt(
-        result.result_set[0],
-        pot_id=expected_pot_id,
-        mutation_id=mutation_id,
-        fingerprint=fingerprint,
-    )
+    applied = read_revision(graph, expected_pot_id).execution(mutation_id, fingerprint)
     return MutationExecutionLookup(
-        MutationExecutionState.completed.value, mutation_id, fingerprint, result=applied
+        MutationExecutionState.completed.value
+        if applied is not None
+        else MutationExecutionState.absent.value,
+        mutation_id,
+        fingerprint,
+        result=applied,
     )
-
-
-def _existing(graph, pipe, pot_id, mutation_id):
-    query = graph._build_params_header({"pot": pot_id, "mid": mutation_id}) + (
-        f"MATCH (v:{_STATE} {{pot_id:$pot}}) "
-        f"OPTIONAL MATCH (r:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid}}) "
-        f"RETURN v.version,{RECEIPT_COLUMNS}"
-    )
-    response = pipe.execute_command(
-        "GRAPH.RO_QUERY",
-        graph.name,
-        query,
-        "--compact",
-    )
-    rows = _rows(graph, response)
-    if len(rows) > 1:
-        raise MutationPersistenceError("duplicate native revision or execution receipt")
-    if rows and (type(rows[0][0]) is not int or rows[0][0] < 0):
-        raise MutationPersistenceError("invalid native pot revision")
-    return rows[0] if rows else (0, None, None, None, None, None, None, None)
 
 
 def _compile(
@@ -549,15 +482,10 @@ def _apply_watched(
     pipe = transaction_client(graph).pipeline()
     try:
         pipe.watch(graph.name)
-        current, *stored = _existing(graph, pipe, expected_pot_id, mutation_id)
-        stored_fp = stored[0]
-        if stored_fp:
-            result = decode_receipt(
-                stored,
-                pot_id=expected_pot_id,
-                mutation_id=mutation_id,
-                fingerprint=fingerprint,
-            )
+        revision = read_revision(graph, expected_pot_id, pipe)
+        current = revision.version if revision.version is not None else 0
+        result = revision.execution(mutation_id, fingerprint)
+        if result is not None:
             validate_execution_replay(result, provenance=provenance_context)
             return result
         if int(current) != expected_version:

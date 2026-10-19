@@ -28,11 +28,11 @@ from potpie_context_engine.core.llm_reconciliation import EvidenceRef
 from potpie_context_engine.core.reconciliation import MutationBatch
 from potpie_context_engine.core.mutation_execution import (
     PreparedMutation,
+    ExecutionMetadata,
     MutationPersistenceError,
     batch_fingerprint,
     request_fingerprint,
 )
-
 
 class GraphMutationPlanStatus(StrEnum):
     validated = "validated"
@@ -176,6 +176,7 @@ class GraphMutationPlanRecord:
     commit_attempt_started_at: datetime | None = None
     verification_quality_before: Mapping[str, Any] | None = None
     prepared: PreparedMutation | None = None
+    execution: ExecutionMetadata | None = None
 
     def validate_prepared(self) -> None:
         prepared = self.prepared
@@ -212,12 +213,16 @@ class GraphMutationPlanRecord:
             "accepted_ops": [_json_safe(op) for op in self.accepted_ops],
             "review_required_ops": [_json_safe(op) for op in self.review_required_ops],
             "rejected_ops": [_json_safe(op) for op in self.rejected_ops],
-            "lowered_batch": mutation_batch_to_dict(self.lowered_batch)
-            if self.lowered_batch is not None
-            else None,
-            "provenance": provenance_context_to_dict(self.provenance)
-            if self.provenance is not None
-            else None,
+            "lowered_batch": (
+                mutation_batch_to_dict(self.lowered_batch)
+                if self.lowered_batch is not None
+                else None
+            ),
+            "provenance": (
+                provenance_context_to_dict(self.provenance)
+                if self.provenance is not None
+                else None
+            ),
             "expected_subgraph_versions": dict(self.expected_subgraph_versions),
             "current_subgraph_versions": dict(self.current_subgraph_versions),
             "subgraph_versions": dict(self.current_subgraph_versions),
@@ -227,13 +232,18 @@ class GraphMutationPlanRecord:
             "mutation_id": self.mutation_id,
             "verification_quality_before": _json_safe(self.verification_quality_before),
             "prepared": self.prepared.to_dict() if self.prepared is not None else None,
+            "execution": (
+                self.execution.to_dict() if self.execution is not None else None
+            ),
             "commit_attempt_id": self.commit_attempt_id,
-            "commit_attempt_started_at": self.commit_attempt_started_at.isoformat()
-            if self.commit_attempt_started_at is not None
-            else None,
-            "committed_at": self.committed_at.isoformat()
-            if self.committed_at is not None
-            else None,
+            "commit_attempt_started_at": (
+                self.commit_attempt_started_at.isoformat()
+                if self.commit_attempt_started_at is not None
+                else None
+            ),
+            "committed_at": (
+                self.committed_at.isoformat() if self.committed_at is not None else None
+            ),
             "final_subgraph_versions": dict(self.final_subgraph_versions),
             "detail": self.detail,
             "graph_contract_version": self.graph_contract_version,
@@ -243,15 +253,14 @@ class GraphMutationPlanRecord:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "GraphMutationPlanRecord":
+        _validate_plan_payload(raw)
         record = cls(
-            plan_id=str(raw.get("plan_id") or ""),
+            plan_id=raw["plan_id"],
             pot_id=str(raw.get("pot_id") or ""),
             status=str(raw.get("status") or GraphMutationPlanStatus.invalid.value),
             risk=str(raw.get("risk") or "low"),
-            created_at=_parse_datetime(raw.get("created_at"))
-            or datetime.now(timezone.utc),
-            expires_at=_parse_datetime(raw.get("expires_at"))
-            or datetime.now(timezone.utc),
+            created_at=_parse_datetime(raw["created_at"]),
+            expires_at=_parse_datetime(raw["expires_at"]),
             original_payload=dict(raw.get("original_payload") or {}),
             validation_issues=tuple(
                 dict(i) for i in raw.get("validation_issues") or ()
@@ -262,9 +271,16 @@ class GraphMutationPlanRecord:
             ),
             rejected_ops=tuple(dict(i) for i in raw.get("rejected_ops") or ()),
             verification_quality_before=raw.get("verification_quality_before"),
-            prepared=PreparedMutation.from_dict(raw["prepared"])
-            if raw.get("prepared") is not None
-            else None,
+            execution=(
+                ExecutionMetadata.from_dict(raw["execution"])
+                if raw.get("execution") is not None
+                else None
+            ),
+            prepared=(
+                PreparedMutation.from_dict(raw["prepared"])
+                if raw.get("prepared") is not None
+                else None
+            ),
             lowered_batch=mutation_batch_from_dict(raw.get("lowered_batch")),
             provenance=provenance_context_from_dict(raw.get("provenance")),
             expected_subgraph_versions=_int_mapping(
@@ -435,18 +451,20 @@ class GraphMutationCommitResult:
     recommended_next_action: str | None = None
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
     ontology_version: str = ONTOLOGY_VERSION
+    execution: ExecutionMetadata | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
+            "execution": self.execution.to_dict() if self.execution else None,
             "ok": self.ok,
             "plan_id": self.plan_id,
             "status": self.status,
             "risk": self.risk,
             "pot_id": self.pot_id,
             "mutation_id": self.mutation_id,
-            "applied_at": self.applied_at.isoformat()
-            if self.applied_at is not None
-            else None,
+            "applied_at": (
+                self.applied_at.isoformat() if self.applied_at is not None else None
+            ),
             "expected_subgraph_versions": dict(self.expected_subgraph_versions),
             "current_subgraph_versions": dict(self.current_subgraph_versions),
             "new_subgraph_versions": dict(self.new_subgraph_versions),
@@ -456,9 +474,9 @@ class GraphMutationCommitResult:
             "diff": self.diff.to_dict(),
             "claim_keys": list(self.claim_keys),
             "approval": self.approval.to_dict() if self.approval else None,
-            "verification": self.verification.to_dict()
-            if self.verification is not None
-            else None,
+            "verification": (
+                self.verification.to_dict() if self.verification is not None else None
+            ),
             "graph_contract_version": self.graph_contract_version,
             "ontology_version": self.ontology_version,
         }
@@ -470,6 +488,62 @@ class GraphMutationCommitResult:
         if self.recommended_next_action:
             out["recommended_next_action"] = self.recommended_next_action
         return out
+
+
+def _validate_plan_payload(raw: Mapping[str, Any]) -> None:
+    if not isinstance(raw, Mapping):
+        raise MutationPersistenceError("plan record must be an object")
+    for name in ("pot_id", "plan_id", "status", "risk"):
+        if not isinstance(raw.get(name), str) or not raw[name].strip():
+            raise MutationPersistenceError(f"invalid plan {name}")
+    if raw["status"] not in GraphMutationPlanStatus or raw["risk"] not in {
+        "low",
+        "medium",
+        "high",
+    }:
+        raise MutationPersistenceError("invalid plan status or risk")
+    for name in (
+        "created_at",
+        "expires_at",
+        "committed_at",
+        "commit_attempt_started_at",
+    ):
+        value = raw.get(name)
+        if value is None and name not in {"created_at", "expires_at"}:
+            continue
+        parsed = _parse_datetime(value)
+        if parsed is None:
+            raise MutationPersistenceError(f"invalid plan {name}")
+    for name in (
+        "expected_subgraph_versions",
+        "current_subgraph_versions",
+        "final_subgraph_versions",
+        "subgraph_versions",
+    ):
+        value = raw.get(name, {})
+        if not isinstance(value, Mapping) or any(
+            not isinstance(key, str) or type(version) is not int or version < 0
+            for key, version in value.items()
+        ):
+            raise MutationPersistenceError(f"invalid plan {name}")
+    for name in ("original_payload", "diff"):
+        if not isinstance(raw.get(name, {}), Mapping):
+            raise MutationPersistenceError(f"invalid plan {name}")
+    for name in (
+        "accepted_ops",
+        "rejected_ops",
+        "review_required_ops",
+        "validation_issues",
+    ):
+        value = raw.get(name, [])
+        if not isinstance(value, (list, tuple)) or any(
+            not isinstance(item, Mapping) for item in value
+        ):
+            raise MutationPersistenceError(f"invalid plan {name}")
+    for name in ("mutation_id", "commit_attempt_id"):
+        value = raw.get(name)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise MutationPersistenceError(f"invalid plan {name}")
 
 
 def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:

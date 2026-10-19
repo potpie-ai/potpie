@@ -8,12 +8,16 @@ from potpie_context_engine.core.semantic_mutations import (
     SemanticMutationRequest,
     SemanticMutationResult,
     SemanticMutationValidationIssue,
+    SemanticOperationResolver,
 )
 from potpie_context_engine.core.workbench_service import GraphWorkbenchService
 
 
 def mutate_prepared(
-    workbench: GraphWorkbenchService, request: SemanticMutationRequest
+    workbench: GraphWorkbenchService,
+    request: SemanticMutationRequest,
+    *,
+    resolve_operations: SemanticOperationResolver | None = None,
 ) -> SemanticMutationResult:
     proposal = workbench.propose(
         {
@@ -25,6 +29,7 @@ def mutate_prepared(
         },
         pot_id=request.pot_id,
         approved_by=request.approved_by,
+        resolve_operations=resolve_operations,
     )
     record = workbench.plan_store.get(pot_id=request.pot_id, plan_id=proposal.plan_id)
     # A rejected competing reservation may be returned without being persisted.
@@ -56,7 +61,12 @@ def mutate_prepared(
         "edge_deletes": proposal.diff.edge_deletes,
         "invalidations": proposal.diff.invalidations,
     }
-    if not proposal.ok:
+    # A frozen plan can outlive an acknowledgement failure or stale workflow
+    # status. Commit always consults receipt authority before considering that
+    # status; changed-body/invalid proposals have no prepared batch to recover.
+    if not proposal.ok and (
+        request.dry_run or record is None or record.prepared is None
+    ):
         return SemanticMutationResult(
             ok=False, status="rejected", detail=proposal.detail, **common
         )

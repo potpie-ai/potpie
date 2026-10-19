@@ -1763,6 +1763,11 @@ def graph_commit(
             "reported in verification.status and as a warning"
         ),
     ),
+    recover_stale: bool = typer.Option(
+        True,
+        "--recover-stale/--no-recover-stale",
+        help="Permit recovery of stale attempts after authoritative execution lookup",
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.commit") as ctx:
@@ -1781,6 +1786,7 @@ def graph_commit(
             pot_id=pot_id,
             approved_by=approved_by,
             verify=verify,
+            recover_stale=recover_stale,
             history_command=(
                 f"potpie --json graph history --plan {quoted_plan} --pot {quoted_pot}"
             ),

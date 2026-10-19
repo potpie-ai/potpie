@@ -18,7 +18,6 @@ store is SQLite + a local vector index.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -31,7 +30,10 @@ from potpie_context_engine.core.definition import (
 )
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
-from potpie_context_engine.core.mutation_execution import MutationCapabilities
+from potpie_context_engine.core.mutation_execution import (
+    MutationCapabilities,
+    MutationPersistenceError,
+)
 from potpie_context_engine.core.ports.graph.mutation import MutationExecutionLookup
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
@@ -39,6 +41,8 @@ from potpie_context_engine.core.reconciliation_config import ReconciliationConfi
 
 from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
     locked_json_store,
+    durable_json_replace,
+    strict_json_load,
 )
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
@@ -314,6 +318,7 @@ class EmbeddedGraphBackend:
     _snapshot: _EmbeddedSnapshot = field(init=False)
     _revisions: dict[str, int] = field(default_factory=dict, init=False)
     _journal_data: dict[str, Any] = field(default_factory=dict, init=False)
+    _state_observed: bool = field(default=False, init=False, repr=False)
     resource_exists: Any = None
 
     def __post_init__(self) -> None:
@@ -350,34 +355,90 @@ class EmbeddedGraphBackend:
     def _load_state(
         self,
     ) -> _EmbeddedState:
+        loaded = False
         try:
             with open(self._path, encoding="utf-8") as fh:
-                payload = json.load(fh)
-        except FileNotFoundError:
+                payload = strict_json_load(fh)
+            loaded = True
+        except FileNotFoundError as exc:
+            if self._state_observed:
+                raise MutationPersistenceError(
+                    "previously observed embedded graph state is missing"
+                ) from exc
+            # A fresh process has no external lifecycle metadata with which to
+            # distinguish a new home from an externally deleted store. Store
+            # durability requires that applications preserve its state files.
             payload = {}
+        except (ValueError, UnicodeError) as exc:
+            raise MutationPersistenceError(
+                "embedded graph state is malformed JSON"
+            ) from exc
         if not isinstance(payload, dict):
-            raise TypeError("embedded graph state must be an object")
+            raise MutationPersistenceError("embedded graph state must be an object")
+        if "schema_version" in payload:
+            if (
+                type(payload["schema_version"]) is not int
+                or payload["schema_version"] != 1
+            ):
+                raise MutationPersistenceError(
+                    "unsupported embedded graph schema version"
+                )
+            required = {
+                "rows": list,
+                "labels": list,
+                "entity_properties": list,
+                "graph_revisions": dict,
+                "mutation_receipts": list,
+                "graph_journal": dict,
+            }
+            for name, kind in required.items():
+                if not isinstance(payload.get(name), kind):
+                    raise MutationPersistenceError(
+                        f"embedded {name} must be a {kind.__name__}"
+                    )
         from potpie_context_engine.core.graph_journal import decode_journal
 
-        journal_data = (
-            decode_journal(payload["graph_journal"])
-            if "graph_journal" in payload
-            else {}
-        )
-        raw_revisions = payload.get("graph_revisions") or {}
-        revisions = (
-            {str(key): int(value) for key, value in raw_revisions.items()}
-            if isinstance(raw_revisions, dict)
-            else {}
-        )
-        return _EmbeddedState(
+        try:
+            journal_data = (
+                decode_journal(payload["graph_journal"])
+                if "graph_journal" in payload
+                else {}
+            )
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise MutationPersistenceError("invalid embedded graph journal") from exc
+        if not isinstance(journal_data, dict):
+            raise MutationPersistenceError(
+                "embedded graph journal must decode to a map"
+            )
+        revisions = payload.get("graph_revisions", {})
+        if not isinstance(revisions, dict) or any(
+            not isinstance(pot_id, str)
+            or not pot_id
+            or type(version) is not int
+            or version < 0
+            for pot_id, version in revisions.items()
+        ):
+            raise MutationPersistenceError(
+                "embedded graph revisions must map pot IDs to nonnegative integers"
+            )
+        receipts = execution_receipts_from_json(payload.get("mutation_receipts", []))
+        for receipt in receipts:
+            if receipt.result.execution is not None and (
+                receipt.pot_id not in revisions
+                or revisions[receipt.pot_id] < receipt.result.execution.version_after
+            ):
+                raise MutationPersistenceError(
+                    "embedded graph revision is missing or older than its execution receipt"
+                )
+        state = _EmbeddedState(
             load_store(payload),
-            MutationExecutionRegistry(
-                execution_receipts_from_json(payload.get("mutation_receipts", []))
-            ),
-            revisions,
+            MutationExecutionRegistry(receipts),
+            dict(revisions),
             journal_data,
         )
+        if loaded:
+            self._state_observed = True
+        return state
 
     def _write_state(
         self,
@@ -387,8 +448,7 @@ class EmbeddedGraphBackend:
         revisions: dict[str, int] | None = None,
         journal_data: dict[str, Any] | None = None,
     ) -> None:
-        self.home.mkdir(parents=True, exist_ok=True)
-        payload = dump_store(store)
+        payload = {"schema_version": 1, **dump_store(store)}
         payload["mutation_receipts"] = execution_receipts_to_json(registry.completed())
         payload["graph_revisions"] = dict(
             revisions if revisions is not None else self._revisions
@@ -398,17 +458,13 @@ class EmbeddedGraphBackend:
         payload["graph_journal"] = encode_journal(
             journal_data if journal_data is not None else self._journal_data
         )
-        tmp = self._path.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, allow_nan=False)
-            fh.flush()
-            os.fsync(fh.fileno())
-        tmp.replace(self._path)
-        descriptor = os.open(self.home, os.O_RDONLY)
         try:
-            os.fsync(descriptor)
+            durable_json_replace(self._path, payload)
         finally:
-            os.close(descriptor)
+            # Replacement can succeed before directory synchronization raises.
+            # That complete file is authoritative despite a failed acknowledgement.
+            if self._path.exists():
+                self._state_observed = True
 
     def _apply_once(
         self,

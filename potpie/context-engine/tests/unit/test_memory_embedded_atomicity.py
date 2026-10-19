@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -157,12 +158,24 @@ def test_partial_json_write_leaves_original_state_and_receipts(tmp_path, monkeyp
     )
     before = (tmp_path / "graph.json").read_bytes()
 
-    def partial_write(payload, stream, **kwargs):
-        stream.write('{"incomplete":')
-        raise OSError("injected partial JSON write")
+    from potpie_context_engine.adapters.outbound.graph import _local_json_atomic
+
+    original_fdopen = _local_json_atomic.os.fdopen
+
+    @contextmanager
+    def partial_stream(fd, *args, **kwargs):
+        with original_fdopen(fd, *args, **kwargs) as stream:
+
+            class PartialStream:
+                def write(self, payload):
+                    stream.write(payload[:16])
+                    stream.flush()
+                    raise OSError("injected partial JSON write")
+
+            yield PartialStream()
 
     with monkeypatch.context() as patch:
-        patch.setattr(json, "dump", partial_write)
+        patch.setattr(_local_json_atomic.os, "fdopen", partial_stream)
         with pytest.raises(OSError, match="partial JSON write"):
             backend.mutation.apply(
                 plan,

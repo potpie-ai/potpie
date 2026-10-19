@@ -37,10 +37,10 @@ from potpie_context_engine.core.ports.agent_context import (
     SearchRequest,
 )
 from potpie_context_engine.core.semantic_mutations import (
+    SemanticOperationResolver,
     SemanticMutationRequest,
     SemanticMutationResult,
 )
-
 
 @dataclass(frozen=True, slots=True)
 class DataPlaneStatus:
@@ -446,7 +446,12 @@ class GraphService(Protocol):
         """Narrow entity/claim lookup for identity resolution before writes."""
         ...
 
-    def mutate(self, request: SemanticMutationRequest) -> SemanticMutationResult:
+    def mutate(
+        self,
+        request: SemanticMutationRequest,
+        *,
+        resolve_operations: SemanticOperationResolver | None = None,
+    ) -> SemanticMutationResult:
         """Validate, risk-classify, lower, and dry-run or apply semantic mutations."""
         ...
 

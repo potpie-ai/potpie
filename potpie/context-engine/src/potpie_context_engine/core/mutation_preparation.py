@@ -22,6 +22,7 @@ from potpie_context_engine.core.graph_plans import (
 from potpie_context_engine.core.semantic_mutations import (
     SemanticMutationParseError,
     SemanticMutationRequest,
+    SemanticOperationResolver,
 )
 
 from .mutation_execution import PreparedMutation, batch_fingerprint, request_fingerprint as _request_fingerprint
@@ -50,6 +51,7 @@ def propose_mutation(
     pot_id: str,
     ttl_seconds: int | None = None,
     approved_by: str | None = None,
+    resolve_operations: SemanticOperationResolver | None = None,
 ) -> GraphMutationProposal:
     """Validate, lower, diff, and persist a mutation plan without writing.
 
@@ -121,7 +123,11 @@ def propose_mutation(
 
     try:
         request = SemanticMutationRequest.parse(
-            payload,
+            (
+                {**payload, "operations": [dict(op.raw) for op in resolve_operations()]}
+                if resolve_operations is not None
+                else payload
+            ),
             pot_id=pot_id,
             allow_review_required=approver is not None,
             approved_by=approver,

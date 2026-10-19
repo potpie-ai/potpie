@@ -82,6 +82,7 @@ from potpie_context_engine.core.semantic_mutation_validator import (
     validate_semantic_request,
 )
 from potpie_context_engine.core.semantic_mutations import (
+    SemanticOperationResolver,
     SemanticMutationRequest,
 )
 
@@ -203,6 +204,7 @@ class GraphWorkbenchService(GraphCommitSurface):
         pot_id: str,
         ttl_seconds: int | None = None,
         approved_by: str | None = None,
+        resolve_operations: SemanticOperationResolver | None = None,
     ) -> GraphMutationProposal:
         return propose_mutation(
             self,
@@ -210,6 +212,7 @@ class GraphWorkbenchService(GraphCommitSurface):
             pot_id=pot_id,
             ttl_seconds=ttl_seconds,
             approved_by=approved_by,
+            resolve_operations=resolve_operations,
         )
 
     def commit(
@@ -219,7 +222,7 @@ class GraphWorkbenchService(GraphCommitSurface):
         pot_id: str,
         approved_by: str | None = None,
         verify: bool = False,
-        recover_stale: bool = False,
+        recover_stale: bool = True,
         defer_verification: bool = False,
     ) -> GraphMutationCommitResult:
         return commit_mutation(

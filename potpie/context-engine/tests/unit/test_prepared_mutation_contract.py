@@ -58,6 +58,16 @@ def test_legacy_fingerprint_and_receipt_are_preserved():
     assert execution_receipts_from_json(serialized)[0].result.execution is None
 
 
+def test_explicit_null_execution_metadata_is_corruption_not_legacy():
+    receipt = CompletedMutationExecution(
+        "pot", "mutation", batch_fingerprint(MutationBatch()), result()
+    )
+    serialized = execution_receipts_to_json([receipt])
+    serialized[0]["result"]["execution"] = None
+    with pytest.raises(MutationPersistenceError, match="malformed execution receipt"):
+        execution_receipts_from_json(serialized)
+
+
 def test_new_receipt_freezes_execution_metadata_and_rejects_rebased_preparation():
     context = ProvenanceContext(mutation_id="mutation", prepared=prepared())
     completed = complete_execution(

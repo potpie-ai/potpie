@@ -210,6 +210,11 @@ def _idempotency_propose_worker(home, seconds, ready, results) -> None:
 
 
 class _RaiseOnceMutation:
+
+    @property
+    def capabilities(self):
+        return self.inner.capabilities
+
     def __init__(self, inner, *, after_side_effect: bool) -> None:
         self.inner = inner
         self.after_side_effect = after_side_effect

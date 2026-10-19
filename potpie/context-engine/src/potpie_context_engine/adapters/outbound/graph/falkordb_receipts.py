@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+from io import StringIO
 
 from potpie_context_engine.core.mutation_execution import MutationPersistenceError
 
@@ -10,6 +10,7 @@ from ._mutation_execution import (
     MutationExecutionReuseError,
     _mutation_result_from_dict,
 )
+from ._local_json_atomic import strict_json_load
 
 RECEIPT_COLUMNS = (
     "r.fingerprint,r.payload,r.entities,r.edges,r.deletes,r.invalidations,"
@@ -26,7 +27,7 @@ def decode_receipt(row, *, pot_id, mutation_id, fingerprint):
             "mutation ID was already used with a different batch"
         )
     try:
-        raw = json.loads(payload)
+        raw = strict_json_load(StringIO(payload))
         if not isinstance(raw, dict):
             raise MutationPersistenceError("native execution receipt must be an object")
         # Historical journal receipts contained only their mutation summary.

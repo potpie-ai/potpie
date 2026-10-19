@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from potpie_context_engine.core.mutation_execution import PreparedMutation
+from potpie_context_engine.core.mutation_execution import (
+    PreparedMutation,
+    MutationCapabilities,
+    batch_fingerprint,
+    execution_matches_batch,
+)
 
 import logging
 from collections.abc import Mapping, Sequence
@@ -18,6 +23,7 @@ from potpie_context_engine.core.graph_contract import (
     MutationRisk,
 )
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.reconciliation import MutationResult
 from potpie_context_engine.core.graph_plans import (
     GraphMutationCommitResult,
     GraphMutationPlanRecord,
@@ -55,8 +61,12 @@ _CONFLICT_LANDED_SHOWN = 5
 
 def _subgraph_versions(backend: GraphBackend, pot_id: str) -> dict[str, int]:
     current_version = getattr(backend.mutation, "current_version", None)
-    supported = getattr(backend.mutation, "atomic_mutations_supported", True)
-    if not supported or not callable(current_version):
+    capabilities = getattr(backend.mutation, "capabilities", MutationCapabilities())
+    if (
+        not capabilities.revision_check
+        or not capabilities.atomic_writes
+        or not callable(current_version)
+    ):
         raise CapabilityNotImplemented(
             "atomic_mutation", detail="backend must expose authoritative revisions"
         )
@@ -71,8 +81,12 @@ def _apply_if_current(
     reconciliation_config: ReconciliationConfig,
 ) -> tuple[Any | None, dict[str, int]]:
     """Use the backend's atomic compare-and-apply boundary exclusively."""
-    supported = getattr(backend.mutation, "atomic_mutations_supported", True)
-    if not supported or atomic_apply is None:
+    capabilities = getattr(backend.mutation, "capabilities", MutationCapabilities())
+    if (
+        not capabilities.atomic_writes
+        or not capabilities.revision_check
+        or atomic_apply is None
+    ):
         raise CapabilityNotImplemented(
             "atomic_mutation", detail="backend must implement atomic compare-and-apply"
         )
@@ -288,7 +302,8 @@ def _lookup_mutation_execution(
     if not mutation_id or record.lowered_batch is None:
         return unsupported
     lookup_method = getattr(backend.mutation, "lookup_execution", None)
-    if not callable(lookup_method):
+    capabilities = getattr(backend.mutation, "capabilities", MutationCapabilities())
+    if not capabilities.execution_lookup or not callable(lookup_method):
         return unsupported
     try:
         lookup = lookup_method(
@@ -317,7 +332,13 @@ def _lookup_mutation_execution(
             mutation_id=mutation_id,
             batch_fingerprint="",
         )
-    if lookup.mutation_id != mutation_id:
+    invalid = lookup.mutation_id != mutation_id
+    if lookup.state == MutationExecutionState.completed.value:
+        invalid = invalid or (
+            lookup.batch_fingerprint != batch_fingerprint(record.lowered_batch)
+            or not _execution_matches_record(record, lookup.result)
+        )
+    if invalid:
         return replace(
             lookup,
             state=MutationExecutionState.ambiguous.value,
@@ -325,6 +346,23 @@ def _lookup_mutation_execution(
             detail=None,
         )
     return lookup
+
+
+def _execution_matches_record(
+    record: GraphMutationPlanRecord, result: MutationResult | None
+) -> bool:
+    return (
+        record.lowered_batch is not None
+        and execution_matches_batch(
+            result,
+            record.lowered_batch,
+            pot_id=record.pot_id,
+            mutation_id=record.mutation_id or "",
+            prepared=record.prepared,
+            allow_legacy=record.execution is None,
+        )
+        and (record.execution is None or record.execution == result.execution)
+    )
 
 
 def _committed_plan_result(
@@ -340,6 +378,7 @@ def _committed_plan_result(
         pot_id=record.pot_id,
         mutation_id=record.mutation_id,
         applied_at=record.committed_at,
+        execution=record.execution,
         expected_subgraph_versions=record.expected_subgraph_versions,
         current_subgraph_versions=record.current_subgraph_versions,
         new_subgraph_versions=record.final_subgraph_versions,

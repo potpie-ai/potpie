@@ -17,7 +17,7 @@ parse boundary and normalized into ``operations=[...]`` immediately.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from potpie_context_engine.core.graph_contract import (
     GRAPH_CONTRACT_VERSION,
@@ -29,6 +29,11 @@ from potpie_context_engine.core.graph_contract import (
 class SemanticMutationParseError(ValueError):
     """Raised when a mutation payload is structurally malformed (not a
     semantic/ontology error — that is the validator's job)."""
+
+
+# Host-side source adapters resolve effects during first preparation. The
+# callback is never serialized or invoked during execution/recovery.
+SemanticOperationResolver = Callable[[], tuple["SemanticMutation", ...]]
 
 
 # --- Building blocks --------------------------------------------------------

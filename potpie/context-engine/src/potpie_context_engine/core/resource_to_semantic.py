@@ -335,6 +335,7 @@ def resource_delete_to_semantic_request(
     pot_id: str,
     doc: str,
     section_slugs: tuple[str, ...],
+    revision: int | None = None,
     dependent_claims: tuple[DependentClaim, ...] = (),
 ) -> SemanticMutationRequest:
     """Build the graph write that retracts every section of a removed document.
@@ -380,7 +381,7 @@ def resource_delete_to_semantic_request(
     return SemanticMutationRequest(
         pot_id=pot_id,
         operations=tuple(SemanticMutation.parse(op) for op in ops),
-        idempotency_key=f"resource-delete:{doc}:{','.join(section_slugs)}",
+        idempotency_key=f"resource-delete:{doc}:{revision}:{','.join(section_slugs)}",
         created_by=MutationActor(surface=_SURFACE, harness="resource_rm"),
         allow_review_required=True,
         approved_by=_APPROVED_BY_DELETE,

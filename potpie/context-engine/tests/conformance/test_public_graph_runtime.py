@@ -801,6 +801,38 @@ class _SyncOnlyBackend:
         return self
 
 
+@pytest.mark.parametrize("declared", [False, True])
+def test_runtime_never_infers_atomic_authority_from_method_presence(declared):
+    from potpie_context_engine.core.errors import CapabilityNotImplemented
+    from potpie_context_engine.core.mutation_execution import MutationCapabilities
+    from potpie_context_engine.core.ports.graph.mutation import (
+        RecoverableGraphMutationPort,
+    )
+
+    class UnsupportedMutation(_SyncMutation):
+        @property
+        def capabilities(self):
+            if not declared:
+                raise AttributeError("capabilities")
+            return MutationCapabilities()
+
+    class UnsupportedBackend(_SyncOnlyBackend):
+        def _replace_inner(self, inner):
+            super()._replace_inner(inner)
+            self.mutation = UnsupportedMutation(inner.mutation)
+
+    backend = UnsupportedBackend()
+    runtime = build_graph_runtime(
+        backend, InMemoryGraphPlanStore(), InMemoryGraphInboxStore(), _definition()
+    )
+    assert isinstance(runtime.backend.mutation, RecoverableGraphMutationPort)
+    assert not runtime.backend.mutation.capabilities.atomic_writes
+    assert not runtime.backend.mutation.atomic_mutations_supported
+    with pytest.raises(CapabilityNotImplemented):
+        runtime.mutate(_request())
+    assert backend.inner.mutation.current_version("p") == 0
+
+
 def test_sync_only_mutation_uses_non_blocking_async_bridge() -> None:
     async def journey() -> None:
         backend = _SyncOnlyBackend()

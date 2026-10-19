@@ -102,6 +102,7 @@ from potpie_context_engine.core.semantic_mutation_validator import (
     validate_semantic_request,
 )
 from potpie_context_engine.core.semantic_mutations import (
+    SemanticOperationResolver,
     SemanticMutationRequest,
     SemanticMutationResult,
 )
@@ -789,7 +790,12 @@ class DefaultGraphService:
             matching_repositories=tuple(matching_repositories),
         )
 
-    def mutate(self, request: SemanticMutationRequest) -> SemanticMutationResult:
+    def mutate(
+        self,
+        request: SemanticMutationRequest,
+        *,
+        resolve_operations: SemanticOperationResolver | None = None,
+    ) -> SemanticMutationResult:
         from potpie_context_engine.application.services.semantic_execution import (
             mutate_prepared,
         )
@@ -798,7 +804,9 @@ class DefaultGraphService:
             raise ValueError(
                 "mutation idempotency requires a shared plan store; use build_graph_runtime"
             )
-        return mutate_prepared(self._mutation_workbench, request)
+        return mutate_prepared(
+            self._mutation_workbench, request, resolve_operations=resolve_operations
+        )
 
     async def resolve_async(self, request: ResolveRequest) -> AgentEnvelope:
         return await asyncio.to_thread(self.resolve, request)
