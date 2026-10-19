@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from potpie_context_engine.core.mutation_execution import ExecutionMetadata
+
 from potpie_context_engine.core.context_events import EventRef
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
@@ -100,6 +102,8 @@ class MutationResult:
     """Structured validation failures (entity + issue) when ``ok`` is false."""
     downgrades: list[dict[str, str]] = field(default_factory=list)
     """Ontology soft-fail rewrites applied (sync reconcile / apply)."""
+    execution: ExecutionMetadata | None = None
+    """Authoritative metadata captured with the write; None identifies legacy results."""
 
 
 # Back-compat alias.

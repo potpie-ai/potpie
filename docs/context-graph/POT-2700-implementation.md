@@ -32,7 +32,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | --- | --- | --- | --- |
 | 1 | test(graph): establish reliability contract and conformance harness | Existing baseline; isolated backend/process fixtures | 92 existing targeted tests + 4 new memory/JSON conformance tests pass; existing multiprocessing restart helper retained |
 | 2 | refactor(graph): isolate preparation execution and verification | Existing behavior and approval/authorization tests | 116 workbench/quality/inbox/runtime/record/correction tests pass; preparation, execution, state and verification each have a canonical module |
-| 3 | feat(graph): version prepared mutations and execution receipts | Stable preparation, fingerprint compatibility, explicit capabilities | Pending |
+| 3 | feat(graph): version prepared mutations and execution receipts | Stable preparation, fingerprint compatibility, explicit capabilities | 101 targeted tests pass; prepared v1, receipt v2, historical batch fingerprint v1 preserved; GPT-6.1 xhigh contract review findings addressed before adapter integration |
 | 4 | fix(graph): atomically publish memory and embedded mutations | Rollback, observer failure, coherent/fresh reads | Pending |
 | 5 | fix(graph): enforce native atomic execution and receipt metadata | Native concurrency, internal failure, restart replay | Pending |
 | 6 | refactor(graph): unify supported graph write entry points | Entry-point inventory covered; repair/reset revision semantics | Pending |
@@ -104,3 +104,26 @@ forward fix. Previously erased intervals remain explicitly unavailable.
 
 Record local evidence separately from CI/native/platform evidence. No step is
 complete merely because its code exists; limitations remain visible here.
+
+## Shared contract freeze after step 3
+
+`GraphMutationPlanRecord.prepared` is the canonical persisted intent descriptor;
+`lowered_batch` owns its resolved content. The descriptor binds pot/mutation ID,
+request and batch digests, expected revision and preparation timestamp. Validate
+it before execution; provenance carries the descriptor only across the port.
+Legacy plans/receipts keep `None` for unavailable metadata. New backend results
+must carry `MutationResult.execution` with the actual execution timestamp,
+before/after revision, and affected incarnation IDs.
+
+Backend assignments must call `validate_prepared_execution` before touching data,
+validate completed replays with `validate_execution_replay`, and build the receipt
+with `complete_execution` inside their transaction/staging boundary. New execution
+must enforce both the port's expected revision and the frozen preparation's
+revision. Receipt lookup precedes revision rejection. `complete_execution` rejects
+failed results and frozen-revision drift. Legacy batch digest bytes do not change.
+No adapter may silently turn unsupported/unknown execution state into absence.
+
+Contract review caught request identity replay checks, frozen revision checks,
+strict metadata decoding, missing-vs-null legacy fields, and sync/async capability
+parity. Each has a shared contract fix; adapter integration in 4/5 is still pending.
+Subagents use GPT-6.1 with xhigh reasoning as requested by the user.

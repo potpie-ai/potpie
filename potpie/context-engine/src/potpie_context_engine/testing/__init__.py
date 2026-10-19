@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from potpie_context_engine.core.mutation_execution import (
+    request_fingerprint as _request_fingerprint,
+)
+
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-import hashlib
-import json
 from pathlib import Path
 import threading
 from typing import Callable
@@ -51,13 +53,6 @@ from potpie_context_engine.testing.conformance import (
 )
 
 
-def _request_fingerprint(payload) -> str:
-    normalized = dict(payload)
-    normalized.pop("expected_subgraph_versions", None)
-    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=20).hexdigest()
-
-
 @dataclass(slots=True)
 class InMemoryGraphPlanStore:
     _records: dict[tuple[str, str], GraphMutationPlanRecord] = field(
@@ -93,8 +88,7 @@ class InMemoryGraphPlanStore:
                         f"idempotency_key {idempotency_key!r} is already bound to "
                         f"plan {existing.plan_id!r} with different content"
                     )
-                if existing.status not in {"conflict", "error", "expired"}:
-                    return existing, False
+                return existing, False
             self._records[(record.pot_id, record.plan_id)] = record
             return record, True
 

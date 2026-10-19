@@ -16,6 +16,7 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,40 @@ class AtomicGraphMutationPort(Protocol):
         expected_version: int,
         provenance_context: ProvenanceContext | None = None,
     ) -> MutationResult: ...
+
+
+@runtime_checkable
+class AsyncAtomicGraphMutationPort(Protocol):
+    async def current_version_async(self, pot_id: str) -> int: ...
+
+    async def compare_and_apply_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> MutationResult: ...
+
+
+@runtime_checkable
+class RecoverableGraphMutationPort(Protocol):
+    @property
+    def capabilities(self) -> MutationCapabilities: ...
+
+    def lookup_execution(
+        self, plan: MutationBatch, *, expected_pot_id: str, mutation_id: str
+    ) -> MutationExecutionLookup: ...
+
+
+@runtime_checkable
+class AsyncRecoverableGraphMutationPort(Protocol):
+    @property
+    def capabilities(self) -> MutationCapabilities: ...
+
+    async def lookup_execution_async(
+        self, plan: MutationBatch, *, expected_pot_id: str, mutation_id: str
+    ) -> MutationExecutionLookup: ...
 
 
 @runtime_checkable
@@ -130,6 +165,9 @@ class GraphMutationPort(Protocol):
 
 __all__ = [
     "AtomicGraphMutationPort",
+    "AsyncAtomicGraphMutationPort",
+    "RecoverableGraphMutationPort",
+    "AsyncRecoverableGraphMutationPort",
     "BackendReadiness",
     "GraphMutationPort",
     "MutationExecutionLookup",

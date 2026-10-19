@@ -38,6 +38,25 @@ class _MemoryPlanStore:
         self.records: dict[tuple[str, str], GraphMutationPlanRecord] = {}
         self.lock = threading.Lock()
 
+    def reserve_idempotency(self, *, record, idempotency_key, request_fingerprint):
+        from potpie_context_engine.core.mutation_execution import (
+            request_fingerprint as fingerprint,
+        )
+
+        with self.lock:
+            for existing in self.records.values():
+                if (
+                    existing.pot_id == record.pot_id
+                    and existing.reserves_idempotency
+                    and existing.original_payload.get("idempotency_key")
+                    == idempotency_key
+                ):
+                    if fingerprint(existing.original_payload) != request_fingerprint:
+                        raise ValueError("idempotency_key has different content")
+                    return existing, False
+            self.records[(record.pot_id, record.plan_id)] = record
+            return record, True
+
     def save(self, record: GraphMutationPlanRecord) -> None:
         with self.lock:
             self.records[(record.pot_id, record.plan_id)] = record
@@ -276,7 +295,7 @@ def test_crashed_committing_plan_has_single_stale_recovery_claimer() -> None:
         replace(
             proposed,
             status=GraphMutationPlanStatus.committing.value,
-            mutation_id="mutation:crash-recovery",
+            mutation_id=proposed.mutation_id,
             commit_attempt_id="attempt:crashed-worker",
             commit_attempt_started_at=datetime.now(timezone.utc)
             - timedelta(seconds=10),
@@ -300,7 +319,7 @@ def test_crashed_committing_plan_has_single_stale_recovery_claimer() -> None:
 
     assert sum(result.ok for result in results) == 1
     assert mutation_count == 1
-    assert {result.mutation_id for result in results} == {"mutation:crash-recovery"}
+    assert {result.mutation_id for result in results} == {proposed.mutation_id}
     stored = store.get(pot_id=POT, plan_id=proposal.plan_id)
     assert stored is not None
     assert stored.status == GraphMutationPlanStatus.committed.value
@@ -935,7 +954,9 @@ def test_idempotency_key_binding_survives_plan_store_restart(tmp_path) -> None:
     assert conflict.status == "invalid"
 
 
-def test_conflicted_idempotent_request_can_roll_forward_after_restart(tmp_path) -> None:
+def test_conflicted_idempotent_request_requires_new_identity_after_restart(
+    tmp_path,
+) -> None:
     backend = InMemoryGraphBackend()
     store = LocalJsonGraphPlanStore(home=tmp_path)
     service = GraphWorkbenchService(backend=backend, plan_store=store)
@@ -955,6 +976,12 @@ def test_conflicted_idempotent_request_can_roll_forward_after_restart(tmp_path) 
         _timeout_payload(20, idempotency_key="request:roll-forward"), pot_id=POT
     )
 
+    assert fresh.plan_id == stale.plan_id
+    assert not fresh.ok
+    assert restarted.commit(fresh.plan_id, pot_id=POT).status == "conflict"
+    fresh = restarted.propose(
+        _timeout_payload(20, idempotency_key="request:new-preparation"), pot_id=POT
+    )
     assert fresh.plan_id != stale.plan_id
     assert restarted.commit(fresh.plan_id, pot_id=POT).ok
 
@@ -1174,7 +1201,7 @@ def test_local_json_plan_store_rejects_a_stale_state_transition(tmp_path) -> Non
     claimed = replace(
         expected,
         status=GraphMutationPlanStatus.committing.value,
-        mutation_id="mutation:local-cas",
+        mutation_id=expected.mutation_id,
         commit_attempt_id="attempt:local-cas",
         commit_attempt_started_at=attempt_started_at,
     )
@@ -1190,7 +1217,7 @@ def test_local_json_plan_store_rejects_a_stale_state_transition(tmp_path) -> Non
     )
     reloaded = first_store.get(pot_id=POT, plan_id=proposal.plan_id)
     assert reloaded is not None
-    assert reloaded.mutation_id == "mutation:local-cas"
+    assert reloaded.mutation_id == expected.mutation_id
     assert reloaded.commit_attempt_id == "attempt:local-cas"
     assert reloaded.commit_attempt_started_at == attempt_started_at
 
@@ -1429,7 +1456,7 @@ def test_a_conflict_names_the_commits_that_landed_in_between() -> None:
     assert "Plans pin the whole pot's version" in result.detail
     assert "nothing from this plan was applied" in result.detail
     assert result.recommended_next_action == (
-        "Re-run `potpie graph propose --file <the same file>` and commit the new "
+        "Use a fresh idempotency_key and re-run `potpie graph propose`, then commit the new "
         "plan_id; nothing from this plan was applied."
     )
 

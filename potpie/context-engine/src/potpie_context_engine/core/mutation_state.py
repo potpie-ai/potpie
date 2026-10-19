@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from potpie_context_engine.core.mutation_execution import PreparedMutation
+
 import hashlib
 import json
 import logging
@@ -53,7 +55,7 @@ _COMMIT_LOCKS: dict[tuple[int, str], threading.Lock] = {}
 
 
 _CONFLICT_NEXT_ACTION = (
-    "Re-run `potpie graph propose --file <the same file>` and commit the new "
+    "Use a fresh idempotency_key and re-run `potpie graph propose`, then commit the new "
     "plan_id; nothing from this plan was applied."
 )
 
@@ -138,13 +140,6 @@ def _apply_if_current(
             return None, current
         with reconciliation_config_scope(reconciliation_config):
             return apply(), current
-
-
-def _request_fingerprint(payload: Mapping[str, Any]) -> str:
-    normalized = dict(payload)
-    normalized.pop("expected_subgraph_versions", None)
-    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=20).hexdigest()
 
 
 def _plan_for_idempotency_key(
@@ -547,16 +542,19 @@ def _provenance_for_commit(
     *,
     approved_by: str | None,
     mutation_id: str,
+    prepared: PreparedMutation | None = None,
 ) -> ProvenanceContext:
     if provenance is None:
         return ProvenanceContext(
             actor_user_id=approved_by,
             mutation_id=mutation_id,
+            prepared=prepared,
         )
     return replace(
         provenance,
         actor_user_id=provenance.actor_user_id or approved_by,
         mutation_id=mutation_id,
+        prepared=prepared,
     )
 
 

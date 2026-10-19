@@ -26,6 +26,12 @@ from potpie_context_engine.core.graph_mutations import (
 )
 from potpie_context_engine.core.llm_reconciliation import EvidenceRef
 from potpie_context_engine.core.reconciliation import MutationBatch
+from potpie_context_engine.core.mutation_execution import (
+    PreparedMutation,
+    MutationPersistenceError,
+    batch_fingerprint,
+    request_fingerprint,
+)
 
 
 class GraphMutationPlanStatus(StrEnum):
@@ -169,6 +175,29 @@ class GraphMutationPlanRecord:
     commit_attempt_id: str | None = None
     commit_attempt_started_at: datetime | None = None
     verification_quality_before: Mapping[str, Any] | None = None
+    prepared: PreparedMutation | None = None
+
+    def validate_prepared(self) -> None:
+        prepared = self.prepared
+        if prepared is None:
+            return  # legacy plan; execution/recovery decides its migration policy
+        if (
+            prepared.pot_id != self.pot_id
+            or prepared.mutation_id != self.mutation_id
+            or prepared.expected_version
+            != self.expected_subgraph_versions.get("_global")
+            or prepared.request_fingerprint
+            != request_fingerprint(self.original_payload)
+            or self.lowered_batch is None
+            or prepared.batch_fingerprint != batch_fingerprint(self.lowered_batch)
+            or (
+                self.provenance is not None
+                and self.provenance.prepared not in (None, prepared)
+            )
+        ):
+            raise MutationPersistenceError(
+                "persisted preparation differs from its frozen execution intent"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -197,6 +226,7 @@ class GraphMutationPlanRecord:
             "approval": self.approval.to_dict() if self.approval else None,
             "mutation_id": self.mutation_id,
             "verification_quality_before": _json_safe(self.verification_quality_before),
+            "prepared": self.prepared.to_dict() if self.prepared is not None else None,
             "commit_attempt_id": self.commit_attempt_id,
             "commit_attempt_started_at": self.commit_attempt_started_at.isoformat()
             if self.commit_attempt_started_at is not None
@@ -213,7 +243,7 @@ class GraphMutationPlanRecord:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "GraphMutationPlanRecord":
-        return cls(
+        record = cls(
             plan_id=str(raw.get("plan_id") or ""),
             pot_id=str(raw.get("pot_id") or ""),
             status=str(raw.get("status") or GraphMutationPlanStatus.invalid.value),
@@ -232,6 +262,9 @@ class GraphMutationPlanRecord:
             ),
             rejected_ops=tuple(dict(i) for i in raw.get("rejected_ops") or ()),
             verification_quality_before=raw.get("verification_quality_before"),
+            prepared=PreparedMutation.from_dict(raw["prepared"])
+            if raw.get("prepared") is not None
+            else None,
             lowered_batch=mutation_batch_from_dict(raw.get("lowered_batch")),
             provenance=provenance_context_from_dict(raw.get("provenance")),
             expected_subgraph_versions=_int_mapping(
@@ -259,6 +292,8 @@ class GraphMutationPlanRecord:
             ),
             ontology_version=str(raw.get("ontology_version") or ONTOLOGY_VERSION),
         )
+        record.validate_prepared()
+        return record
 
     @property
     def reserves_idempotency(self) -> bool:
@@ -476,6 +511,11 @@ def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:
                 "target_claim_keys": list(item.target_claim_keys)
                 if item.target_claim_keys is not None
                 else None,
+                **(
+                    {"target_claim_record_ids": list(item.target_claim_record_ids)}
+                    if item.target_claim_record_ids is not None
+                    else {}
+                ),
             }
             for item in batch.invalidations
         ],
@@ -535,6 +575,9 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
                 target_claim_keys=tuple(item["target_claim_keys"])
                 if item.get("target_claim_keys") is not None
                 else None,
+                target_claim_record_ids=tuple(item["target_claim_record_ids"])
+                if item.get("target_claim_record_ids") is not None
+                else None,
             )
             for item in raw.get("invalidations") or ()
             if isinstance(item, Mapping)
@@ -560,6 +603,7 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
 
 def provenance_context_to_dict(ctx: ProvenanceContext) -> dict[str, Any]:
     return {
+        **({"prepared": ctx.prepared.to_dict()} if ctx.prepared is not None else {}),
         "mutation_id": ctx.mutation_id,
         "source_event_id": ctx.source_event_id,
         "source_system": ctx.source_system,
@@ -586,6 +630,9 @@ def provenance_context_from_dict(
     if not raw:
         return None
     return ProvenanceContext(
+        prepared=PreparedMutation.from_dict(raw["prepared"])
+        if raw.get("prepared") is not None
+        else None,
         mutation_id=str(raw.get("mutation_id") or "") or None,
         source_event_id=str(raw.get("source_event_id") or "") or None,
         source_system=str(raw.get("source_system") or "") or None,

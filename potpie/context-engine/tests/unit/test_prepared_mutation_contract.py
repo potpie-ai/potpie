@@ -1,0 +1,173 @@
+"""Frozen request identity and receipt schema regression contract (POT-2700)."""
+
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from datetime import datetime, timezone
+
+import pytest
+
+from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
+    CompletedMutationExecution,
+    MutationExecutionReuseError,
+    complete_execution,
+    execution_receipts_from_json,
+    execution_receipts_to_json,
+    validate_execution_replay,
+)
+from potpie_context_engine.core.errors import GraphMutationVersionConflict
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.graph_plans import GraphMutationPlanRecord
+from potpie_context_engine.core.mutation_execution import (
+    ExecutionMetadata,
+    MutationPersistenceError,
+    PreparedMutation,
+    batch_fingerprint,
+)
+from potpie_context_engine.core.reconciliation import (
+    MutationBatch,
+    MutationResult,
+    MutationSummary,
+)
+from potpie_context_engine.testing import build_test_graph_runtime
+
+
+def prepared():
+    return PreparedMutation(
+        "pot",
+        "mutation",
+        "request",
+        batch_fingerprint(MutationBatch()),
+        0,
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+
+def result():
+    return MutationResult(
+        ok=True, mutation_id="mutation", mutation_summary=MutationSummary()
+    )
+
+
+def test_legacy_fingerprint_and_receipt_are_preserved():
+    digest = batch_fingerprint(MutationBatch())
+    assert digest == "3cd0190c5a605bf2af818ce7222c9813f6ee51f2"
+    receipt = CompletedMutationExecution("pot", "mutation", digest, result())
+    serialized = execution_receipts_to_json([receipt])
+    assert "execution" not in serialized[0]["result"]
+    assert execution_receipts_from_json(serialized) == (receipt,)
+    assert execution_receipts_from_json(serialized)[0].result.execution is None
+
+
+def test_new_receipt_freezes_execution_metadata_and_rejects_rebased_preparation():
+    context = ProvenanceContext(mutation_id="mutation", prepared=prepared())
+    completed = complete_execution(
+        result(),
+        MutationBatch(),
+        pot_id="pot",
+        version_before=0,
+        provenance=context,
+        applied_at=context.prepared.prepared_at,
+    )
+    assert completed.execution.version_after == 0
+    assert (
+        ExecutionMetadata.from_dict(completed.execution.to_dict())
+        == completed.execution
+    )
+    with pytest.raises(GraphMutationVersionConflict):
+        complete_execution(
+            result(),
+            MutationBatch(),
+            pot_id="pot",
+            version_before=1,
+            provenance=context,
+        )
+    with pytest.raises(MutationExecutionReuseError):
+        validate_execution_replay(
+            completed,
+            provenance=replace(
+                context, prepared=replace(prepared(), request_fingerprint="changed")
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("prepared_at", "2026-01-01"),
+        ("expected_version", True),
+        ("target_claim_record_ids", "abc"),
+        ("request_fingerprint", {}),
+        ("schema_version", 99),
+    ],
+)
+def test_malformed_prepared_metadata_fails_closed(field, value):
+    raw = prepared().to_dict()
+    raw[field] = value
+    with pytest.raises(MutationPersistenceError):
+        PreparedMutation.from_dict(raw)
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"ok": "false"},
+        {"mutation_id": 3},
+        {"mutation_summary": {"edge_upserts_applied": "1"}},
+    ],
+)
+def test_malformed_receipt_cannot_become_success(patch):
+    raw = execution_receipts_to_json(
+        [CompletedMutationExecution("pot", "mutation", "digest", result())]
+    )
+    raw[0]["result"].update(patch)
+    with pytest.raises(MutationPersistenceError):
+        execution_receipts_from_json(raw)
+
+
+def test_concurrent_proposals_freeze_one_preparation_and_retain_terminal_identity():
+    runtime = build_test_graph_runtime()
+    payload = {
+        "idempotency_key": "same",
+        "operations": [
+            {
+                "op": "upsert_entity",
+                "subject": {"key": "service:api", "type": "Service"},
+            }
+        ],
+    }
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        proposals = list(
+            pool.map(lambda _: runtime.propose(payload, pot_id="pot"), range(8))
+        )
+    assert len({p.plan_id for p in proposals}) == 1
+    record = runtime.plan_store.get(pot_id="pot", plan_id=proposals[0].plan_id)
+    assert record.prepared.mutation_id == record.mutation_id
+    assert GraphMutationPlanRecord.from_dict(record.to_dict()) == record
+    for status in ("conflict", "expired", "error"):
+        runtime.plan_store.save(replace(record, status=status))
+        replay = runtime.propose(payload, pot_id="pot")
+        assert replay.plan_id == record.plan_id and not replay.ok
+        assert (
+            runtime.plan_store.get(pot_id="pot", plan_id=record.plan_id).prepared
+            == record.prepared
+        )
+
+
+def test_changed_frozen_plan_is_rejected_before_execution():
+    runtime = build_test_graph_runtime()
+    proposal = runtime.propose(
+        {
+            "operations": [
+                {
+                    "op": "upsert_entity",
+                    "subject": {"key": "service:api", "type": "Service"},
+                }
+            ]
+        },
+        pot_id="pot",
+    )
+    record = runtime.plan_store.get(pot_id="pot", plan_id=proposal.plan_id)
+    runtime.plan_store.save(replace(record, mutation_id="tampered"))
+    with pytest.raises(MutationPersistenceError):
+        runtime.commit(proposal.plan_id, pot_id="pot")
+    assert runtime.backend.mutation.current_version("pot") == 0

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import replace
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -23,6 +24,9 @@ from potpie_context_engine.core.semantic_mutations import (
     SemanticMutationRequest,
 )
 
+from .mutation_execution import PreparedMutation, batch_fingerprint, request_fingerprint as _request_fingerprint
+from .reconciliation import MutationBatch
+
 from .mutation_state import (
     _CONFLICT_NEXT_ACTION,
     _commit_next_action,
@@ -32,7 +36,6 @@ from .mutation_state import (
     _plan_for_idempotency_key,
     _proposal_from_record,
     _rejected_operation_summaries,
-    _request_fingerprint,
     _status_for_proposal,
     _subgraph_versions,
     _version_conflict,
@@ -65,7 +68,7 @@ def propose_mutation(
     expires_at = now + timedelta(
         seconds=max(1, int(ttl_seconds or self.default_plan_ttl_seconds))
     )
-    payload_with_pot = dict(payload)
+    payload_with_pot = deepcopy(dict(payload))
     payload_with_pot["pot_id"] = pot_id
 
     idempotency_key = str(payload.get("idempotency_key") or "").strip()
@@ -77,24 +80,14 @@ def propose_mutation(
             if _request_fingerprint(matching.original_payload) == _request_fingerprint(
                 payload_with_pot
             ):
-                if matching.status in {
-                    GraphMutationPlanStatus.conflict.value,
-                    GraphMutationPlanStatus.error.value,
-                    GraphMutationPlanStatus.expired.value,
-                }:
-                    matching = None
-                else:
-                    return _proposal_from_record(
-                        matching,
-                        ok=matching.status
-                        not in {GraphMutationPlanStatus.invalid.value},
-                        recommended_next_action=(
-                            "Reuse the existing plan_id; this idempotency key already "
-                            "names the same request."
-                        ),
-                    )
-            if matching is None:
-                pass
+                return _proposal_from_record(
+                    matching,
+                    ok=matching.status
+                    not in {"invalid", "conflict", "error", "expired", "abandoned"},
+                    recommended_next_action=(
+                        "Reuse the existing plan_id; conflict or expiry requires a new idempotency_key."
+                    ),
+                )
             else:
                 issue = {
                     "code": "idempotency_key_reused",
@@ -154,11 +147,11 @@ def propose_mutation(
             current_subgraph_versions=current_versions,
             detail=str(exc),
         )
-        self.plan_store.save(record)
+        record, _ = _persist_preparation(self, record, idempotency_key)
         return _proposal_from_record(
             record,
             ok=False,
-            recommended_next_action="Fix the mutation JSON and run graph propose again.",
+            recommended_next_action="Fix the mutation JSON and use a new idempotency_key.",
         )
 
     semantic_plan = self.validator(request)
@@ -173,6 +166,12 @@ def propose_mutation(
         GraphMutationPlanStatus.conflict.value,
     }:
         self.lowerer(request, semantic_plan)
+        # The entire validator/lowerer read set must have observed one revision.
+        after_versions = _subgraph_versions(self.backend, pot_id)
+        conflict = _version_conflict(current_versions, after_versions)
+        if conflict:
+            status = GraphMutationPlanStatus.conflict.value
+        semantic_plan.batch = deepcopy(semantic_plan.batch or MutationBatch())
 
     claim_keys = tuple(
         key for op in semantic_plan.accepted_ops for key in op.claim_keys
@@ -213,7 +212,22 @@ def propose_mutation(
     elif status == GraphMutationPlanStatus.validated.value:
         recommended = _commit_next_action(plan_id, approved=True)
 
+    mutation_id = uuid.uuid4().hex
+    prepared = (
+        PreparedMutation(
+            pot_id=pot_id,
+            mutation_id=mutation_id,
+            request_fingerprint=_request_fingerprint(payload_with_pot),
+            batch_fingerprint=batch_fingerprint(semantic_plan.batch),
+            expected_version=expected_versions["_global"],
+            prepared_at=now,
+        )
+        if semantic_plan.batch is not None
+        else None
+    )
     record = GraphMutationPlanRecord(
+        mutation_id=mutation_id,
+        prepared=prepared,
         plan_id=plan_id,
         pot_id=pot_id,
         status=status,
@@ -238,52 +252,40 @@ def propose_mutation(
         approval=approval,
         detail=detail,
     )
-    if idempotency_key:
-        reserve = getattr(self.plan_store, "reserve_idempotency", None)
-        if callable(reserve):
-            try:
-                stored, inserted = reserve(
-                    record=record,
-                    idempotency_key=idempotency_key,
-                    request_fingerprint=_request_fingerprint(payload_with_pot),
-                )
-            except ValueError as exc:
-                rejected_record = replace(
-                    record,
-                    status=GraphMutationPlanStatus.invalid.value,
-                    detail=str(exc),
-                )
-                return _proposal_from_record(
-                    rejected_record,
-                    ok=False,
-                    recommended_next_action=(
-                        "Use a new idempotency_key for different content."
-                    ),
-                )
-            if not inserted:
-                return _proposal_from_record(
-                    stored,
-                    ok=stored.status
-                    not in {
-                        GraphMutationPlanStatus.invalid.value,
-                        GraphMutationPlanStatus.conflict.value,
-                        GraphMutationPlanStatus.error.value,
-                    },
-                    recommended_next_action=(
-                        "Reuse the existing plan_id; this idempotency key already "
-                        "names the same request."
-                    ),
-                )
-        else:
-            self.plan_store.save(record)
-    else:
-        self.plan_store.save(record)
+    try:
+        stored, inserted = _persist_preparation(self, record, idempotency_key)
+    except ValueError as exc:
+        return _proposal_from_record(
+            replace(
+                record, status=GraphMutationPlanStatus.invalid.value, detail=str(exc)
+            ),
+            ok=False,
+            recommended_next_action="Use a new idempotency_key for different content.",
+        )
     return _proposal_from_record(
-        record,
-        ok=status
+        stored,
+        ok=stored.status
         in {
             GraphMutationPlanStatus.validated.value,
             GraphMutationPlanStatus.review_required.value,
         },
-        recommended_next_action=recommended,
+        recommended_next_action=recommended
+        if inserted
+        else "Reuse the existing plan_id; conflict or expiry requires a new idempotency_key.",
+    )
+
+
+def _persist_preparation(
+    self: MutationWorkflow, record: GraphMutationPlanRecord, key: str
+) -> tuple[GraphMutationPlanRecord, bool]:
+    if not key:
+        self.plan_store.save(record)
+        return record, True
+    reserve = getattr(self.plan_store, "reserve_idempotency", None)
+    if not callable(reserve):
+        raise ValueError("plan store does not support atomic request reservation")
+    return reserve(
+        record=record,
+        idempotency_key=key,
+        request_fingerprint=_request_fingerprint(record.original_payload),
     )

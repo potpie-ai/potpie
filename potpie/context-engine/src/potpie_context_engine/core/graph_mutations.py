@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from .mutation_execution import PreparedMutation
+
 
 @dataclass(frozen=True, slots=True)
 class ProvenanceRef:
@@ -112,6 +114,8 @@ class ProvenanceContext:
     actor_auth_method: str | None = None
     mutation_id: str | None = None
     """Caller-reserved execution id used to make retried applies idempotent."""
+    prepared: PreparedMutation | None = None
+    """Frozen execution metadata; not a graph provenance property."""
 
 
 @dataclass(slots=True)
@@ -173,3 +177,5 @@ class InvalidationOp:
     valid_to: str | None = None
     # None retains the legacy internal selector. An empty tuple selects no claims.
     target_claim_keys: tuple[str, ...] | None = None
+    target_claim_record_ids: tuple[str, ...] | None = None
+    """Frozen incarnation selector. None is legacy; empty selects no records."""

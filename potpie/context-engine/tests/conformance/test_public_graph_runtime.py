@@ -258,7 +258,7 @@ def test_public_async_runtime_recovers_a_stale_commit_attempt() -> None:
         crashed = replace(
             record,
             status=GraphMutationPlanStatus.committing.value,
-            mutation_id="mutation:runtime-recovery",
+            mutation_id=record.mutation_id,
             commit_attempt_id="attempt:crashed-runtime",
             commit_attempt_started_at=datetime.now(timezone.utc)
             - timedelta(minutes=10),
@@ -275,7 +275,7 @@ def test_public_async_runtime_recovers_a_stale_commit_attempt() -> None:
         )
 
         assert recovered.ok
-        assert recovered.mutation_id == "mutation:runtime-recovery"
+        assert recovered.mutation_id == record.mutation_id
 
     asyncio.run(journey())
 

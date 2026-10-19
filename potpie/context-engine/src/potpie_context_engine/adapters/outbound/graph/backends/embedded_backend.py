@@ -269,7 +269,7 @@ class EmbeddedGraphBackend:
         return (
             load_store(payload),
             MutationExecutionRegistry(
-                execution_receipts_from_json(payload.get("mutation_receipts"))
+                execution_receipts_from_json(payload.get("mutation_receipts", []))
             ),
         )
 

@@ -14,7 +14,6 @@ import asyncio
 import importlib
 import inspect
 import logging
-import threading
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -337,44 +336,20 @@ class _StoreBridge:
 class _PlanStoreBridge(_StoreBridge):
     """Plan-store facade including the atomic commit-state transition."""
 
-    def __init__(self, target: Any) -> None:
-        super().__init__(target)
-        self._reservation_lock = threading.RLock()
-
     def reserve_idempotency(self, *args: Any, **kwargs: Any) -> Any:
-        if callable(getattr(self._bridge._target, "reserve_idempotency", None)):
-            return self._bridge.call("reserve_idempotency", *args, **kwargs)
-        record = kwargs["record"]
-        idempotency_key = kwargs["idempotency_key"]
-        request_fingerprint = kwargs["request_fingerprint"]
-        with self._reservation_lock:
-            for existing in self.list(pot_id=record.pot_id):
-                key = str(
-                    existing.original_payload.get("idempotency_key") or ""
-                ).strip()
-                if key != idempotency_key or not existing.reserves_idempotency:
-                    continue
-                from potpie_context_engine.core.workbench_service import (
-                    _request_fingerprint,
-                )
-
-                if (
-                    _request_fingerprint(existing.original_payload)
-                    != request_fingerprint
-                ):
-                    raise ValueError(
-                        f"idempotency_key {idempotency_key!r} is already bound to "
-                        f"plan {existing.plan_id!r} with different content"
-                    )
-                if existing.status not in {"conflict", "error", "expired"}:
-                    return existing, False
-            self.save(record)
-            return record, True
+        self._require_reservation()
+        return self._bridge.call("reserve_idempotency", *args, **kwargs)
 
     async def reserve_idempotency_async(self, *args: Any, **kwargs: Any) -> Any:
-        # Use the same compatibility reservation when the store predates this
-        # capability; directly forwarding would bypass the fallback above.
-        return await asyncio.to_thread(self.reserve_idempotency, *args, **kwargs)
+        self._require_reservation()
+        return await self._bridge.call_async("reserve_idempotency", *args, **kwargs)
+
+    def _require_reservation(self) -> None:
+        if not any(
+            callable(getattr(self._bridge._target, name, None))
+            for name in ("reserve_idempotency", "reserve_idempotency_async")
+        ):
+            raise ValueError("plan store does not support atomic request reservation")
 
     def compare_and_set(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("compare_and_set", *args, **kwargs)

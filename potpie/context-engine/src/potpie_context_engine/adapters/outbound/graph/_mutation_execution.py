@@ -5,13 +5,19 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass
-import hashlib
-import json
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 import threading
 from typing import Any
 
-from potpie_context_engine.core.graph_plans import mutation_batch_to_dict
+from potpie_context_engine.core.errors import GraphMutationVersionConflict
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.mutation_execution import (
+    ExecutionMetadata,
+    MutationPersistenceError,
+    batch_fingerprint,
+    batch_has_work,
+)
 from potpie_context_engine.core.ports.graph.mutation import (
     MutationExecutionLookup,
     MutationExecutionState,
@@ -48,13 +54,85 @@ class _InFlight:
 
 
 def mutation_batch_fingerprint(plan: MutationBatch) -> str:
-    encoded = json.dumps(
-        mutation_batch_to_dict(plan),
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
+    return batch_fingerprint(plan)
+
+
+def validate_prepared_execution(
+    plan: MutationBatch,
+    *,
+    pot_id: str,
+    mutation_id: str,
+    provenance: ProvenanceContext | None,
+) -> None:
+    prepared = provenance.prepared if provenance else None
+    if prepared is not None and (
+        prepared.pot_id != pot_id
+        or prepared.mutation_id != mutation_id
+        or prepared.batch_fingerprint != batch_fingerprint(plan)
+    ):
+        raise MutationExecutionReuseError(
+            "prepared execution identity or batch was changed"
+        )
+
+
+def complete_execution(
+    result: MutationResult,
+    plan: MutationBatch,
+    *,
+    pot_id: str,
+    version_before: int,
+    provenance: ProvenanceContext | None = None,
+    record_ids: Iterable[str] = (),
+    applied_at: datetime | None = None,
+) -> MutationResult:
+    """Called inside the backend transaction, before publishing its receipt."""
+    validate_prepared_execution(
+        plan, pot_id=pot_id, mutation_id=result.mutation_id, provenance=provenance
     )
-    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=20).hexdigest()
+    prepared = provenance.prepared if provenance else None
+    if prepared is not None and prepared.expected_version != version_before:
+        raise GraphMutationVersionConflict(
+            expected=prepared.expected_version, current=version_before
+        )
+    if not result.ok:
+        raise ValueError("cannot create a completion receipt for a failed execution")
+    return replace(
+        result,
+        execution=ExecutionMetadata(
+            pot_id=pot_id,
+            applied_at=applied_at or datetime.now(timezone.utc),
+            version_before=version_before,
+            version_after=version_before + int(result.ok and batch_has_work(plan)),
+            batch_fingerprint=batch_fingerprint(plan),
+            request_fingerprint=prepared.request_fingerprint if prepared else None,
+            affected_claim_record_ids=tuple(sorted(set(record_ids))),
+        ),
+    )
+
+
+def validate_execution_replay(
+    result: MutationResult, *, provenance: ProvenanceContext | None
+) -> None:
+    """Validate request binding before returning an already completed result.
+
+    Legacy receipts have unknown request metadata; their original batch digest
+    remains authoritative. A new prepared execution must retain its request hash.
+    """
+    prepared = provenance.prepared if provenance else None
+    execution = result.execution
+    if (
+        prepared is not None
+        and execution is not None
+        and (
+            execution.request_fingerprint != prepared.request_fingerprint
+            or execution.batch_fingerprint != prepared.batch_fingerprint
+            or execution.pot_id != prepared.pot_id
+            or result.mutation_id != prepared.mutation_id
+        )
+    ):
+        raise MutationExecutionReuseError(
+            "execution identity was already bound to a different request"
+        )
 
 
 class MutationExecutionRegistry:
@@ -291,24 +369,42 @@ def execution_receipts_from_json(
     raw: object,
 ) -> tuple[CompletedMutationExecution, ...]:
     if not isinstance(raw, list):
-        return ()
+        raise MutationPersistenceError("execution receipts must be a list")
     receipts: list[CompletedMutationExecution] = []
+    seen: set[ExecutionKey] = set()
     for item in raw:
         if not isinstance(item, Mapping):
-            continue
-        pot_id = str(item.get("pot_id") or "")
-        mutation_id = str(item.get("mutation_id") or "")
-        fingerprint = str(item.get("batch_fingerprint") or "")
+            raise MutationPersistenceError("malformed execution receipt")
+        pot_id, mutation_id, fingerprint = (
+            item.get(name) for name in ("pot_id", "mutation_id", "batch_fingerprint")
+        )
+        if any(
+            not isinstance(value, str) or not value
+            for value in (pot_id, mutation_id, fingerprint)
+        ):
+            raise MutationPersistenceError("invalid execution receipt identity")
         result = _mutation_result_from_dict(item.get("result"))
-        if pot_id and mutation_id and fingerprint and result is not None:
-            receipts.append(
-                CompletedMutationExecution(
-                    pot_id=pot_id,
-                    mutation_id=mutation_id,
-                    batch_fingerprint=fingerprint,
-                    result=result,
-                )
+        if (
+            not pot_id
+            or not mutation_id
+            or not fingerprint
+            or result is None
+            or result.mutation_id != mutation_id
+        ):
+            raise MutationPersistenceError("incomplete execution receipt identity")
+        if (pot_id, mutation_id) in seen:
+            raise MutationPersistenceError("duplicate execution receipt identity")
+        if result.execution is not None and (
+            result.execution.pot_id != pot_id
+            or result.execution.batch_fingerprint != fingerprint
+        ):
+            raise MutationPersistenceError(
+                "execution receipt metadata differs from its identity"
             )
+        seen.add((pot_id, mutation_id))
+        receipts.append(
+            CompletedMutationExecution(pot_id, mutation_id, fingerprint, result)
+        )
     return tuple(receipts)
 
 
@@ -327,6 +423,11 @@ def _require_same_fingerprint(
 def _mutation_result_to_dict(result: MutationResult) -> dict[str, Any]:
     summary = result.mutation_summary
     return {
+        **(
+            {"execution": result.execution.to_dict()}
+            if result.execution is not None
+            else {}
+        ),
         "ok": result.ok,
         "mutation_id": result.mutation_id,
         "mutation_summary": {
@@ -348,30 +449,50 @@ def _mutation_result_from_dict(raw: object) -> MutationResult | None:
     summary_raw = raw.get("mutation_summary")
     if not isinstance(summary_raw, Mapping):
         return None
+    if (
+        raw.get("ok") is not True
+        or not isinstance(raw.get("mutation_id"), str)
+        or not raw["mutation_id"]
+    ):
+        raise MutationPersistenceError(
+            "completion receipt must describe a successful identified execution"
+        )
+    counts = {}
+    for name in (
+        "entity_upserts_applied",
+        "edge_upserts_applied",
+        "edge_deletes_applied",
+        "invalidations_applied",
+    ):
+        value = summary_raw.get(name, 0)
+        if type(value) is not int or value < 0:
+            raise MutationPersistenceError("invalid execution mutation count")
+        counts[name] = value
+    stamps = summary_raw.get("stamp_counts", {})
+    if not isinstance(stamps, Mapping) or any(
+        not isinstance(key, str) or type(value) is not int or value < 0
+        for key, value in stamps.items()
+    ):
+        raise MutationPersistenceError("invalid execution stamp counts")
+    errors, downgrades = raw.get("reconciliation_errors", []), raw.get("downgrades", [])
+    if any(
+        not isinstance(items, (list, tuple))
+        or any(not isinstance(item, Mapping) for item in items)
+        for items in (errors, downgrades)
+    ):
+        raise MutationPersistenceError("invalid execution diagnostic metadata")
+    if raw.get("error") is not None and not isinstance(raw["error"], str):
+        raise MutationPersistenceError("invalid execution error")
     return MutationResult(
-        ok=bool(raw.get("ok")),
-        mutation_id=str(raw.get("mutation_id") or ""),
-        mutation_summary=MutationSummary(
-            entity_upserts_applied=int(summary_raw.get("entity_upserts_applied") or 0),
-            edge_upserts_applied=int(summary_raw.get("edge_upserts_applied") or 0),
-            edge_deletes_applied=int(summary_raw.get("edge_deletes_applied") or 0),
-            invalidations_applied=int(summary_raw.get("invalidations_applied") or 0),
-            stamp_counts={
-                str(key): int(value)
-                for key, value in dict(summary_raw.get("stamp_counts") or {}).items()
-            },
-        ),
-        error=str(raw.get("error") or "") or None,
-        reconciliation_errors=[
-            dict(item)
-            for item in raw.get("reconciliation_errors") or ()
-            if isinstance(item, Mapping)
-        ],
-        downgrades=[
-            dict(item)
-            for item in raw.get("downgrades") or ()
-            if isinstance(item, Mapping)
-        ],
+        execution=ExecutionMetadata.from_dict(raw["execution"])
+        if raw.get("execution") is not None
+        else None,
+        ok=True,
+        mutation_id=raw["mutation_id"],
+        mutation_summary=MutationSummary(**counts, stamp_counts=dict(stamps)),
+        error=raw.get("error"),
+        reconciliation_errors=[dict(item) for item in errors],
+        downgrades=[dict(item) for item in downgrades],
     )
 
 

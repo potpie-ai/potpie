@@ -102,9 +102,7 @@ from .mutation_state import (
     _subgraph_versions,
     _unsupported_from_exception,
 )
-from .mutation_state import (
-    _request_fingerprint as _request_fingerprint,
-)
+from .mutation_execution import request_fingerprint as _request_fingerprint  # noqa: F401
 from .mutation_verification import _verify_ingestion_commit as _verify_prepared_commit
 
 

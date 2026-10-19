@@ -84,6 +84,8 @@ def commit_mutation(
             recommended_next_action="Run graph propose and commit the returned plan_id.",
         )
 
+    record.validate_prepared()
+
     if record.status == GraphMutationPlanStatus.committed.value:
         receipt = _committed_plan_result(record)
         if verify and not defer_verification:
@@ -338,6 +340,7 @@ def commit_mutation(
                     record.provenance,
                     approved_by=commit_actor,
                     mutation_id=execution_mutation_id,
+                    prepared=record.prepared,
                 ),
                 reconciliation_config=self.reconciliation_config,
             )
@@ -354,6 +357,7 @@ def commit_mutation(
                     record.provenance,
                     approved_by=commit_actor,
                     mutation_id=execution_mutation_id,
+                    prepared=record.prepared,
                 ),
             ),
             atomic_apply=atomic_apply,
