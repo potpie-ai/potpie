@@ -1,4 +1,4 @@
-"""Convert LLM plan models to domain ``ReconciliationPlan``."""
+"""Convert LLM plan models to domain ``MutationBatch``."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from potpie_context_engine.core.graph_mutations import (
     InvalidationOp,
 )
 from potpie_context_engine.core.llm_reconciliation import EvidenceRef
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 from potpie_context_engine.adapters.outbound.reconciliation.llm_plan_schema import (
     LlmInvalidationOp,
@@ -38,14 +38,14 @@ def llm_plan_to_reconciliation_plan(
     llm: LlmReconciliationPlan | dict,
     *,
     event_ref: EventRef,
-) -> ReconciliationPlan:
+) -> MutationBatch:
     llm = LlmReconciliationPlan.model_validate(llm)
 
     inv: list[InvalidationOp] = []
     for raw in llm.invalidations:
         inv.append(_invalidation(raw))
 
-    return ReconciliationPlan(
+    return MutationBatch(
         event_ref=event_ref,
         summary=llm.summary,
         entity_upserts=[
