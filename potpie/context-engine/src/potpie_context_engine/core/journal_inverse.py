@@ -38,6 +38,7 @@ from .claim_lifecycle import (
     validate_incarnation_history,
 )
 
+
 def protocols_enabled_for(definition: GraphDefinition) -> bool:
     """Whether ``definition`` carries the opt-in protocol ontology extension."""
 

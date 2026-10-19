@@ -576,7 +576,7 @@ def test_server_aof_receipt_survives_restart():
             provenance_context=context(plan),
         )
         subprocess.run(
-            ["rtk", "docker", "restart", container], check=True, capture_output=True
+            ["docker", "restart", container], check=True, capture_output=True
         )
         deadline = time.monotonic() + 15
         while True:

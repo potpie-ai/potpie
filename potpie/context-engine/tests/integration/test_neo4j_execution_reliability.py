@@ -21,7 +21,9 @@ from potpie_context_engine.adapters.outbound.graph.backends.neo4j_backend import
     Neo4jGraphBackend,
 )
 from potpie_context_engine.adapters.outbound.graph.neo4j_writer import Neo4jGraphWriter
-from potpie_context_engine.adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
+from potpie_context_engine.adapters.outbound.graph.neo4j_reader import (
+    Neo4jClaimQueryStore,
+)
 from potpie_context_engine.core.claim_preparation import prepare_claim_assertions
 from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION
 from potpie_context_engine.core.errors import (
@@ -567,7 +569,7 @@ def test_native_server_restart_retains_execution_receipt(graph):
         batch, expected_pot_id=pot, provenance_context=context
     )
     subprocess.run(
-        ["rtk", "docker", "restart", os.environ["PROTOCOL_TEST_NEO4J_CONTAINER"]],
+        ["docker", "restart", os.environ["PROTOCOL_TEST_NEO4J_CONTAINER"]],
         check=True,
         capture_output=True,
         timeout=60,

@@ -228,3 +228,16 @@ def test_multiple_incarnations_keep_unique_derived_logical_selector():
     assert prepare(batch, original) == original
     assert batch.invalidations[0].target_claim_keys == ("c",)
     assert prepare(batch, original) == original
+
+
+def test_derived_supersession_observation_uses_frozen_preparation_time():
+    op = replace(correction(), superseded_by_key="team:b")
+    batch = MutationBatch(invalidations=[op])
+    original = row()
+    prepare(batch, [original])
+    effect = batch.edge_upserts[0]
+    assert effect.properties["valid_at"] == time(3).isoformat()
+    assert effect.properties["observed_at"] == time(5).isoformat()
+    frozen = mutation_batch_to_dict(batch)
+    prepare_claim_closures(batch, [original], anchor=time(12), bindings=[])
+    assert mutation_batch_to_dict(batch) == frozen

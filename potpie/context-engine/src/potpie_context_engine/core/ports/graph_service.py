@@ -42,6 +42,7 @@ from potpie_context_engine.core.semantic_mutations import (
     SemanticMutationResult,
 )
 
+
 @dataclass(frozen=True, slots=True)
 class DataPlaneStatus:
     """Data-plane half of ``context_status``: backend readiness + coverage."""

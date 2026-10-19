@@ -406,7 +406,9 @@ def _engine_client(service: LocalPotManagementService, selector: str):
         backend=SimpleNamespace(
             profile="embedded",
             mutation=SimpleNamespace(
-                reset_pot=MagicMock(side_effect=lambda pot_id: {"pot_id": pot_id})
+                reset_pot=MagicMock(
+                    side_effect=lambda pot_id, *, mutation_id=None: {"pot_id": pot_id}
+                )
             ),
         ),
         agent_context=SimpleNamespace(search=MagicMock(return_value={"matches": 0})),
@@ -435,7 +437,9 @@ async def test_an_archived_pot_id_reaches_only_the_graph_reset(service) -> None:
     assert searched.error.code == "pot_archived"
     services.agent_context.search.assert_not_called()
     assert isinstance(reset, Success)
-    services.backend.mutation.reset_pot.assert_called_once_with(dead.pot_id)
+    services.backend.mutation.reset_pot.assert_called_once_with(
+        dead.pot_id, mutation_id=None
+    )
 
 
 @pytest.mark.anyio

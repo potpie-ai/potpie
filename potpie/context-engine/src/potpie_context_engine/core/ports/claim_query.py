@@ -21,6 +21,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from potpie_context_engine.core.claim_storage import StoredClaimSource
 
+
 @dataclass(frozen=True, slots=True)
 class ClaimRow:
     """One canonical :RELATES_TO edge as the readers see it.

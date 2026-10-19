@@ -42,7 +42,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | 10 | fix(graph): normalize temporal writes and query semantics | Offset/boundary/occurrence/query-limit parity | Independent review approved; 2329 unit/core, 108 live temporal, 142 public API/CLI cases passed. Details below. |
 | 11 | fix(graph): separate execution success from current verification | Current lifecycle results independent of execution receipt | Checkpoint B approved. 2399 unit/core, 112 Falkor server/Lite, 24 Neo native, 115 root CLI/API cases passed; details below. |
 | 12 | feat(graph): add resumable legacy graph repair | Dry-run, resumability, ambiguity rejection, receipt preservation | Independent shared/public review approved; raw repair manifests, exact bounded native publication, strict identity/time policy and authorized CLI/API. 2481 engine unit/core; final native repair 81 passed, 2 restart opt-ins separately proven. Details below. |
-| 13 | test(graph): require full backend and public API acceptance | Live native matrix, supported Windows, independent review/QA | Pending |
+| 13 | test(graph): require full backend and public API acceptance | Live native matrix, supported Windows, independent review/QA | Implementation and independent source reviews complete; local final gates below. Hosted Linux/Windows evidence pending. |
 
 Checkpoint A follows step 7, B follows step 11, release acceptance follows 13.
 Each behavior change includes regression tests. No permanent expected failures.
@@ -533,3 +533,85 @@ Latest primary native repair gate: 81 passed, 2 opt-in restart skips in 36.16s,
 covering FalkorDB server/Lite and Neo4j, including the authorized 5001-record
 repair and replay. Separate actual restart evidence above remains applicable.
 Indexed before-image matching avoids rehashing the inventory for every effect.
+
+## Step 13 release review and acceptance
+
+The three fresh reviewers separately audited shared code quality, public/CI
+acceptance, and migration/compatibility. All approved their source scopes after
+the findings below were fixed. The quality reviewer applied the thermo-nuclear
+standard and independently checked the final public-record recovery fix. Source
+approval does not substitute for the hosted platform gate.
+
+Release findings resolved as invariant blockers:
+
+- I1/I10: repair child request reservations could collide with an ordinary plan
+  using the same key. Both plan stores now validate the complete reservation set
+  under their existing lock before publication. Rejection leaves JSON bytes and
+  existing plans unchanged.
+- I8/I10: contradictory raw logical/scope aliases are reported rather than
+  resolved by precedence. Schema and fingerprint versions require integer types;
+  float/bool lookalikes fail closed. Ordinary entity writes also reject empty or
+  negative validity intervals through the shared timestamp policy.
+- I8: correction-derived SUPERSEDES edges retain the reviewed effective time but
+  use the frozen preparation observation time. Retries cannot rewrite either.
+- I4/I11: public record retries formerly stopped at an errored workflow even when
+  graph persistence had completed. They now consult the existing authoritative
+  status coordinator, report a duplicate only for completed execution, and use
+  the existing commit coordinator for safe retries. Tests reopen both stores
+  after failures before persistence and after durable acknowledgement loss.
+- I11: async-only reference host fixtures now expose atomic request reservation;
+  reset fixtures and the unimplemented backend accept the optional mutation
+  identity. Unsupported reset still reports CapabilityNotImplemented.
+
+Missing acceptance coverage added:
+
+- Public legacy repair loses finalization after its first chunk, restarts the
+  actual FalkorDB/Neo4j server, reopens workflow storage, recovers the original
+  receipt, and completes the remaining frozen chunk exactly once.
+- Active-loop cancellation after graph commit preserves the receipt; recovery
+  wins workflow ownership and a late old finalizer cannot overwrite it.
+- Explicit required CI selections reject every skip. The five-profile native
+  gate, serialized restart/forced-kill gate, and supported Windows memory/JSON
+  gate include separate-process races. Broad optional suites retain their
+  existing unsupported-environment selection behavior.
+
+The pinned Ruff 0.14.3 preflight found formatter differences and imported pytest
+fixture F811 reports. Formatting and narrowly documented test-only suppressions
+were applied; AST comparison proved no semantic changes in all 27 mechanically
+edited files. The independent preflight also passed actionlint, YAML/JSON/AST,
+merge/case-conflict, large-file, private-key, debug-statement and whitespace checks.
+
+Local evidence (macOS, Python 3.13.10; counts overlap):
+
+| Gate | Result | Environment |
+| --- | --- | --- |
+| Five-backend required reliability selection | 870 passed, 6 restart cases deselected; no skips | Memory, embedded JSON, FalkorDB 4.16.0 server/Lite, Neo4j 5.26 Community |
+| YAML-derived native restart and forced-kill selection | 12 passed; no skips | Actual AOF server restart, Lite process restart, Neo4j restart, public repair recovery, killed journal writers/server |
+| Independent migration review | 164 passed plus expired-partial/reset-replay probes | Shared repair policy and workflow |
+| Independent public cancellation/API | 11 passed | Active event loop and reopened JSON plans |
+| Independent final record recovery | 29 passed plus public-wire lost-ack probe | Durable embedded graph and plan stores |
+| Independent final host-kit and temporal | 8 host-kit + 87 temporal passed | Async-only store affinity and UTC boundaries |
+| Final full root unit/characterization suite | 2644 passed | Includes daemon/socket lifecycle with local process access |
+| Final engine unit/core suite | 2506 passed, 3 unrelated skips | One existing naive-datetime deprecation warning |
+| Broad engine suite with native fixtures | 3708 passed, 41 optional skips; 3 stale assertions subsequently fixed and passing | Separate 22-case surface/public recovery and 12-case live Lite roundtrip reruns passed |
+| Windows selection exercised locally | 163 passed before latest record additions | macOS only; actual Windows result still required |
+
+The exact required commands live in `.github/workflows/test.yml` and load
+`tests.required_acceptance`. Full root/engine final regression results and hosted
+run links are recorded after execution. No production store was migrated or
+deployed. The rollout guide explicitly requires excluding every old writer;
+schema markers alone cannot fence old binaries that ignored them.
+
+### Final invariant ownership and evidence
+
+| Invariant | Canonical owner | Acceptance tests | Independent review |
+| --- | --- | --- | --- |
+| I1 | mutation_preparation / plan reservation stores | prepared_mutation_contract, graph_workbench_plans, legacy_repair_workflow | Shared + migration approved |
+| I2/I3 | Backend atomic owners / execution receipt model | graph_reliability, memory_embedded_atomicity, native atomic/revision suites, journal_crash | Backend checkpoint A + release QA approved |
+| I4 | mutation_execution_service / mutation_state | mutation_recovery_contract, record_recovery, public_repair_restart, legacy_repair_api | Shared release review approved |
+| I5/I6 | claim_lifecycle / claim_preparation / quality | Memory and native claim_lifecycle suites, temporal_backend_acceptance | Checkpoint B approved |
+| I7 | claim_corrections / frozen prepared mutation | Memory and native claim_corrections suites | Checkpoint B + final observation-time review approved |
+| I8 | claim_codec / temporal helpers / shared legacy policy | semantic_temporal_contract, native temporal suites, legacy repair suites | Temporal + migration release reviews approved |
+| I9 | mutation_verification / immutable receipt | Memory/native verification suites, public commit cancellation | Checkpoint B approved |
+| I10 | strict persistence / legacy_repair_service | plan_storage_reliability, legacy_repair_workflow, native repair restart | Migration release review approved |
+| I11 | Explicit ports / runtime bridges / typed transports | public_graph_runtime, public_semantic_mutation_reliability, host-kit, required CI selections | Release QA approved; hosted platform evidence pending |

@@ -1,3 +1,4 @@
+# ruff: noqa: F811 - imported pytest fixtures are injected as test parameters.
 """Lossless native inventory, explicit legacy repair and identity invariants."""
 
 import asyncio
@@ -478,9 +479,7 @@ def test_repaired_receipt_survives_server_restart(graph, request):
     patches = effects(store)
     result = apply(store, patches)
     before = snapshot(graph)
-    subprocess.run(
-        ["rtk", "docker", "restart", container], check=True, capture_output=True
-    )
+    subprocess.run(["docker", "restart", container], check=True, capture_output=True)
     deadline = time.monotonic() + 20
     while True:
         try:

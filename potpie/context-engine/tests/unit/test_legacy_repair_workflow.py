@@ -374,9 +374,75 @@ def test_repair_receipt_never_claims_current_matching_from_empty_semantic_batch(
     replay = workbench.commit(run.children[0].plan_id, pot_id=POT, verify=True)
     assert replay.ok and replay.verification.state == "unsupported"
     assert replay.verification.outcome == "inconclusive"
-    assert replay.to_dict()["verification"]["unsupported"] == [{"capability": "verification.record_repairs"}]
+    assert replay.to_dict()["verification"]["unsupported"] == [
+        {"capability": "verification.record_repairs"}
+    ]
     assert replay.execution.to_dict() == {
         key: value
         for key, value in applied.executions[0].items()
         if key != "mutation_id"
     }
+
+
+def test_repair_child_cannot_steal_permanent_request_reservation(repair_context):
+    backend, store, workbench = repair_context
+    proposal = workbench.propose(
+        {
+            "idempotency_key": "legacy-repair:shared:0",
+            "operations": [
+                {
+                    "op": "upsert_entity",
+                    "subject": {"key": "service:new", "type": "Service"},
+                }
+            ],
+        },
+        pot_id=POT,
+    )
+    assert proposal.ok
+    before = store.list(pot_id=POT)
+    before_bytes = (
+        store._path.read_bytes() if isinstance(store, LocalJsonGraphPlanStore) else None
+    )
+    with pytest.raises(MutationPersistenceError, match="idempotency reservation"):
+        _prepare(repair_context, repair_id="shared")
+    assert store.list(pot_id=POT) == before
+    assert store.get_repair_run(pot_id=POT, repair_id="shared") is None
+    if before_bytes is not None:
+        assert store._path.read_bytes() == before_bytes
+    assert backend.mutation.current_version(POT) == 0
+
+
+@pytest.mark.parametrize(
+    "alias,value",
+    [
+        ("subject_key", "service:wrong"),
+        ("object_key", "service:wrong"),
+        ("predicate", "DIFFERENT"),
+        ("claim_key", "other"),
+        ("environment", "stage"),
+    ],
+)
+def test_claim_namespace_contradictions_block_repair(alias, value):
+    from potpie_context_engine.core.legacy_records import LegacyRecord, LegacyInventory
+
+    fields = {
+        "subject_key": "service:a",
+        "object_key": "service:b",
+        "predicate": "RELATED_TO",
+        "claim_key": "claim:c",
+        "environment": "prod",
+    }
+    record = LegacyRecord(
+        "p",
+        "claim",
+        "claim:c",
+        {alias: value},
+        fields=fields,
+        subject_key="service:a",
+        object_key="service:b",
+        relationship_type="RELATES_TO",
+        subject_pot_id="p",
+        object_pot_id="p",
+    )
+    effects, findings = plan_legacy_repairs(LegacyInventory((record,)))
+    assert not effects and any(f.blocking for f in findings)

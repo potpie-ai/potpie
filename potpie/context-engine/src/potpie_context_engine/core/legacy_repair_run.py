@@ -193,3 +193,25 @@ def validate_repair_reservation(
         return False
     run.validate_children(records)
     return True
+
+
+def validate_repair_child_reservations(existing, children) -> None:
+    """Check permanent request ownership before atomically inserting any child."""
+    occupied = {
+        (
+            record.pot_id,
+            str(record.original_payload.get("idempotency_key") or "").strip(),
+        )
+        for record in existing
+        if record.reserves_idempotency
+    }
+    for child in children:
+        key = (
+            child.pot_id,
+            str(child.original_payload.get("idempotency_key") or "").strip(),
+        )
+        if not key[1] or key in occupied:
+            raise MutationPersistenceError(
+                "repair child idempotency reservation is already owned"
+            )
+        occupied.add(key)

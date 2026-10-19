@@ -189,8 +189,8 @@ async def test_the_kit_agent_door_resolves_and_records_on_async_only_stores(
     # The door filled the intent the caller left unset.
     assert resolved["metadata"]["intent_source"] == "inferred"
     assert recorded["accepted"] is True and recorded["status"] == "recorded"
-    # An idempotent record is a plan in the host's async-only store.
-    assert "save" in host.plan_store.calls
+    # A keyed record atomically reserves a plan in the host's async-only store.
+    assert "reserve_idempotency" in host.plan_store.calls
 
 
 def test_the_host_agent_door_needs_no_pot_or_skill_service(tmp_path: Path) -> None:

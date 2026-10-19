@@ -66,9 +66,31 @@ def _record_issues(record: LegacyRecord) -> tuple[str, ...]:
             ("subject_key", record.subject_key),
             ("object_key", record.object_key),
         ):
-            stored = record.value(name)
-            if stored is not None and stored != actual:
-                issues.append(f"stored {name} differs from the physical relationship")
+            for namespace in (record.fields, record.properties):
+                if name in namespace and namespace[name] != actual:
+                    issues.append(
+                        f"stored {name} differs from the physical relationship"
+                    )
+        for aliases in (
+            ("predicate", "name"),
+            ("claim_key",),
+            ("subgraph",),
+            ("source_system",),
+            ("source_ref",),
+            ("environment",),
+            ("truth",),
+        ):
+            values = [
+                namespace[name]
+                for namespace in (record.fields, record.properties)
+                for name in aliases
+                if name in namespace
+            ]
+            if values and any(
+                type(value) is not type(values[0]) or value != values[0]
+                for value in values
+            ):
+                issues.append(f"stored {'/'.join(aliases)} aliases disagree")
     for name in ("record_id", "uuid"):
         for namespace in (record.fields, record.properties):
             value = namespace.get(name)

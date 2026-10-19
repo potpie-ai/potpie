@@ -480,7 +480,9 @@ def _complete_execution(
         verification_state=(
             verification.state
             if verification is not None
-            else "deferred" if verify else "not_requested"
+            else "deferred"
+            if verify
+            else "not_requested"
         ),
         detail="returned the backend's authoritative execution receipt",
         recommended_next_action=_verification_next_action(verification),

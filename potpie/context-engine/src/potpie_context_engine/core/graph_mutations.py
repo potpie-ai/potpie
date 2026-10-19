@@ -10,6 +10,7 @@ from .mutation_execution import PreparedMutation
 from .claim_lifecycle import ClaimWriteResolution
 from .claim_corrections import ClaimClosureResolution
 
+
 @dataclass(frozen=True, slots=True)
 class ProvenanceRef:
     """Link mutations back to a source event and the agent that produced them.

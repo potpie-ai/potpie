@@ -19,6 +19,7 @@ from potpie_context_engine.core.claim_codec import (
     vector_property,
 )
 
+
 def claim_is_applicable(row: ClaimRow, *, as_of: datetime | None = None) -> bool:
     """Return whether a claim applies in the half-open valid-time interval."""
     point = _as_utc(as_of or datetime.now(timezone.utc))

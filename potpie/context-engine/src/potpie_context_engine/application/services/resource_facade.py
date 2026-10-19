@@ -486,6 +486,7 @@ class ResourceFacade:
         review_claims, review_errors = (), ()
         if self.graph is not None:
             from .resource_graph_mutations import delete_graph
+
             graph_result = delete_graph(self, manifest)
             if not graph_result.ok or graph_result.status != "applied":
                 return ResourceDeleteResult(

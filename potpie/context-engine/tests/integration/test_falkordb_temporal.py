@@ -1,3 +1,4 @@
+# ruff: noqa: F811 - imported pytest fixtures are injected as test parameters.
 """Real server/Lite temporal publication and vector post-filter contracts."""
 
 from copy import deepcopy

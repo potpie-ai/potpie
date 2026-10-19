@@ -1,3 +1,4 @@
+# ruff: noqa: F811 - imported pytest fixtures are injected as test parameters.
 """Supported administrative FalkorDB writes share the native mutation boundary."""
 
 from concurrent.futures import ThreadPoolExecutor

@@ -141,7 +141,9 @@ class PreparedMutation:
 
     def __post_init__(self) -> None:
         if (
-            self.schema_version not in {1, 2, 3, PREPARATION_SCHEMA_VERSION}
+            type(self.schema_version) is not int
+            or type(self.fingerprint_version) is not int
+            or self.schema_version not in {1, 2, 3, PREPARATION_SCHEMA_VERSION}
             or self.fingerprint_version != FINGERPRINT_VERSION
         ):
             raise MutationPersistenceError("unsupported prepared mutation version")
@@ -200,7 +202,9 @@ class ExecutionMetadata:
 
     def __post_init__(self) -> None:
         if (
-            self.schema_version != EXECUTION_SCHEMA_VERSION
+            type(self.schema_version) is not int
+            or type(self.fingerprint_version) is not int
+            or self.schema_version != EXECUTION_SCHEMA_VERSION
             or self.fingerprint_version != FINGERPRINT_VERSION
         ):
             raise MutationPersistenceError("unsupported execution receipt version")

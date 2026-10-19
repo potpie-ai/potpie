@@ -574,8 +574,7 @@ def test_retired_endpoint_requires_explicit_reactivation(graph):
     _apply(graph, _batch(_edge(JAN)), "seed")
     _run(
         driver,
-        "MATCH (n:Entity {group_id:$pot,entity_key:'service:api'}) "
-        "SET n.retired=true",
+        "MATCH (n:Entity {group_id:$pot,entity_key:'service:api'}) SET n.retired=true",
         pot=pot,
     )
     before = _raw_claims(graph)

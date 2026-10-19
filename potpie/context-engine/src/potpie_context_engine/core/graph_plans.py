@@ -39,6 +39,7 @@ from potpie_context_engine.core.mutation_execution import (
     request_fingerprint,
 )
 
+
 class GraphMutationPlanStatus(StrEnum):
     validated = "validated"
     invalid = "invalid"

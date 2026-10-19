@@ -30,7 +30,11 @@ from .reconciliation_validation import validate_reconciliation_plan
 from .errors import MutationBatchValidationError
 from .claim_lifecycle import ClaimLifecycleConflict
 from .semantic_mutations import SemanticMutationValidationIssue
-from .mutation_execution import PreparedMutation, batch_fingerprint, request_fingerprint as _request_fingerprint
+from .mutation_execution import (
+    PreparedMutation,
+    batch_fingerprint,
+    request_fingerprint as _request_fingerprint,
+)
 
 from .mutation_state import (
     _CONFLICT_NEXT_ACTION,

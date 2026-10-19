@@ -1,3 +1,4 @@
+# ruff: noqa: F811 - imported pytest fixtures are injected as test parameters.
 """Prepared3 exact corrections on real server/Lite ordinary/journal paths."""
 
 from dataclasses import replace

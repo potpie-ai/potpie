@@ -1,3 +1,4 @@
+# ruff: noqa: F811 - imported pytest fixtures are injected as test parameters.
 """Modern native receipts prevent deleted or regressed revision reuse."""
 
 import json

@@ -108,6 +108,10 @@ def test_new_receipt_freezes_execution_metadata_and_rejects_rebased_preparation(
         ("target_claim_record_ids", "abc"),
         ("request_fingerprint", {}),
         ("schema_version", 99),
+        ("schema_version", 4.0),
+        ("schema_version", True),
+        ("fingerprint_version", True),
+        ("fingerprint_version", 1.0),
     ],
 )
 def test_malformed_prepared_metadata_fails_closed(field, value):
@@ -214,3 +218,54 @@ def test_raw_snapshot_batch_requires_canonical_frozen_identities() -> None:
     )
     with pytest.raises(MutationBatchValidationError, match="canonical"):
         validate_reconciliation_plan(batch, "p")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("schema_version", 2.0),
+        ("fingerprint_version", True),
+        ("fingerprint_version", 1.0),
+    ],
+)
+def test_receipt_versions_require_exact_integers(field, value):
+    execution = ExecutionMetadata("pot", datetime.now(timezone.utc), 0, 1, "digest")
+    raw = execution.to_dict()
+    raw[field] = value
+    with pytest.raises(MutationPersistenceError, match="version"):
+        ExecutionMetadata.from_dict(raw)
+
+
+@pytest.mark.parametrize(
+    "field,value", [("schema_version", 4.0), ("fingerprint_version", True)]
+)
+def test_corrupt_persisted_prepared_version_cannot_execute(tmp_path, field, value):
+    import json
+    from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
+        LocalJsonGraphPlanStore,
+    )
+    from potpie_context_engine.testing import InMemoryGraphBackend
+    from potpie_context_engine.core.runtime import build_graph_runtime
+
+    store = LocalJsonGraphPlanStore(tmp_path)
+    backend = InMemoryGraphBackend()
+    runtime = build_graph_runtime(backend=backend, plan_store=store)
+    proposal = runtime.propose(
+        {
+            "operations": [
+                {
+                    "op": "upsert_entity",
+                    "subject": {"key": "service:a", "type": "Service"},
+                }
+            ]
+        },
+        pot_id="pot",
+    )
+    raw = json.loads(store._path.read_text())
+    raw["plans"]["pot"][proposal.plan_id]["prepared"][field] = value
+    store._path.write_text(json.dumps(raw))
+    before = store._path.read_bytes()
+    with pytest.raises(MutationPersistenceError):
+        runtime.commit(proposal.plan_id, pot_id="pot")
+    assert backend.mutation.current_version("pot") == 0
+    assert store._path.read_bytes() == before

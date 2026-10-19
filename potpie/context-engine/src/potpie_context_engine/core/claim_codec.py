@@ -251,6 +251,9 @@ def normalize_entity_times(properties: Mapping[str, Any]) -> dict[str, Any]:
         if key in ENTITY_TEMPORAL_FIELDS and value != ""
     }
     props.update(normalize_claim_times(temporal))
+    diagnostics = stored_temporal_diagnostics(temporal)
+    if diagnostics:
+        raise ValueError("; ".join(diagnostics.values()))
     return props
 
 

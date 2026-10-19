@@ -249,8 +249,23 @@ def test_high_risk_supersede_requires_approval() -> None:
     )
     assert approved.status == "applied"
     rows = svc.backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
-    assert len(rows) == 1
-    assert rows[0].object_key == "service:ledger-v2"
+    dependencies = [row for row in rows if row.predicate == "DEPENDS_ON"]
+    supersessions = [row for row in rows if row.predicate == "SUPERSEDES"]
+    assert len(dependencies) == len(supersessions) == 1
+    assert dependencies[0].object_key == "service:ledger-v2"
+    history = svc.backend.claim_query.find_claims(
+        ClaimQueryFilter(
+            pot_id=POT, predicate_in=("DEPENDS_ON",), include_invalidated=True
+        )
+    )
+    original = next(row for row in history if row.object_key == "service:ledger-api")
+    assert len(history) == 2
+    assert original.invalid_at == dependencies[0].valid_at
+    assert supersessions[0].properties["supersedes_record_id"] == original.record_id
+    assert (
+        supersessions[0].properties["replacement_record_id"]
+        == dependencies[0].record_id
+    )
 
 
 # 8. context_record uses the semantic mutation path with the same metadata

@@ -179,3 +179,11 @@ def test_unused_provenance_time_still_requires_an_offset(field):
             ),
         )
     assert backend.mutation.current_version("p") == 0
+
+
+@pytest.mark.parametrize("end", ["2024-12-31T23:59:59Z", "2025-01-01T05:30:00+05:30"])
+def test_authored_entity_valid_to_must_follow_start(end):
+    from potpie_context_engine.core.claim_codec import normalize_entity_times
+
+    with pytest.raises(ValueError, match="not positive"):
+        normalize_entity_times({"valid_from": "2025-01-01T00:00:00Z", "valid_to": end})

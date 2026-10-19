@@ -257,8 +257,9 @@ def test_reimport_after_delete_gets_a_distinct_delete_identity(host):
 
     assert second_delete.removed and second_delete.graph_retracted
     second_record = host.record(second_delete)
-    assert second_record.original_payload["idempotency_key"] != (
-        first_record.original_payload["idempotency_key"]
+    assert (
+        second_record.original_payload["idempotency_key"]
+        != (first_record.original_payload["idempotency_key"])
     )
     assert second_record.plan_id != first_record.plan_id
     assert second_record.mutation_id != first_record.mutation_id

@@ -21,6 +21,7 @@ from potpie_context_engine.core.graph_plans import GraphMutationPlanRecord
 from potpie_context_engine.core.legacy_repair_run import (
     RepairRun,
     validate_repair_reservation,
+    validate_repair_child_reservations,
 )
 from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
     locked_json_store,
@@ -30,6 +31,7 @@ from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
 from potpie_context_engine.adapters.outbound.local_paths import default_home
 
 from potpie_context_engine.core.mutation_execution import MutationPersistenceError
+
 
 @dataclass(slots=True)
 class LocalJsonGraphPlanStore:
@@ -66,6 +68,10 @@ class LocalJsonGraphPlanStore:
                 raise MutationPersistenceError(
                     "repair child plan identity is already reserved"
                 )
+            validate_repair_child_reservations(
+                (GraphMutationPlanRecord.from_dict(raw) for raw in plans.values()),
+                child_records,
+            )
             plans.update({record.plan_id: record.to_dict() for record in child_records})
             by_pot[run.repair_id] = run.to_dict()
             state["schema_version"] = 2

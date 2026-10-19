@@ -443,6 +443,10 @@ class AsyncOnlyStore:
         self._enter("save")
         return self._store.save(*args, **kwargs)
 
+    async def reserve_idempotency_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._enter("reserve_idempotency")
+        return self._store.reserve_idempotency(*args, **kwargs)
+
     async def get_async(self, *args: Any, **kwargs: Any) -> Any:
         self._enter("get")
         return self._store.get(*args, **kwargs)

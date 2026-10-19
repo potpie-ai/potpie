@@ -422,6 +422,7 @@ async def delete_edges_async(
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
     from .cypher_claim_writes import close_claims
+
     _require_valid_pot_id(pot_id)
     anchor = provenance.graph_updated_at or _utc_now()
     count = 0
@@ -450,6 +451,7 @@ async def apply_invalidations_async(
 ) -> int:
     """Apply frozen claim intervals. Derived effects are ordinary batch writes."""
     from .cypher_claim_writes import close_claims
+
     _require_valid_pot_id(pot_id)
     anchor = provenance.graph_updated_at or _utc_now()
     count = 0

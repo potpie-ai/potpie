@@ -36,10 +36,16 @@ def record_once(
     proposal = workbench.propose(
         payload, pot_id=request.pot_id, approved_by=semantic.approved_by
     )
-    replay = proposal.status == "committed"
+    record = workbench.plan_store.get(pot_id=request.pot_id, plan_id=proposal.plan_id)
+    replay = False
     result = proposal
-    if proposal.ok:
-        result = workbench.commit(proposal.plan_id, pot_id=request.pot_id)
+    if proposal.ok or (record is not None and record.prepared is not None):
+        # Workflow errors can outlive a completed graph write. Only receipt
+        # authority establishes a duplicate; the coordinator owns safe retries.
+        result = workbench.commit_status(proposal.plan_id, pot_id=request.pot_id)
+        replay = result.ok and result.status == "committed"
+        if not replay:
+            result = workbench.commit(proposal.plan_id, pot_id=request.pot_id)
     accepted = result.ok and result.status == "committed"
     subgraphs = sorted({op.subgraph for op in semantic.operations if op.subgraph})
     return RecordReceipt(

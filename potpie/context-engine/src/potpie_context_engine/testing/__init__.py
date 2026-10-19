@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from potpie_context_engine.core.mutation_plan_store import InMemoryGraphPlanStore as InMemoryGraphPlanStore
+from potpie_context_engine.core.mutation_plan_store import (
+    InMemoryGraphPlanStore as InMemoryGraphPlanStore,
+)
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime

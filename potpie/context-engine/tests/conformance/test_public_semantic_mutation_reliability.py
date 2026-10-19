@@ -6,6 +6,10 @@ from dataclasses import replace
 import pytest
 
 from potpie_context_engine.api import SemanticMutationRequest, build_graph_runtime
+from potpie_context_engine.adapters.outbound.graph.backends.stub_backend import (
+    StubGraphBackend,
+)
+from potpie_context_engine.application.services.context_reset import reset_context
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.testing import (
     InMemoryGraphBackend,
@@ -46,6 +50,11 @@ class _UncoordinatedBackend(_SyncOnlyBackend):
     def _replace_inner(self, inner):
         super()._replace_inner(inner)
         self.mutation = _UncoordinatedMutation(inner.mutation)
+
+
+def test_unimplemented_reset_preserves_explicit_capability_failure():
+    with pytest.raises(CapabilityNotImplemented, match="mutation.reset_pot"):
+        reset_context(StubGraphBackend("fixture"), None, pot_id="p", mutation_id=None)
 
 
 @pytest.mark.parametrize("mode", ["sync", "async"])

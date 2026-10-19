@@ -502,7 +502,7 @@ def test_a_record_the_store_refuses_is_not_reported_as_a_write(
             error="claim store refused the batch",
         )
 
-    monkeypatch.setattr(in_memory_backend._Mutation, "apply", _refuse)
+    monkeypatch.setattr(in_memory_backend._Mutation, "compare_and_apply", _refuse)
     _common.set_json(True)
 
     result = CliRunner().invoke(

@@ -12,7 +12,11 @@ from datetime import datetime
 import threading
 from .graph_plans import GraphMutationPlanRecord
 from .mutation_execution import request_fingerprint as _request_fingerprint
-from .legacy_repair_run import RepairRun, validate_repair_reservation
+from .legacy_repair_run import (
+    RepairRun,
+    validate_repair_reservation,
+    validate_repair_child_reservations,
+)
 
 
 @dataclass(slots=True)
@@ -36,6 +40,7 @@ class InMemoryGraphPlanStore:
                 for record in child_records
             ):
                 raise ValueError("repair child plan identity is already reserved")
+            validate_repair_child_reservations(self._records.values(), child_records)
             records = deepcopy(child_records)
             stored = deepcopy(run)
             self._records.update(

@@ -40,6 +40,7 @@ from potpie_context_engine.core.graph_mutations import (  # noqa: E402
     ProvenanceRef,
 )
 from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter  # noqa: E402
+from potpie_context_engine.core.reconciliation import MutationBatch  # noqa: E402
 
 
 class _Settings:
@@ -150,25 +151,38 @@ def test_write_read_reset_roundtrip(shared_graph) -> None:
     )
     assert "Service" in labels["service:web"]
 
-    # Invalidate the edge → no longer in the live set.
-    n_inv = asyncio.run(
-        writer.invalidate(
-            pot,
-            [
+    # Resolve raw invalidation inside the atomic backend. The low-level writer
+    # consumes frozen closures and cannot select correction targets itself.
+    backend = FalkorDBGraphBackend(settings, graph_provider=lambda: shared_graph)
+    invalidated = backend.mutation.apply(
+        MutationBatch(
+            invalidations=[
                 InvalidationOp(
                     target_entity_key=None,
                     target_edge=("DEPENDS_ON", "service:web", "service:auth"),
                     reason="test",
                 )
-            ],
-            prov,
-        )
+            ]
+        ),
+        expected_pot_id=pot,
     )
-    assert n_inv == 1
+    assert invalidated.ok
+    assert (
+        invalidated.execution.version_after == invalidated.execution.version_before + 1
+    )
     assert (
         reader.find_claims(ClaimQueryFilter(pot_id=pot, predicate_in=("DEPENDS_ON",)))
         == []
     )
+    history = reader.find_claims(
+        ClaimQueryFilter(
+            pot_id=pot, predicate_in=("DEPENDS_ON",), include_invalidated=True
+        )
+    )
+    assert len(history) == 1
+    assert history[0].record_id == rows[0].record_id
+    assert history[0].valid_at == rows[0].valid_at
+    assert history[0].invalid_at is not None
 
     # reset_pot clears the partition with the Neo4j-parity result contract.
     final = asyncio.run(writer.reset_pot(pot))
@@ -228,7 +242,8 @@ def test_entity_label_repair_cleans_existing_pollution(shared_graph) -> None:
     key = "environment:production"
     shared_graph.query(
         "MERGE (e:Entity {group_id: $gid, entity_key: $key}) "
-        "SET e:Activity:ConfigVariable:DeploymentTarget:Environment",
+        "SET e:Activity:ConfigVariable:DeploymentTarget:Environment, "
+        "e.record_id = 'fixture-environment', e.uuid = 'fixture-environment'",
         params={"gid": pot, "key": key},
     )
 

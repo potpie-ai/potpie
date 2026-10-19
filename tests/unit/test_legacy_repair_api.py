@@ -257,3 +257,60 @@ async def test_sync_repair_facade_refuses_active_loop_without_side_effects(tmp_p
     with pytest.raises(RuntimeCompositionError, match="async"):
         services.graph_workbench.repair_legacy(pot_id="p", mode="dry_run")
     assert backend.mutation.current_version("p") == 0
+
+
+@pytest.mark.anyio
+async def test_cancelled_public_repair_recovers_receipt_before_late_finalizer(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import threading
+
+    backend, services = _compose(tmp_path)
+    manager = build_local_resource_manager(services)
+    client = LocalEngineClient(
+        selector=ContextSelector(kind="explicit", value="p"),
+        authentication={"kind": "local_cli"},
+        resource_manager=manager,
+        coordinator=OperationCoordinator(),
+    )
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original = LocalJsonGraphPlanStore.compare_and_set
+
+    def pause_finalization(store, *, expected, replacement):
+        if replacement.status == "committed" and not entered.is_set():
+            entered.set()
+            try:
+                if not release.wait(15):
+                    raise TimeoutError(
+                        "acceptance finalization barrier was not released"
+                    )
+                return original(store, expected=expected, replacement=replacement)
+            finally:
+                finished.set()
+        return original(store, expected=expected, replacement=replacement)
+
+    try:
+        preview = await client.repair(RepairRequest(legacy_mode="dry_run"))
+        request = RepairRequest(legacy_mode="apply", repair_id=preview.value.repair_id)
+        confirmation = DestructiveConfirmation(confirmed=True)
+        monkeypatch.setattr(
+            LocalJsonGraphPlanStore, "compare_and_set", pause_finalization
+        )
+        task = asyncio.create_task(client.repair(request, confirmation=confirmation))
+        assert await asyncio.to_thread(entered.wait, 10)
+        assert backend.mutation.current_version("p") == 1
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        recovered = await client.repair(request, confirmation=confirmation)
+        assert isinstance(recovered, Success) and recovered.value.ok
+        assert recovered.value.completed_batches == 1
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 10)
+        replay = await client.repair(request, confirmation=confirmation)
+        assert replay.value.executions == recovered.value.executions
+        assert backend.mutation.current_version("p") == 1
+    finally:
+        release.set()
+        await manager.shutdown()

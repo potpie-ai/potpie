@@ -323,10 +323,13 @@ machinery for large baseline/ingestion writes. Full flags in [cli-flow.md](./cli
 ## 6. Spine B — direct mutate (record bridge only)
 
 `DefaultGraphService.mutate(request)` (`application/services/graph_service.py`):
-validate → (reject early) → lower → if `dry_run` return preview counts → if `review_required`
-return without writing → else `backend.mutation.apply(plan.batch, …)` **immediately**. No plan
-persistence, no TTL, no version-conflict guard. Returns a `SemanticMutationResult`
-(`applied | validated | rejected | review_required | error`).
+validates the request, then delegates preparation and execution to the shared
+workbench owner. Dry-run returns a preview. Accepted writes persist a frozen
+preparation, use the atomic request reservation and compare-and-apply contract,
+and recover original receipts on retry. Review-required operations retain their
+approval requirements. A missing atomic capability fails before writing. The
+result retains the public semantic result shape; request/plan/execution identities
+allow recoverable retries. See [reliable mutations](./reliable-mutations.md).
 
 **What reaches Spine B today:**
 
@@ -350,29 +353,22 @@ The bridge is exposed by the `potpie record` compatibility command.
 
 ## 7. The single backend write door
 
-All applies — from both spines — converge on `apply_mutation_batch`
-(`adapters/outbound/graph/apply_plan.py`, alias `apply_reconciliation_plan`). The sync
-`GraphMutationPort.apply(...)` bridges to this async function via a loop-aware `asyncio.run` in
-each backend. It:
+Direct semantic writes and planned commits share the workbench preparation and
+execution owners. Raw/reconciled batches, invalidation, repair, supported reset,
+snapshot import and journal changes enter their backend's atomic mutation owner.
+Memory/JSON stage coherent state; FalkorDB uses native WATCH and a guarded command;
+Neo4j uses a managed transaction. Graph changes, one revision transition and the
+execution receipt share that boundary. The shared apply-plan writer orchestrates
+canonical verbs where appropriate; it does not replace native atomicity.
 
-1. runs `validate_reconciliation_plan` (the pre-apply gate, §8);
-2. mints a per-apply `mutation_id` (uuid4);
-3. builds a `ProvenanceRef` — for event-less batches it uses
-   `ProvenanceContext.source_event_id` or a **stable blake2b content fingerprint of the whole
-   batch** (`_stable_batch_source_id`), *never* the per-apply uuid, so retries stay idempotent and
-   do not mint duplicate edges;
-4. runs the **four verbs, in order**, on `GraphWriterPort`:
-   `upsert_entities → upsert_edges → delete_edges → invalidate`;
-5. returns a `MutationResult` (ok, `mutation_id`, summary counts, downgrades).
-
-Below this sits the **Position-B canonical writer** shared by both the Neo4j and FalkorDB writers
-(`adapters/outbound/graph/cypher.py`): claims are
-`(:Entity {group_id, entity_key})-[:RELATES_TO {name, source_ref, valid_at, invalid_at, …}]->(:Entity)`.
-The MERGE key *includes* `source_ref` so corroborating writes from different sources don't
-collide; bitemporal stamps separate event time (`valid_at`/`invalid_at`) from system time
-(`created_at`); `_supersede_singleton_predecessors` stamps `invalid_at` on prior disagreeing live
-singleton claims (`OWNED_BY` is the only singleton). Backend coverage and the `GraphWriterPort`
-shape are detailed in [architecture.md](./architecture.md).
+Native relationships use `record_id` for physical identity. `claim_key` remains a
+logical identity across reasserted incarnations. Shared lifecycle policy restricts
+singleton supersession to the same source and environment, while corrections
+carry exact reviewed incarnation targets and dependent effects. Occurrence,
+validity and observation times remain distinct. Receipt replay precedes stale
+revision checks and does not regenerate preparation. Complete backend capability,
+recovery and migration contracts are in
+[reliable-mutations.md](./reliable-mutations.md).
 
 ---
 

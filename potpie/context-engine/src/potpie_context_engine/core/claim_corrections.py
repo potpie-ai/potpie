@@ -279,7 +279,9 @@ def prepare_claim_closures(
                 )
             op.closures = tuple(closures)
             if isinstance(op, InvalidationOp):
-                _derived_effects(batch, op, selected, point, bindings)
+                _derived_effects(
+                    batch, op, selected, point, bindings, observed_at=anchor
+                )
                 op.target_claim_keys = (
                     tuple(dict.fromkeys(c.target.claim_key for c in closures))
                     if all(c.target.claim_key is not None for c in closures)
@@ -331,6 +333,8 @@ def _derived_effects(
     selected: list[ClaimRow],
     point: datetime,
     bindings: list[SupersessionBinding],
+    *,
+    observed_at: datetime,
 ) -> None:
     from .graph_mutations import EdgeUpsert, EntityUpsert
 
@@ -423,7 +427,7 @@ def _derived_effects(
                 "source_ref": row.source_ref,
                 "source_identity_stable": False,
                 "valid_at": iso(point),
-                "observed_at": iso(point),
+                "observed_at": iso(observed_at),
                 "fact": f"{op.superseded_by_key} supersedes {old_key}: {op.reason}",
                 "correction_reason": op.reason,
                 "supersedes_claim_key": row.claim_key,

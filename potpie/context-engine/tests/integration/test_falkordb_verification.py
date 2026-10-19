@@ -1,3 +1,4 @@
+# ruff: noqa: F811 - imported pytest fixtures are injected as test parameters.
 """Native server/Lite acceptance for exact-incarnation workbench verification."""
 
 import asyncio
@@ -277,9 +278,9 @@ def test_unprovable_stored_times_are_inconclusive_unless_content_also_mismatches
     assert set(diagnostic_fields).issubset(evidence.temporal_diagnostics)
     before_verification = snapshot(graph)
     report = workbench.verify_commit(proposed.plan_id, pot_id="p")
-    assert report.outcome == (
-        "mismatched" if content_mismatch else "inconclusive"
-    ), report.to_dict()
+    assert report.outcome == ("mismatched" if content_mismatch else "inconclusive"), (
+        report.to_dict()
+    )
     assert report.state == ("completed" if content_mismatch else "deferred")
     assert report.ok is False
     assert report.checked_revision == revision(graph)
