@@ -18,7 +18,7 @@ from potpie_context_engine.core.context_events import ContextEvent, EventRef
 from potpie_context_engine.core.graph_mutations import EntityUpsert
 from potpie_context_engine.core.llm_reconciliation import ReconciliationRequest
 from potpie_context_engine.core.ports.agent_context import ResolveRequest
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 
 def _make_request(
@@ -168,8 +168,8 @@ def test_snapshot_omits_semantic_seed_when_none() -> None:
     assert "source_ref_hits" not in snap
 
 
-def _plan_with_n_entities(n: int) -> ReconciliationPlan:
-    return ReconciliationPlan(
+def _plan_with_n_entities(n: int) -> MutationBatch:
+    return MutationBatch(
         event_ref=EventRef(event_id="e1", source_system="github", pot_id="pot-1"),
         summary="s",
         entity_upserts=[
