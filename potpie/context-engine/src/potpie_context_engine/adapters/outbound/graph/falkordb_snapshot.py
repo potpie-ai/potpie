@@ -62,13 +62,6 @@ class FalkorDBSnapshot:
 
                 read_revision(graph, pot_id, pipe)
                 entities, claims = _snapshot_rows(graph, pipe, pot_id)
-                from .falkordb_journal import _state
-                from .journal_snapshot_policy import require_snapshot_identity
-
-                if _state(graph, pot_id, pipe) is not None:
-                    require_snapshot_identity(
-                        props.get("claim_key") for props in claims
-                    )
                 pipe.multi()
                 pipe.execute()
                 return payload_from_rows(

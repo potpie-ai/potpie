@@ -19,6 +19,8 @@ Two outputs per request:
 
 from __future__ import annotations
 
+from .claim_codec import claim_preservation_snapshot as _claim_snapshot
+
 from contextvars import ContextVar
 from datetime import datetime
 from typing import Mapping
@@ -145,7 +147,9 @@ def _validate_preservation_guards(request, plan, claim_query) -> None:
         claim_key = str(expected.get("claim_key") or "")
         preserve_key = str(op.extra.get("_preserve_claim_key") or "")
         operation_matches = (
-            preserve_key == claim_key
+            bool(expected.get("record_id"))
+            and op.extra.get("_preserve_claim_record_id") == expected.get("record_id")
+            and preserve_key == claim_key
             and (op.predicate or "").strip().upper() == expected.get("predicate")
             and op.subject is not None
             and op.subject.key == expected.get("subject_key")
@@ -157,12 +161,16 @@ def _validate_preservation_guards(request, plan, claim_query) -> None:
                 ClaimQueryFilter(
                     pot_id=request.pot_id,
                     claim_key_in=(claim_key,),
+                    record_id_in=(
+                        (expected["record_id"],) if expected.get("record_id") else ()
+                    ),
                     include_invalidated=True,
                 )
             )
             if claim_query is not None and claim_key
             else []
         )
+        rows = [row for row in rows if row.record_id == expected.get("record_id")]
         if (
             not operation_matches
             or len(rows) != 1
@@ -181,31 +189,6 @@ def _validate_preservation_guards(request, plan, claim_query) -> None:
         plan.issues = (*plan.issues, *issues)
         plan.ok = False
         plan.decision = "rejected"
-
-
-def _claim_snapshot(row) -> dict:
-    def timestamp(value):
-        return value.isoformat() if value is not None else None
-
-    return {
-        "claim_key": row.claim_key,
-        "predicate": row.predicate,
-        "subject_key": row.subject_key,
-        "object_key": row.object_key,
-        "fact": row.fact,
-        "description": row.description,
-        "source_system": row.source_system,
-        "source_refs": list(row.source_refs),
-        "evidence": [dict(item) for item in row.evidence],
-        "properties": dict(row.properties),
-        "valid_at": timestamp(row.valid_at),
-        "invalid_at": timestamp(row.invalid_at),
-        "valid_until": timestamp(row.valid_until),
-        "observed_at": timestamp(row.observed_at),
-        "truth": row.truth,
-        "confidence": row.confidence,
-        "environment": row.environment,
-    }
 
 
 def _validate_semantic_request(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 import uuid
 
@@ -26,6 +27,7 @@ from ._mutation_execution import (
     mutation_batch_fingerprint,
     validate_execution_replay,
     validate_prepared_execution,
+    validate_new_preparation,
 )
 from .memory_journal import MemoryJournal, adopt_store, clone_store
 
@@ -67,6 +69,7 @@ def apply_transaction(
             raise MutationExecutionAmbiguousError(
                 prior.detail or f"mutation execution is {prior.state}"
             )
+        validate_new_preparation(provenance)
         current = owner.revisions.get(expected_pot_id, 0)
         frozen_version = (
             provenance.prepared.expected_version
@@ -78,6 +81,7 @@ def apply_transaction(
                 raise GraphMutationVersionConflict(
                     expected=required_version, current=current
                 )
+        applied_at = datetime.now(timezone.utc)
         validated = deepcopy(original)
         validate_reconciliation_plan(
             validated,
@@ -103,10 +107,15 @@ def apply_transaction(
                 pot_id=expected_pot_id,
                 mutation_id=mutation_id,
                 provenance=provenance,
+                applied_at=applied_at,
             )
         else:
             result = writer._apply_uncached(
-                validated, expected_pot_id=expected_pot_id, mutation_id=mutation_id
+                validated,
+                expected_pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+                provenance=provenance,
+                applied_at=applied_at,
             )
         result = complete_execution(
             result,
@@ -117,6 +126,7 @@ def apply_transaction(
             record_ids=_affected_claim_ids(
                 owner.store.rows, writer.store.rows, expected_pot_id
             ),
+            applied_at=applied_at,
         )
         assert result.execution is not None
         writer.revisions[expected_pot_id] = result.execution.version_after

@@ -60,11 +60,13 @@ WHERE r.group_id = $gid
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
+  AND ($record_ids IS NULL OR coalesce(r.record_id, r.uuid) IN $record_ids)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
   AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
   AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
+  AND ($environments IS NULL OR toLower(coalesce(r.environment, '')) IN $environments)
   AND ($include_invalid OR (
     (coalesce(r.valid_from, r.valid_at) IS NULL OR coalesce(r.valid_from, r.valid_at) <= $query_time)
     AND (r.valid_until IS NULL OR $query_time < r.valid_until)
@@ -147,6 +149,7 @@ class Neo4jClaimQueryStore:
             "subjects": list(filter_.subject_key_in) or None,
             "objects": list(filter_.object_key_in) or None,
             "claim_keys": list(filter_.claim_key_in) or None,
+            "record_ids": list(filter_.record_id_in) or None,
             "subgraphs": list(filter_.subgraph_in) or None,
             "excluded_subgraphs": list(filter_.subgraph_not_in) or None,
             "mutation_ids": list(filter_.mutation_id_in) or None,

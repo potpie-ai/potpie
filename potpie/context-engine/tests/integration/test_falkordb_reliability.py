@@ -9,6 +9,7 @@ import threading
 import time
 from urllib.parse import urlparse
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from redis.exceptions import ConnectionError, ResponseError
@@ -21,6 +22,8 @@ from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend imp
     FalkorDBGraphBackend,
 )
 from potpie_context_engine.core.errors import GraphMutationVersionConflict
+from potpie_context_engine.core.claim_preparation import prepare_claim_assertions
+from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -94,7 +97,16 @@ def batch(value="before"):
     )
 
 
-def context(plan, mid="m1", *, version=0, request="request-one"):
+def context(plan, mid="m1", *, version=0, request="request-one", query=None):
+    if any(edge.resolution is None for edge in plan.edge_upserts):
+        prepare_claim_assertions(
+            plan,
+            pot_id="p",
+            mutation_id=mid,
+            anchor=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            query=query or SimpleNamespace(find_claims=lambda _: []),
+            definition=DEFAULT_GRAPH_DEFINITION,
+        )
     return ProvenanceContext(
         mutation_id=mid,
         source_event_id=f"event:{mid}",
@@ -260,7 +272,9 @@ def test_runtime_failure_after_graph_and_receipt_writes_rolls_back(graph, monkey
             failing,
             expected_pot_id="p",
             expected_version=1,
-            provenance_context=context(failing, "failed", version=1),
+            provenance_context=context(
+                failing, "failed", version=1, query=backend(graph).claim_query
+            ),
         )
     assert snapshot(graph) == before
     assert (
@@ -335,11 +349,12 @@ def test_existing_claim_record_identity_is_preserved(graph):
     )
     graph.query("MATCH ()-[r:RELATES_TO]->() SET r.record_id='existing-record'")
     before = graph.ro_query("MATCH ()-[r:RELATES_TO]->() RETURN r.uuid").result_set
+    plan = batch()
     result = store.mutation.compare_and_apply(
         plan,
         expected_pot_id="p",
         expected_version=1,
-        provenance_context=context(plan, "again", version=1),
+        provenance_context=context(plan, "again", version=1, query=store.claim_query),
     )
     assert result.execution.affected_claim_record_ids == ("existing-record",)
     assert (
@@ -418,7 +433,7 @@ def test_legacy_receipt_preserves_unknown_execution_metadata(graph):
         plan,
         expected_pot_id="p",
         expected_version=999,
-        provenance_context=context(plan, "legacy"),
+        provenance_context=ProvenanceContext(mutation_id="legacy"),
     )
     assert replay == receipt.result
     assert store.mutation.current_version("p") == 0
@@ -485,7 +500,9 @@ def test_journal_metadata_empty_revision_and_native_rollback(graph, monkeypatch)
             failing,
             expected_pot_id="p",
             expected_version=1,
-            provenance_context=context(failing, "failed", version=1),
+            provenance_context=context(
+                failing, "failed", version=1, query=store.claim_query
+            ),
         )
     assert snapshot(graph) == before
     assert (

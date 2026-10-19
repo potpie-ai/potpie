@@ -39,6 +39,7 @@ def _claim(environment="prod", source="incident:original", target="service:ledge
         "object": {"key": target, "type": "Service"},
         "environment": environment,
         "truth": "source_observation",
+        "valid_from": "2025-01-01T00:00:00+00:00",
         "evidence": [{"source_ref": source}],
         "description": "Payments calls ledger in this environment",
     }

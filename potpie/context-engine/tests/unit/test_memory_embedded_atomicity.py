@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 import json
@@ -23,6 +24,8 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
     _Mutation,
 )
 from potpie_context_engine.core.errors import GraphMutationVersionConflict
+from potpie_context_engine.core.claim_preparation import prepare_claim_assertions
+from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION
 from potpie_context_engine.core.graph_mutations import (
     EdgeUpsert,
     EntityUpsert,
@@ -61,13 +64,27 @@ def _plan() -> MutationBatch:
             EntityUpsert("service:b", ("Service",)),
         ],
         edge_upserts=[
-            EdgeUpsert("RELATES_TO", "service:a", "service:b", {"fact": "first"}),
-            EdgeUpsert("RELATES_TO", "service:b", "service:a", {"fact": "second"}),
+            EdgeUpsert("RELATED_TO", "service:a", "service:b", {"fact": "first"}),
+            EdgeUpsert("RELATED_TO", "service:b", "service:a", {"fact": "second"}),
         ],
     )
 
 
-def _context(plan, *, mutation_id="write", request="request", version=0):
+def _context(plan, *, mutation_id="write", request="request", version=0, backend=None):
+    anchor = datetime(2026, 10, 19, tzinfo=timezone.utc)
+    for edge in plan.edge_upserts:
+        edge.properties.setdefault("source_system", "fixture")
+        edge.properties.setdefault("source_ref", "fixture:atomic")
+        edge.properties.setdefault("valid_at", anchor.isoformat())
+        edge.properties.setdefault("observed_at", anchor.isoformat())
+    prepare_claim_assertions(
+        plan,
+        pot_id=POT,
+        mutation_id=mutation_id,
+        anchor=anchor,
+        query=(backend or InMemoryGraphBackend()).claim_query,
+        definition=DEFAULT_GRAPH_DEFINITION,
+    )
     return ProvenanceContext(
         mutation_id=mutation_id,
         prepared=PreparedMutation(
@@ -76,7 +93,7 @@ def _context(plan, *, mutation_id="write", request="request", version=0):
             request,
             batch_fingerprint(plan),
             version,
-            datetime(2026, 10, 19, tzinfo=timezone.utc),
+            anchor,
         ),
     )
 
@@ -96,8 +113,8 @@ def test_internal_failure_leaves_no_data_revision_or_receipt(
     plan = _plan()
     original = _Mutation._upsert_claim_row
 
-    def fail_after_first_write(self, row):
-        original(self, row)
+    def fail_after_first_write(self, row, **kwargs):
+        original(self, row, **kwargs)
         raise RuntimeError("injected internal apply failure")
 
     with monkeypatch.context() as patch:
@@ -157,6 +174,8 @@ def test_partial_json_write_leaves_original_state_and_receipts(tmp_path, monkeyp
         plan, expected_pot_id=POT, provenance_context=_context(plan)
     )
     before = (tmp_path / "graph.json").read_bytes()
+    second = deepcopy(plan)
+    second_context = _context(second, mutation_id="second", version=1, backend=backend)
 
     from potpie_context_engine.adapters.outbound.graph import _local_json_atomic
 
@@ -178,15 +197,15 @@ def test_partial_json_write_leaves_original_state_and_receipts(tmp_path, monkeyp
         patch.setattr(_local_json_atomic.os, "fdopen", partial_stream)
         with pytest.raises(OSError, match="partial JSON write"):
             backend.mutation.apply(
-                plan,
+                second,
                 expected_pot_id=POT,
-                provenance_context=_context(plan, mutation_id="second", version=1),
+                provenance_context=second_context,
             )
     assert (tmp_path / "graph.json").read_bytes() == before
     restarted = EmbeddedGraphBackend(home=tmp_path)
     assert restarted.mutation.current_version(POT) == 1
     assert _lookup(restarted, plan).result == original
-    assert _lookup(restarted, plan, mutation_id="second").state == "absent"
+    assert _lookup(restarted, second, mutation_id="second").state == "absent"
 
 
 @pytest.mark.parametrize("journal", [False, True])
@@ -198,8 +217,8 @@ def test_reader_waits_for_complete_batch(backend, monkeypatch, journal):
     reader_started = threading.Event()
     original = _Mutation._upsert_claim_row
 
-    def pause_after_write(self, row):
-        original(self, row)
+    def pause_after_write(self, row, **kwargs):
+        original(self, row, **kwargs)
         if not first_write.is_set():
             first_write.set()
             assert release.wait(timeout=5)

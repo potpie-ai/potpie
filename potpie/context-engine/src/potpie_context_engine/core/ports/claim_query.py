@@ -73,6 +73,7 @@ class ClaimQueryFilter:
     subject_key_in: tuple[str, ...] = ()
     object_key_in: tuple[str, ...] = ()
     claim_key_in: tuple[str, ...] = ()
+    record_id_in: tuple[str, ...] = ()
     subgraph_in: tuple[str, ...] = ()
     subgraph_not_in: tuple[str, ...] = ()
     mutation_id_in: tuple[str, ...] = ()

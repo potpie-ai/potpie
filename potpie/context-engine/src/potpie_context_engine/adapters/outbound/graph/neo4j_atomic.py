@@ -23,6 +23,7 @@ from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     complete_execution,
     validate_execution_replay,
     validate_prepared_execution,
+    validate_new_preparation,
 )
 from potpie_context_engine.adapters.outbound.graph.apply_plan import (
     apply_mutation_batch,
@@ -158,6 +159,7 @@ async def apply_atomic(
                         cached.result, provenance=provenance_context
                     )
                     return cached.result
+                validate_new_preparation(provenance_context)
                 if expected_version is not None and current != expected_version:
                     raise GraphMutationVersionConflict(
                         expected=expected_version, current=current

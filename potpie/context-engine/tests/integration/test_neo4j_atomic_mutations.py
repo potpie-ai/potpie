@@ -312,7 +312,7 @@ def test_evidence_marker_refresh_preserves_invalidation_and_claim(expiry_days):
     backend = Neo4jGraphBackend(Settings())
     invalid_at = (datetime.now(timezone.utc) + timedelta(days=expiry_days)).isoformat()
 
-    def batch(properties):
+    def batch(properties, *, metadata_record_id=None):
         return MutationBatch(
             entity_upserts=[
                 EntityUpsert("document:guide", ("Entity", "Document")),
@@ -326,9 +326,11 @@ def test_evidence_marker_refresh_preserves_invalidation_and_claim(expiry_days):
                     {
                         "claim_key": "claim:guide-api",
                         "source_ref": "resource:guide",
+                        "source_system": "documents",
                         "fact": "Guide documents API behavior",
                         **properties,
                     },
+                    metadata_review_record_id=metadata_record_id,
                 )
             ],
         )
@@ -337,9 +339,12 @@ def test_evidence_marker_refresh_preserves_invalidation_and_claim(expiry_days):
         batch(
             {
                 "invalid_at": invalid_at,
+                "valid_from": (
+                    datetime.now(timezone.utc) - timedelta(days=30)
+                ).isoformat(),
                 "invalidation_reason": "scheduled source retirement",
                 "invalidated_by": "refresh:scheduled",
-            }
+            },
         ),
         expected_pot_id=pot,
         provenance_context=ProvenanceContext(mutation_id="marker-seed"),
@@ -356,7 +361,8 @@ def test_evidence_marker_refresh_preserves_invalidation_and_claim(expiry_days):
             {
                 "evidence_review_required": True,
                 "evidence_review_reason": "source version changed",
-            }
+            },
+            metadata_record_id=before.record_id,
         ),
         expected_pot_id=pot,
         provenance_context=ProvenanceContext(mutation_id="marker-refresh"),
@@ -381,12 +387,19 @@ def test_evidence_marker_refresh_preserves_invalidation_and_claim(expiry_days):
         expected_pot_id=pot,
         provenance_context=ProvenanceContext(mutation_id="ordinary-reassert"),
     )
-    revived = backend.claim_query.find_claims(
+    reasserted = backend.claim_query.find_claims(
         ClaimQueryFilter(
             pot_id=pot,
             claim_key_in=("claim:guide-api",),
             include_invalidated=True,
         )
     )
-    assert len(revived) == 1
-    assert revived[0].invalid_at is None
+    original = next(row for row in reasserted if row.record_id == before.record_id)
+    assert original.invalid_at.isoformat() == invalid_at
+    assert original.valid_at == before.valid_at
+    if expiry_days > 0:
+        assert len(reasserted) == 1
+    else:
+        assert len(reasserted) == 2
+        new = next(row for row in reasserted if row.record_id != before.record_id)
+        assert new.invalid_at is None

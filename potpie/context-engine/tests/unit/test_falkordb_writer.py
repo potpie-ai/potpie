@@ -71,9 +71,16 @@ class _FakeGraph:
         if "DETACH DELETE" in cypher:
             self._deleted = True
             return _FakeResult()
+        if "UNION ALL" in cypher and "AS identity" in cypher:
+            # No existing identities in these new-claim shim fixtures.
+            return _FakeResult()
         if "count(n) AS cnt" in cypher:
             val = 0 if self._deleted else self._count
             return _FakeResult(header=[[1, "cnt"]], result_set=[[val]])
+        if "CREATE (a)-[r:RELATES_TO]" in cypher:
+            # These writer-shim tests supply existing endpoints; candidate
+            # reads are empty and one new physical relationship is created.
+            return _FakeResult(header=[[1, "cnt"]], result_set=[[1]])
         return _FakeResult()
 
     def ro_query(self, cypher: str, params=None):
@@ -464,8 +471,8 @@ async def test_upsert_edges_writes_falkordb_vecf32_embedding() -> None:
     assert len(vector_writes) == 1
     _, params = vector_writes[0]
     assert params["embedding"] == [0.1, 0.2, 0.3]
-    assert params["embedding_model"] == "fake-embedder"
-    assert params["embedding_dim"] == 3
+    assert params["props"]["embedding_model"] == "fake-embedder"
+    assert params["props"]["embedding_dim"] == 3
 
 
 def test_build_falkordb_graph_server_mode_requires_url() -> None:

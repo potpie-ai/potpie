@@ -6,7 +6,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any, TYPE_CHECKING
 
 from potpie_context_engine.core.graph_journal import JournalError
-from potpie_context_engine.core.graph_snapshot import validate_snapshot_merge
+from potpie_context_engine.core.graph_snapshot import (
+    snapshot_claim_identity,
+    validate_snapshot_merge,
+)
 from potpie_context_engine.core.graph_snapshot_mutation import prepare_snapshot_import
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.journal_context import (
@@ -126,9 +129,13 @@ def apply_snapshot_import(
         incoming=payload,
     )
     entity_keys = {row["key"] for row in existing["entities"]}
-    claim_keys = {row["claim_key"] for row in existing["claims"]}
+    claim_keys = {snapshot_claim_identity(row) for row in existing["claims"]}
     entities = [row for row in payload["entities"] if row["key"] not in entity_keys]
-    claims = [row for row in payload["claims"] if row["claim_key"] not in claim_keys]
+    claims = [
+        row
+        for row in payload["claims"]
+        if snapshot_claim_identity(row) not in claim_keys
+    ]
     prepared_rows = [_row_from_dict(pot_id, row) for row in claims]
     for entity in entities:
         writer.store.set_entity_label(

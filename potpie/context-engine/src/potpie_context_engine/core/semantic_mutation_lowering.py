@@ -258,6 +258,7 @@ def _lower_claim(
             from_entity_key=subject.entity_key,
             to_entity_key=object_key,
             properties=props,
+            metadata_review_record_id=op.extra.get("_preserve_claim_record_id"),
         )
     )
     return [claim_key]
@@ -760,12 +761,13 @@ def _claim_properties(
         "confidence": op.confidence if op.confidence is not None else 1.0,
         "fact": fact,
         "description": op.description,
+        "source_identity_stable": bool(source_refs),
         "source_refs": source_refs,
         "evidence": evidence_dicts,
         "source_system": request.created_by.surface or "agent",
-        "source_ref": source_refs[0]
-        if source_refs
-        else (request.idempotency_key or claim_key),
+        "source_ref": (
+            source_refs[0] if source_refs else (request.idempotency_key or claim_key)
+        ),
         "valid_at": valid_at,
         "valid_from": valid_at,
         "observed_at": _utc_iso(op.observed_at) if op.observed_at else _now_iso(),
@@ -799,6 +801,13 @@ def _claim_properties(
     preserved_source_system = op.extra.get("_preserve_source_system")
     if isinstance(preserved_source_system, str):
         props["source_system"] = preserved_source_system
+    if op.extra.get("_preserve_claim_record_id"):
+        props["source_ref"] = op.extra.get("_preserve_source_ref")
+        snapshot = op.extra.get("_expected_claim_snapshot", {})
+        props["subgraph"] = snapshot.get("subgraph")
+        props["source_identity_stable"] = snapshot.get("properties", {}).get(
+            "source_identity_stable", False
+        )
     # Carry the scope hierarchy for the readers (R4) when the subject/object
     # properties or op extras name a code scope.
     code_scope = _code_scope_for(op)

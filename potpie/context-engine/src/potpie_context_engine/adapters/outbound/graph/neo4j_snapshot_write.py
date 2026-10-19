@@ -5,7 +5,10 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
-from potpie_context_engine.core.graph_snapshot import validate_snapshot_merge
+from potpie_context_engine.core.graph_snapshot import (
+    snapshot_claim_identity,
+    validate_snapshot_merge,
+)
 from potpie_context_engine.core.graph_snapshot_mutation import normalize_snapshot_import
 from potpie_context_engine.core.mutation_execution import MutationPersistenceError
 from potpie_context_engine.core.reconciliation import MutationResult, MutationSummary
@@ -60,10 +63,12 @@ async def merge_snapshot(
         incoming=incoming,
     )
     entity_keys = {item["key"] for item in existing["entities"]}
-    claim_keys = {item["claim_key"] for item in existing["claims"]}
+    claim_ids = {snapshot_claim_identity(item) for item in existing["claims"]}
     entities = [item for item in incoming["entities"] if item["key"] not in entity_keys]
     claims = [
-        item for item in incoming["claims"] if item["claim_key"] not in claim_keys
+        item
+        for item in incoming["claims"]
+        if snapshot_claim_identity(item) not in claim_ids
     ]
     for entity in entities:
         key, labels, props = stored_entity(entity, pot_id)

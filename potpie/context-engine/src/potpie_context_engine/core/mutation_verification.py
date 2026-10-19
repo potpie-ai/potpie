@@ -194,7 +194,13 @@ def _claim_content_readback(
         return {}
     expected: dict[str, dict[str, Any]] = {}
     for edge in batch.edge_upserts:
-        props = edge.properties
+        props = dict(edge.properties)
+        if edge.resolution is not None:
+            props["valid_until"] = (
+                edge.resolution.valid_until.isoformat()
+                if edge.resolution.valid_until
+                else None
+            )
         claim_key = str(props.get("claim_key") or "")
         if not claim_key:
             continue

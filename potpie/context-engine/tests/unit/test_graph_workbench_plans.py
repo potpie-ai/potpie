@@ -801,20 +801,20 @@ def test_commit_rejects_stale_plan_after_graph_version_changes() -> None:
     assert result.current_subgraph_versions["_global"] > 0
 
 
-def test_commit_rejects_stale_same_count_claim_overwrite() -> None:
+def test_commit_rejects_stale_same_count_claim_refresh() -> None:
     workbench, backend, _store = _service()
     initial = workbench.propose(_timeout_payload(10), pot_id=POT)
     assert workbench.commit(initial.plan_id, pot_id=POT).ok
 
-    stale = workbench.propose(_timeout_payload(20), pot_id=POT)
-    fresh = workbench.propose(_timeout_payload(30), pot_id=POT)
+    stale = workbench.propose(_timeout_payload(10), pot_id=POT)
+    fresh = workbench.propose(_timeout_payload(10), pot_id=POT)
     assert workbench.commit(fresh.plan_id, pot_id=POT).ok
     assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
 
     rejected = workbench.commit(stale.plan_id, pot_id=POT)
     assert rejected.status == "conflict"
     rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
-    assert rows[0].fact == "Ledger timeout is 30 seconds"
+    assert rows[0].fact == "Ledger timeout is 10 seconds"
 
 
 def test_competing_plans_compare_and_apply_once_per_backend_instance() -> None:
@@ -887,12 +887,19 @@ def test_embedded_competing_processes_atomically_compare_and_apply(tmp_path) -> 
     assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
 
 
-def test_verify_detects_later_content_change_at_same_claim_key() -> None:
-    workbench, _backend, _store = _service()
+def test_verify_detects_out_of_band_content_change_at_same_claim_key() -> None:
+    workbench, backend, _store = _service()
     first = workbench.propose(_timeout_payload(10), pot_id=POT)
     assert workbench.commit(first.plan_id, pot_id=POT, verify=True).ok
     second = workbench.propose(_timeout_payload(30), pot_id=POT)
-    assert workbench.commit(second.plan_id, pot_id=POT).ok
+    assert not second.ok
+    assert "explicit correction" in (second.detail or "")
+    # Corruption outside the supported mutation boundary must still be detected.
+    from dataclasses import replace
+
+    backend.store.rows[0] = replace(
+        backend.store.rows[0], fact="unexpected overwritten content"
+    )
 
     verification = workbench.verify_commit(first.plan_id, pot_id=POT)
     assert verification.ok is False

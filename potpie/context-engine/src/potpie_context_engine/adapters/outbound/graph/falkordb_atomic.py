@@ -28,22 +28,15 @@ from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     complete_execution,
     mutation_batch_fingerprint,
     validate_execution_replay,
+    validate_new_preparation,
     validate_prepared_execution,
 )
 from potpie_context_engine.adapters.outbound.graph.apply_plan import _build_provenance
 from potpie_context_engine.adapters.outbound.graph.cypher import (
-    _REVIVE_CLAUSE,
     _clean_entity_text,
     _coerce_props_for_neo4j,
-    _conditional_revive_clause,
-    _embedding_props,
-    _iso,
-    _render_fact,
-    _split_edge_properties,
-    _stable_source_ref,
     coherent_entity_labels,
     compact_entity_summary,
-    evidence_strength_for_truth,
 )
 
 from .falkordb_connection import transaction_client
@@ -149,7 +142,6 @@ def _compile(
         f"OPTIONAL MATCH (prior:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid}}) "
         "WITH v,prior WHERE v.version=$expected AND prior IS NULL"
     ]
-    affected = []
     counts = {"entities": 0, "edges": 0, "deletes": 0, "invalidations": 0}
     prov = provenance.to_properties()
     for i, item in enumerate(plan.entity_upserts):
@@ -180,7 +172,7 @@ def _compile(
         params[f"ead{i}"] = description
         clauses.append(
             f"CALL {{ WITH v MERGE (e:Entity {{group_id:$pot,entity_key:${key}}}) "
-            f"ON CREATE SET e.uuid=randomUUID(),e.created_at=timestamp() SET e+=${props} "
+            f"ON CREATE SET e.uuid=randomUUID(),e.created_at=timestamp() SET e.record_id=coalesce(e.record_id,e.uuid) SET e+=${props} "
             f"SET e.name=CASE WHEN $ean{i}<>'' THEN $ean{i} WHEN coalesce(e.name,'')='' THEN ${key} ELSE e.name END, "
             f"e.summary=CASE WHEN $eas{i}<>'' THEN $eas{i} WHEN coalesce(e.summary,'')='' THEN ${key} ELSE e.summary END, "
             f"e.description=CASE WHEN $ead{i}<>'' THEN $ead{i} WHEN coalesce(e.description,'')='' THEN ${key} ELSE e.description END "
@@ -188,199 +180,17 @@ def _compile(
             f"SET e:{label_text} RETURN count(e) AS ec{i} }}"
         )
         counts["entities"] += 1
-    for i, item in enumerate(plan.edge_upserts):
-        reserved, extras = _split_edge_properties(item.properties)
-        source = reserved.get("source_ref") or _stable_source_ref(
-            predicate=item.edge_type,
-            from_key=item.from_entity_key,
-            to_key=item.to_entity_key,
-            provenance=provenance,
-        )
-        raw = dict(extras)
-        valid_at = (
-            _iso(reserved.get("valid_at"))
-            or _iso(provenance.valid_from)
-            or params["now"]
-        )
-        source_system = (
-            reserved.get("source_system") or provenance.source_system or "agent"
-        )
-        truth = extras.get("truth") if isinstance(extras.get("truth"), str) else None
-        raw.setdefault(
-            "fact",
-            _render_fact(
-                predicate=item.edge_type,
-                from_key=item.from_entity_key,
-                to_key=item.to_entity_key,
-                extra=reserved,
-            ),
-        )
-        raw["valid_at"] = valid_at
-        raw["source_system"] = source_system
-        raw["evidence_strength"] = evidence_strength_for_truth(truth)
-        raw["observed_at"] = params["now"]
-        if reserved.get("fact_embedding") is not None:
-            raw["fact_embedding"] = reserved["fact_embedding"]
-        if reserved.get("confidence") is not None:
-            raw["confidence"] = float(reserved["confidence"])
-        elif provenance.confidence is not None:
-            raw["confidence"] = float(provenance.confidence)
-        raw.update(
-            _embedding_props(
-                embedder=embedder,
-                predicate=item.edge_type,
-                from_key=item.from_entity_key,
-                to_key=item.to_entity_key,
-                edge_props=raw,
-            )
-        )
-        raw["provenance_source_event"] = provenance.source_event_id
-        raw["mutation_id"] = mutation_id
-        claim_key = raw.get("claim_key")
-        preserve_lifecycle = raw.get("evidence_review_required") is True
-        for name, value in (
-            (f"ef{i}", item.from_entity_key),
-            (f"et{i}", item.to_entity_key),
-            (f"en{i}", item.edge_type),
-            (f"es{i}", source),
-            (f"eprop{i}", _coerce_props_for_neo4j(raw)),
-            (f"eclaim{i}", claim_key),
-            (f"ev{i}", valid_at),
-            (f"epreserve{i}", preserve_lifecycle),
-        ):
-            params[name] = value
-        clauses.append(
-            f"CALL {{ WITH v MATCH (a:Entity {{group_id:$pot,entity_key:$ef{i}}}) "
-            f"MATCH (b:Entity {{group_id:$pot,entity_key:$et{i}}}) "
-            f"MERGE (a)-[r:RELATES_TO {{group_id:$pot,name:$en{i},subject_key:$ef{i},object_key:$et{i},source_ref:$es{i}"
-            + (f",claim_key:$eclaim{i}" if claim_key else "")
-            + "}]->(b) "
-            f"ON CREATE SET r.uuid=randomUUID(),r.created_at=$now "
-            f"SET r.revived_at=CASE WHEN r.invalid_at IS NULL OR ($epreserve{i} AND r.invalid_at IS NOT NULL) "
-            f"THEN r.revived_at ELSE $now END SET {_conditional_revive_clause(alias='r', preserve_param=f'epreserve{i}')} "
-            f"SET r+= $eprop{i} "
-            f"RETURN count(r) AS xc{i},collect(DISTINCT coalesce(r.record_id,r.uuid)) AS xr{i} }}"
-        )
-        affected.append(f"xr{i}")
-        if (
-            item.edge_type in definition.singleton_predicates
-            and evidence_strength_for_truth(truth) == "deterministic"
-        ):
-            clauses.append(
-                f"CALL {{ WITH v OPTIONAL MATCH (:Entity {{group_id:$pot,entity_key:$ef{i}}})"
-                f"-[old:RELATES_TO {{group_id:$pot,name:$en{i}}}]->(other:Entity) "
-                f"WHERE other.entity_key <> $et{i} AND old.invalid_at IS NULL "
-                "FOREACH (_ IN CASE WHEN old IS NULL THEN [] ELSE [1] END | "
-                f"SET old.invalid_at=$ev{i},old.expired_at=$now,"
-                f"old.superseded_by_object=$et{i},old.supersession_reason='singleton_predicate') "
-                f"RETURN count(old) AS sc{i},collect(DISTINCT coalesce(old.record_id,old.uuid)) AS sr{i} }}"
-            )
-            affected.append(f"sr{i}")
-        counts["edges"] += 1
-    for i, item in enumerate(plan.edge_deletes):
-        params.update(
-            {
-                f"df{i}": item.from_entity_key,
-                f"dt{i}": item.to_entity_key,
-                f"dn{i}": item.edge_type,
-            }
-        )
-        clauses.append(
-            f"CALL {{ WITH v OPTIONAL MATCH (:Entity {{group_id:$pot,entity_key:$df{i}}})-[r:RELATES_TO {{group_id:$pot,name:$dn{i},object_key:$dt{i}}}]->() "
-            f"FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END | SET r.invalid_at=$now,r.expired_at=$now,r.deleted_by=$mid) "
-            f"RETURN count(r) AS dc{i},collect(DISTINCT coalesce(r.record_id,r.uuid)) AS dr{i} }}"
-        )
-        affected.append(f"dr{i}")
-        counts["deletes"] += 1
+    from .falkordb_claims import publication_clauses
+
+    clauses.extend(publication_clauses(plan))
     for i, item in enumerate(plan.invalidations):
-        prop = {
-            "invalid_at": item.valid_to or params["now"],
-            "expired_at": params["now"],
-            "invalidation_reason": item.reason,
-            "invalidated_by": provenance.source_event_id,
-        }
-        params[f"ip{i}"] = prop
-        matches = []
-        if item.target_claim_keys is not None:
-            params[f"ick{i}"] = list(item.target_claim_keys)
-            matches.append(
-                f"OPTIONAL MATCH ()-[r{i}a:RELATES_TO {{group_id:$pot}}]->() "
-                f"WHERE r{i}a.claim_key IN $ick{i} AND r{i}a.invalid_at IS NULL"
-            )
         if item.target_entity_key:
             params[f"iek{i}"] = item.target_entity_key
-            matches.append(
-                f"OPTIONAL MATCH (r{i}b:Entity {{group_id:$pot,entity_key:$iek{i}}})"
-            )
-        if not matches:
-            edge, src, dst = item.target_edge or ("", "", "")
-            params.update({f"in{i}": edge, f"if{i}": src, f"it{i}": dst})
-            matches.append(
-                f"OPTIONAL MATCH (:Entity {{group_id:$pot,entity_key:$if{i}}})-"
-                f"[r{i}c:RELATES_TO {{group_id:$pot,name:$in{i},object_key:$it{i}}}]->() "
-                f"WHERE r{i}c.invalid_at IS NULL"
-            )
-        aliases = [
-            f"r{i}{suffix}"
-            for suffix in ("a", "b", "c")
-            if any(f"r{i}{suffix}" in match for match in matches)
-        ]
-        updates = " ".join(
-            f"FOREACH (_ IN CASE WHEN {alias} IS NULL THEN [] ELSE [1] END | SET {alias} += $ip{i})"
-            for alias in aliases
-        )
-        count_expr = "+".join(f"count(DISTINCT {alias})" for alias in aliases)
-        claim_aliases = [alias for alias in aliases if not alias.endswith("b")]
-        claim_ids = ",".join(
-            f"collect(DISTINCT coalesce({alias}.record_id,{alias}.uuid)) AS ir{i}{j}"
-            for j, alias in enumerate(claim_aliases)
-        )
-        clauses.append(
-            f"CALL {{ WITH v {' '.join(matches)} {updates} RETURN {count_expr} AS ic{i}"
-            + (f",{claim_ids}" if claim_ids else "")
-            + " }"
-        )
-        affected.extend(f"ir{i}{j}" for j in range(len(claim_aliases)))
-        if item.superseded_by_key:
-            old_key = item.target_entity_key or (
-                item.target_edge[2] if item.target_edge else None
-            )
-            if old_key:
-                supersedes_revive = _REVIVE_CLAUSE.replace("r.", "s.")
-                supersedes_source = _stable_source_ref(
-                    predicate="SUPERSEDES",
-                    from_key=item.superseded_by_key,
-                    to_key=old_key,
-                    provenance=provenance,
-                )
-                params[f"isn{i}"] = item.superseded_by_key
-                params[f"iso{i}"] = old_key
-                params[f"isr{i}"] = item.reason
-                params[f"iss{i}"] = supersedes_source
-                params[f"isprop{i}"] = _coerce_props_for_neo4j(
-                    {
-                        "fact": item.reason,
-                        "reason": item.reason,
-                        "valid_at": item.valid_to or params["now"],
-                        "source_system": provenance.source_system or "agent",
-                        "evidence_strength": "deterministic",
-                        "observed_at": params["now"],
-                        "provenance_source_event": provenance.source_event_id,
-                        "mutation_id": mutation_id,
-                    }
-                )
-                clauses.append(
-                    f"CALL {{ WITH v MATCH (new:Entity {{group_id:$pot,entity_key:$isn{i}}}) "
-                    f"MATCH (old:Entity {{group_id:$pot,entity_key:$iso{i}}}) "
-                    "MERGE (new)-[s:RELATES_TO {group_id:$pot,name:'SUPERSEDES',"
-                    f"subject_key:$isn{i},object_key:$iso{i},source_ref:$iss{i}}}]->(old) "
-                    "ON CREATE SET s.uuid=randomUUID(),s.created_at=$now "
-                    "SET s.revived_at=CASE WHEN s.invalid_at IS NULL THEN s.revived_at ELSE $now END "
-                    f"SET {supersedes_revive} SET s += $isprop{i} "
-                    f"RETURN count(s) AS sic{i},collect(DISTINCT coalesce(s.record_id,s.uuid)) AS sir{i} }}"
-                )
-                affected.append(f"sir{i}")
-        counts["invalidations"] += 1
+    counts.update(
+        edges=len(plan.edge_upserts),
+        deletes=len(plan.edge_deletes),
+        invalidations=len(plan.invalidations),
+    )
     result = complete_execution(
         MutationResult(
             True,
@@ -402,10 +212,12 @@ def _compile(
     params["payload"] = json.dumps(_mutation_result_to_dict(result), sort_keys=True)
     params["advance"] = int(batch_has_work(receipt_batch))
     entity_expr = "+".join(f"ec{i}" for i in range(len(plan.entity_upserts))) or "0"
-    edge_expr = "+".join(f"xc{i}" for i in range(len(plan.edge_upserts))) or "0"
-    delete_expr = "+".join(f"dc{i}" for i in range(len(plan.edge_deletes))) or "0"
-    invalid_expr = "+".join(f"ic{i}" for i in range(len(plan.invalidations))) or "0"
-    record_expr = "+".join(affected) or "[]"
+    edge_expr = "$claim_edges"
+    delete_expr = "$claim_deletes"
+    invalid_expr = "$claim_invalidations" + "".join(
+        f"+ic{i}" for i, item in enumerate(plan.invalidations) if item.target_entity_key
+    )
+    record_expr = "$claim_affected"
     clauses += [
         "SET v.version=v.version+$advance",
         (
@@ -478,7 +290,6 @@ def _apply_watched(
 
     validate_administration(plan)
     mutation_id = provenance_context.mutation_id
-    _ensure_state(graph, expected_pot_id)
     pipe = transaction_client(graph).pipeline()
     try:
         pipe.watch(graph.name)
@@ -488,10 +299,21 @@ def _apply_watched(
         if result is not None:
             validate_execution_replay(result, provenance=provenance_context)
             return result
+        validate_new_preparation(provenance_context)
+        prepared = provenance_context.prepared
+        if prepared is not None and prepared.expected_version != current:
+            raise GraphMutationVersionConflict(
+                expected=prepared.expected_version, current=current
+            )
         if int(current) != expected_version:
             raise GraphMutationVersionConflict(
                 expected=expected_version, current=int(current)
             )
+        if revision.version is None:
+            _ensure_state(graph, expected_pot_id)
+            # Bootstrap itself changed the watched key. Start a fresh bracket
+            # before resolving candidates or publishing the first receipt.
+            raise WatchError("native revision bootstrapped")
         from .falkordb_journal import FalkorJournal, _state
 
         state = _state(graph, expected_pot_id, pipe)
@@ -531,6 +353,10 @@ def _apply_watched(
                 definition=definition,
                 embedder=embedder,
             )
+            from .falkordb_claims import normalize_assertions, resolve_native_effects
+
+            assertions = normalize_assertions(plan, params, provenance, embedder)
+            resolve_native_effects(graph, pipe, plan, params, definition, assertions)
             params["journal_generated_event"] = (
                 plan.event_ref is None and provenance_context.source_event_id is None
             )
@@ -548,9 +374,6 @@ def _apply_watched(
                     provenance_context=provenance_context,
                     receipt_batch=receipt_batch,
                 )
-            from .falkordb_identity import validate_touched_claim_identities
-
-            validate_touched_claim_identities(graph, pipe, plan, params, definition)
         pipe.multi()
         pipe.execute_command(
             "GRAPH.QUERY",
@@ -570,5 +393,14 @@ def _apply_watched(
             mutation_id=mutation_id,
             fingerprint=fingerprint,
         )
+    except Exception:
+        if pipe.watching:
+            # A policy failure can precede EXEC after a concurrent writer
+            # changed the reads. Surface it only for a still-current bracket;
+            # otherwise EXEC raises WatchError and the caller resolves again.
+            pipe.multi()
+            pipe.ping()
+            pipe.execute()
+        raise
     finally:
         pipe.reset()

@@ -42,15 +42,6 @@ from .falkordb_journal_publication import publish_query as _publish_query
 
 _STATE = "PotpieRevision"
 _RECEIPT = "PotpieMutationReceipt"
-_LIFECYCLE = (
-    "invalid_at",
-    "expired_at",
-    "invalidation_reason",
-    "invalidated_by",
-    "superseded_by_object",
-    "supersession_reason",
-    "deleted_by",
-)
 
 
 def _read(graph, pipe, query, params):
@@ -93,7 +84,7 @@ def _records(graph, pot_id, pipe=None, keys=None):
         graph,
         pipe,
         "MATCH (a:Entity {group_id:$pot})-[r:RELATES_TO {group_id:$pot}]->(b:Entity {group_id:$pot}) "
-        "WHERE $keys IS NULL OR a.entity_key IN $keys OR b.entity_key IN $keys OR r.claim_key IN $keys "
+        "WHERE $keys IS NULL OR a.entity_key IN $keys OR b.entity_key IN $keys OR r.claim_key IN $keys OR coalesce(r.record_id,r.uuid) IN $keys "
         "RETURN a.entity_key,b.entity_key,properties(r)",
         params,
     )
@@ -162,22 +153,10 @@ def _replace_props(record, props, **fields):
     return replace(record, fields={**record.fields, "properties": props, **fields})
 
 
-def _is_future(value, now):
-    value = (
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if isinstance(value, str)
-        else value
-    )
-    if not isinstance(value, datetime) or value.tzinfo is None:
-        raise JournalError("native lifecycle timestamps must be timezone aware")
-    return value > datetime.fromisoformat(now)
-
-
 def _effect_plan(before, plan, params, definition):
     """Evaluate the existing compiler's normalized parameters exactly once."""
     after = deepcopy(before)
     entities = {r.logical_key: r for r in after.values() if r.kind == "entity"}
-    now = params["now"]
     counts = MutationSummary()
     for i, item in enumerate(plan.entity_upserts):
         old = entities.get(item.entity_key)
@@ -191,6 +170,10 @@ def _effect_plan(before, plan, params, definition):
         )
         record_id = old.record_id if old else props["uuid"]
         raw = deepcopy(params[f"ep{i}"])
+        active = old.fields.get("active", True) if old else True
+        if "retired" in raw:
+            retired = raw["retired"]
+            active = retired is None or retired is False
         if params.get("journal_generated_event"):
             raw["execution_source_event_id"] = raw.pop("prov_source_event_id", None)
             raw.pop("provenance_source_event", None)
@@ -214,6 +197,7 @@ def _effect_plan(before, plan, params, definition):
         props.update(
             entity_key=item.entity_key, group_id=params["pot"], record_id=record_id
         )
+        props.pop("retired", None)
         labels = set(old.fields["labels"] if old else ("Entity",))
         labels.difference_update(definition.entity_types)
         from .cypher import coherent_entity_labels
@@ -228,181 +212,54 @@ def _effect_plan(before, plan, params, definition):
             params["pot"],
             item.entity_key,
             "entity",
-            {"active": True, "labels": tuple(sorted(labels)), "properties": props},
+            {"active": active, "labels": tuple(sorted(labels)), "properties": props},
         )
         after[record_id] = entities[item.entity_key] = record
         counts.entity_upserts_applied += 1
 
-    def upsert(
-        source,
-        target,
-        predicate,
-        source_ref,
-        claim_key,
-        raw,
-        preserve=False,
-        generated_valid_at=False,
-    ):
-        a, b = entities.get(source), entities.get(target)
-        if (
-            a is None
-            or b is None
-            or not a.fields.get("active", True)
-            or not b.fields.get("active", True)
-        ):
-            return None
-        matches = [
-            r
-            for r in after.values()
-            if r.kind == "claim"
-            and r.fields["subject_key"] == source
-            and r.fields["object_key"] == target
-            and r.fields["predicate"] == predicate
-            and r.fields["properties"].get("source_ref") == source_ref
-            and r.fields["properties"].get("environment") == raw.get("environment")
-            and r.fields.get("active", True)
-            and (
-                preserve
-                or r.fields["properties"].get("invalid_at") is None
-                or _is_future(r.fields["properties"]["invalid_at"], now)
-            )
-            and (not claim_key or r.fields["properties"].get("claim_key") == claim_key)
-        ]
-        if len(matches) > 1:
-            raise JournalError("ambiguous native MERGE incarnation")
-        old = matches[0] if matches else None
-        props = _props(old) if old else {"uuid": uuid.uuid4().hex, "created_at": now}
-        record_id = old.record_id if old else props["uuid"]
-        if old is not None and props.get("invalid_at") is None and generated_valid_at:
-            raw["valid_at"] = props.get("valid_at", now)
-        if props.get("invalid_at") is not None and not preserve:
-            props["revived_at"] = now
-        if not (preserve and props.get("invalid_at") is not None):
-            for key in _LIFECYCLE:
-                props.pop(key, None)
-        props.update(
-            group_id=params["pot"],
-            name=predicate,
-            subject_key=source,
-            object_key=target,
-            source_ref=source_ref,
-            record_id=record_id,
-        )
-        if claim_key:
-            props["claim_key"] = claim_key
-        for key, value in raw.items():
-            if value is None:
-                props.pop(key, None)
-            else:
-                props[key] = value
-        record = JournalRecord(
+    # The watched native resolution is also the journal's exact after-state.
+    # No semantic selectors or lifecycle choices are repeated during capture.
+    for write in params["claim_writes"]:
+        props = deepcopy(write["props"])
+        record_id = write["record_id"]
+        source, target = write["source"], write["target"]
+        a, b = entities[source], entities[target]
+        after[record_id] = JournalRecord(
             record_id,
             params["pot"],
-            props.get("claim_key") or f"{source}:{predicate}:{target}:{source_ref}",
+            props.get("claim_key")
+            or f"{source}:{props['name']}:{target}:{props.get('source_ref')}",
             "claim",
             {
-                "active": True,
-                "predicate": predicate,
+                "active": not props.get("retired", False),
+                "predicate": props["name"],
                 "subject_key": source,
                 "object_key": target,
                 "subject_record_id": a.record_id,
                 "object_record_id": b.record_id,
-                "properties": props,
+                "properties": {
+                    key: value
+                    for key, value in props.items()
+                    if value is not None and key != "retired"
+                },
             },
         )
-        after[record_id] = record
-        return record
-
-    for i, item in enumerate(plan.edge_upserts):
-        raw = deepcopy(params[f"eprop{i}"])
-        raw["execution_observed_at"] = raw.pop("observed_at", now)
-        if "observed_at" in item.properties:
-            raw["observed_at"] = item.properties["observed_at"]
-        if params.get("journal_generated_event"):
-            raw["execution_source_event_id"] = raw.pop("provenance_source_event", None)
-        new = upsert(
-            params[f"ef{i}"],
-            params[f"et{i}"],
-            params[f"en{i}"],
-            params[f"es{i}"],
-            params[f"eclaim{i}"],
-            raw,
-            params[f"epreserve{i}"],
-            generated_valid_at="valid_at" not in item.properties
-            and "valid_from" not in item.properties,
-        )
-        counts.edge_upserts_applied += new is not None
-        if (
-            item.edge_type in definition.singleton_predicates
-            and params[f"eprop{i}"].get("evidence_strength") == "deterministic"
-        ):
-            for key, old in list(after.items()):
-                if (
-                    old.kind == "claim"
-                    and old.fields["subject_key"] == item.from_entity_key
-                    and old.fields["predicate"] == item.edge_type
-                    and old.fields["object_key"] != item.to_entity_key
-                    and old.fields["properties"].get("invalid_at") is None
-                ):
-                    props = _props(old)
-                    props.update(
-                        invalid_at=params[f"ev{i}"],
-                        expired_at=now,
-                        superseded_by_object=item.to_entity_key,
-                        supersession_reason="singleton_predicate",
-                    )
-                    after[key] = _replace_props(old, props)
-    for i, item in enumerate(plan.edge_deletes):
-        for key, old in list(after.items()):
-            if (
-                old.kind == "claim"
-                and old.fields["subject_key"] == item.from_entity_key
-                and old.fields["object_key"] == item.to_entity_key
-                and old.fields["predicate"] == item.edge_type
-            ):
-                props = _props(old)
-                props.update(invalid_at=now, expired_at=now, deleted_by=params["mid"])
-                after[key] = _replace_props(old, props)
-                counts.edge_deletes_applied += 1
+    counts.edge_upserts_applied = params["claim_edges"]
+    counts.edge_deletes_applied = params["claim_deletes"]
+    counts.invalidations_applied = params["claim_invalidations"]
     for i, item in enumerate(plan.invalidations):
-        for key, old in list(after.items()):
-            body, props = old.fields, _props(old)
-            selected = (
-                (
-                    item.target_claim_keys is not None
-                    and old.kind == "claim"
-                    and props.get("claim_key") in item.target_claim_keys
-                    and props.get("invalid_at") is None
-                )
-                or (
-                    item.target_entity_key
-                    and old.kind == "entity"
-                    and old.logical_key == item.target_entity_key
-                )
-                or (
-                    item.target_claim_keys is None
-                    and not item.target_entity_key
-                    and old.kind == "claim"
-                    and (body["predicate"], body["subject_key"], body["object_key"])
-                    == item.target_edge
-                    and props.get("invalid_at") is None
-                )
+        if item.target_entity_key and item.target_entity_key in entities:
+            old = entities[item.target_entity_key]
+            props = _props(old)
+            props.update(
+                {
+                    key: value
+                    for key, value in params[f"ip{i}"].items()
+                    if value is not None
+                }
             )
-            if selected:
-                props.update(
-                    {k: v for k, v in params[f"ip{i}"].items() if v is not None}
-                )
-                after[key] = _replace_props(old, props)
-                counts.invalidations_applied += 1
-        if f"isn{i}" in params:
-            upsert(
-                params[f"isn{i}"],
-                params[f"iso{i}"],
-                "SUPERSEDES",
-                params[f"iss{i}"],
-                None,
-                params[f"isprop{i}"],
-            )
+            after[old.record_id] = _replace_props(old, props)
+            counts.invalidations_applied += 1
     return after, counts
 
 
@@ -621,6 +478,8 @@ class FalkorJournal:
             )
             if item.target_edge:
                 keys.update(item.target_edge[1:])
+        for write in params["claim_writes"]:
+            keys.update((write["record_id"], write["source"], write["target"]))
         before = _records(self.graph, state.pot_id, pipe, keys=keys)
         after, summary = _effect_plan(before, plan, params, self.definition)
         receipt = self._receipt(

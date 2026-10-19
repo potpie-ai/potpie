@@ -276,7 +276,9 @@ class MemoryJournal:
             self.owner.revisions.get(state.pot_id, 0) + 1
         )
 
-    def apply(self, plan, *, original_plan, pot_id, mutation_id, provenance):
+    def apply(
+        self, plan, *, original_plan, pot_id, mutation_id, provenance, applied_at
+    ):
         """Capture one apply inside ``apply_transaction``'s isolated writer.
 
         The transaction owns execution identity, metadata and publication. This
@@ -292,7 +294,11 @@ class MemoryJournal:
         before = records_from_store(store, pot_id)
         old_properties = deepcopy(store.entity_property_index)
         result = self.owner._apply_uncached(
-            plan, expected_pot_id=pot_id, mutation_id=mutation_id
+            plan,
+            expected_pot_id=pot_id,
+            mutation_id=mutation_id,
+            provenance=provenance,
+            applied_at=applied_at,
         )
         for ent in plan.entity_upserts:
             props = store.entity_property_index[(pot_id, ent.entity_key)]
@@ -301,7 +307,6 @@ class MemoryJournal:
                 props["record_id"] = old["record_id"]
             if old.get("uuid"):
                 props["uuid"] = old["uuid"]
-            props["retired"] = False
         migrate_ids(store, pot_id)
         receipt = self._receipt(
             state,

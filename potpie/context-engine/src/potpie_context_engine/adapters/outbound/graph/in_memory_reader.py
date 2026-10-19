@@ -231,6 +231,8 @@ def _matches_filter(
         return False
     if filter_.claim_key_in and row.claim_key not in filter_.claim_key_in:
         return False
+    if filter_.record_id_in and row.record_id not in filter_.record_id_in:
+        return False
     if filter_.subgraph_in and row.subgraph not in filter_.subgraph_in:
         return False
     if filter_.subgraph_not_in and row.subgraph in filter_.subgraph_not_in:

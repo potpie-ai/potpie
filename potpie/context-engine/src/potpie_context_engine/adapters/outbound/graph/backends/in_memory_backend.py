@@ -24,15 +24,27 @@ from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
 )
+from potpie_context_engine.core.claim_lifecycle import (
+    ClaimLifecycleConflict,
+    apply_claim_to_rows,
+    close_claim_at,
+    resolve_claim_assertion,
+)
+from potpie_context_engine.core.claim_preparation import assertion_row
 from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
 from potpie_context_engine.core.graph_entity_summary import (
     merge_entity_display_properties,
     normalize_entity_properties,
 )
-from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.graph_mutations import (
+    EdgeUpsert,
+    ProvenanceContext,
+    ProvenanceRef,
+)
 from potpie_context_engine.core.mutation_execution import MutationCapabilities
 from potpie_context_engine.core.graph_snapshot import (
     build_snapshot_payload,
+    snapshot_record_id,
 )
 from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
 from potpie_context_engine.core.ports.graph.analytics import RepairReport
@@ -56,9 +68,6 @@ from potpie_context_engine.core.reconciliation_config import ReconciliationConfi
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
-)
-from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
-    CONTRACT_EDGE_KEYS,
 )
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
@@ -198,7 +207,12 @@ class _Mutation:
         *,
         expected_pot_id: str,
         mutation_id: str,
+        provenance: ProvenanceContext | None = None,
+        applied_at: datetime | None = None,
     ) -> MutationResult:
+        from potpie_context_engine.adapters.outbound.graph.apply_plan import (
+            _build_provenance,
+        )
         from potpie_context_engine.adapters.outbound.graph.memory_admin import (
             apply_reset,
             apply_snapshot_import,
@@ -213,6 +227,19 @@ class _Mutation:
                 pot_id=expected_pot_id,
                 mutation_id=mutation_id,
             )
+        applied_at = applied_at or datetime.now(timezone.utc)
+        source = _build_provenance(
+            plan,
+            pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+            context=provenance,
+            graph_updated_at=applied_at,
+        )
+        anchor = (
+            provenance.prepared.prepared_at
+            if provenance and provenance.prepared
+            else applied_at
+        )
         summary = MutationSummary()
         for ent in plan.entity_upserts:
             self.store.set_entity_label(
@@ -223,28 +250,38 @@ class _Mutation:
                 entity_key=ent.entity_key,
                 properties=merge_entity_display_properties(
                     ent.properties,
-                    existing=self.store.entity_properties(
-                        pot_id=expected_pot_id, entity_key=ent.entity_key
+                    existing=self.store.entity_property_index.get(
+                        (expected_pot_id, ent.entity_key), {}
                     ),
                     entity_key=ent.entity_key,
                 ),
             )
             summary.entity_upserts_applied += 1
         for edge in plan.edge_upserts:
-            self._upsert_claim_row(
-                self._build_claim_row(
-                    edge,
-                    pot_id=expected_pot_id,
-                    mutation_id=mutation_id,
-                    fallback_fact=plan.summary,
-                )
+            for key in (edge.from_entity_key, edge.to_entity_key):
+                endpoint = (expected_pot_id, key)
+                if (
+                    endpoint not in self.store.entity_label_index
+                    and endpoint not in self.store.entity_property_index
+                ) or self.store.entity_property_index.get(endpoint, {}).get(
+                    "retired", False
+                ):
+                    raise ClaimLifecycleConflict("claim endpoint is missing or retired")
+            row = self._build_claim_row(
+                edge,
+                pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+                provenance=source,
+                anchor=anchor,
             )
+            self._upsert_claim_row(row, edge=edge, anchor=anchor)
             summary.edge_upserts_applied += 1
+        closed_at = source.valid_from or applied_at
         summary.edge_deletes_applied = self._apply_edge_deletes(
-            plan, pot_id=expected_pot_id
+            plan, pot_id=expected_pot_id, closed_at=closed_at, anchor=anchor
         )
         summary.invalidations_applied = self._apply_invalidations(
-            plan, pot_id=expected_pot_id
+            plan, pot_id=expected_pot_id, closed_at=closed_at, anchor=anchor
         )
         return MutationResult(
             ok=True, mutation_id=mutation_id, mutation_summary=summary
@@ -252,180 +289,128 @@ class _Mutation:
 
     def _build_claim_row(
         self,
-        edge: Any,
+        edge: EdgeUpsert,
         *,
         pot_id: str,
         mutation_id: str,
-        fallback_fact: str,
+        provenance: ProvenanceRef,
+        anchor: datetime,
     ) -> ClaimRow:
-        props = dict(edge.properties)
-        props.setdefault("mutation_id", mutation_id)
-        source_refs = props.get("source_refs")
-        truth = _coerce_str(props.get("truth"))
-        row = ClaimRow(
-            pot_id=pot_id,
-            predicate=edge.edge_type,
-            subject_key=edge.from_entity_key,
-            object_key=edge.to_entity_key,
-            valid_at=_coerce_dt(props.get("valid_at")),
-            evidence_strength=evidence_strength_for_truth(truth),
-            source_system=_coerce_str(props.get("source_system")),
-            source_ref=_coerce_str(props.get("source_ref")),
-            fact=_coerce_str(props.get("fact")) or fallback_fact or None,
-            properties=_reader_extras(props),
-            fact_embedding=_vector_tuple(props.get("fact_embedding")),
-            claim_key=_coerce_str(props.get("claim_key")),
-            subgraph=_coerce_str(props.get("subgraph")),
-            truth=truth,
-            confidence=_coerce_float(props.get("confidence")),
-            description=_coerce_str(props.get("description")),
-            environment=_coerce_str(props.get("environment")),
-            observed_at=_coerce_dt(props.get("observed_at")),
-            valid_until=_coerce_dt(props.get("valid_until")),
-            mutation_id=mutation_id,
-            source_refs=tuple(source_refs)
-            if isinstance(source_refs, (list, tuple))
-            else (),
-            evidence=_evidence_tuple(props.get("evidence")),
-            graph_contract_version=_coerce_str(props.get("graph_contract_version")),
-            ontology_version=_coerce_str(props.get("ontology_version")),
-            record_id=uuid.uuid4().hex,
+        from potpie_context_engine.adapters.outbound.graph.cypher import (
+            _stable_source_ref,
         )
-        # Embed the retrieval card on write (R1/R2) so reads use a real vector.
+
+        props = dict(edge.properties)
+        props["mutation_id"] = mutation_id
+        props.setdefault(
+            "valid_at", props.get("valid_from") or _dt_iso(provenance.valid_from)
+        )
+        props.setdefault(
+            "observed_at", _dt_iso(provenance.event_received_at) or _dt_iso(anchor)
+        )
+        row = assertion_row(
+            replace(edge, properties=props),
+            pot_id=pot_id,
+            record_id=edge.resolution.record_id
+            if edge.resolution
+            else uuid.uuid4().hex,
+            anchor=anchor,
+            source_system=provenance.source_system,
+            source_ref=_stable_source_ref(
+                predicate=edge.edge_type,
+                from_key=edge.from_entity_key,
+                to_key=edge.to_entity_key,
+                provenance=provenance,
+            ),
+            stable_source=bool(provenance.source_system and provenance.source_ref),
+        )
+        # Embed the retrieval card on write so reads use a real vector.
         if self.embedder is not None and row.fact_embedding is None:
             try:
-                row = _with_embedding(row, self.embedder.embed(card_for_row(row)))
+                row = replace(
+                    row, fact_embedding=self.embedder.embed(card_for_row(row))
+                )
             except Exception:  # noqa: BLE001 - graph writes should survive embedder failure.
                 pass
         return row
 
-    def _upsert_claim_row(self, row: ClaimRow) -> None:
-        """Merge a live incarnation; retain invalidated/retired incarnations.
-
-        A retracted row is not a merge target, so re-asserting a retracted
-        claim appends a fresh live row and leaves the tombstone as history. The
-        canonical writers cannot do that (their MERGE key is identical for both
-        rows), so they revive the tombstone in place and stamp ``revived_at``.
-        The observable contract is the same: the claim is live again.
-        """
-        from potpie_context_engine.core.graph_journal import JournalError
-
-        now = datetime.now(timezone.utc)
-        review_marker = row.properties.get("evidence_review_required") is True
-        matches = []
-        for i, existing in enumerate(self.store.rows):
-            if (
-                existing.retired
-                or existing.pot_id != row.pot_id
-                or (
-                    not review_marker
-                    and existing.invalid_at is not None
-                    and existing.invalid_at <= now
-                )
-            ):
-                continue
-            same_claim = bool(
-                row.claim_key
-                and existing.claim_key == row.claim_key
-                and existing.predicate == row.predicate
-                and existing.subject_key == row.subject_key
-                and existing.object_key == row.object_key
-                and existing.source_ref == row.source_ref
-                and existing.environment == row.environment
-            )
-            same_source_edge = bool(
-                not (row.claim_key and existing.claim_key)
-                and row.source_ref
-                and existing.source_ref == row.source_ref
-                and existing.predicate == row.predicate
-                and existing.subject_key == row.subject_key
-                and existing.object_key == row.object_key
-                and existing.environment == row.environment
-            )
-            if same_claim or same_source_edge:
-                matches.append((i, existing))
-        if len(matches) > 1:
-            raise JournalError("ambiguous claim incarnation")
-        if matches:
-            index, existing = matches[0]
-            if existing.invalid_at is not None and row.invalid_at is None:
-                row = replace(row, invalid_at=existing.invalid_at)
-            self.store.rows[index] = replace(
-                row, record_id=existing.record_id or row.record_id
-            )
-        else:
-            self.store.add(row)
-        if (
-            row.predicate in self.definition.singleton_predicates
-            and row.evidence_strength == "deterministic"
+    def _upsert_claim_row(
+        self, row: ClaimRow, *, edge: EdgeUpsert, anchor: datetime
+    ) -> None:
+        row, resolution = resolve_claim_assertion(
+            row,
+            self.store.rows,
+            singleton=row.predicate in self.definition.singleton_predicates,
+            anchor=anchor,
+            resolution=edge.resolution,
+            metadata_record_id=edge.metadata_review_record_id,
+        )
+        if any(
+            pot_id == row.pot_id
+            and row.record_id == snapshot_record_id({"properties": props})
+            for (pot_id, _), props in self.store.entity_property_index.items()
         ):
-            invalid_at = row.valid_at or now
-            for i, previous in enumerate(self.store.rows):
-                if (
-                    previous.pot_id == row.pot_id
-                    and not previous.retired
-                    and previous.subject_key == row.subject_key
-                    and previous.predicate == row.predicate
-                    and previous.object_key != row.object_key
-                    and previous.invalid_at is None
-                ):
-                    self.store.rows[i] = replace(
-                        previous,
-                        invalid_at=invalid_at,
-                        properties={
-                            **previous.properties,
-                            "superseded_by_object": row.object_key,
-                            "supersession_reason": "singleton_predicate",
-                        },
-                    )
+            raise ClaimLifecycleConflict(
+                "claim incarnation collides with an entity identity"
+            )
+        self.store.rows[:] = apply_claim_to_rows(self.store.rows, row, resolution)
 
-    def _apply_edge_deletes(self, plan: MutationBatch, *, pot_id: str) -> int:
-        """Drop claims targeted by ``plan.edge_deletes``.
-
-        The shared application path records ``summary.edge_deletes_applied``
-        after the writer deletes edges; the substrate must actually remove the
-        rows so it does not keep stale claims the canonical backends would drop.
-        """
-        if not plan.edge_deletes:
-            return 0
+    def _apply_edge_deletes(
+        self, plan: MutationBatch, *, pot_id: str, closed_at: datetime, anchor: datetime
+    ) -> int:
         targets = {
             (edge.edge_type.upper(), edge.from_entity_key, edge.to_entity_key)
             for edge in plan.edge_deletes
         }
-        if self.journal_data.get("states", {}).get(pot_id) is not None:
-            count = 0
-            for i, row in enumerate(self.store.rows):
-                if (
-                    row.pot_id == pot_id
-                    and not row.retired
-                    and (row.predicate.upper(), row.subject_key, row.object_key)
-                    in targets
-                ):
-                    self.store.rows[i] = replace(row, retired=True)
-                    count += 1
-            return count
-        before = len(self.store.rows)
-        self.store.rows = [
-            row
-            for row in self.store.rows
-            if not (
+        count = 0
+        for index, row in enumerate(self.store.rows):
+            if (
                 row.pot_id == pot_id
+                and not row.retired
                 and (row.predicate.upper(), row.subject_key, row.object_key) in targets
-            )
-        ]
-        return before - len(self.store.rows)
+            ):
+                closed = close_claim_at(row, closed_at, anchor=anchor)
+                if closed != row:
+                    self.store.rows[index] = closed
+                    count += 1
+        return count
 
-    def _apply_invalidations(self, plan: MutationBatch, *, pot_id: str) -> int:
+    def _apply_invalidations(
+        self, plan: MutationBatch, *, pot_id: str, closed_at: datetime, anchor: datetime
+    ) -> int:
         if not plan.invalidations:
             return 0
-        now = datetime.now(timezone.utc)
-        # Preserve each op's own ``valid_to`` (the canonical writers stamp it when
-        # present); fall back to apply-time ``now`` only when it is missing.
+        for inv in plan.invalidations:
+            identities = inv.target_claim_record_ids
+            if identities is None:
+                continue
+            if (
+                any(
+                    not isinstance(identity, str) or not identity
+                    for identity in identities
+                )
+                or len(set(identities)) != len(identities)
+                or sorted(
+                    row.record_id
+                    for row in self.store.rows
+                    if row.pot_id == pot_id and row.record_id in identities
+                )
+                != sorted(identities)
+            ):
+                raise ClaimLifecycleConflict(
+                    "invalidation incarnation is missing or ambiguous"
+                )
         edge_targets: dict[tuple[str, str, str], datetime] = {}
         entity_targets: dict[str, datetime] = {}
         claim_targets: dict[str, datetime] = {}
+        record_targets: dict[str, datetime] = {}
         for inv in plan.invalidations:
-            invalid_at = _coerce_dt(inv.valid_to) or now
+            invalid_at = _coerce_dt(inv.valid_to) or closed_at
+            if inv.target_claim_record_ids is not None:
+                record_targets.update(
+                    {key: invalid_at for key in inv.target_claim_record_ids}
+                )
+                continue
             if inv.target_claim_keys is not None:
                 claim_targets.update({key: invalid_at for key in inv.target_claim_keys})
                 continue
@@ -435,18 +420,22 @@ class _Mutation:
             if inv.target_entity_key:
                 entity_targets[inv.target_entity_key] = invalid_at
         count = 0
-        for i, row in enumerate(self.store.rows):
-            if row.retired or row.pot_id != pot_id or row.invalid_at is not None:
+        for index, row in enumerate(self.store.rows):
+            if row.retired or row.pot_id != pot_id:
                 continue
             triple = (row.predicate.upper(), row.subject_key, row.object_key)
-            invalid_at = claim_targets.get(row.claim_key) or edge_targets.get(triple)
-            if invalid_at is None:
-                invalid_at = entity_targets.get(row.subject_key) or entity_targets.get(
-                    row.object_key
-                )
+            invalid_at = (
+                record_targets.get(row.record_id)
+                or claim_targets.get(row.claim_key)
+                or edge_targets.get(triple)
+                or entity_targets.get(row.subject_key)
+                or entity_targets.get(row.object_key)
+            )
             if invalid_at is not None:
-                self.store.rows[i] = _with_invalid_at(row, invalid_at)
-                count += 1
+                closed = close_claim_at(row, invalid_at, anchor=anchor)
+                if closed != row:
+                    self.store.rows[index] = closed
+                    count += 1
         return count
 
     async def apply_async(
@@ -817,12 +806,6 @@ class _Snapshot:
             }
             for row in rows
         ]
-        if self.mutation.journal_data.get("states", {}).get(pot_id) is not None:
-            from potpie_context_engine.adapters.outbound.graph.journal_snapshot_policy import (
-                require_snapshot_identity,
-            )
-
-            require_snapshot_identity(row.claim_key for row in rows)
         return build_snapshot_payload(pot_id=pot_id, entities=entities, claims=claims)
 
     def import_(
@@ -1010,18 +993,6 @@ def _edge(row: ClaimRow) -> GraphEdge:
     )
 
 
-def _with_invalid_at(row: ClaimRow, when: datetime) -> ClaimRow:
-    import dataclasses
-
-    return dataclasses.replace(row, invalid_at=when)
-
-
-def _with_embedding(row: ClaimRow, embedding: tuple[float, ...]) -> ClaimRow:
-    import dataclasses
-
-    return dataclasses.replace(row, fact_embedding=embedding)
-
-
 def _coerce_dt(value: Any) -> datetime | None:
     """Coerce an ISO string or datetime into a tz-aware datetime (or None)."""
     if value is None:
@@ -1047,25 +1018,10 @@ def _coerce_str(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _vector_tuple(value: Any) -> tuple[float, ...] | None:
-    if value is None:
-        return None
-    if isinstance(value, (list, tuple)):
-        try:
-            return tuple(float(x) for x in value)
-        except (TypeError, ValueError):
-            return None
-    return None
-
-
 def _evidence_tuple(value: Any) -> tuple[Mapping[str, Any], ...]:
     if not isinstance(value, (list, tuple)):
         return ()
     return tuple(dict(item) for item in value if isinstance(item, Mapping))
-
-
-def _reader_extras(props: Mapping[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in props.items() if k not in CONTRACT_EDGE_KEYS}
 
 
 def _dt_iso(value: datetime | None) -> str | None:

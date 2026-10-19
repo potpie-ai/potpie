@@ -7,6 +7,10 @@ lifecycle code.
 
 from __future__ import annotations
 
+from potpie_context_engine.core.claim_codec import (
+    claim_preservation_snapshot as _claim_snapshot,
+)
+
 import hashlib
 import json
 import logging
@@ -415,6 +419,8 @@ class ResourceFacade:
                     "evidence_review_reason": reason,
                     "evidence_review_refs": list(refs),
                     "_preserve_claim_key": row.claim_key,
+                    "_preserve_claim_record_id": row.record_id,
+                    "_preserve_source_ref": row.source_ref,
                     "_preserve_claim_properties": dict(row.properties),
                     "_preserve_claim_fact": row.fact,
                     "_preserve_source_system": row.source_system,
@@ -971,28 +977,3 @@ def _index_profile(index: ResourceIndexPort | None) -> str:
 
 
 __all__ = ["ResourceFacade"]
-
-
-def _claim_snapshot(row: Any) -> dict[str, Any]:
-    def timestamp(value: Any) -> str | None:
-        return value.isoformat() if value is not None else None
-
-    return {
-        "claim_key": row.claim_key,
-        "predicate": row.predicate,
-        "subject_key": row.subject_key,
-        "object_key": row.object_key,
-        "fact": row.fact,
-        "description": row.description,
-        "source_system": row.source_system,
-        "source_refs": list(row.source_refs),
-        "evidence": [dict(item) for item in row.evidence],
-        "properties": dict(row.properties),
-        "valid_at": timestamp(row.valid_at),
-        "invalid_at": timestamp(row.invalid_at),
-        "valid_until": timestamp(row.valid_until),
-        "observed_at": timestamp(row.observed_at),
-        "truth": row.truth,
-        "confidence": row.confidence,
-        "environment": row.environment,
-    }

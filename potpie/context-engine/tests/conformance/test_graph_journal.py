@@ -377,7 +377,8 @@ def test_singleton_implicit_effects_are_captured_and_restored(backend):
                 "team:first",
                 {
                     "claim_key": "owner1",
-                    "source_ref": "one",
+                    "source_ref": "inventory:owner",
+                    "source_system": "inventory",
                     "truth": "authoritative_fact",
                 },
             )
@@ -393,7 +394,8 @@ def test_singleton_implicit_effects_are_captured_and_restored(backend):
                 "team:second",
                 {
                     "claim_key": "owner2",
-                    "source_ref": "two",
+                    "source_ref": "inventory:owner",
+                    "source_system": "inventory",
                     "truth": "authoritative_fact",
                 },
             )
@@ -710,13 +712,13 @@ def test_activation_preserves_legacy_native_identity_and_marks_boundary(backend)
     assert state == backend.journal.activate(pot_id="legacy")
 
 
-def test_normal_upsert_reactivates_retired_entity_without_changing_identity(backend):
+def test_explicit_upsert_reactivates_retired_entity_without_changing_identity(backend):
     write(backend, "one", summary="a")
     original = backend.claim_query.entity_properties(
         pot_id="p", entity_key="service:a"
     )["record_id"]
     revert(backend, "one", "one", "undo")
-    assert write(backend, "new", summary="new").ok
+    assert write(backend, "new", props={"retired": False, "summary": "new"}).ok
     after = backend.claim_query.entity_properties(pot_id="p", entity_key="service:a")
     assert after["record_id"] == original and after["summary"] == "new"
 
@@ -745,11 +747,16 @@ def test_reasserting_retired_claim_creates_distinct_incarnation_and_keeps_histor
         ClaimQueryFilter(pot_id="p", include_invalidated=True, include_retired=True)
     )
     assert len(history) == 2 and len({row.record_id for row in history}) == 2
-    revert(backend, "undo", "new", "again")
+    with pytest.raises(JournalError, match="overlapping logical history"):
+        revert(backend, "undo", "new", "again")
     current = backend.claim_query.find_claims(ClaimQueryFilter(pot_id="p"))
-    assert len(current) == 2 and old in {row.record_id for row in current}
-    with pytest.raises(JournalError, match="snapshot export.*parallel"):
-        backend.snapshot.export_data(pot_id="p")
+    assert len(current) == 1 and current[0].record_id != old
+    assert backend.journal.journal_state("p").head == "new"
+    exported = backend.snapshot.export_data(pot_id="p")
+    assert {row["record_id"] for row in exported["claims"]} == {
+        row.record_id for row in current
+    }
+    assert {row["claim_key"] for row in exported["claims"]} == {"edge"}
 
 
 @pytest.mark.parametrize(
@@ -798,6 +805,11 @@ def test_identity_migration_rejects_duplicate_ids_without_activation(backend):
         expected_version=backend.mutation.current_version("legacy"),
     )
     assert result.ok
+    if backend.profile == "falkordb":
+        # Simulate corrupt pre-upgrade data; current writers assign physical IDs.
+        backend.journal.graph.query(
+            "MATCH (e:Entity {group_id:'legacy'}) SET e.record_id='duplicate', e.uuid='duplicate'"
+        )
     with pytest.raises(JournalError, match="ambiguous"):
         backend.journal.activate(pot_id="legacy")
     assert backend.journal.journal_state("legacy") is None
@@ -858,7 +870,8 @@ def test_restore_invalidates_current_vectors_and_keeps_semantic_source_fields(ba
                         "claim_key": "edge",
                         "source_ref": "source",
                         "truth": "authoritative_fact",
-                        "description": text,
+                        "description": "unchanged claim",
+                        "annotation": text,
                         "fact_embedding": vector,
                         "embedding_dim": 2,
                     },
@@ -874,7 +887,8 @@ def test_restore_invalidates_current_vectors_and_keeps_semantic_source_fields(ba
         assert current.fact_embedding == (0.0, 1.0)
     revert(backend, "two", "two", "undo")
     restored = backend.claim_query.find_claims(ClaimQueryFilter(pot_id="p"))[0]
-    assert restored.description == "before" and restored.fact_embedding is None
+    assert restored.description == "unchanged claim" and restored.fact_embedding is None
+    assert restored.properties["annotation"] == "before"
     assert restored.source_ref == "source"
     if backend.profile == "falkordb":
         assert backend.journal.graph.query(
@@ -892,6 +906,9 @@ def test_offset_timestamp_reassertion_keeps_invalidated_incarnation(backend):
         "service:b",
         {"claim_key": "edge", "source_ref": "source", "truth": "authoritative_fact"},
     )
+    edge.properties["valid_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=1)
+    ).isoformat()
     write(backend, "one", entities=entities, edges=[edge])
     original = backend.claim_query.find_claims(ClaimQueryFilter(pot_id="p"))[
         0
@@ -916,6 +933,7 @@ def test_offset_timestamp_reassertion_keeps_invalidated_incarnation(backend):
     assert result.ok and not backend.claim_query.find_claims(
         ClaimQueryFilter(pot_id="p")
     )
+    edge.properties["valid_at"] = datetime.now(timezone.utc).isoformat()
     write(backend, "new", edges=[edge])
     live = backend.claim_query.find_claims(ClaimQueryFilter(pot_id="p"))
     assert len(live) == 1 and live[0].record_id != original

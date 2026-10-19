@@ -73,7 +73,8 @@ def snapshot_claim_identity(claim: Mapping[str, Any]) -> str:
     key = claim.get("claim_key")
     if not isinstance(key, str) or not key:
         raise ValueError("claim.claim_key must be a non-empty string")
-    return key
+    identity = snapshot_record_id(claim)
+    return f"record:{identity}" if identity else f"legacy:{key}"
 
 
 def _normalize_entity(raw: Any, *, index: int) -> dict[str, Any]:
@@ -274,7 +275,12 @@ def normalize_snapshot_payload(
         for i, raw in enumerate(claims_raw)
     ]
     _reject_conflicting_duplicates(entities, "key", "entity")
-    _reject_conflicting_duplicates(claims, "claim_key", "claim")
+    seen_claims: set[str] = set()
+    for claim in claims:
+        identity = snapshot_claim_identity(claim)
+        if identity in seen_claims:
+            raise ValueError(f"duplicate claim identity: {identity}")
+        seen_claims.add(identity)
     entity_keys = {row["key"] for row in entities}
     missing = sorted(
         {claim[field] for claim in claims for field in ("subject_key", "object_key")}
@@ -286,7 +292,7 @@ def normalize_snapshot_payload(
         "format_version": SNAPSHOT_FORMAT_VERSION,
         "pot_id": target_pot_id,
         "entities": sorted(entities, key=lambda item: item["key"]),
-        "claims": sorted(claims, key=lambda item: item["claim_key"]),
+        "claims": sorted(claims, key=snapshot_claim_identity),
     }
 
 
@@ -386,13 +392,38 @@ def validate_snapshot_merge(
         ("entity", entities, incoming["entities"], "key"),
         ("claim", claims, incoming["claims"], "claim_key"),
     ):
-        index = {row[key]: row for row in previous}
+        identity_for = (
+            (lambda row: row["key"]) if kind == "entity" else snapshot_claim_identity
+        )
+        index = {identity_for(row): row for row in previous}
         for row in rows:
-            prior = index.get(row[key])
+            prior = index.get(identity_for(row))
             if prior is not None and _identity_comparison_row(
                 prior, entity=kind == "entity"
             ) != _identity_comparison_row(row, entity=kind == "entity"):
                 raise ValueError(f"snapshot {kind} conflicts with target: {row[key]}")
+    from .claim_codec import row_from_record
+    from .claim_lifecycle import validate_incarnation_history
+
+    # Verify physical equality above before collapsing exact replays. A missing
+    # legacy ID may normalize to a new ID, but cannot invent overlapping history.
+    merged = {
+        snapshot_claim_identity(row): row for row in [*claims, *incoming["claims"]]
+    }
+    validate_incarnation_history(
+        row_from_record(
+            {
+                "props": {
+                    **row.get("properties", {}),
+                    **{key: value for key, value in row.items() if key != "properties"},
+                    "group_id": incoming["pot_id"],
+                    "name": row["predicate"],
+                    "valid_from": row.get("valid_at"),
+                }
+            }
+        )
+        for row in merged.values()
+    )
 
 
 __all__ = [

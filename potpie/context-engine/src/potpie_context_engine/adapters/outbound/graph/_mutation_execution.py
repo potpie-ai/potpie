@@ -65,6 +65,12 @@ def validate_prepared_execution(
     provenance: ProvenanceContext | None,
 ) -> None:
     prepared = provenance.prepared if provenance else None
+    if (prepared is None or prepared.schema_version < 2) and any(
+        edge.resolution is not None for edge in plan.edge_upserts
+    ):
+        raise MutationExecutionReuseError(
+            "frozen assertion resolutions require a version-2 prepared mutation"
+        )
     if prepared is not None and (
         prepared.pot_id != pot_id
         or prepared.mutation_id != mutation_id
@@ -72,6 +78,22 @@ def validate_prepared_execution(
     ):
         raise MutationExecutionReuseError(
             "prepared execution identity or batch was changed"
+        )
+    if (
+        prepared is not None
+        and prepared.schema_version >= 2
+        and any(edge.resolution is None for edge in plan.edge_upserts)
+    ):
+        raise MutationExecutionReuseError(
+            "prepared assertion is missing its frozen incarnation resolution"
+        )
+
+
+def validate_new_preparation(provenance: ProvenanceContext | None) -> None:
+    """Call only after authoritative lookup has proved no receipt exists."""
+    if provenance and provenance.prepared and provenance.prepared.schema_version < 2:
+        raise MutationExecutionReuseError(
+            "migration_required: unexecuted legacy preparation needs a fresh identity"
         )
 
 

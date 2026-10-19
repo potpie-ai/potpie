@@ -21,7 +21,13 @@ from potpie_context_engine.adapters.outbound.graph.backends.neo4j_backend import
     Neo4jGraphBackend,
 )
 from potpie_context_engine.adapters.outbound.graph.neo4j_writer import Neo4jGraphWriter
-from potpie_context_engine.core.errors import GraphMutationVersionConflict
+from potpie_context_engine.adapters.outbound.graph.neo4j_reader import Neo4jClaimQueryStore
+from potpie_context_engine.core.claim_preparation import prepare_claim_assertions
+from potpie_context_engine.core.definition import DEFAULT_GRAPH_DEFINITION
+from potpie_context_engine.core.errors import (
+    GraphMutationVersionConflict,
+    ReconciliationApplyError,
+)
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
@@ -91,6 +97,23 @@ def _batch(description="API depends on DB"):
 
 
 def _context(pot, batch, *, mutation="once", request="request", version=0):
+    anchor = datetime.now(timezone.utc)
+    for edge in batch.edge_upserts:
+        edge.properties.setdefault("source_system", "fixture")
+        edge.properties.setdefault("source_ref", f"fixture:{mutation}")
+        edge.properties.setdefault("valid_at", anchor.isoformat())
+    query = Neo4jClaimQueryStore(Settings())
+    try:
+        prepare_claim_assertions(
+            batch,
+            pot_id=pot,
+            mutation_id=mutation,
+            anchor=anchor,
+            query=query,
+            definition=DEFAULT_GRAPH_DEFINITION,
+        )
+    finally:
+        query.close()
     return ProvenanceContext(
         mutation_id=mutation,
         prepared=PreparedMutation(
@@ -99,7 +122,7 @@ def _context(pot, batch, *, mutation="once", request="request", version=0):
             request_fingerprint=request,
             batch_fingerprint=batch_fingerprint(batch),
             expected_version=version,
-            prepared_at=datetime.now(timezone.utc),
+            prepared_at=anchor,
         ),
     )
 
@@ -429,7 +452,7 @@ def test_missing_affected_record_identity_rolls_back_lifecycle_update(graph):
             )
         ]
     )
-    with pytest.raises(MutationPersistenceError, match="record identity"):
+    with pytest.raises(ReconciliationApplyError, match="incarnation identity"):
         backend.mutation.apply(
             batch,
             expected_pot_id=pot,

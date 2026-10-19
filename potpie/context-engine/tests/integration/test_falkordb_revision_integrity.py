@@ -34,7 +34,7 @@ def test_modern_receipt_floor_blocks_revision_reads_lookup_bootstrap_and_executi
         second,
         expected_pot_id="p",
         expected_version=1,
-        provenance_context=context(second, "m2", version=1),
+        provenance_context=context(second, "m2", version=1, query=store.claim_query),
     )
     if corruption == "missing":
         graph.query("MATCH (v:PotpieRevision {pot_id:'p'}) DELETE v")

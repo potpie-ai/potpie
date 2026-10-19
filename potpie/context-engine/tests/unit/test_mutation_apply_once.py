@@ -42,7 +42,8 @@ def _plan(summary: str = "API uses structured logging") -> MutationBatch:
         ),
         summary=summary,
         entity_upserts=[
-            EntityUpsert(entity_key="pref:logging", labels=("Preference",))
+            EntityUpsert(entity_key="pref:logging", labels=("Preference",)),
+            EntityUpsert(entity_key="service:api", labels=("Service",)),
         ],
         edge_upserts=[
             EdgeUpsert(

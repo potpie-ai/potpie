@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from .mutation_execution import PreparedMutation
-
+from .claim_lifecycle import ClaimWriteResolution
 
 @dataclass(frozen=True, slots=True)
 class ProvenanceRef:
@@ -139,6 +139,8 @@ class EdgeUpsert:
     from_entity_key: str
     to_entity_key: str
     properties: dict[str, Any] = field(default_factory=dict)
+    resolution: ClaimWriteResolution | None = None
+    metadata_review_record_id: str | None = None
 
 
 @dataclass(slots=True)

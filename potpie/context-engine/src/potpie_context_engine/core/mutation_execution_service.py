@@ -133,7 +133,11 @@ def commit_mutation(
         )
     if lookup.state != MutationExecutionState.absent.value:
         return _fail_unsafe_recovery(self, record, lookup=lookup)
-    if record.prepared is None or record.lowered_batch is None:
+    if (
+        record.prepared is None
+        or record.lowered_batch is None
+        or record.prepared.schema_version < 2
+    ):
         return _errored_commit_result(
             record,
             current_subgraph_versions=record.current_subgraph_versions,

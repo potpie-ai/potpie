@@ -1025,6 +1025,7 @@ def _history_claim_rows(
 def _history_entry_from_claim(row: ClaimRow) -> GraphHistoryEntry:
     source_refs = row.source_refs or ((row.source_ref,) if row.source_ref else ())
     payload = {
+        "record_id": row.record_id,
         "predicate": row.predicate,
         "subject_key": row.subject_key,
         "object_key": row.object_key,
@@ -1043,7 +1044,8 @@ def _history_entry_from_claim(row: ClaimRow) -> GraphHistoryEntry:
     }
     return GraphHistoryEntry(
         kind="claim",
-        id=row.claim_key
+        id=row.record_id
+        or row.claim_key
         or f"{row.predicate}:{row.subject_key}:{row.object_key}:{row.mutation_id or ''}",
         status="invalidated" if row.invalid_at else "current",
         occurred_at=row.invalid_at or row.valid_at or row.observed_at,
@@ -1907,12 +1909,25 @@ def _singleton_conflict_findings(
     limit: int,
     definition: GraphDefinition,
 ) -> tuple[GraphQualityFinding, ...]:
-    buckets: dict[tuple[str, str], list[ClaimRow]] = defaultdict(list)
+    from .claim_codec import _as_utc
+    from .claim_lifecycle import claim_scope, interval_end
+
+    now = datetime.now(timezone.utc)
+    buckets: dict[tuple[str | None, ...], list[ClaimRow]] = defaultdict(list)
     for row in rows:
-        if row.invalid_at is None and row.predicate in definition.singleton_predicates:
-            buckets[(row.subject_key, row.predicate)].append(row)
+        end = interval_end(row)
+        if (
+            not row.retired
+            and row.predicate in definition.singleton_predicates
+            and (row.valid_at is None or _as_utc(row.valid_at) <= now)
+            and (end is None or now < end)
+        ):
+            buckets[claim_scope(row)[:5]].append(row)
     findings: list[GraphQualityFinding] = []
-    for (subject, predicate), group in sorted(buckets.items()):
+    for scope, group in sorted(
+        buckets.items(), key=lambda item: tuple(value or "" for value in item[0])
+    ):
+        subject, predicate = group[0].subject_key, group[0].predicate
         objects = {row.object_key for row in group}
         if len(objects) < 2:
             continue
@@ -1935,7 +1950,18 @@ def _singleton_conflict_findings(
                     "command": "graph propose",
                     "reason": "Supersede or retract the incorrect singleton claim.",
                 },
-                payload={"object_keys": sorted(objects)},
+                payload={
+                    "object_keys": sorted(objects),
+                    "environment": scope[4],
+                    "record_ids": [row.record_id for row in group],
+                    "source_identities": [
+                        {
+                            "source_system": row.source_system,
+                            "source_ref": row.source_ref,
+                        }
+                        for row in group
+                    ],
+                },
             )
         )
         if len(findings) >= limit:

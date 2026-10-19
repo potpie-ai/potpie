@@ -564,9 +564,10 @@ def _row_claim_key(row: ClaimRow) -> str:
 
 def _dedupe_claim_rows(rows: list[ClaimRow]) -> tuple[ClaimRow, ...]:
     out: list[ClaimRow] = []
-    seen: set[tuple[str | None, str, str, str, str | None]] = set()
+    seen: set[tuple] = set()
     for row in rows:
         key = (
+            row.record_id,
             row.claim_key,
             row.predicate,
             row.subject_key,

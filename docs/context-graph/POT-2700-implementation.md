@@ -37,7 +37,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | 5 | fix(graph): enforce native atomic execution and receipt metadata | Native concurrency, internal failure, restart replay | FalkorDB v4.16.0/Lite: 121 passed, 64 deselected; server AOF restart and Lite reopen pass. Neo4j 5.26: 31 passed plus actual restart test, 18 unit tests. Fresh-pot Falkor revision race fixed under native WATCH. Forced-kill durability and full platform matrix remain step13. |
 | 6 | refactor(graph): unify supported graph write entry points | Entry-point inventory covered; repair/reset revision semantics | 1736 unit/core passed (3 unrelated skips), plus 10 isolated Falkor wiring tests. Neo4j 80 passed; Falkor server/Lite 154 passed. Native restart guards unselected here; actual restarts proven in step5. Direct semantics share prepared workbench; empty commits get receipts; reset/import/repair share native execution; reset returns retry identity. |
 | 7 | fix(graph): make plan persistence and public recovery crash-safe | Corruption fail-closed, crash recovery, stale owner fencing | Checkpoint A approved by independent shared and backend reviewers. Engine unit/core + public runtime/semantic gate: 1929 passed, 3 unrelated skips. Root CLI/runtime gate: 146 passed; final reset gate: 16 passed. Native integrity: 25 passed across server/Lite/Neo4j. Detailed evidence below. |
-| 8 | fix(graph): preserve claim incarnations and scoped supersession | Historical intervals and source/environment isolation | Pending |
+| 8 | fix(graph): preserve claim incarnations and scoped supersession | Historical intervals and source/environment isolation | Approved by independent shared/adapter reviewer. Shared history and source policy, physical identity and endpoint guards; detailed local/native evidence below. |
 | 9 | fix(graph): freeze correction targets and dependent effects | Preview/commit/verify targets identical; stale conflicts | Pending |
 | 10 | fix(graph): normalize temporal writes and query semantics | Offset/boundary/occurrence/query-limit parity | Pending |
 | 11 | fix(graph): separate execution success from current verification | Current lifecycle results independent of execution receipt | Pending |
@@ -171,3 +171,64 @@ bound to their original identity and require an explicit fresh operation.
 
 Remaining release evidence: forced-kill durability, full supported Windows/native
 CI, and lifecycle/temporal/correction/verification/migration work in steps 8–13.
+
+
+## Step 8 contract freeze (2026-10-19)
+
+Design reviewer: independent GPT-6.1 xhigh shared-contract reviewer, approved after resolving future interval overlap, explicit endpoint changes, and timestamp ownership.
+
+- `ClaimWriteResolution` is the sole authority for selected incarnation ID, preserved interval, assertion effective time, and exact singleton predecessors. It is serialized only when present, preserving old fingerprint-v1 bytes. Prepared schema 2 distinguishes resolved assertions; schema 1 remains readable for completed receipt recovery and requires fresh preparation before unexecuted work.
+- One pure policy operates over canonical `ClaimRow`s in preparation and raw backend atomic boundaries. Adapters validate frozen physical selections; they cannot select replacement targets on retry. Preparation maintains a virtual candidate set for earlier writes in the same batch.
+- A historical endpoint at/before the frozen preparation/execution anchor prevents ordinary overlapping edits. Scheduled endpoints after the anchor survive refresh; at-end assertions create another incarnation. Explicit changed finite endpoints and truth-bearing changes require correction. Backdated assertions before an existing start and simultaneous/future singleton overlaps are rejected; no silent interval clipping.
+- Singleton scope is pot, subgraph, subject, predicate, exact environment (missing is its own scope), source system and source reference. Both claims need an explicit stable-source marker; legacy missing markers and generated request/event references never authorize automatic replacement.
+- Exact metadata review patches only the review marker allowlist and preserves content, observation time and lifecycle. Its guarded snapshot carries the physical record ID and full scope.
+- Snapshot identity is physical `record_id`, with explicit legacy logical-key fallback until identity normalization. Multiple incarnations of one logical claim survive export/import.
+- Shared closure preserves completed intervals and prevents empty/negative intervals. Journal and ordinary writers use this same policy.
+
+Implementation uses one core lifecycle/codec/preparation owner. Native Cypher and
+Falkor publication consume exact physical selections; memory staging uses the
+same policy. Snapshot imports and journal inverse validation reject overlapping
+logical incarnations, including legacy archives whose missing IDs would otherwise
+invent a duplicate. Missing/retired endpoints and ambiguous physical IDs reject
+before publication. Reactivation is explicit; omitted retirement metadata preserves
+existing status. Different sources remain visible in quality reporting.
+
+Step 8 validation evidence:
+
+- Engine unit/core plus memory/JSON journal conformance: 2089 passed, 3 unrelated
+  skips, 129 Falkor-named tests deselected; the native/Falkor gates below cover
+  those adapters. Existing naive-datetime test emits one deprecation warning.
+- Memory/JSON final owned incarnation/atomic/admin gate: 253 passed, covering
+  raw/frozen identity collisions, retirement, restart, failure rollback and history.
+- FalkorDB v4.16.0 server/Lite full gate: 275 passed, 64 deselected, no skips,
+  including actual server restart. Final endpoint/journal/snapshot gate after
+  shared history validation: 104 passed, 144 deselected. Writer/native vector shim:
+  40 passed. Final staged entity/claim identity guard: 75 passed, one optional
+  restart test unselected; 32 added native collision cases preserve graph/revision/receipts.
+  Dedicated native tests exercise ordinary and journal modes.
+- Neo4j 5.26 lifecycle/atomic/recovery gate after global identity guards: 50 passed,
+  one restart opt-in test unselected; actual restart had already passed the earlier
+  86-case native gate. Snapshot/entrypoint follow-up: 50 passed after the shared history checks.
+- Root public CLI/runtime unit contracts: 257 passed. Canonical daemon integration:
+  8 passed with loopback service access. The resource-without-query fixture now
+  asserts the fail-closed reconciliation capability error introduced in step 7.
+- Independent adapter reviewer: 122 native lifecycle cases and 73 focused identity,
+  endpoint, annotation and occurrence-time cases passed. Shared snapshot/policy
+  regressions: 64 passed. Ruff and diff whitespace checks pass.
+
+Review findings remaining with their planned owners:
+
+- I7/step9: freeze exact correction incarnations, intersect selector axes, and
+  lower dependent/canonical SUPERSEDES effects centrally. Explicit empty target
+  sets must never become wildcard selectors.
+- I8/step10: native raw writers must preserve `event_received_at` observation time
+  as memory does; occurrence time and frozen assertion time remain separate.
+- I10/step12: ordinary entity updates must not overwrite immutable record IDs/UUIDs.
+  Repair/import are explicit identity boundaries; migrate legacy duplicate fixtures
+  through out-of-band setup instead of keeping an identity overwrite write door.
+
+Final step 8 review approved after independently rerunning both Falkor staged-ID
+collision reproductions twice. Each rejected with unchanged canonical data and
+receipts, revision zero. Final legacy UUID promotion guard: 44 native cases passed.
+General entity-ID overwrite and raw observation-time issues remain explicitly
+assigned to steps 12 and 10; step 8 approval does not waive those release gates.

@@ -7,6 +7,8 @@ resends the mutation payload at commit time.
 
 from __future__ import annotations
 
+from .claim_lifecycle import ClaimWriteResolution
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -570,6 +572,16 @@ def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:
                 "from_entity_key": item.from_entity_key,
                 "to_entity_key": item.to_entity_key,
                 "properties": _json_safe(item.properties),
+                **(
+                    {"resolution": item.resolution.to_dict()}
+                    if item.resolution is not None
+                    else {}
+                ),
+                **(
+                    {"metadata_review_record_id": item.metadata_review_record_id}
+                    if item.metadata_review_record_id is not None
+                    else {}
+                ),
             }
             for item in batch.edge_upserts
         ],
@@ -588,9 +600,11 @@ def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:
                 "reason": item.reason,
                 "superseded_by_key": item.superseded_by_key,
                 "valid_to": item.valid_to,
-                "target_claim_keys": list(item.target_claim_keys)
-                if item.target_claim_keys is not None
-                else None,
+                "target_claim_keys": (
+                    list(item.target_claim_keys)
+                    if item.target_claim_keys is not None
+                    else None
+                ),
                 **(
                     {"target_claim_record_ids": list(item.target_claim_record_ids)}
                     if item.target_claim_record_ids is not None
@@ -632,6 +646,12 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
                 from_entity_key=str(item.get("from_entity_key") or ""),
                 to_entity_key=str(item.get("to_entity_key") or ""),
                 properties=dict(item.get("properties") or {}),
+                resolution=(
+                    ClaimWriteResolution.from_dict(item["resolution"])
+                    if item.get("resolution") is not None
+                    else None
+                ),
+                metadata_review_record_id=item.get("metadata_review_record_id"),
             )
             for item in raw.get("edge_upserts") or ()
             if isinstance(item, Mapping)
@@ -648,18 +668,22 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
         invalidations=[
             InvalidationOp(
                 target_entity_key=str(item.get("target_entity_key") or "") or None,
-                target_edge=tuple(item.get("target_edge"))
-                if item.get("target_edge")
-                else None,
+                target_edge=(
+                    tuple(item.get("target_edge")) if item.get("target_edge") else None
+                ),
                 reason=str(item.get("reason") or ""),
                 superseded_by_key=str(item.get("superseded_by_key") or "") or None,
                 valid_to=str(item.get("valid_to") or "") or None,
-                target_claim_keys=tuple(item["target_claim_keys"])
-                if item.get("target_claim_keys") is not None
-                else None,
-                target_claim_record_ids=tuple(item["target_claim_record_ids"])
-                if item.get("target_claim_record_ids") is not None
-                else None,
+                target_claim_keys=(
+                    tuple(item["target_claim_keys"])
+                    if item.get("target_claim_keys") is not None
+                    else None
+                ),
+                target_claim_record_ids=(
+                    tuple(item["target_claim_record_ids"])
+                    if item.get("target_claim_record_ids") is not None
+                    else None
+                ),
             )
             for item in raw.get("invalidations") or ()
             if isinstance(item, Mapping)

@@ -58,6 +58,7 @@ WHERE r.group_id = $gid
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
+  AND ($record_ids IS NULL OR coalesce(r.record_id,r.uuid) IN $record_ids)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
   AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
@@ -146,6 +147,7 @@ class FalkorDBClaimQueryStore:
             "subjects": list(filter_.subject_key_in) or None,
             "objects": list(filter_.object_key_in) or None,
             "claim_keys": list(filter_.claim_key_in) or None,
+            "record_ids": list(filter_.record_id_in) or None,
             "subgraphs": list(filter_.subgraph_in) or None,
             "excluded_subgraphs": list(filter_.subgraph_not_in) or None,
             "mutation_ids": list(filter_.mutation_id_in) or None,

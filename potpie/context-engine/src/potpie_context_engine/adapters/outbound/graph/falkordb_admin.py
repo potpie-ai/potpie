@@ -6,7 +6,10 @@ from datetime import datetime, timezone
 import json
 import re
 
-from potpie_context_engine.core.graph_snapshot import validate_snapshot_merge
+from potpie_context_engine.core.graph_snapshot import (
+    snapshot_claim_identity,
+    validate_snapshot_merge,
+)
 from potpie_context_engine.core.graph_snapshot_mutation import (
     validate_snapshot_identities,
 )
@@ -121,9 +124,13 @@ def _snapshot_effects(graph, pipe, incoming, params, clauses):
         incoming=incoming,
     )
     entity_keys = {row["key"] for row in existing["entities"]}
-    claim_keys = {row["claim_key"] for row in existing["claims"]}
+    claim_keys = {snapshot_claim_identity(row) for row in existing["claims"]}
     entities = [row for row in incoming["entities"] if row["key"] not in entity_keys]
-    claims = [row for row in incoming["claims"] if row["claim_key"] not in claim_keys]
+    claims = [
+        row
+        for row in incoming["claims"]
+        if snapshot_claim_identity(row) not in claim_keys
+    ]
     validate_snapshot_identities(
         {
             "entities": existing["entities"] + entities,

@@ -30,6 +30,7 @@ def _row() -> ClaimRow:
     return ClaimRow(
         pot_id=POT,
         claim_key="claim:guide-api",
+        record_id="record:guide-api-1",
         predicate="DOCUMENTS",
         subject_key="document:guide",
         object_key="service:api",
