@@ -22,6 +22,7 @@ fields.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, Mapping
 
 from potpie_context_engine.core.mutation_execution import ExecutionMetadata
 
@@ -66,6 +67,27 @@ class MutationBatch:
     warnings: list[str] = field(default_factory=list)
     ontology_downgrades: list[dict[str, str]] = field(default_factory=list)
     """Populated when soft ontology downgrade runs (API surface); not persisted on plan slices."""
+    reset_pot: bool = False
+    snapshot_import: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.reset_pot) is not bool:
+            raise ValueError("reset_pot must be a boolean")
+        if self.snapshot_import is not None and not isinstance(
+            self.snapshot_import, Mapping
+        ):
+            raise ValueError("snapshot_import must be a normalized snapshot object")
+        if self.reset_pot and self.snapshot_import is not None:
+            raise ValueError("reset and snapshot import cannot share a batch")
+        if (self.reset_pot or self.snapshot_import is not None) and (
+            self.entity_upserts
+            or self.edge_upserts
+            or self.edge_deletes
+            or self.invalidations
+        ):
+            raise ValueError(
+                "administrative and semantic mutations cannot share a batch"
+            )
 
 
 # Back-compat alias — the public ``SemanticMutationPlan`` keeps its name;
@@ -104,6 +126,7 @@ class MutationResult:
     """Ontology soft-fail rewrites applied (sync reconcile / apply)."""
     execution: ExecutionMetadata | None = None
     """Authoritative metadata captured with the write; None identifies legacy results."""
+    administrative_summary: dict[str, int] = field(default_factory=dict)
 
 
 # Back-compat alias.

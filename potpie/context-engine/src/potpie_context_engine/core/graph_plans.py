@@ -474,6 +474,12 @@ class GraphMutationCommitResult:
 
 def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:
     return {
+        **({"reset_pot": True} if batch.reset_pot else {}),
+        **(
+            {"snapshot_import": _json_safe(batch.snapshot_import)}
+            if batch.snapshot_import is not None
+            else {}
+        ),
         "event_ref": event_ref_to_dict(batch.event_ref),
         "summary": batch.summary,
         "entity_upserts": [
@@ -533,6 +539,8 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
     if not raw:
         return None
     return MutationBatch(
+        reset_pot=raw.get("reset_pot", False),
+        snapshot_import=raw.get("snapshot_import"),
         event_ref=event_ref_from_dict(raw.get("event_ref")),
         summary=str(raw.get("summary") or ""),
         entity_upserts=[

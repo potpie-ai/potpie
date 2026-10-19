@@ -91,13 +91,9 @@ def test_archive_round_trip_preserves_revision_bytes_and_retry_is_idempotent(tmp
     assert _text(target, "target", "guide", first.revision) == "revision one"
     assert _text(target, "target", "guide", second.revision) == "revision two"
     assert target.export_snapshot(pot_id="target")["resources"] == archive["resources"]
-    assert target.snapshot.export_data(pot_id="target")["entities"] == [
-        {
-            "key": "document:guide",
-            "labels": ["Document"],
-            "properties": {"name": "Guide"},
-        }
-    ]
+    source_entity = source.snapshot.export_data(pot_id="source")["entities"][0]
+    assert source_entity["properties"]["record_id"]
+    assert target.snapshot.export_data(pot_id="target")["entities"] == [source_entity]
 
 
 def test_archive_preserves_unrelated_target_documents(tmp_path):

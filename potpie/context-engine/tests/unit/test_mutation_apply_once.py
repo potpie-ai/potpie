@@ -204,7 +204,11 @@ def test_completed_retry_after_reset_returns_receipt_without_resurrecting_graph(
         expected_pot_id=POT,
         provenance_context=_context(),
     )
-    assert backend.mutation.reset_pot(POT) == {"removed_claims": 1}
+    reset = backend.mutation.reset_pot(POT)
+    assert reset["removed_claims"] == 1
+    assert reset["mutation_id"]
+    assert reset["execution"]["version_before"] == 1
+    assert reset["execution"]["version_after"] == 2
 
     if profile == "embedded":
         backend = EmbeddedGraphBackend(home=tmp_path)
@@ -253,7 +257,11 @@ def test_embedded_stale_lifecycle_writes_preserve_newer_graph_and_receipt(
         )
         == 0
     )
-    assert stale.mutation.reset_pot("different-pot") == {"removed_claims": 0}
+    reset = stale.mutation.reset_pot("different-pot")
+    assert reset["removed_claims"] == 0
+    assert reset["mutation_id"]
+    assert reset["execution"]["version_before"] == 0
+    assert reset["execution"]["version_after"] == 1
     assert stale.provision().ok
 
     fresh = EmbeddedGraphBackend(home=tmp_path)

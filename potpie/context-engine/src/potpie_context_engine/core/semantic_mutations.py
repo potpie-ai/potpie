@@ -404,6 +404,7 @@ class SemanticMutationResult:
     detail: str | None = None
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
     ontology_version: str = ONTOLOGY_VERSION
+    plan_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -414,6 +415,7 @@ class SemanticMutationResult:
             "graph_contract_version": self.graph_contract_version,
             "ontology_version": self.ontology_version,
             "operations_accepted": self.operations_accepted,
+            "plan_id": self.plan_id,
             "warnings": list(self.warnings),
             "issues": [i.to_dict() for i in self.issues],
         }

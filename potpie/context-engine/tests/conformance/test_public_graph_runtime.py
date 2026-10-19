@@ -552,6 +552,38 @@ class _AsyncMutation:
         self.inner = inner
         self.seen_configs: list[ReconciliationConfig | None] = []
 
+    @property
+    def capabilities(self):
+        return self.inner.capabilities
+
+    async def current_version_async(self, pot_id):
+        return await self.inner.current_version_async(pot_id)
+
+    async def compare_and_apply_async(
+        self,
+        plan,
+        *,
+        expected_pot_id,
+        expected_version,
+        provenance_context=None,
+        reconciliation_config=None,
+    ):
+        self.seen_configs.append(current_reconciliation_config())
+        return await self.inner.compare_and_apply_async(
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
+        )
+
+    async def lookup_execution_async(self, plan, *, expected_pot_id, mutation_id):
+        return await self.inner.lookup_execution_async(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
+
     async def apply_async(
         self,
         plan: MutationBatch,
@@ -597,6 +629,9 @@ class _AsyncClaims:
 class _AsyncStore:
     def __init__(self, inner) -> None:
         self.inner = inner
+
+    async def reserve_idempotency_async(self, **kwargs):
+        return await self.inner.reserve_idempotency_async(**kwargs)
 
     async def save_async(self, item):
         self.inner.save(item)
@@ -684,6 +719,38 @@ class _SyncMutation:
     def __init__(self, inner) -> None:
         self.inner = inner
         self.seen_configs: list[ReconciliationConfig | None] = []
+
+    @property
+    def capabilities(self):
+        return self.inner.capabilities
+
+    def current_version(self, pot_id):
+        return self.inner.current_version(pot_id)
+
+    def compare_and_apply(
+        self,
+        plan,
+        *,
+        expected_pot_id,
+        expected_version,
+        provenance_context=None,
+        reconciliation_config=None,
+    ):
+        self.seen_configs.append(current_reconciliation_config())
+        return self.inner.compare_and_apply(
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
+        )
+
+    def lookup_execution(self, plan, *, expected_pot_id, mutation_id):
+        return self.inner.lookup_execution(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
 
     def apply(
         self,

@@ -179,6 +179,14 @@ async def apply_atomic(
 
     _require_valid_pot_id(expected_pot_id)
     plan = deepcopy(plan)
+    if plan.reset_pot or plan.snapshot_import is not None:
+        from potpie_context_engine.core.reconciliation_validation import (
+            validate_reconciliation_plan,
+        )
+
+        validate_reconciliation_plan(
+            plan, expected_pot_id, definition=definition, config=reconciliation_config
+        )
     mutation_id = provenance_context.mutation_id
     if not mutation_id:
         raise ValueError("atomic mutation requires a reserved mutation ID")
@@ -229,31 +237,47 @@ async def apply_atomic(
                     raise GraphMutationVersionConflict(
                         expected=prepared.expected_version, current=current
                     )
-                applied = await apply_mutation_batch(
-                    writer.in_transaction(transaction),
-                    deepcopy(plan),
-                    expected_pot_id=expected_pot_id,
-                    provenance_context=provenance_context,
-                    definition=definition,
-                    reconciliation_config=reconciliation_config,
-                )
-                affected = await _one(
-                    transaction,
-                    _AFFECTED_CLAIMS,
-                    pot=expected_pot_id,
-                    mutation=mutation_id,
-                )
-                record_ids = affected["record_ids"] if affected is not None else []
-                if (
-                    affected is None
-                    or len(record_ids) != affected["count"]
-                    or any(
-                        not isinstance(value, str) or not value for value in record_ids
+                if plan.reset_pot or plan.snapshot_import is not None:
+                    from .neo4j_snapshot_write import merge_snapshot, reset_graph
+
+                    if plan.reset_pot:
+                        applied, record_ids = await reset_graph(
+                            transaction, pot_id=expected_pot_id, mutation_id=mutation_id
+                        )
+                    else:
+                        applied, record_ids = await merge_snapshot(
+                            transaction,
+                            pot_id=expected_pot_id,
+                            mutation_id=mutation_id,
+                            incoming=plan.snapshot_import,
+                        )
+                else:
+                    applied = await apply_mutation_batch(
+                        writer.in_transaction(transaction),
+                        deepcopy(plan),
+                        expected_pot_id=expected_pot_id,
+                        provenance_context=provenance_context,
+                        definition=definition,
+                        reconciliation_config=reconciliation_config,
                     )
-                ):
-                    raise MutationPersistenceError(
-                        "affected Neo4j claim has no record identity"
+                    affected = await _one(
+                        transaction,
+                        _AFFECTED_CLAIMS,
+                        pot=expected_pot_id,
+                        mutation=mutation_id,
                     )
+                    record_ids = affected["record_ids"] if affected is not None else []
+                    if (
+                        affected is None
+                        or len(record_ids) != affected["count"]
+                        or any(
+                            not isinstance(value, str) or not value
+                            for value in record_ids
+                        )
+                    ):
+                        raise MutationPersistenceError(
+                            "affected Neo4j claim has no record identity"
+                        )
                 applied = complete_execution(
                     applied,
                     plan,
@@ -278,44 +302,6 @@ async def apply_atomic(
                 )
                 await result.consume()
                 return applied
-
-            return await session.execute_write(execute)
-    finally:
-        await driver.close()
-
-
-async def reset_atomic(writer: Neo4jGraphWriter, pot_id: str) -> dict[str, Any]:
-    """Reset canonical data while invalidating every outstanding proposal."""
-    from potpie_context_engine.adapters.outbound.graph.cypher import (
-        _require_valid_pot_id,
-    )
-
-    _require_valid_pot_id(pot_id)
-    driver = writer._new_driver()
-    if driver is None:
-        raise RuntimeError("neo4j_unavailable")
-    try:
-        async with driver.session() as session:
-            await session.execute_write(_ensure_constraints)
-
-            async def execute(transaction: Any) -> dict[str, Any]:
-                _version(await _one(transaction, _LOCK_REVISION, pot=pot_id))
-                before = await _one(
-                    transaction,
-                    "MATCH (n {group_id: $pot}) WITH collect(n) AS nodes "
-                    "FOREACH (n IN nodes | DETACH DELETE n) RETURN size(nodes) AS count",
-                    pot=pot_id,
-                )
-                result = await transaction.run(
-                    "MATCH (r:PotpieRevision {pot_id: $pot}) SET r.version = r.version + 1",
-                    pot=pot_id,
-                )
-                await result.consume()
-                return {
-                    "ok": True,
-                    "group_id_nodes_before": before["count"],
-                    "group_id_nodes_remaining": 0,
-                }
 
             return await session.execute_write(execute)
     finally:

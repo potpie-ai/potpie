@@ -153,9 +153,11 @@ class GraphMutationPort(Protocol):
         number of claims invalidated."""
         ...
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
         """Hard-reset all graph state for a pot. Returns a summary of what was
-        removed."""
+        removed and its execution identity for recoverable retries."""
         ...
 
     def readiness(self, pot_id: str) -> BackendReadiness:

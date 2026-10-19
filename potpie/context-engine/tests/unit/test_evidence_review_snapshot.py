@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 import pytest
 
 from potpie_context_engine.core.ports.claim_query import ClaimRow
+from potpie_context_engine.core.workbench_service import GraphWorkbenchService
+from potpie_context_engine.core.mutation_plan_store import InMemoryGraphPlanStore
 from potpie_context_engine.core.semantic_mutation_validator import (
     validate_semantic_request,
 )
@@ -69,7 +71,12 @@ class _UnusedStore:
 class _RacingGraph:
     def __init__(self, backend: InMemoryGraphBackend) -> None:
         self.backend = backend
-        self.delegate = DefaultGraphService(backend=backend)
+        self.delegate = DefaultGraphService(
+            backend=backend,
+            record_workbench=GraphWorkbenchService(
+                backend=backend, plan_store=InMemoryGraphPlanStore()
+            ),
+        )
 
     def mutate(self, request):
         current = self.backend.store.rows[0]
@@ -116,7 +123,12 @@ def test_duplicate_exact_claim_key_rejects_preservation_marker() -> None:
     backend.store.add(dataclasses.replace(row, fact="duplicate row"))
     facade = ResourceFacade(
         store=_UnusedStore(),
-        graph=DefaultGraphService(backend=backend),
+        graph=DefaultGraphService(
+            backend=backend,
+            record_workbench=GraphWorkbenchService(
+                backend=backend, plan_store=InMemoryGraphPlanStore()
+            ),
+        ),
         claims=backend.claim_query,
     )
 
@@ -181,7 +193,12 @@ def test_unchanged_exact_marker_succeeds_and_preserves_claim() -> None:
     backend = _backend(row)
     facade = ResourceFacade(
         store=_UnusedStore(),
-        graph=DefaultGraphService(backend=backend),
+        graph=DefaultGraphService(
+            backend=backend,
+            record_workbench=GraphWorkbenchService(
+                backend=backend, plan_store=InMemoryGraphPlanStore()
+            ),
+        ),
         claims=backend.claim_query,
     )
 

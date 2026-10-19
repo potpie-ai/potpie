@@ -16,7 +16,6 @@ import json
 import threading
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -34,11 +33,9 @@ from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.mutation_execution import MutationCapabilities
 from potpie_context_engine.core.graph_snapshot import (
     build_snapshot_payload,
-    normalize_snapshot_payload,
-    validate_snapshot_merge,
 )
 from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
-from potpie_context_engine.core.ports.graph.analytics import RepairFinding, RepairReport
+from potpie_context_engine.core.ports.graph.analytics import RepairReport
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 from potpie_context_engine.core.ports.graph.inspection import (
     GraphEdge,
@@ -62,20 +59,6 @@ from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
 )
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     CONTRACT_EDGE_KEYS,
-)
-from potpie_context_engine.adapters.outbound.graph.document_key_repair import (
-    document_key_finding,
-    wants_document_key_repair,
-)
-from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
-    ENTITY_LABEL_TARGET,
-    repaired_entity_labels,
-    wants_entity_label_repair,
-)
-from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
-    ENTITY_SUMMARY_TARGET,
-    repaired_entity_properties,
-    wants_entity_summary_repair,
 )
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
@@ -216,6 +199,20 @@ class _Mutation:
         expected_pot_id: str,
         mutation_id: str,
     ) -> MutationResult:
+        from potpie_context_engine.adapters.outbound.graph.memory_admin import (
+            apply_reset,
+            apply_snapshot_import,
+        )
+
+        if plan.reset_pot:
+            return apply_reset(self, pot_id=expected_pot_id, mutation_id=mutation_id)
+        if plan.snapshot_import is not None:
+            return apply_snapshot_import(
+                self,
+                plan.snapshot_import,
+                pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+            )
         summary = MutationSummary()
         for ent in plan.entity_upserts:
             self.store.set_entity_label(
@@ -472,57 +469,45 @@ class _Mutation:
     def invalidate(
         self, *, pot_id: str, claim_keys: Sequence[str], reason: str | None = None
     ) -> int:
-        with self.state_lock:
-            if self.journal_data.get("states", {}).get(pot_id) is not None:
-                from potpie_context_engine.core.graph_mutations import InvalidationOp
+        from potpie_context_engine.core.graph_mutations import InvalidationOp
 
-                result = self.apply(
-                    MutationBatch(
-                        invalidations=[
-                            InvalidationOp(
-                                reason=reason or "direct invalidation",
-                                target_claim_keys=tuple(claim_keys),
-                            )
-                        ]
-                    ),
-                    expected_pot_id=pot_id,
-                )
-                return result.mutation_summary.invalidations_applied
-            keys = set(claim_keys)
-            invalidated = 0
-            now = datetime.now(timezone.utc)
-            for i, row in enumerate(self.store.rows):
-                if row.retired or row.pot_id != pot_id or row.invalid_at is not None:
-                    continue
-                if (
-                    (row.claim_key and row.claim_key in keys)
-                    or row.subject_key in keys
-                    or row.object_key in keys
-                ):
-                    self.store.rows[i] = _with_invalid_at(row, now)
-                    invalidated += 1
-            if invalidated:
-                self.revisions[pot_id] = self.revisions.get(pot_id, 0) + 1
-            self._notify()
-            return invalidated
+        if not claim_keys:
+            return 0
+        result = self.apply(
+            MutationBatch(
+                invalidations=[
+                    InvalidationOp(
+                        target_entity_key=None,
+                        target_edge=None,
+                        reason=reason or "direct invalidation",
+                        target_claim_keys=tuple(claim_keys),
+                    )
+                ]
+            ),
+            expected_pot_id=pot_id,
+        )
+        return result.mutation_summary.invalidations_applied
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        with self.state_lock:
-            if self.journal_data.get("states", {}).get(pot_id) is not None:
-                from potpie_context_engine.core.graph_journal import JournalError
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
+        result = self.apply(
+            MutationBatch(reset_pot=True),
+            expected_pot_id=pot_id,
+            provenance_context=ProvenanceContext(mutation_id=mutation_id),
+        )
+        return {
+            "removed_claims": result.administrative_summary["removed_claims"],
+            "mutation_id": result.mutation_id,
+            "execution": result.execution.to_dict()
+            if result.execution is not None
+            else None,
+        }
 
-                raise JournalError(
-                    "reset is unsupported while journal capture is active"
-                )
-            before = len(self.store.rows)
-            self.store.rows = [r for r in self.store.rows if r.pot_id != pot_id]
-            for key in [k for k in self.store.entity_label_index if k[0] == pot_id]:
-                self.store.entity_label_index.pop(key, None)
-            for key in [k for k in self.store.entity_property_index if k[0] == pot_id]:
-                self.store.entity_property_index.pop(key, None)
-            self.revisions[pot_id] = self.revisions.get(pot_id, 0) + 1
-            self._notify()
-            return {"removed_claims": before - len(self.store.rows)}
+    async def reset_pot_async(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
+        return self.reset_pot(pot_id, mutation_id=mutation_id)
 
     def readiness(self, pot_id: str) -> BackendReadiness:
         return BackendReadiness(
@@ -724,10 +709,8 @@ class _Inspection:
 @dataclass(slots=True)
 class _Analytics:
     store: InMemoryClaimQueryStore
-    on_change: Any = None
+    mutation: _Mutation
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION
-
-    mutation: Any = None
 
     def _rows(self, pot_id: str) -> list[ClaimRow]:
         return [r for r in self.store.rows if r.pot_id == pot_id and not r.retired]
@@ -763,102 +746,17 @@ class _Analytics:
         }
 
     def repair(self, pot_id: str, *, targets: Sequence[str] = ()) -> RepairReport:
-        if self.mutation is not None and self.mutation.journal_data.get(
-            "states", {}
-        ).get(pot_id):
-            from potpie_context_engine.adapters.outbound.graph.memory_journal import (
-                repair_journaled,
-            )
-
-            return repair_journaled(self, pot_id, targets)
-        repaired: dict[str, int] = {}
-        findings: list[RepairFinding] = []
-        if wants_entity_summary_repair(targets):
-            repaired[ENTITY_SUMMARY_TARGET] = self._repair_entity_summaries(pot_id)
-        if wants_entity_label_repair(targets):
-            repaired[ENTITY_LABEL_TARGET] = self._repair_entity_labels(pot_id)
-        if wants_document_key_repair(targets):
-            findings.append(document_key_finding(self._entity_keys(pot_id)))
-        parts = [
-            f"repaired {count} {target.replace('_', ' ')}"
-            for target, count in repaired.items()
-        ]
-        parts.extend(finding.detail for finding in findings if finding.detail)
-        if parts:
-            if any(repaired.values()) and self.on_change is not None:
-                self.on_change()
-            return RepairReport(
-                pot_id=pot_id,
-                targets=tuple(targets),
-                repaired=repaired,
-                detail=", ".join(parts),
-                findings=tuple(findings),
-            )
-        return RepairReport(
-            pot_id=pot_id,
-            targets=tuple(targets),
-            repaired={},
-            detail="in_memory projections are computed on read; nothing to rebuild",
+        from potpie_context_engine.adapters.outbound.graph.memory_admin import (
+            repair_entities,
         )
 
-    def _entity_keys(self, pot_id: str) -> set[str]:
-        keys = {
-            key
-            for row in self._rows(pot_id)
-            for key in (row.subject_key, row.object_key)
-        }
-        keys.update(key for pid, key in self.store.entity_label_index if pid == pot_id)
-        keys.update(
-            key for pid, key in self.store.entity_property_index if pid == pot_id
-        )
-        return keys
-
-    def _repair_entity_summaries(self, pot_id: str) -> int:
-        entity_keys = {
-            key
-            for row in self._rows(pot_id)
-            for key in (row.subject_key, row.object_key)
-        }
-        entity_keys.update(
-            key for pid, key in self.store.entity_property_index if pid == pot_id
-        )
-        repaired = 0
-        for entity_key in entity_keys:
-            props = self.store.entity_properties(pot_id=pot_id, entity_key=entity_key)
-            fixed = repaired_entity_properties(entity_key, props)
-            if fixed is None:
-                continue
-            self.store.set_entity_properties(
-                pot_id=pot_id, entity_key=entity_key, properties=fixed
-            )
-            repaired += 1
-        return repaired
-
-    def _repair_entity_labels(self, pot_id: str) -> int:
-        repaired = 0
-        for (pid, entity_key), labels in tuple(self.store.entity_label_index.items()):
-            if pid != pot_id:
-                continue
-            fixed = repaired_entity_labels(
-                entity_key,
-                labels,
-                entity_types=self.definition.entity_types,
-            )
-            if fixed is None:
-                continue
-            self.store.set_entity_label(
-                pot_id=pot_id, entity_key=entity_key, labels=fixed
-            )
-            repaired += 1
-        return repaired
+        return repair_entities(self, pot_id, targets)
 
 
 @dataclass(slots=True)
 class _Snapshot:
     store: InMemoryClaimQueryStore
-    revisions: dict[str, int]
-    state_lock: threading.RLock
-    journal_data: dict[str, Any]
+    mutation: _Mutation
 
     def export(self, *, pot_id: str, destination: str) -> SnapshotManifest:
         payload = self.export_data(pot_id=pot_id)
@@ -874,124 +772,82 @@ class _Snapshot:
 
     @coherent_store_read
     def export_data(self, *, pot_id: str) -> dict[str, Any]:
-        with self.state_lock:
-            rows = [
-                r
-                for r in self.store.rows
-                if r.pot_id == pot_id
-                and not r.retired
-                and not any(
-                    self.store.entity_property_index.get((pot_id, key), {}).get(
-                        "retired", False
-                    )
-                    for key in (r.subject_key, r.object_key)
-                )
-            ]
-            keys = {key for row in rows for key in (row.subject_key, row.object_key)}
-            keys.update(
-                key for pid, key in self.store.entity_label_index if pid == pot_id
-            )
-            keys.update(
-                key for pid, key in self.store.entity_property_index if pid == pot_id
-            )
-            keys = {
-                key
-                for key in keys
-                if not self.store.entity_property_index.get((pot_id, key), {}).get(
+        rows = [
+            r
+            for r in self.store.rows
+            if r.pot_id == pot_id
+            and not r.retired
+            and not any(
+                self.store.entity_property_index.get((pot_id, key), {}).get(
                     "retired", False
                 )
+                for key in (r.subject_key, r.object_key)
+            )
+        ]
+        keys = {key for row in rows for key in (row.subject_key, row.object_key)}
+        keys.update(key for pid, key in self.store.entity_label_index if pid == pot_id)
+        keys.update(
+            key for pid, key in self.store.entity_property_index if pid == pot_id
+        )
+        keys = {
+            key
+            for key in keys
+            if not self.store.entity_property_index.get((pot_id, key), {}).get(
+                "retired", False
+            )
+        }
+        entities = [
+            {
+                "key": key,
+                "labels": list(self.store.entity_label_index.get((pot_id, key), ())),
+                "properties": self.store.entity_properties(
+                    pot_id=pot_id, entity_key=key
+                ),
             }
-            entities = [
-                {
-                    "key": key,
-                    "labels": list(
-                        self.store.entity_label_index.get((pot_id, key), ())
-                    ),
-                    "properties": self.store.entity_properties(
-                        pot_id=pot_id, entity_key=key
-                    ),
-                }
-                for key in keys
-            ]
-            claims = [
-                {
-                    **{
-                        k: v
-                        for k, v in _row_to_dict(row).items()
-                        if k not in {"record_id", "retired"}
-                    },
-                    "evidence_strength": row.evidence_strength,
-                }
-                for row in rows
-            ]
-            if self.journal_data.get("states", {}).get(pot_id) is not None:
-                from potpie_context_engine.adapters.outbound.graph.journal_snapshot_policy import (
-                    require_snapshot_identity,
-                )
-
-                require_snapshot_identity(row.claim_key for row in rows)
-            return build_snapshot_payload(
-                pot_id=pot_id, entities=entities, claims=claims
+            for key in keys
+        ]
+        claims = [
+            {
+                **{
+                    k: v
+                    for k, v in _row_to_dict(row).items()
+                    if k != "retired" and (k != "record_id" or v)
+                },
+                "evidence_strength": row.evidence_strength,
+            }
+            for row in rows
+        ]
+        if self.mutation.journal_data.get("states", {}).get(pot_id) is not None:
+            from potpie_context_engine.adapters.outbound.graph.journal_snapshot_policy import (
+                require_snapshot_identity,
             )
 
-    def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
+            require_snapshot_identity(row.claim_key for row in rows)
+        return build_snapshot_payload(pot_id=pot_id, entities=entities, claims=claims)
+
+    def import_(
+        self, *, pot_id: str, source: str, mutation_id: str | None = None
+    ) -> SnapshotManifest:
         with open(source, encoding="utf-8") as fh:
             payload = json.load(fh)
         return replace(
-            self.import_data(pot_id=pot_id, payload=payload), location=source
+            self.import_data(pot_id=pot_id, payload=payload, mutation_id=mutation_id),
+            location=source,
         )
 
     def import_data(
-        self, *, pot_id: str, payload: Mapping[str, Any]
+        self,
+        *,
+        pot_id: str,
+        payload: Mapping[str, Any],
+        mutation_id: str | None = None,
     ) -> SnapshotManifest:
-        normalized = normalize_snapshot_payload(payload, target_pot_id=pot_id)
-        with self.state_lock:
-            if self.journal_data.get("states", {}).get(pot_id) is not None:
-                from potpie_context_engine.core.graph_journal import JournalError
+        from potpie_context_engine.adapters.outbound.graph.memory_admin import (
+            import_snapshot,
+        )
 
-                raise JournalError(
-                    "snapshot import is unsupported while journal capture is active"
-                )
-            existing = self.export_data(pot_id=pot_id)
-            validate_snapshot_merge(
-                existing_entities=existing["entities"],
-                existing_claims=existing["claims"],
-                incoming=normalized,
-            )
-            entity_keys = {row["key"] for row in existing["entities"]}
-            claim_keys = {row["claim_key"] for row in existing["claims"]}
-            new_entities = [
-                row for row in normalized["entities"] if row["key"] not in entity_keys
-            ]
-            new_claims = [
-                row
-                for row in normalized["claims"]
-                if row["claim_key"] not in claim_keys
-            ]
-            prepared_rows = list(self.store.rows) + [
-                _row_from_dict(pot_id, row) for row in new_claims
-            ]
-            prepared_labels = dict(self.store.entity_label_index)
-            prepared_properties = deepcopy(self.store.entity_property_index)
-            for entity in new_entities:
-                prepared_labels[(pot_id, entity["key"])] = tuple(entity["labels"])
-                if entity["properties"]:
-                    prepared_properties[(pot_id, entity["key"])] = dict(
-                        entity["properties"]
-                    )
-            self.store.rows[:] = prepared_rows
-            self.store.entity_label_index.clear()
-            self.store.entity_label_index.update(prepared_labels)
-            self.store.entity_property_index.clear()
-            self.store.entity_property_index.update(prepared_properties)
-            if new_entities or new_claims:
-                self.revisions[pot_id] = self.revisions.get(pot_id, 0) + 1
-        return SnapshotManifest(
-            pot_id=pot_id,
-            location="<inline>",
-            format_version="2",
-            entity_count=len(normalized["entities"]),
-            claim_count=len(normalized["claims"]),
+        return import_snapshot(
+            self.mutation, pot_id=pot_id, payload=payload, mutation_id=mutation_id
         )
 
 
@@ -1045,13 +901,10 @@ class InMemoryGraphBackend:
         self._inspection = _Inspection(self.store)
         self._analytics = _Analytics(
             self.store,
-            on_change=self.on_change,
-            definition=self.definition,
             mutation=self._mutation,
+            definition=self.definition,
         )
-        self._snapshot = _Snapshot(
-            self.store, self.revisions, self.state_lock, self.journal_data
-        )
+        self._snapshot = _Snapshot(self.store, self._mutation)
 
     @property
     def match_mode(self) -> str:

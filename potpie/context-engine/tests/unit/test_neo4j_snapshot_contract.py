@@ -1,24 +1,21 @@
-"""Neo4j snapshot transaction contract without requiring a server."""
+"""Exact snapshot effects borrow the canonical mutation transaction."""
 
 import pytest
 
-from potpie_context_engine.adapters.outbound.graph.neo4j_snapshot import (
-    _ensure_revision_constraint,
-    _merge,
+from potpie_context_engine.adapters.outbound.graph.neo4j_snapshot_write import (
+    merge_snapshot,
 )
+from potpie_context_engine.core.graph_snapshot_mutation import normalize_snapshot_import
 
 
 class _Result:
     def __init__(self, rows=()):
         self.rows = list(rows)
 
-    def __iter__(self):
-        return iter(self.rows)
+    async def fetch(self, count):
+        return self.rows[:count]
 
-    def single(self):
-        return self.rows[0] if self.rows else None
-
-    def consume(self):
+    async def consume(self):
         return None
 
 
@@ -28,46 +25,62 @@ class _Transaction:
         self.claims = list(claims)
         self.queries = []
 
-    def run(self, query, **params):
+    async def run(self, query, **params):
         self.queries.append((query, params))
-        if "RETURN v.version" in query:
-            return _Result([{"version": 2}])
         if "RETURN entities,collect" in query:
             return _Result([{"entities": self.entities, "claims": self.claims}])
         return _Result()
 
 
 def _payload(name="web"):
-    return {
-        "format_version": "2",
-        "pot_id": "target",
-        "entities": [
-            {
-                "key": "service:web",
-                "labels": ["Entity", "Service"],
-                "properties": {"name": name},
-            }
-        ],
-        "claims": [],
+    return normalize_snapshot_import(
+        {
+            "format_version": "2",
+            "pot_id": "target",
+            "entities": [
+                {
+                    "key": "service:web",
+                    "labels": ["Entity", "Service"],
+                    "properties": {"name": name},
+                }
+            ],
+            "claims": [],
+        },
+        pot_id="target",
+    )
+
+
+async def test_merge_validates_and_writes_without_owning_revision_or_receipt():
+    tx = _Transaction()
+    result, affected = await merge_snapshot(
+        tx, pot_id="target", mutation_id="import", incoming=_payload()
+    )
+    assert result.administrative_summary == {
+        "imported_entities": 1,
+        "imported_claims": 0,
     }
-
-
-def test_merge_locks_validates_writes_and_advances_revision() -> None:
-    tx = _Transaction()
-    _merge(tx, "target", _payload())
-    assert "lock_sequence" in tx.queries[0][0]
+    assert affected == ()
     assert any("MERGE (e:Entity" in query for query, _ in tx.queries)
-    assert "v.version=v.version+1" in tx.queries[-1][0]
     assert sum("RETURN entities,collect" in query for query, _ in tx.queries) == 1
+    assert all(
+        "PotpieRevision" not in query and "PotpieMutationReceipt" not in query
+        for query, _ in tx.queries
+    )
 
 
-def test_revision_constraint_is_installed_before_using_merge_as_lock() -> None:
+async def test_unnormalized_import_is_rejected_before_any_read_or_write():
     tx = _Transaction()
-    _ensure_revision_constraint(tx)
-    assert "REQUIRE r.pot_id IS UNIQUE" in tx.queries[0][0]
+    payload = _payload()
+    payload["entities"][0]["properties"].pop("record_id")
+    with pytest.raises(ValueError, match="normalized stable record"):
+        await merge_snapshot(
+            tx, pot_id="target", mutation_id="import", incoming=payload
+        )
+    assert tx.queries == []
 
 
-def test_identical_retry_does_not_advance_revision() -> None:
+async def test_identical_merge_has_no_effects():
+    payload = _payload()
     tx = _Transaction(
         entities=[
             {
@@ -76,17 +89,23 @@ def test_identical_retry_does_not_advance_revision() -> None:
                 "props": {
                     "group_id": "target",
                     "entity_key": "service:web",
-                    "name": "web",
+                    **payload["entities"][0]["properties"],
                 },
             }
         ]
     )
-    _merge(tx, "target", _payload())
+    result, affected = await merge_snapshot(
+        tx, pot_id="target", mutation_id="import", incoming=payload
+    )
+    assert result.administrative_summary == {
+        "imported_entities": 0,
+        "imported_claims": 0,
+    }
+    assert affected == ()
     assert not any("MERGE (e:Entity" in query for query, _ in tx.queries)
-    assert not any("v.version=v.version+1" in query for query, _ in tx.queries)
 
 
-def test_conflict_is_detected_before_any_canonical_write() -> None:
+async def test_conflict_is_detected_before_any_canonical_write():
     tx = _Transaction(
         entities=[
             {
@@ -101,6 +120,7 @@ def test_conflict_is_detected_before_any_canonical_write() -> None:
         ]
     )
     with pytest.raises(ValueError, match="conflicts with target"):
-        _merge(tx, "target", _payload("new"))
+        await merge_snapshot(
+            tx, pot_id="target", mutation_id="import", incoming=_payload("new")
+        )
     assert not any("MERGE (e:Entity" in query for query, _ in tx.queries)
-    assert not any("v.version=v.version+1" in query for query, _ in tx.queries)

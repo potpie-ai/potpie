@@ -119,8 +119,10 @@ class _MutationPortBridge:
             value = value()
         if value is not None:
             return bool(value)
-        return callable(getattr(self._target, "current_version", None)) and callable(
-            getattr(self._target, "compare_and_apply", None)
+        return all(
+            callable(getattr(self._target, name, None))
+            or callable(getattr(self._target, name + "_async", None))
+            for name in ("current_version", "compare_and_apply", "lookup_execution")
         )
 
     def current_version(self, *args: Any, **kwargs: Any) -> Any:

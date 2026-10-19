@@ -171,3 +171,36 @@ def test_changed_frozen_plan_is_rejected_before_execution():
     with pytest.raises(MutationPersistenceError):
         runtime.commit(proposal.plan_id, pot_id="pot")
     assert runtime.backend.mutation.current_version("pot") == 0
+
+
+def test_mutated_administrative_batch_is_rejected_before_apply() -> None:
+    from potpie_context_engine.core.reconciliation_validation import (
+        validate_reconciliation_plan,
+    )
+    from potpie_context_engine.core.errors import MutationBatchValidationError
+    from potpie_context_engine.core.reconciliation import MutationBatch
+    from potpie_context_engine.core.graph_mutations import EntityUpsert
+
+    batch = MutationBatch(reset_pot=True)
+    batch.entity_upserts.append(EntityUpsert("service:a", ("Entity", "Service"), {}))
+    with pytest.raises(MutationBatchValidationError, match="cannot share"):
+        validate_reconciliation_plan(batch, "p")
+
+
+def test_raw_snapshot_batch_requires_canonical_frozen_identities() -> None:
+    from potpie_context_engine.core.reconciliation_validation import (
+        validate_reconciliation_plan,
+    )
+    from potpie_context_engine.core.errors import MutationBatchValidationError
+    from potpie_context_engine.core.reconciliation import MutationBatch
+
+    batch = MutationBatch(
+        snapshot_import={
+            "format_version": "2",
+            "pot_id": "p",
+            "claims": [],
+            "entities": [{"key": "service:a", "labels": ["Entity"], "properties": {}}],
+        }
+    )
+    with pytest.raises(MutationBatchValidationError, match="canonical"):
+        validate_reconciliation_plan(batch, "p")

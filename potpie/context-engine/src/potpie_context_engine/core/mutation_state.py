@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from potpie_context_engine.core.mutation_execution import PreparedMutation
 
-import hashlib
-import json
 import logging
-import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -28,7 +25,6 @@ from potpie_context_engine.core.graph_plans import (
     GraphMutationProposal,
 )
 from potpie_context_engine.core.ports.claim_query import (
-    ClaimQueryFilter,
     ClaimRow,
 )
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
@@ -48,12 +44,6 @@ from potpie_context_engine.core.semantic_mutations import (
 
 _LOG = logging.getLogger(__name__)
 
-_COMMIT_LOCKS_GUARD = threading.Lock()
-
-
-_COMMIT_LOCKS: dict[tuple[int, str], threading.Lock] = {}
-
-
 _CONFLICT_NEXT_ACTION = (
     "Use a fresh idempotency_key and re-run `potpie graph propose`, then commit the new "
     "plan_id; nothing from this plan was applied."
@@ -65,81 +55,34 @@ _CONFLICT_LANDED_SHOWN = 5
 
 def _subgraph_versions(backend: GraphBackend, pot_id: str) -> dict[str, int]:
     current_version = getattr(backend.mutation, "current_version", None)
-    atomic_supported = getattr(backend.mutation, "atomic_mutations_supported", True)
-    if atomic_supported and callable(current_version):
-        return {"_global": int(current_version(pot_id))}
-    try:
-        rows = backend.claim_query.find_claims(
-            ClaimQueryFilter(pot_id=pot_id, include_invalidated=True)
+    supported = getattr(backend.mutation, "atomic_mutations_supported", True)
+    if not supported or not callable(current_version):
+        raise CapabilityNotImplemented(
+            "atomic_mutation", detail="backend must expose authoritative revisions"
         )
-    except Exception:
-        return {"_global": 0}
-    if not rows:
-        return {"_global": 0}
-    state = [
-        {
-            "claim_key": row.claim_key,
-            "subgraph": row.subgraph,
-            "predicate": row.predicate,
-            "subject_key": row.subject_key,
-            "object_key": row.object_key,
-            "truth": row.truth,
-            "confidence": row.confidence,
-            "fact": row.fact,
-            "description": row.description,
-            "environment": row.environment,
-            "valid_at": row.valid_at,
-            "valid_until": row.valid_until,
-            "invalid_at": row.invalid_at,
-            "source_refs": tuple(row.source_refs),
-            "evidence": tuple(row.evidence),
-            "properties": dict(row.properties),
-        }
-        for row in rows
-    ]
-    state.sort(key=lambda item: json.dumps(item, sort_keys=True, default=str))
-    encoded = json.dumps(state, sort_keys=True, separators=(",", ":"), default=str)
-    # Graph versions are opaque integer concurrency tokens. Unlike the former
-    # claim count, this token changes when an existing claim is overwritten.
-    return {
-        "_global": int.from_bytes(
-            hashlib.blake2b(encoded.encode("utf-8"), digest_size=8).digest(), "big"
-        )
-    }
+    return {"_global": int(current_version(pot_id))}
 
 
 def _apply_if_current(
     backend: GraphBackend,
     *,
-    pot_id: str,
     expected_versions: Mapping[str, int],
-    apply: Callable[[], Any],
     atomic_apply: Callable[[int], Any] | None,
     reconciliation_config: ReconciliationConfig,
 ) -> tuple[Any | None, dict[str, int]]:
-    """Serialize compare-and-apply for commits sharing this backend instance.
-
-    Persistent adapters may provide a stronger transaction internally. This
-    guard closes the in-process TOCTOU window and always rechecks after the plan
-    reservation, immediately before entering the backend write door.
-    """
-    key = (id(backend), pot_id)
-    with _COMMIT_LOCKS_GUARD:
-        lock = _COMMIT_LOCKS.setdefault(key, threading.Lock())
-    with lock:
-        expected = int(expected_versions.get("_global", 0))
-        atomic_supported = getattr(backend.mutation, "atomic_mutations_supported", True)
-        if atomic_supported and atomic_apply is not None:
-            try:
-                result = atomic_apply(expected)
-            except GraphMutationVersionConflict as exc:
-                return None, {"_global": exc.current}
-            return result, {"_global": expected}
-        current = _subgraph_versions(backend, pot_id)
-        if _version_conflict(expected_versions, current):
-            return None, current
+    """Use the backend's atomic compare-and-apply boundary exclusively."""
+    supported = getattr(backend.mutation, "atomic_mutations_supported", True)
+    if not supported or atomic_apply is None:
+        raise CapabilityNotImplemented(
+            "atomic_mutation", detail="backend must implement atomic compare-and-apply"
+        )
+    expected = int(expected_versions["_global"])
+    try:
         with reconciliation_config_scope(reconciliation_config):
-            return apply(), current
+            result = atomic_apply(expected)
+    except GraphMutationVersionConflict as exc:
+        return None, {"_global": exc.current}
+    return result, {"_global": expected}
 
 
 def _plan_for_idempotency_key(
@@ -526,15 +469,6 @@ def _approval_error(
         if not (record.approval or (approved_by and approved_by.strip())):
             return "approval required for medium- or high-risk plan"
     return None
-
-
-def _batch_has_work(batch) -> bool:
-    return bool(
-        batch.entity_upserts
-        or batch.edge_upserts
-        or batch.edge_deletes
-        or batch.invalidations
-    )
 
 
 def _provenance_for_commit(

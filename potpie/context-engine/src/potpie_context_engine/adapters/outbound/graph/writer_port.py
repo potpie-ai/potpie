@@ -44,7 +44,9 @@ class GraphWriterPort(Protocol):
         self, pot_id: str, items: list[InvalidationOp], provenance: ProvenanceRef
     ) -> int: ...
 
-    async def reset_pot(self, pot_id: str) -> dict[str, Any]: ...
+    async def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]: ...
 
 
 __all__ = ["GraphWriterPort"]

@@ -35,7 +35,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | 3 | feat(graph): version prepared mutations and execution receipts | Stable preparation, fingerprint compatibility, explicit capabilities | 101 targeted tests pass; prepared v1, receipt v2, historical batch fingerprint v1 preserved; GPT-6.1 xhigh contract review findings addressed before adapter integration |
 | 4 | fix(graph): atomically publish memory and embedded mutations | Rollback, observer failure, coherent/fresh reads | 93 focused integration tests pass; worker broader gate 176 passed/31 unselected-native skips; 35 new rollback/concurrency/restart cases. Observer publication race required canonical CAS-loss result handling. Windows evidence remains step13. |
 | 5 | fix(graph): enforce native atomic execution and receipt metadata | Native concurrency, internal failure, restart replay | FalkorDB v4.16.0/Lite: 121 passed, 64 deselected; server AOF restart and Lite reopen pass. Neo4j 5.26: 31 passed plus actual restart test, 18 unit tests. Fresh-pot Falkor revision race fixed under native WATCH. Forced-kill durability and full platform matrix remain step13. |
-| 6 | refactor(graph): unify supported graph write entry points | Entry-point inventory covered; repair/reset revision semantics | Pending |
+| 6 | refactor(graph): unify supported graph write entry points | Entry-point inventory covered; repair/reset revision semantics | 1736 unit/core passed (3 unrelated skips), plus 10 isolated Falkor wiring tests. Neo4j 80 passed; Falkor server/Lite 154 passed. Native restart guards unselected here; actual restarts proven in step5. Direct semantics share prepared workbench; empty commits get receipts; reset/import/repair share native execution; reset returns retry identity. |
 | 7 | fix(graph): make plan persistence and public recovery crash-safe | Corruption fail-closed, crash recovery, stale owner fencing | Pending |
 | 8 | fix(graph): preserve claim incarnations and scoped supersession | Historical intervals and source/environment isolation | Pending |
 | 9 | fix(graph): freeze correction targets and dependent effects | Preview/commit/verify targets identical; stale conflicts | Pending |
@@ -56,7 +56,8 @@ Each behavior change includes regression tests. No permanent expected failures.
 | Reconciled events/raw batches | mutation backend and apply-plan writer | Atomic complete batch and stable supplied mutation identity |
 | Invalidation | mutation backend | Canonical revisioned batch |
 | Entity/label repair | analytics backend | Revisioned administrative mutation |
-| Reset | mutation backend | Revision barrier; retained receipts; journal restrictions explicit |
+| Reset | mutation backend | Revision barrier; retained receipts; returned execution identity; journal restrictions explicit |
+| Snapshot import | snapshot port prepares; mutation backend executes | Canonical identity-preserving payload; atomic exact merge, receipt and revision |
 | Journal restore/resource operations | journal port and commit service | Existing authorization, native receipt/revision atomicity |
 | Readback/verification | claim query/workbench verification | Coherent revision; no implicit writes |
 
@@ -127,3 +128,10 @@ Contract review caught request identity replay checks, frozen revision checks,
 strict metadata decoding, missing-vs-null legacy fields, and sync/async capability
 parity. Each has a shared contract fix; adapter integration in 4/5 is still pending.
 Subagents use GPT-6.1 with xhigh reasoning as requested by the user.
+
+
+## Findings tracked during implementation
+
+- Step6 invariant blocker for step12: a repair delta above the existing 5000-entity batch cap must use resumable revisioned batches. Current behavior fails before writing; a native 5001-entity regression proves no partial changes. Do not truncate silently or add a private cap bypass.
+- Step7 blockers: fail-closed plan parsing, durable replacement, defensive copies in the process-local plan store, receipt lookup before workflow status/takeover checks, and original execution timestamp/revision recovery. Read-only audit independently confirmed each issue.
+- Cross-store resource purge remains the existing ordered workflow. The graph transaction does not claim to atomically commit external resource bytes or ingestion-ledger deletion.

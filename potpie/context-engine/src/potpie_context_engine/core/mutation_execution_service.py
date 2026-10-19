@@ -30,7 +30,6 @@ from .mutation_state import (
     _CONFLICT_NEXT_ACTION,
     _apply_if_current,
     _approval_error,
-    _batch_has_work,
     _claim_keys_from_record,
     _commit_attempt_is_stale,
     _commit_next_action,
@@ -277,53 +276,6 @@ def commit_mutation(
         )
     record = reserved
 
-    if record.lowered_batch is None or not _batch_has_work(record.lowered_batch):
-        committed = replace(
-            record,
-            status=GraphMutationPlanStatus.committed.value,
-            commit_attempt_id=None,
-            commit_attempt_started_at=None,
-            committed_at=now,
-            final_subgraph_versions=current_versions,
-            approval=approval,
-        )
-        if not self.plan_store.compare_and_set(
-            expected=record,
-            replacement=committed,
-        ):
-            return _commit_state_changed_result(
-                self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-            )
-        verification = (
-            verify_receipt(
-                self.backend,
-                pot_id=pot_id,
-                record=committed,
-                before_quality=quality_before,
-                definition=self.definition,
-            )
-            if verify and not defer_verification
-            else None
-        )
-        return GraphMutationCommitResult(
-            ok=True,
-            plan_id=committed.plan_id,
-            status=committed.status,
-            risk=committed.risk,
-            pot_id=committed.pot_id,
-            mutation_id=execution_mutation_id,
-            applied_at=now,
-            expected_subgraph_versions=committed.expected_subgraph_versions,
-            current_subgraph_versions=current_versions,
-            new_subgraph_versions=current_versions,
-            diff=committed.diff,
-            claim_keys=_claim_keys_from_record(committed),
-            approval=approval,
-            verification=verification,
-            detail="plan had no structural mutations to apply",
-            recommended_next_action=_verification_next_action(verification),
-        )
-
     commit_actor = approved_by or (
         approval.approved_by if approval is not None else None
     )
@@ -348,18 +300,7 @@ def commit_mutation(
     try:
         result, apply_versions = _apply_if_current(
             self.backend,
-            pot_id=pot_id,
             expected_versions=record.expected_subgraph_versions,
-            apply=lambda: self.backend.mutation.apply(
-                deepcopy(record.lowered_batch),
-                expected_pot_id=pot_id,
-                provenance_context=_provenance_for_commit(
-                    record.provenance,
-                    approved_by=commit_actor,
-                    mutation_id=execution_mutation_id,
-                    prepared=record.prepared,
-                ),
-            ),
             atomic_apply=atomic_apply,
             reconciliation_config=self.reconciliation_config,
         )

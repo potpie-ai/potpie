@@ -184,8 +184,28 @@ class _EmbeddedMutation:
     def invalidate(self, **kwargs: Any) -> int:
         return self.backend._transact(lambda inner: inner.mutation.invalidate(**kwargs))
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        return self.backend._transact(lambda inner: inner.mutation.reset_pot(pot_id))
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
+        result = self.apply(
+            MutationBatch(reset_pot=True),
+            expected_pot_id=pot_id,
+            provenance_context=ProvenanceContext(mutation_id=mutation_id),
+        )
+        return {
+            "removed_claims": result.administrative_summary["removed_claims"],
+            "mutation_id": result.mutation_id,
+            "execution": result.execution.to_dict()
+            if result.execution is not None
+            else None,
+        }
+
+    async def reset_pot_async(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
+        import asyncio
+
+        return await asyncio.to_thread(self.reset_pot, pot_id, mutation_id=mutation_id)
 
     def readiness(self, pot_id: str):
         return self.backend._inner.mutation.readiness(pot_id)
@@ -231,10 +251,14 @@ class _EmbeddedSnapshot:
             lambda inner: inner.snapshot.export_data(pot_id=pot_id)
         )
 
-    def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
+    def import_(
+        self, *, pot_id: str, source: str, mutation_id: str | None = None
+    ) -> SnapshotManifest:
         with open(source, encoding="utf-8") as fh:
             payload = json.load(fh)
-        result = self.import_data(pot_id=pot_id, payload=payload)
+        result = self.import_data(
+            pot_id=pot_id, payload=payload, mutation_id=mutation_id
+        )
         return SnapshotManifest(
             pot_id=result.pot_id,
             location=source,
@@ -245,10 +269,21 @@ class _EmbeddedSnapshot:
         )
 
     def import_data(
-        self, *, pot_id: str, payload: Mapping[str, Any]
+        self,
+        *,
+        pot_id: str,
+        payload: Mapping[str, Any],
+        mutation_id: str | None = None,
     ) -> SnapshotManifest:
-        return self.backend._transact(
-            lambda inner: inner.snapshot.import_data(pot_id=pot_id, payload=payload)
+        from potpie_context_engine.adapters.outbound.graph.memory_admin import (
+            import_snapshot,
+        )
+
+        return import_snapshot(
+            self.backend.mutation,
+            pot_id=pot_id,
+            payload=payload,
+            mutation_id=mutation_id,
         )
 
 

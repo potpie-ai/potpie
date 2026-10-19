@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pytest
 
 from potpie_context_engine.core.workbench_service import GraphWorkbenchService
+from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.adapters.outbound.graph.backends.neo4j_backend import (
     Neo4jGraphBackend,
 )
@@ -29,7 +30,7 @@ class LegacyWriter:
         return len(items)
 
 
-def test_injected_legacy_writer_uses_workbench_fallback_and_reports_limit():
+def test_injected_legacy_writer_reports_limit_and_workbench_rejects_it():
     backend = Neo4jGraphBackend(SimpleNamespace(), writer=LegacyWriter())
     readiness = backend.mutation.readiness("test")
     assert readiness.ready
@@ -38,23 +39,22 @@ def test_injected_legacy_writer_uses_workbench_fallback_and_reports_limit():
     workbench = GraphWorkbenchService(
         backend=backend, plan_store=InMemoryGraphPlanStore()
     )
-    plan = workbench.propose(
-        {
-            "operations": [
-                {
-                    "op": "upsert_entity",
-                    "subject": {
-                        "key": "service:api",
-                        "type": "Service",
-                        "properties": {"summary": "API service"},
-                    },
-                }
-            ]
-        },
-        pot_id="test",
-    )
-    assert plan.ok
-    assert workbench.commit(plan.plan_id, pot_id="test").ok
+    with pytest.raises(CapabilityNotImplemented, match="authoritative revisions"):
+        workbench.propose(
+            {
+                "operations": [
+                    {
+                        "op": "upsert_entity",
+                        "subject": {
+                            "key": "service:api",
+                            "type": "Service",
+                            "properties": {"summary": "API service"},
+                        },
+                    }
+                ]
+            },
+            pot_id="test",
+        )
 
 
 def test_disabled_native_writer_does_not_report_ready():

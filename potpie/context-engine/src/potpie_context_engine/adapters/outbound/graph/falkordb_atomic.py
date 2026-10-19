@@ -116,44 +116,28 @@ def _ensure_state(graph, pot_id: str) -> None:
                 continue
 
 
-def reset_pot(graph, pot_id: str) -> dict[str, int | bool]:
-    """Delete canonical pot entities and advance revision in one graph command."""
-    _ensure_state(graph, pot_id)
-    while True:
-        pipe = transaction_client(graph).pipeline()
-        try:
-            pipe.watch(graph.name)
-            from potpie_context_engine.core.graph_journal import JournalError
+def reset_pot(graph, pot_id: str, *, mutation_id: str | None = None) -> dict:
+    """Internal writer compatibility entry into the canonical mutation boundary."""
+    import uuid
+    from potpie_context_engine.core.graph_mutations import ProvenanceContext
+    from potpie_context_engine.core.reconciliation import MutationBatch
 
-            from .falkordb_journal import _state
-
-            if _state(graph, pot_id, pipe) is not None:
-                raise JournalError(
-                    "reset is unsupported while journal capture is active"
-                )
-            before = current_version(graph, pot_id)
-            query = graph._build_params_header({"pot": pot_id, "expected": before}) + (
-                f"MATCH (v:{_STATE} {{pot_id:$pot}}) WHERE v.version=$expected AND v.journal IS NULL "
-                "OPTIONAL MATCH (n:Entity {group_id:$pot}) WITH v,collect(n) AS nodes "
-                "FOREACH (item IN nodes | DETACH DELETE item) "
-                "SET v.version=v.version+1 RETURN size(nodes),v.version"
-            )
-            pipe.multi()
-            pipe.execute_command("GRAPH.QUERY", graph.name, query, "--compact")
-            rows = _rows(graph, pipe.execute()[0])
-            if not rows:
-                continue
-            row = rows[0]
-            return {
-                "ok": True,
-                "group_id_nodes_before": int(row[0]),
-                "group_id_nodes_remaining": 0,
-                "version": int(row[1]),
-            }
-        except WatchError:
-            continue
-        finally:
-            pipe.reset()
+    result = apply_atomic(
+        graph,
+        MutationBatch(reset_pot=True),
+        expected_pot_id=pot_id,
+        expected_version=current_version(graph, pot_id),
+        provenance_context=ProvenanceContext(
+            mutation_id=mutation_id or uuid.uuid4().hex
+        ),
+    )
+    return {
+        "ok": result.ok,
+        **result.administrative_summary,
+        "version": result.execution.version_after,
+        "mutation_id": result.mutation_id,
+        "execution": result.execution.to_dict(),
+    }
 
 
 def lookup_execution(graph, plan, *, expected_pot_id, mutation_id):
@@ -557,15 +541,10 @@ def _apply_watched(
     validate_reconciliation_plan(
         plan, expected_pot_id, definition=definition, config=reconciliation_config
     )
+    from .falkordb_admin import validate_administration
+
+    validate_administration(plan)
     mutation_id = provenance_context.mutation_id
-    now = datetime.now(timezone.utc)
-    provenance = _build_provenance(
-        plan,
-        pot_id=expected_pot_id,
-        mutation_id=mutation_id,
-        context=provenance_context,
-        graph_updated_at=now,
-    )
     _ensure_state(graph, expected_pot_id)
     pipe = transaction_client(graph).pipeline()
     try:
@@ -585,41 +564,65 @@ def _apply_watched(
             raise GraphMutationVersionConflict(
                 expected=expected_version, current=int(current)
             )
-        query, params, result = _compile(
-            plan,
-            pot_id=expected_pot_id,
-            expected=expected_version,
-            mutation_id=mutation_id,
-            fingerprint=fingerprint,
-            provenance=provenance,
-            provenance_context=provenance_context,
-            receipt_batch=receipt_batch,
-            definition=definition,
-            embedder=embedder,
-        )
-        params["journal_generated_event"] = (
-            plan.event_ref is None and provenance_context.source_event_id is None
-        )
-        params["journal_generated_valid_from"] = (
-            provenance_context.event_occurred_at is None
-        )
         from .falkordb_journal import FalkorJournal, _state
 
         state = _state(graph, expected_pot_id, pipe)
-        if state is not None:
-            return FalkorJournal(graph, definition).apply(
+        if plan.reset_pot or plan.snapshot_import is not None:
+            from potpie_context_engine.core.graph_journal import JournalError
+            from .falkordb_admin import compile_administration
+
+            if state is not None:
+                raise JournalError(
+                    "reset/snapshot import is unsupported while journal capture is active"
+                )
+            query, params, result = compile_administration(
+                graph,
+                pipe,
                 plan,
-                pipe=pipe,
-                state=state,
-                params=params,
+                pot_id=expected_pot_id,
+                expected=expected_version,
+                provenance_context=provenance_context,
+            )
+        else:
+            provenance = _build_provenance(
+                plan,
+                pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+                context=provenance_context,
+                graph_updated_at=datetime.now(timezone.utc),
+            )
+            query, params, result = _compile(
+                plan,
+                pot_id=expected_pot_id,
+                expected=expected_version,
+                mutation_id=mutation_id,
                 fingerprint=fingerprint,
-                actor=provenance_context.actor_user_id or "system",
+                provenance=provenance,
                 provenance_context=provenance_context,
                 receipt_batch=receipt_batch,
+                definition=definition,
+                embedder=embedder,
             )
-        from .falkordb_identity import validate_touched_claim_identities
+            params["journal_generated_event"] = (
+                plan.event_ref is None and provenance_context.source_event_id is None
+            )
+            params["journal_generated_valid_from"] = (
+                provenance_context.event_occurred_at is None
+            )
+            if state is not None:
+                return FalkorJournal(graph, definition).apply(
+                    plan,
+                    pipe=pipe,
+                    state=state,
+                    params=params,
+                    fingerprint=fingerprint,
+                    actor=provenance_context.actor_user_id or "system",
+                    provenance_context=provenance_context,
+                    receipt_batch=receipt_batch,
+                )
+            from .falkordb_identity import validate_touched_claim_identities
 
-        validate_touched_claim_identities(graph, pipe, plan, params, definition)
+            validate_touched_claim_identities(graph, pipe, plan, params, definition)
         pipe.multi()
         pipe.execute_command(
             "GRAPH.QUERY",

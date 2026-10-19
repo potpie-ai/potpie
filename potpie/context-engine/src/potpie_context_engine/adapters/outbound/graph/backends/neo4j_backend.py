@@ -23,7 +23,7 @@ from __future__ import annotations
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping
+from typing import Any
 
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
@@ -52,19 +52,6 @@ from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytic
 )
 from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
     ClaimQuerySemanticSearch,
-)
-from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
-from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
-    ENTITY_LABEL_REPAIR_LIMIT,
-    ENTITY_LABEL_SCAN_CYPHER,
-    canonical_label_changes,
-    repaired_entity_labels,
-)
-from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
-    ENTITY_SUMMARY_REPAIR_LIMIT,
-    ENTITY_SUMMARY_SCAN_CYPHER,
-    ENTITY_SUMMARY_UPDATE_CYPHER,
-    repaired_entity_properties,
 )
 from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
 
@@ -333,17 +320,31 @@ class _Neo4jMutation:
         )
         return result.mutation_summary.invalidations_applied
 
-    async def reset_pot_async(self, pot_id: str) -> dict[str, Any]:
-        if callable(getattr(self._get_writer(), "in_transaction", None)):
-            from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
-                reset_atomic,
-            )
+    async def reset_pot_async(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
+        if not self.atomic_mutations_supported:
+            raise NotImplementedError("Neo4j reset requires native atomic mutations")
+        if mutation_id is not None and (
+            not isinstance(mutation_id, str) or not mutation_id
+        ):
+            raise ValueError("reset mutation_id must be a nonempty string")
+        result = await self.apply_async(
+            MutationBatch(reset_pot=True),
+            expected_pot_id=pot_id,
+            provenance_context=ProvenanceContext(mutation_id=mutation_id),
+        )
+        return {
+            "ok": result.ok,
+            **result.administrative_summary,
+            "mutation_id": result.mutation_id,
+            "execution": result.execution.to_dict() if result.execution else None,
+        }
 
-            return await reset_atomic(self._get_writer(), pot_id)
-        return await self._get_writer().reset_pot(pot_id)
-
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        return _run_sync(self.reset_pot_async(pot_id))
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
+        return _run_sync(self.reset_pot_async(pot_id, mutation_id=mutation_id))
 
     def readiness(self, pot_id: str) -> BackendReadiness:
         ready = bool(getattr(self._get_writer(), "enabled", False))
@@ -360,7 +361,7 @@ class _Neo4jMutation:
                 "durable_mutation_receipts": atomic,
                 "semantic": ready,
                 "inspection": False,
-                "snapshot": ready,
+                "snapshot": atomic,
             },
         )
 
@@ -443,13 +444,11 @@ class Neo4jGraphBackend:
 
     @property
     def analytics(self) -> ClaimQueryAnalytics:
-        # Real: counts/freshness/quality are computed from the canonical
-        # claim store, which this profile already serves.
-        return ClaimQueryAnalytics(
-            self._claim_query,
-            entity_summary_repair=self._repair_entity_summaries,
-            entity_label_repair=self._repair_entity_labels,
+        from potpie_context_engine.adapters.outbound.graph.neo4j_admin import (
+            Neo4jAnalytics,
         )
+
+        return Neo4jAnalytics(self._claim_query, self._mutation, self.definition)
 
     @property
     def snapshot(self) -> Any:
@@ -457,7 +456,7 @@ class Neo4jGraphBackend:
             Neo4jSnapshot,
         )
 
-        return Neo4jSnapshot(self.settings)
+        return Neo4jSnapshot(self.settings, mutation=self._mutation)
 
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
@@ -467,7 +466,7 @@ class Neo4jGraphBackend:
             analytics=True,
             semantic=True,
             inspection=False,
-            snapshot=True,
+            snapshot=self._mutation.atomic_mutations_supported,
         )
 
     def bind_definition(self, definition: GraphDefinition) -> Neo4jGraphBackend:
@@ -493,108 +492,6 @@ class Neo4jGraphBackend:
             detail="neo4j backend ready" if ok else "neo4j index setup failed",
             metadata={"profile": _PROFILE},
         )
-
-    def _repair_entity_summaries(self, pot_id: str) -> int:
-        from neo4j import GraphDatabase
-
-        uri = self.settings.neo4j_uri()
-        user = self.settings.neo4j_user()
-        password = self.settings.neo4j_password()
-        if not uri or user is None or password is None:
-            raise RuntimeError("neo4j_unavailable")
-
-        repaired = 0
-        driver = GraphDatabase.driver(uri, auth=(user, password))
-        try:
-            with driver.session() as session:
-                rows = list(
-                    session.run(
-                        ENTITY_SUMMARY_SCAN_CYPHER,
-                        gid=pot_id,
-                        limit=ENTITY_SUMMARY_REPAIR_LIMIT,
-                    )
-                )
-                for row in rows:
-                    key = str(row.get("key") or "").strip()
-                    if not key:
-                        continue
-                    raw_props = row.get("props")
-                    fixed = repaired_entity_properties(
-                        key, raw_props if isinstance(raw_props, Mapping) else {}
-                    )
-                    if fixed is None:
-                        continue
-                    result = session.run(
-                        ENTITY_SUMMARY_UPDATE_CYPHER,
-                        gid=pot_id,
-                        key=key,
-                        props=_coerce_props_for_neo4j(fixed),
-                    )
-                    rec = result.single()
-                    result.consume()
-                    repaired += int(rec["cnt"]) if rec is not None else 0
-        finally:
-            driver.close()
-        return repaired
-
-    def _repair_entity_labels(self, pot_id: str) -> int:
-        from neo4j import GraphDatabase
-
-        uri = self.settings.neo4j_uri()
-        user = self.settings.neo4j_user()
-        password = self.settings.neo4j_password()
-        if not uri or user is None or password is None:
-            raise RuntimeError("neo4j_unavailable")
-
-        repaired = 0
-        driver = GraphDatabase.driver(uri, auth=(user, password))
-        try:
-            with driver.session() as session:
-                after = ""
-                while True:
-                    rows = list(
-                        session.run(
-                            ENTITY_LABEL_SCAN_CYPHER,
-                            gid=pot_id,
-                            after=after,
-                            limit=ENTITY_LABEL_REPAIR_LIMIT,
-                        )
-                    )
-                    if not rows:
-                        break
-                    for row in rows:
-                        key = str(row.get("key") or "").strip()
-                        labels = tuple(row.get("labels") or ())
-                        fixed = repaired_entity_labels(
-                            key,
-                            labels,
-                            entity_types=self.definition.entity_types,
-                        )
-                        if not key or fixed is None:
-                            continue
-                        remove, add = canonical_label_changes(
-                            labels,
-                            fixed,
-                            entity_types=self.definition.entity_types,
-                        )
-                        clauses = [*(f"REMOVE e:{label}" for label in remove)]
-                        clauses.extend(f"SET e:{label}" for label in add)
-                        if not clauses:
-                            continue
-                        result = session.run(
-                            "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
-                            + " ".join(clauses)
-                            + " RETURN count(e) AS cnt",
-                            gid=pot_id,
-                            key=key,
-                        )
-                        rec = result.single()
-                        result.consume()
-                        repaired += int(rec["cnt"]) if rec is not None else 0
-                    after = str(rows[-1].get("key") or "")
-        finally:
-            driver.close()
-        return repaired
 
 
 __all__ = ["Neo4jGraphBackend"]

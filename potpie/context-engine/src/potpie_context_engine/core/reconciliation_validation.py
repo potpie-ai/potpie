@@ -64,6 +64,22 @@ def validate_reconciliation_plan(
     definition: GraphDefinition | None = None,
     config: ReconciliationConfig | None = None,
 ) -> None:
+    # Batches are mutable: validate administrative exclusivity again at the write boundary.
+    try:
+        plan.__post_init__()
+        if plan.snapshot_import is not None:
+            from potpie_context_engine.core.graph_snapshot_mutation import (
+                normalize_snapshot_import,
+            )
+
+            if plan.snapshot_import != normalize_snapshot_import(
+                plan.snapshot_import, pot_id=expected_pot_id
+            ):
+                raise ValueError("snapshot import must be canonical before execution")
+    except ValueError as exc:
+        raise MutationBatchValidationError(str(exc)) from exc
+    if plan.reset_pot or plan.snapshot_import is not None:
+        return
     config = (
         config or current_reconciliation_config() or reconciliation_config_from_env()
     )

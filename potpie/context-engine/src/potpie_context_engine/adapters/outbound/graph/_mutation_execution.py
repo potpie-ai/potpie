@@ -424,6 +424,11 @@ def _mutation_result_to_dict(result: MutationResult) -> dict[str, Any]:
     summary = result.mutation_summary
     return {
         **(
+            {"administrative_summary": dict(result.administrative_summary)}
+            if result.administrative_summary
+            else {}
+        ),
+        **(
             {"execution": result.execution.to_dict()}
             if result.execution is not None
             else {}
@@ -483,11 +488,18 @@ def _mutation_result_from_dict(raw: object) -> MutationResult | None:
         raise MutationPersistenceError("invalid execution diagnostic metadata")
     if raw.get("error") is not None and not isinstance(raw["error"], str):
         raise MutationPersistenceError("invalid execution error")
+    administrative = raw.get("administrative_summary", {})
+    if not isinstance(administrative, Mapping) or any(
+        not isinstance(key, str) or type(value) is not int or value < 0
+        for key, value in administrative.items()
+    ):
+        raise MutationPersistenceError("invalid administrative execution counts")
     return MutationResult(
         execution=ExecutionMetadata.from_dict(raw["execution"])
         if raw.get("execution") is not None
         else None,
         ok=True,
+        administrative_summary=dict(administrative),
         mutation_id=raw["mutation_id"],
         mutation_summary=MutationSummary(**counts, stamp_counts=dict(stamps)),
         error=raw.get("error"),

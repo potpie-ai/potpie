@@ -95,6 +95,26 @@ class _FakeResult:
 
 
 class _RepairGraph:
+    def ro_query(self, cypher: str, params: dict | None = None) -> _FakeResult:
+        params = params or {}
+        if params.get("after"):
+            return _FakeResult([], [])
+        return _FakeResult(
+            ["key", "labels", "props"],
+            [
+                [
+                    "service:web",
+                    ["Entity", "Service"],
+                    {"description": "Web frontend service."},
+                ],
+                [
+                    "service:auth",
+                    ["Entity", "Service"],
+                    {"name": "auth", "summary": ""},
+                ],
+            ],
+        )
+
     def query(self, cypher: str, params: dict | None = None) -> _FakeResult:
         params = params or {}
         if "labels(e) AS labels" in cypher:
@@ -123,7 +143,9 @@ def _record_repair_batches(monkeypatch) -> list:
 
     batches: list = []
 
-    def compare_and_apply(self, batch, *, expected_pot_id, expected_version):
+    def compare_and_apply(
+        self, batch, *, expected_pot_id, expected_version, provenance_context=None
+    ):
         batches.append(batch)
         return SimpleNamespace(
             mutation_summary=SimpleNamespace(
@@ -166,6 +188,12 @@ class _PagedLabelRepairGraph:
             }
             return _FakeResult(["key", "labels"], pages[after])
         return _FakeResult([], [])
+
+    def ro_query(self, cypher: str, params: dict | None = None) -> _FakeResult:
+        result = self.query(cypher, params)
+        return _FakeResult(
+            ["key", "labels", "props"], [[*row, {}] for row in result.result_set]
+        )
 
 
 def test_build_backend_registers_falkordb_without_connecting() -> None:
@@ -227,7 +255,17 @@ async def test_falkordb_backend_apply_uses_writer() -> None:
     assert len(writer.edges) == 1
 
 
-def test_ingestion_server_accepts_falkordb_backend() -> None:
+@pytest.fixture
+def composition_graph_provider(monkeypatch):
+    from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
+        FalkorDBGraphProvider,
+    )
+
+    graph = _RepairGraph()
+    monkeypatch.setattr(FalkorDBGraphProvider, "__call__", lambda self: graph)
+
+
+def test_ingestion_server_accepts_falkordb_backend(composition_graph_provider) -> None:
     container = build_ingestion_server(settings=_Settings(), pots=MagicMock())
 
     assert container.backend is not None
@@ -236,7 +274,9 @@ def test_ingestion_server_accepts_falkordb_backend() -> None:
     assert container.graph_writer is not None
 
 
-def test_ingestion_server_accepts_falkordb_lite_backend() -> None:
+def test_ingestion_server_accepts_falkordb_lite_backend(
+    composition_graph_provider,
+) -> None:
     container = build_ingestion_server(
         settings=_Settings(backend="falkordb_lite", mode="server"),
         pots=MagicMock(),

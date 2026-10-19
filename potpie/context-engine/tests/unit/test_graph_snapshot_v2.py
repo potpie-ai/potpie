@@ -65,9 +65,15 @@ def test_v2_round_trip_preserves_entities_metadata_and_is_idempotent() -> None:
     isolated = next(row for row in exported["entities"] if row["key"] == "isolated")
     assert isolated == {
         "key": "isolated",
-        "labels": ["Document"],
-        "properties": {"title": "Only node"},
+        "labels": ["Document", "Entity"],
+        "properties": {
+            "title": "Only node",
+            "record_id": isolated["properties"]["record_id"],
+        },
     }
+    assert isolated["properties"]["record_id"]
+    assert exported["claims"][0]["record_id"]
+    assert first.metadata["execution"] == second.metadata["execution"]
 
 
 @pytest.mark.parametrize(
@@ -126,8 +132,12 @@ def test_embedded_export_reloads_current_disk_state(tmp_path) -> None:
             "claims": [],
         },
     )
+    identity = writer.claim_query.entity_properties(pot_id="p", entity_key="only")[
+        "record_id"
+    ]
+    assert identity
     assert stale.snapshot.export_data(pot_id="p")["entities"] == [
-        {"key": "only", "labels": ["Entity"], "properties": {}}
+        {"key": "only", "labels": ["Entity"], "properties": {"record_id": identity}}
     ]
 
 

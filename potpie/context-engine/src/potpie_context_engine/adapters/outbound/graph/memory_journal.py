@@ -499,64 +499,6 @@ class MemoryJournal:
             return deepcopy(state)
 
 
-def repair_journaled(analytics, pot_id, targets):
-    from potpie_context_engine.core.graph_mutations import EntityUpsert
-    from potpie_context_engine.core.journal_context import (
-        JournalWriteContext,
-        journal_write_context,
-    )
-    from potpie_context_engine.core.ports.graph.analytics import RepairReport
-    from potpie_context_engine.core.reconciliation import MutationBatch
-
-    from .entity_label_repair import repaired_entity_labels, wants_entity_label_repair
-    from .entity_summary_repair import (
-        repaired_entity_properties,
-        wants_entity_summary_repair,
-    )
-
-    with analytics.mutation.state_lock:
-        operations, repaired = [], {"entity_summaries": 0, "entity_labels": 0}
-        for (pid, key), properties in analytics.store.entity_property_index.items():
-            if pid != pot_id or properties.get("retired", False):
-                continue
-            labels = analytics.store.entity_label_index.get((pid, key), ())
-            props = (
-                repaired_entity_properties(key, properties)
-                if wants_entity_summary_repair(targets)
-                else None
-            )
-            fixed_labels = (
-                repaired_entity_labels(
-                    key, labels, entity_types=analytics.definition.entity_types
-                )
-                if wants_entity_label_repair(targets)
-                else None
-            )
-            if props is not None or fixed_labels is not None:
-                operations.append(
-                    EntityUpsert(key, tuple(fixed_labels or labels), props or {})
-                )
-                repaired["entity_summaries"] += props is not None
-                repaired["entity_labels"] += fixed_labels is not None
-        if operations:
-            with journal_write_context(
-                JournalWriteContext(origin="repair", required_access="admin")
-            ):
-                analytics.mutation.apply(
-                    MutationBatch(
-                        summary="Repair entity summaries/labels",
-                        entity_upserts=operations,
-                    ),
-                    expected_pot_id=pot_id,
-                )
-        return RepairReport(
-            pot_id=pot_id,
-            targets=tuple(targets),
-            repaired=repaired,
-            detail="semantic repairs captured in graph journal",
-        )
-
-
 def clone_store(store):
     from .in_memory_reader import InMemoryClaimQueryStore
 

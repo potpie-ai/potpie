@@ -47,7 +47,15 @@ def batch_fingerprint(batch: MutationBatch) -> str:
 
 def batch_has_work(batch: MutationBatch) -> bool:
     return bool(
-        batch.entity_upserts
+        batch.reset_pot
+        or (
+            batch.snapshot_import is not None
+            and (
+                batch.snapshot_import.get("entities")
+                or batch.snapshot_import.get("claims")
+            )
+        )
+        or batch.entity_upserts
         or batch.edge_upserts
         or batch.edge_deletes
         or batch.invalidations

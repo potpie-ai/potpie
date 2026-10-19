@@ -216,7 +216,10 @@ class _RaiseOnceMutation:
         self.mutation_ids: list[str | None] = []
         self.raised = False
 
-    def apply(self, plan, **kwargs):
+    def current_version(self, pot_id):
+        return self.inner.current_version(pot_id)
+
+    def compare_and_apply(self, plan, **kwargs):
         provenance = kwargs.get("provenance_context")
         self.mutation_ids.append(
             provenance.mutation_id if provenance is not None else None
@@ -224,9 +227,9 @@ class _RaiseOnceMutation:
         if not self.raised:
             self.raised = True
             if self.after_side_effect:
-                self.inner.apply(plan, **kwargs)
+                self.inner.compare_and_apply(plan, **kwargs)
             raise RuntimeError("injected mutation failure")
-        return self.inner.apply(plan, **kwargs)
+        return self.inner.compare_and_apply(plan, **kwargs)
 
     def lookup_execution(self, plan, **kwargs):
         return self.inner.lookup_execution(plan, **kwargs)
@@ -1551,3 +1554,38 @@ def test_commit_status_preserves_durable_failure_and_repair(status) -> None:
     assert (
         "backend readiness" if status == "error" else "fresh proposal"
     ) in result.recommended_next_action
+
+
+def test_empty_prepared_commit_gets_authoritative_receipt_without_revision() -> None:
+    from dataclasses import replace
+    from potpie_context_engine.core.mutation_execution import batch_fingerprint
+    from potpie_context_engine.core.reconciliation import MutationBatch
+
+    workbench, backend, store = _service()
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    record = store.get(pot_id=POT, plan_id=proposal.plan_id)
+    batch = MutationBatch()
+    record = replace(
+        record,
+        lowered_batch=batch,
+        prepared=replace(
+            record.prepared,
+            batch_fingerprint=batch_fingerprint(batch),
+        ),
+    )
+    store.save(record)
+    result = workbench.commit(record.plan_id, pot_id=POT)
+    assert result.ok
+    assert backend.mutation.current_version(POT) == 0
+    lookup = backend.mutation.lookup_execution(
+        batch, expected_pot_id=POT, mutation_id=result.mutation_id
+    )
+    assert lookup.state == "completed"
+    assert (
+        lookup.result.execution.version_before
+        == lookup.result.execution.version_after
+        == 0
+    )
+    assert (
+        workbench.commit(record.plan_id, pot_id=POT).mutation_id == result.mutation_id
+    )

@@ -114,6 +114,7 @@ def claim_row(props: Mapping[str, Any]) -> dict[str, Any]:
         if _same_numeric_vector(stored_embedding, original_embedding):
             raw["fact_embedding"] = original_embedding
     raw = _restore_snapshot_properties(raw)
+    record_id = raw.pop("record_id", None) or raw.get("uuid")
     fields = {
         name: raw.pop(name, None)
         for name in (
@@ -150,6 +151,7 @@ def claim_row(props: Mapping[str, Any]) -> dict[str, Any]:
             except json.JSONDecodeError:
                 pass
     return {
+        "record_id": record_id,
         "predicate": predicate,
         "subject_key": subject,
         "object_key": object_,
