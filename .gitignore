@@ -85,6 +85,10 @@ certificates
 .vscode/
 .claude/
 .cursor/
+# TLC jar and scratch metadata downloaded or written by scripts/check-graph-write.sh
+spec/graph-write/.tools/
+spec/graph-write/states/
+spec/graph-write/*_TTrace_*
 .taskmaster/
 thoughts/
 .codex/

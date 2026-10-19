@@ -12,7 +12,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 .DEFAULT_GOAL := help
-.PHONY: help ui-build ui-build-ci cli-install cli-update cli-uninstall cli-status
+.PHONY: help ui-build ui-build-ci cli-install cli-update cli-uninstall cli-status check-graph-write
 
 ##@ Help
 
@@ -84,3 +84,8 @@ cli-status: ## Show the global potpie install + run a quick health check
 	else \
 	  echo "ui:       ✗ not built (run: make ui-build)"; \
 	fi
+
+##@ Verification
+
+check-graph-write: ## Model-check the pot graph write protocol (needs Java)
+	./scripts/check-graph-write.sh
