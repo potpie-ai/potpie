@@ -31,7 +31,7 @@ from potpie_context_engine.core.graph_mutations import (
 from potpie_context_engine.core.identity import IdentityClass
 from potpie_context_engine.core.ontology import EntityTypeSpec
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 pytestmark = pytest.mark.unit
 
@@ -205,7 +205,7 @@ def test_build_backend_registers_falkordb_lite_without_connecting(profile) -> No
 async def test_falkordb_backend_apply_uses_writer() -> None:
     writer = _Writer()
     backend = FalkorDBGraphBackend(_Settings(), writer=writer)
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=EventRef(event_id="e1", source_system="agent", pot_id="p1"),
         entity_upserts=[
             EntityUpsert(entity_key="service:web", labels=("Entity", "Service"))
