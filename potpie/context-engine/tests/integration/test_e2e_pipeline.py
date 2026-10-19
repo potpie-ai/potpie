@@ -34,7 +34,7 @@ from potpie_context_engine.domain.ingestion_event_models import (
 from potpie_context_engine.domain.ingestion_kinds import (
     INGESTION_KIND_AGENT_RECONCILIATION,
 )
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 pytestmark = pytest.mark.integration
 
@@ -191,7 +191,7 @@ class TestLLMReconciliationPipeline:
 
 
 def _seed_topology(container, pot_id: str) -> None:
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=EventRef(event_id="seed", source_system="test", pot_id=pot_id),
         summary="seed topology",
         entity_upserts=[
