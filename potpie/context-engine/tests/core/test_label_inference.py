@@ -17,7 +17,7 @@ from potpie_context_engine.core.ontology import (
     inferred_labels_for_episodic_edge_endpoint,
     is_canonical_entity_label,
 )
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 pytestmark = pytest.mark.unit
 
@@ -41,7 +41,7 @@ def test_enrich_plan_adds_inferred_endpoint_labels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "1")
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=EventRef(event_id="e1", source_system="test", pot_id="p1"),
         summary="t",
         entity_upserts=[
@@ -73,7 +73,7 @@ def test_enrich_plan_adds_inferred_endpoint_labels(
 
 
 def test_enrich_plan_does_not_accumulate_type_conflicting_with_key() -> None:
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=EventRef(event_id="e1", source_system="test", pot_id="p1"),
         summary="t",
         entity_upserts=[
@@ -94,7 +94,7 @@ def test_validate_reconciliation_runs_enrich_when_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "1")
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=EventRef(event_id="e1", source_system="test", pot_id="p1"),
         summary="t",
         entity_upserts=[

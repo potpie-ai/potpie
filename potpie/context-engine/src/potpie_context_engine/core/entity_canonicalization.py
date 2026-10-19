@@ -1,4 +1,4 @@
-"""Normalize entity keys and merge duplicates in a ``ReconciliationPlan``.
+"""Normalize entity keys and merge duplicates in a ``MutationBatch``.
 
 Entities arriving from LLM planners or heterogeneous deterministic planners
 can drift on casing / whitespace (``Agents`` vs ``agents``; ``context_resolve``
@@ -38,7 +38,7 @@ from potpie_context_engine.core.graph_mutations import (
 )
 from potpie_context_engine.core.graph_contract import entity_key_prefix
 from potpie_context_engine.core.ontology import ENTITY_TYPES, EntityTypeSpec
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 SYNONYMS: dict[str, str] = {}
 """Post-normalization synonym collapse. Keys and values are already normalized."""
@@ -87,7 +87,7 @@ def coherent_entity_labels(
 
 
 def canonicalize_reconciliation_plan(
-    plan: ReconciliationPlan,
+    plan: MutationBatch,
     *,
     enforce_label_coherence: bool = True,
     entity_types: Mapping[str, EntityTypeSpec] = ENTITY_TYPES,
@@ -127,7 +127,7 @@ def _build_rewrite_map(items: Iterable[EntityUpsert]) -> dict[str, str]:
 
 
 def _extra_rewrites_from_edges(
-    plan: ReconciliationPlan, existing: dict[str, str]
+    plan: MutationBatch, existing: dict[str, str]
 ) -> dict[str, str]:
     """Normalize endpoints that appear only on edges / invalidations.
 

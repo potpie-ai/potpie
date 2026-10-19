@@ -11,14 +11,14 @@ from potpie_context_engine.core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
 from potpie_context_engine.core.context_events import EventRef
-from potpie_context_engine.core.errors import ReconciliationPlanValidationError
+from potpie_context_engine.core.errors import MutationBatchValidationError
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,
 )
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 pytestmark = pytest.mark.unit
 
@@ -48,10 +48,10 @@ def _valid_edge_upsert() -> EdgeUpsert:
     )
 
 
-def _valid_plan(**kwargs) -> ReconciliationPlan:  # type: ignore[no-untyped-def]
+def _valid_plan(**kwargs) -> MutationBatch:  # type: ignore[no-untyped-def]
     defaults = dict(event_ref=_ref(), summary="ok")
     defaults.update(kwargs)
-    return ReconciliationPlan(**defaults)
+    return MutationBatch(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ def test_validate_plan_with_valid_structural_mutations_passes() -> None:
 
 def test_validate_pot_id_mismatch_raises() -> None:
     plan = _valid_plan()
-    with pytest.raises(ReconciliationPlanValidationError, match="pot_id"):
+    with pytest.raises(MutationBatchValidationError, match="pot_id"):
         validate_reconciliation_plan(plan, "wrong-pot")
 
 
@@ -118,7 +118,7 @@ def test_validate_exceeds_max_entity_upserts_raises() -> None:
         for i in range(MAX_GENERIC_ENTITY_UPSERTS + 1)
     ]
     plan = _valid_plan(entity_upserts=upserts)
-    with pytest.raises(ReconciliationPlanValidationError, match="entity upsert cap"):
+    with pytest.raises(MutationBatchValidationError, match="entity upsert cap"):
         validate_reconciliation_plan(plan, "p1")
 
 
@@ -147,7 +147,7 @@ def test_validate_edge_upsert_plus_delete_combined_cap() -> None:
         for i in range(half + 1)
     ]
     plan = _valid_plan(edge_upserts=edge_upserts, edge_deletes=edge_deletes)
-    with pytest.raises(ReconciliationPlanValidationError, match="edge mutation cap"):
+    with pytest.raises(MutationBatchValidationError, match="edge mutation cap"):
         validate_reconciliation_plan(plan, "p1")
 
 
@@ -175,7 +175,7 @@ def test_validate_exceeds_max_invalidations_raises() -> None:
         for i in range(MAX_INVALIDATIONS + 1)
     ]
     plan = _valid_plan(invalidations=invalidations)
-    with pytest.raises(ReconciliationPlanValidationError, match="invalidation cap"):
+    with pytest.raises(MutationBatchValidationError, match="invalidation cap"):
         validate_reconciliation_plan(plan, "p1")
 
 
@@ -198,7 +198,7 @@ def test_validate_ontology_error_message_samples_first_8(
         for i in range(12)
     ]
     plan = _valid_plan(entity_upserts=upserts)
-    with pytest.raises(ReconciliationPlanValidationError) as exc_info:
+    with pytest.raises(MutationBatchValidationError) as exc_info:
         validate_reconciliation_plan(plan, "p1")
     message = str(exc_info.value)
     assert "more" in message  # suffix "... X more" should appear
@@ -219,7 +219,7 @@ def test_validate_ontology_error_no_suffix_when_8_or_fewer(
         for i in range(4)
     ]
     plan = _valid_plan(entity_upserts=upserts)
-    with pytest.raises(ReconciliationPlanValidationError) as exc_info:
+    with pytest.raises(MutationBatchValidationError) as exc_info:
         validate_reconciliation_plan(plan, "p1")
     message = str(exc_info.value)
     assert "more" not in message

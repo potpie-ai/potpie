@@ -25,15 +25,15 @@ from potpie_context_engine.core.graph_mutations import (
     EntityUpsert,
     InvalidationOp,
 )
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 from potpie_context_engine.core.identity import IdentityClass
 from potpie_context_engine.core.ontology import EntityTypeSpec
 
 pytestmark = pytest.mark.unit
 
 
-def _plan(**kwargs) -> ReconciliationPlan:
-    return ReconciliationPlan(
+def _plan(**kwargs) -> MutationBatch:
+    return MutationBatch(
         event_ref=EventRef(event_id="evt-1", pot_id="pot-1", source_system="test"),
         summary="test",
         **kwargs,

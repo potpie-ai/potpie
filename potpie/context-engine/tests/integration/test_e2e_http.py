@@ -17,16 +17,16 @@ import pytest
 
 from potpie_context_engine.core.context_events import EventRef
 from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 pytestmark = pytest.mark.integration
 
 API = "/api/v1/context"
 
 
-def _seed_plan(pot_id: str) -> ReconciliationPlan:
+def _seed_plan(pot_id: str) -> MutationBatch:
     """A tiny topology so reads have something deterministic to return."""
-    return ReconciliationPlan(
+    return MutationBatch(
         event_ref=EventRef(event_id="http-seed", source_system="test", pot_id=pot_id),
         summary="http seed",
         entity_upserts=[

@@ -133,10 +133,6 @@ class MutationBatchValidationError(ContextEngineError):
         self.structured_issues = structured_issues or ()
 
 
-# Back-compat alias (Step 5a rename).
-ReconciliationPlanValidationError = MutationBatchValidationError
-
-
 class ReconciliationApplyError(ContextEngineError):
     """Deterministic apply step failed after validation."""
 

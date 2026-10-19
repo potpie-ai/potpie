@@ -8,7 +8,7 @@ import pytest
 
 from potpie_context_engine.core.context_events import EventRef
 from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 from potpie_context_engine.core.reconciliation_flags import (
     reconciliation_config_from_env,
@@ -86,8 +86,8 @@ def test_configuration_is_frozen_and_rejects_conflicting_ontology_modes() -> Non
         ReconciliationConfig(ontology_soft_fail=True, ontology_strict=True)
 
 
-def _label_inference_plan() -> ReconciliationPlan:
-    return ReconciliationPlan(
+def _label_inference_plan() -> MutationBatch:
+    return MutationBatch(
         event_ref=EventRef(event_id="e1", source_system="test", pot_id="p1"),
         summary="deployment",
         entity_upserts=[
@@ -136,7 +136,7 @@ def test_explicit_validation_configs_ignore_later_environment_changes(
 
 def test_label_coherence_remains_enabled_when_inference_is_disabled() -> None:
     """Keep key-prefix coherence active when classifier inference is disabled."""
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=EventRef(event_id="e1", pot_id="p1", source_system="test"),
         summary="test",
         entity_upserts=[

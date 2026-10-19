@@ -91,7 +91,7 @@ class ProvenanceRef:
 class ProvenanceContext:
     """Caller-supplied context threaded into ``apply_plan``.
 
-    Carries the optional provenance fields the ``ReconciliationPlan``
+    Carries the optional provenance fields the ``MutationBatch``
     cannot reconstruct on its own (source identifiers, source event times,
     resolved source ref/kind, agent identity, reconciliation run id). Combined
     with ``plan.event_ref`` and ``plan.confidence`` this produces a full
