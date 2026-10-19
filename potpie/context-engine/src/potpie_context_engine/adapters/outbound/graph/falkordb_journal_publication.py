@@ -16,7 +16,18 @@ _RECEIPT = "PotpieMutationReceipt"
 _LABEL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
-def publish_query(before, after, *, state, receipt, result=None, execution=None):
+def publish_query(
+    before,
+    after,
+    *,
+    state,
+    receipt,
+    result=None,
+    execution=None,
+    repair_clauses=(),
+    repair_params=None,
+    repair_payload=None,
+):
     params = {
         "pot": state.pot_id,
         "state": journal_json(state),
@@ -24,6 +35,10 @@ def publish_query(before, after, *, state, receipt, result=None, execution=None)
         "old_head": receipt.parent_commit_id if receipt else state.head,
     }
     clauses = [f"MATCH (v:{_STATE} {{pot_id:$pot}}) WHERE v.journal=$state"]
+    clauses.extend(repair_clauses)
+    params.update(repair_params or {})
+    if repair_payload is not None:
+        params["record_repairs"] = repair_payload
     changed = [after[key] for key in after if before.get(key) != after[key]]
     for i, record in enumerate(sorted(changed, key=lambda r: r.kind != "entity")):
         props = deepcopy(dict(record.fields["properties"]))
@@ -122,9 +137,15 @@ def publish_query(before, after, *, state, receipt, result=None, execution=None)
             f"CREATE (receipt:{_RECEIPT} {{pot_id:$pot,mutation_id:$mid,fingerprint:$fingerprint,"
             "payload:$payload,journal:$journal,journal_generation:$generation,sequence:$sequence,"
             "entities:$entities,edges:$edges,deletes:$deletes,invalidations:$invalidations,"
-            "affected_claim_record_ids:$affected})"
+            "affected_claim_record_ids:$affected"
+            + (",record_repairs:$record_repairs" if repair_payload is not None else "")
+            + "})"
         )
         clauses.append("SET v.version=v.version+$advance")
     params["next_state"] = journal_json(next_state)
     clauses.append("SET v.journal=$next_state RETURN v.version")
+    if repair_payload is not None:
+        from .falkordb_receipts import RECEIPT_COLUMNS
+
+        clauses[-1] += "," + RECEIPT_COLUMNS.replace("r.", "receipt.")
     return " ".join(clauses), params

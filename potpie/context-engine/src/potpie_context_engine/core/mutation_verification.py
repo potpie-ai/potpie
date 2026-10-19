@@ -89,6 +89,13 @@ def _verify_ingestion_commit(
     definition: GraphDefinition,
     quality_snapshot: Callable[..., Mapping[str, Any]],
 ) -> GraphIngestionVerificationResult:
+    if record.lowered_batch is not None and record.lowered_batch.record_repairs:
+        return inconclusive_verification(
+            plan_id=record.plan_id,
+            pot_id=pot_id,
+            detail="Current-state verification of raw storage repairs is unsupported; the execution receipt remains authoritative.",
+            unsupported=({"capability": "verification.record_repairs"},),
+        )
     query_time = datetime.now(timezone.utc)
     before_versions = _subgraph_versions(backend, pot_id)
     if (

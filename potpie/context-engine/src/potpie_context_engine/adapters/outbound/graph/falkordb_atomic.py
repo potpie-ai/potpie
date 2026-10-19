@@ -181,7 +181,7 @@ def _compile(
         params[f"ead{i}"] = description
         clauses.append(
             f"CALL {{ WITH v MERGE (e:Entity {{group_id:$pot,entity_key:${key}}}) "
-            f"ON CREATE SET e.uuid=randomUUID(),e.created_at=timestamp() SET e.record_id=coalesce(e.record_id,e.uuid) SET e+=${props} "
+            f"ON CREATE SET e.created_at=timestamp() SET e+=${props} "
             f"SET e.name=CASE WHEN $ean{i}<>'' THEN $ean{i} WHEN coalesce(e.name,'')='' THEN ${key} ELSE e.name END, "
             f"e.summary=CASE WHEN $eas{i}<>'' THEN $eas{i} WHEN coalesce(e.summary,'')='' THEN ${key} ELSE e.summary END, "
             f"e.description=CASE WHEN $ead{i}<>'' THEN $ead{i} WHEN coalesce(e.description,'')='' THEN ${key} ELSE e.description END "
@@ -343,7 +343,25 @@ def _apply_watched(
                 expected=expected_version,
                 provenance_context=provenance_context,
             )
+        elif plan.record_repairs:
+            from .falkordb_legacy import compile_repairs
+
+            query, params, result = compile_repairs(
+                graph,
+                pipe,
+                plan,
+                pot_id=expected_pot_id,
+                expected=expected_version,
+                provenance_context=provenance_context,
+                state=state,
+                definition=definition,
+            )
         else:
+            from .falkordb_legacy import prepare_entities, validate_final_aliases
+
+            inventory = prepare_entities(
+                graph, pipe, plan, pot_id=expected_pot_id, mutation_id=mutation_id
+            )
             provenance = _build_provenance(
                 plan,
                 pot_id=expected_pot_id,
@@ -385,6 +403,9 @@ def _apply_watched(
                 embedder,
                 original_claims,
                 final_rows,
+            )
+            validate_final_aliases(
+                inventory, plan, params["claim_writes"], pot_id=expected_pot_id
             )
             params["journal_generated_event"] = (
                 plan.event_ref is None and provenance_context.source_event_id is None

@@ -7,6 +7,8 @@ resends the mutation payload at commit time.
 
 from __future__ import annotations
 
+from .legacy_records import RecordRepair
+
 from .claim_corrections import ClaimClosureResolution
 from .claim_lifecycle import ClaimWriteResolution
 
@@ -572,6 +574,11 @@ def _validate_plan_payload(raw: Mapping[str, Any]) -> None:
 
 def mutation_batch_to_dict(batch: MutationBatch) -> dict[str, Any]:
     return {
+        **(
+            {"record_repairs": [effect.to_dict() for effect in batch.record_repairs]}
+            if batch.record_repairs
+            else {}
+        ),
         **({"reset_pot": True} if batch.reset_pot else {}),
         **(
             {"snapshot_import": _json_safe(batch.snapshot_import)}
@@ -665,6 +672,9 @@ def mutation_batch_from_dict(raw: Mapping[str, Any] | None) -> MutationBatch | N
     if not raw:
         return None
     return MutationBatch(
+        record_repairs=tuple(
+            RecordRepair.from_dict(effect) for effect in raw.get("record_repairs", ())
+        ),
         reset_pot=raw.get("reset_pot", False),
         snapshot_import=raw.get("snapshot_import"),
         event_ref=event_ref_from_dict(raw.get("event_ref")),

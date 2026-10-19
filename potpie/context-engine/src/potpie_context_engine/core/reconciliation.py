@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from potpie_context_engine.core.mutation_execution import ExecutionMetadata
+from potpie_context_engine.core.legacy_records import RecordRepair, MAX_REPAIR_RECORDS
 
 from potpie_context_engine.core.context_events import EventRef
 from potpie_context_engine.core.graph_mutations import (
@@ -69,6 +70,7 @@ class MutationBatch:
     """Populated when soft ontology downgrade runs (API surface); not persisted on plan slices."""
     reset_pot: bool = False
     snapshot_import: Mapping[str, Any] | None = None
+    record_repairs: tuple[RecordRepair, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.reset_pot) is not bool:
@@ -77,9 +79,24 @@ class MutationBatch:
             self.snapshot_import, Mapping
         ):
             raise ValueError("snapshot_import must be a normalized snapshot object")
-        if self.reset_pot and self.snapshot_import is not None:
-            raise ValueError("reset and snapshot import cannot share a batch")
-        if (self.reset_pot or self.snapshot_import is not None) and (
+        if (
+            sum(
+                (
+                    self.reset_pot,
+                    self.snapshot_import is not None,
+                    bool(self.record_repairs),
+                )
+            )
+            > 1
+        ):
+            raise ValueError("administrative mutation kinds cannot share a batch")
+        if len(self.record_repairs) > MAX_REPAIR_RECORDS or any(
+            not isinstance(effect, RecordRepair) for effect in self.record_repairs
+        ):
+            raise ValueError("invalid or oversized legacy repair batch")
+        if (
+            self.reset_pot or self.snapshot_import is not None or self.record_repairs
+        ) and (
             self.entity_upserts
             or self.edge_upserts
             or self.edge_deletes

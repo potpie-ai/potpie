@@ -723,6 +723,7 @@
     "kind": "ref",
     "name": "RepairRequest"
    },
+   "request_policy": "legacy_repair_v1",
    "resource_identity_fields": [],
    "resource_type": null,
    "result": {
@@ -1352,6 +1353,115 @@
    "kind": "object",
    "python": "potpie_context_engine.core.ports.resource_store.ChunkRef"
   },
+  "ClaimClosureResolution": {
+   "fields": [
+    {
+     "name": "target",
+     "required": true,
+     "schema": {
+      "kind": "ref",
+      "name": "ClaimTarget"
+     }
+    },
+    {
+     "name": "before",
+     "required": true,
+     "schema": {
+      "kind": "ref",
+      "name": "ClaimInterval"
+     }
+    },
+    {
+     "name": "after",
+     "required": true,
+     "schema": {
+      "kind": "ref",
+      "name": "ClaimInterval"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.claim_corrections.ClaimClosureResolution"
+  },
+  "ClaimInterval": {
+   "fields": [
+    {
+     "name": "valid_at",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "invalid_at",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "valid_until",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.claim_corrections.ClaimInterval"
+  },
+  "ClaimTarget": {
+   "fields": [
+    {
+     "name": "claim_key",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "record_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.claim_corrections.ClaimTarget"
+  },
   "CommitRequest": {
    "fields": [
     {
@@ -1386,6 +1496,13 @@
     {
      "default": false,
      "name": "defer_verification",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": true,
+     "name": "recover_stale",
      "schema": {
       "kind": "boolean"
      }
@@ -2114,6 +2231,86 @@
    ],
    "kind": "object",
    "python": "potpie_context_engine.core.agent_envelope.EvidenceItem"
+  },
+  "ExecutionMetadata": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "applied_at",
+     "required": true,
+     "schema": {
+      "kind": "datetime"
+     }
+    },
+    {
+     "name": "version_before",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "name": "version_after",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "name": "batch_fingerprint",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "request_fingerprint",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "affected_claim_record_ids",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": 2,
+     "name": "schema_version",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 1,
+     "name": "fingerprint_version",
+     "schema": {
+      "kind": "integer"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.mutation_execution.ExecutionMetadata"
   },
   "ExportSnapshotRequest": {
    "fields": [
@@ -3542,6 +3739,50 @@
        "kind": "integer"
       }
      }
+    },
+    {
+     "default": "deferred",
+     "name": "state",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "inconclusive",
+     "name": "outcome",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "checked_revision",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "verified_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
     }
    ],
    "kind": "object",
@@ -3709,6 +3950,7 @@
     },
     {
      "default": {
+      "claim_closures": [],
       "claim_keys": [],
       "edge_deletes": 0,
       "edge_upserts": 0,
@@ -3807,6 +4049,29 @@
      "schema": {
       "kind": "string"
      }
+    },
+    {
+     "default": null,
+     "name": "execution",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "ExecutionMetadata"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "not_requested",
+     "name": "verification_state",
+     "schema": {
+      "kind": "string"
+     }
     }
    ],
    "kind": "object",
@@ -3858,6 +4123,17 @@
      "schema": {
       "items": {
        "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "claim_closures",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "ClaimClosureResolution"
       },
       "kind": "array"
      }
@@ -6944,6 +7220,125 @@
       },
       "kind": "array"
      }
+    },
+    {
+     "default": true,
+     "name": "ok",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": "completed",
+     "name": "status",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "repair_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 0,
+     "name": "scanned_records",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "repairable_records",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "completed_batches",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "total_batches",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "expected_revision",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "expires_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "changes",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "executions",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
     }
    ],
    "kind": "object",
@@ -6959,6 +7354,36 @@
        "kind": "string"
       },
       "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "legacy_mode",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "repair_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
      }
     }
    ],
@@ -7040,7 +7465,23 @@
    "python": "potpie.runtime.host_operations.RepoDefaultSetRequest"
   },
   "ResetContextRequest": {
-   "fields": [],
+   "fields": [
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
    "kind": "object",
    "python": "potpie_context_engine.requests.ResetContextRequest"
   },
@@ -7068,6 +7509,59 @@
       "options": [
        {
         "kind": "boolean"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "execution",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "ExecutionMetadata"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "not_configured",
+     "name": "resources_status",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
        },
        {
         "kind": "null"
@@ -8476,6 +8970,31 @@
      "name": "ontology_version",
      "schema": {
       "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "plan_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "review_required_claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
      }
     }
    ],

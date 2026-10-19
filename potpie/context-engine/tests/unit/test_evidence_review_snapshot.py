@@ -68,6 +68,8 @@ def _backend(row: ClaimRow) -> InMemoryGraphBackend:
     backend.store.set_entity_label(
         pot_id=POT, entity_key=row.object_key, labels=("Entity", "Service")
     )
+    for key in (row.subject_key, row.object_key):
+        backend.store.entity_property_index[(POT, key)] = {"record_id": f"entity:{key}"}
     return backend
 
 

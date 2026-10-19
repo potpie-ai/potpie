@@ -89,6 +89,15 @@ def validate_reconciliation_plan(
                 raise ValueError("snapshot import must be canonical before execution")
     except ValueError as exc:
         raise MutationBatchValidationError(str(exc)) from exc
+    if plan.record_repairs:
+        from .legacy_repair_policy import validate_record_repair
+
+        try:
+            for effect in plan.record_repairs:
+                validate_record_repair(effect, pot_id=expected_pot_id)
+        except ValueError as exc:
+            raise MutationBatchValidationError(str(exc)) from exc
+        return
     if plan.reset_pot or plan.snapshot_import is not None:
         return
     config = (

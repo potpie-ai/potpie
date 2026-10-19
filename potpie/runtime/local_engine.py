@@ -501,6 +501,16 @@ class ServiceEngineOperations:
     async def repair(
         self, context: ContextIdentity, request: RepairRequest
     ) -> Outcome[object]:
+        if request.legacy_mode is not None:
+            return await self._authorized_graph_call(
+                "legacy_repair",
+                context,
+                lambda workbench: workbench.repair_legacy_async(
+                    pot_id=context.value,
+                    mode=request.legacy_mode,
+                    repair_id=request.repair_id,
+                ),
+            )
         return await self._call(
             lambda: self._services.backend.analytics.repair(
                 context.value,
@@ -1005,6 +1015,17 @@ class ServiceEngineOperations:
         context: ContextIdentity,
         call: Callable[[Any], Awaitable[Any]],
     ) -> Outcome[object]:
+        result = await self._authorized_graph_call(operation, context, call)
+        if isinstance(result, Failure):
+            return result
+        return Success(GraphJournalResult.from_value(result.value))
+
+    async def _authorized_graph_call(
+        self,
+        operation: str,
+        context: ContextIdentity,
+        call: Callable[[Any], Awaitable[Any]],
+    ) -> Outcome[object]:
         """Run one commit-service call inside this pot's commit grant.
 
         Every call that reaches here passed the resource manager, which
@@ -1037,7 +1058,7 @@ class ServiceEngineOperations:
             )
         except Exception as exc:
             return await self._dependency_failure(operation, exc)
-        return Success(GraphJournalResult.from_value(value))
+        return Success(value)
 
     async def invoke(
         self,

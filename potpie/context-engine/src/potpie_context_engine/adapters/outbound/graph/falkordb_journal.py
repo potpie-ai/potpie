@@ -170,7 +170,7 @@ def _effect_plan(before, plan, params, definition):
                 "created_at": int(datetime.now(timezone.utc).timestamp() * 1000),
             }
         )
-        record_id = old.record_id if old else props["uuid"]
+        record_id = old.record_id if old else params[f"ep{i}"]["record_id"]
         raw = deepcopy(params[f"ep{i}"])
         active = old.fields.get("active", True) if old else True
         if "retired" in raw:
@@ -313,52 +313,30 @@ class FalkorJournal:
                 rollback_enabled=rollback_enabled,
                 limits=limits or JournalLimits(),
             )
-            nodes = _read(
-                self.graph,
-                pipe,
-                "MATCH (e:Entity {group_id:$pot}) RETURN e.entity_key,e.uuid,e.record_id",
-                {"pot": pot_id},
+            from .falkordb_legacy import raw_inventory
+            from potpie_context_engine.core.legacy_records import (
+                validate_alias_ownership,
             )
-            edges = _read(
-                self.graph,
-                pipe,
-                "MATCH (a:Entity {group_id:$pot})-[r:RELATES_TO {group_id:$pot}]->(b:Entity {group_id:$pot}) RETURN r.uuid,r.record_id",
-                {"pot": pot_id},
-            )
-            ids, keys = set(), set()
-            for key, uid, record_id in nodes:
-                if (
-                    not isinstance(key, str)
-                    or not key
-                    or any(
-                        value is not None and value != "" and not isinstance(value, str)
-                        for value in (uid, record_id)
-                    )
-                ):
-                    raise JournalError("invalid native entity migration identity")
-                if key in keys or (record_id or uid) in ids:
-                    raise JournalError("ambiguous entity migration")
-                keys.add(key)
-                if record_id or uid:
-                    ids.add(record_id or uid)
-            for uid, record_id in edges:
-                if any(
-                    value is not None and value != "" and not isinstance(value, str)
-                    for value in (uid, record_id)
-                ):
-                    raise JournalError("invalid native claim migration identity")
-                if (record_id or uid) and (record_id or uid) in ids:
-                    raise JournalError("ambiguous relationship migration")
-                if record_id or uid:
-                    ids.add(record_id or uid)
-            # Assign missing UUIDs and persistent record IDs in the SAME
-            # guarded activation command, not backend-internal relationship IDs.
+            from potpie_context_engine.core.legacy_repair_policy import record_patch
+
+            records, _ = raw_inventory(self.graph, pot_id, pipe)
+            try:
+                validate_alias_ownership(records)
+                keys = [record.key for record in records if record.kind == "entity"]
+                if len(keys) != len(set(keys)):
+                    raise ValueError("ambiguous entity logical identity")
+                for record in records:
+                    if not isinstance(
+                        record.value("record_id"), str
+                    ) or not record.value("record_id"):
+                        raise ValueError("missing persistent record_id")
+                    record_patch(record, new_record_id=record.value("record_id"))
+            except ValueError as exc:
+                raise JournalError(
+                    f"migration_required: ambiguous or unsupported native inventory: {exc}"
+                ) from exc
             query = (
                 f"MATCH (v:{_STATE} {{pot_id:$pot}}) WHERE v.journal IS NULL "
-                "CALL { WITH v OPTIONAL MATCH (e:Entity {group_id:$pot}) "
-                "FOREACH (_ IN CASE WHEN e IS NULL THEN [] ELSE [1] END | SET e.record_id=coalesce(CASE WHEN e.record_id='' THEN null ELSE e.record_id END,CASE WHEN e.uuid='' THEN null ELSE e.uuid END,randomUUID())) RETURN count(e) AS nodes } "
-                "CALL { WITH v OPTIONAL MATCH ()-[r:RELATES_TO {group_id:$pot}]->() "
-                "FOREACH (_ IN CASE WHEN r IS NULL THEN [] ELSE [1] END | SET r.record_id=coalesce(CASE WHEN r.record_id='' THEN null ELSE r.record_id END,CASE WHEN r.uuid='' THEN null ELSE r.uuid END,randomUUID())) RETURN count(r) AS edges } "
                 "SET v.journal=$journal RETURN v.version"
             )
             self._execute(pipe, query, {"pot": pot_id, "journal": journal_json(state)})
@@ -437,6 +415,49 @@ class FalkorJournal:
 
         return capture_receipt(state, before, after, **kwargs)
 
+    def _require_write_guard(self, state):
+        context = current_journal_context()
+        if context.resource_operation_id and state.resource_guard is None:
+            raise JournalError("resource operation no longer owns an active guard")
+        if state.resource_guard and (
+            context.resource_operation_id,
+            context.resource_owner,
+        ) != (state.resource_guard.operation_id, state.resource_guard.owner):
+            raise JournalError("resource operation owns the pot write guard")
+
+    def compile_record_repairs(
+        self, *, state, plan, clauses, params, payload, result, provenance_context
+    ):
+        """Storage-only repair audit; exact legacy representation is not reversible."""
+        self._require_write_guard(state)
+        receipt = self._receipt(
+            state,
+            {},
+            {},
+            commit_id=result.mutation_id,
+            fingerprint=result.execution.batch_fingerprint,
+            actor=provenance_context.actor_user_id or "system",
+            message=plan.summary,
+            origin="repair",
+            required_access="admin",
+            unsupported_reason="legacy storage normalization cannot restore exact raw representation",
+        )
+        query, values = _publish_query(
+            {},
+            {},
+            state=state,
+            receipt=receipt,
+            result=result.mutation_summary,
+            execution=result,
+            repair_clauses=clauses,
+            repair_params=params,
+            repair_payload=payload,
+        )
+        from .falkordb_legacy import check_query_size
+
+        check_query_size(self.graph, query, values, state)
+        return query, values, result
+
     def apply(
         self,
         plan,
@@ -449,14 +470,7 @@ class FalkorJournal:
         provenance_context,
         receipt_batch,
     ):
-        context = current_journal_context()
-        if context.resource_operation_id and state.resource_guard is None:
-            raise JournalError("resource operation no longer owns an active guard")
-        if state.resource_guard and (
-            context.resource_operation_id,
-            context.resource_owner,
-        ) != (state.resource_guard.operation_id, state.resource_guard.owner):
-            raise JournalError("resource operation owns the pot write guard")
+        self._require_write_guard(state)
         keys = {item.entity_key for item in plan.entity_upserts}
         for write in params["claim_writes"]:
             keys.update((write["record_id"], write["source"], write["target"]))

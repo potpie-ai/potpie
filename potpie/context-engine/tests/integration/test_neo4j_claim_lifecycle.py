@@ -555,7 +555,9 @@ def test_refresh_rejects_global_incarnation_identity_collision(graph, collision)
     before = _raw_claims(graph)
     version = backend.mutation.current_version(pot)
     batch = _batch(_edge(MAR))
-    with pytest.raises(ReconciliationApplyError, match="incarnation"):
+    with pytest.raises(
+        ReconciliationApplyError, match="incarnation|physical identity is shared"
+    ):
         _apply(graph, batch, "colliding-refresh")
     assert _raw_claims(graph) == before
     assert backend.mutation.current_version(pot) == version

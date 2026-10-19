@@ -69,6 +69,17 @@ class _SyncAsyncBridge:
     def __init__(self, target: Any) -> None:
         self._target = target
 
+    def require(self, name: str) -> None:
+        if not any(
+            callable(getattr(self._target, candidate, None))
+            for candidate in (name, f"{name}_async")
+        ):
+            from .errors import CapabilityNotImplemented
+
+            raise CapabilityNotImplemented(
+                "graph.legacy_repair", detail=f"adapter does not implement {name}"
+            )
+
     def call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         sync_method = getattr(self._target, name, None)
         if callable(sync_method):
@@ -104,6 +115,20 @@ class _SyncAsyncBridge:
         if not callable(sync_method):
             raise AttributeError(name)
         return await asyncio.to_thread(sync_method, *args, **kwargs)
+
+
+def run_async_from_sync(operation, *args, **kwargs):
+    """Enter one authorized async service without crossing an active driver loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop = _BRIDGE_LOOP.get()
+        if loop is not None and loop.is_running():
+            return asyncio.run_coroutine_threadsafe(
+                operation(*args, **kwargs), loop
+            ).result()
+        return asyncio.run(operation(*args, **kwargs))
+    raise RuntimeCompositionError("use the async operation inside a running event loop")
 
 
 class _MutationPortBridge:
@@ -164,6 +189,14 @@ class _MutationPortBridge:
 
     def readiness(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("readiness", *args, **kwargs)
+
+    def legacy_inventory(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("legacy_inventory")
+        return self._bridge.call("legacy_inventory", *args, **kwargs)
+
+    async def legacy_inventory_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("legacy_inventory")
+        return await self._bridge.call_async("legacy_inventory", *args, **kwargs)
 
     async def readiness_async(self, *args: Any, **kwargs: Any) -> Any:
         return await self._bridge.call_async("readiness", *args, **kwargs)
@@ -338,6 +371,22 @@ class _StoreBridge:
 
 class _PlanStoreBridge(_StoreBridge):
     """Plan-store facade including the atomic commit-state transition."""
+
+    def reserve_repair_run(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("reserve_repair_run")
+        return self._bridge.call("reserve_repair_run", *args, **kwargs)
+
+    async def reserve_repair_run_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("reserve_repair_run")
+        return await self._bridge.call_async("reserve_repair_run", *args, **kwargs)
+
+    def get_repair_run(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("get_repair_run")
+        return self._bridge.call("get_repair_run", *args, **kwargs)
+
+    async def get_repair_run_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("get_repair_run")
+        return await self._bridge.call_async("get_repair_run", *args, **kwargs)
 
     def reserve_idempotency(self, *args: Any, **kwargs: Any) -> Any:
         self._require_reservation()
@@ -606,6 +655,9 @@ class GraphRuntime(GraphCommitSurface):
     def commit_status(self, plan_id: str, *, pot_id: str):
         return self.workbench.commit_status(plan_id, pot_id=pot_id)
 
+    def repair_legacy(self, **kwargs):
+        return self.workbench.repair_legacy(**kwargs)
+
     def verify_commit(self, plan_id: str, *, pot_id: str):
         return self.workbench.verify_commit(plan_id, pot_id=pot_id)
 
@@ -745,6 +797,9 @@ class GraphRuntime(GraphCommitSurface):
         return await _async_call(
             self.workbench, "commit_status", plan_id, pot_id=pot_id
         )
+
+    async def repair_legacy_async(self, **kwargs):
+        return await self.workbench.repair_legacy_async(**kwargs)
 
     async def verify_commit_async(self, plan_id: str, *, pot_id: str):
         return await _async_call(

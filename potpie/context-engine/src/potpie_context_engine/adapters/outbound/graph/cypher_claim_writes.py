@@ -73,7 +73,8 @@ async def write_claim(
         predicate=edge.edge_type,
         identities=identities,
     )
-    candidates = [row_from_record(record) async for record in result]
+    raw_candidates = [dict(record) async for record in result]
+    candidates = [row_from_record(record) for record in raw_candidates]
     row, resolution = resolve_claim_assertion(
         incoming,
         candidates,
@@ -84,6 +85,9 @@ async def write_claim(
     )
     expected = {key: 1 for key in resolution.superseded_record_ids}
     expected[resolution.record_id] = int(resolution.existing)
+    _require_physical_ids(
+        raw_candidates, {key for key, count in expected.items() if count}
+    )
     await _validate_claim_identities(session, pot_id, expected)
     props = {
         **({} if resolution.metadata_review else edge.properties),
@@ -205,7 +209,9 @@ async def close_claims(
         gid=pot_id,
         record_ids=identities,
     )
-    rows = [row_from_record(record) async for record in result]
+    raw_rows = [dict(record) async for record in result]
+    _require_physical_ids(raw_rows, set(identities))
+    rows = [row_from_record(record) for record in raw_rows]
     if sorted(row.record_id for row in rows) != sorted(identities):
         raise ClaimLifecycleConflict("correction incarnation is missing or ambiguous")
     by_id = {row.record_id: row for row in rows}
@@ -228,3 +234,16 @@ async def close_claims(
             raise ClaimLifecycleConflict("closure incarnation identity changed")
         count += 1
     return count
+
+
+def _require_physical_ids(records, selected: set[str]) -> None:
+    for record in records:
+        props = record["props"]
+        if (props.get("record_id") or props.get("uuid")) in selected:
+            if (
+                not isinstance(props.get("record_id"), str)
+                or not props["record_id"].strip()
+            ):
+                raise ClaimLifecycleConflict(
+                    "migration_required: selected claim has no physical record_id"
+                )

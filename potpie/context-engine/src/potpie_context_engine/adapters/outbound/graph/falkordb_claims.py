@@ -184,8 +184,6 @@ def _validate_write_identities(graph, pipe, pot_id, writes, existing, entity_ups
         matched = [props for key, props in staged if key == item.entity_key]
         if matched:
             for props in matched:
-                if not item.preserve_labels and props.get("record_id") is None:
-                    props["record_id"] = props.get("uuid")
                 props.update(item.properties)
         else:
             staged.append((item.entity_key, dict(item.properties)))

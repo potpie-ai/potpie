@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import threading
+from copy import deepcopy
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -30,6 +31,12 @@ from potpie_context_engine.core.claim_lifecycle import (
 )
 from potpie_context_engine.core.claim_preparation import assertion_row
 from potpie_context_engine.core.claim_codec import stored_temporal_diagnostics
+from potpie_context_engine.core.claim_storage import (
+    StoredClaimSource,
+    preserve_claim_source,
+    stored_claim_record_id,
+)
+from potpie_context_engine.core.legacy_records import resolve_entity_identity
 from potpie_context_engine.core.claim_corrections import apply_claim_closure
 from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
 from potpie_context_engine.core.graph_entity_summary import (
@@ -133,6 +140,15 @@ class _Mutation:
         with self.state_lock:
             return self.revisions.get(pot_id, 0)
 
+    def legacy_inventory(self, pot_id: str):
+        from ..memory_legacy import legacy_inventory
+
+        with self.state_lock:
+            return legacy_inventory(self, pot_id)
+
+    async def legacy_inventory_async(self, pot_id: str):
+        return self.legacy_inventory(pot_id)
+
     def compare_and_apply(
         self,
         plan: MutationBatch,
@@ -216,6 +232,16 @@ class _Mutation:
             apply_snapshot_import,
         )
 
+        if plan.record_repairs:
+            from ..memory_legacy import apply_record_repairs
+
+            return apply_record_repairs(
+                self,
+                plan.record_repairs,
+                pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+            )
+
         if plan.reset_pot:
             return apply_reset(self, pot_id=expected_pot_id, mutation_id=mutation_id)
         if plan.snapshot_import is not None:
@@ -233,8 +259,19 @@ class _Mutation:
         )
         summary = MutationSummary()
         for ent in plan.entity_upserts:
+            endpoint = (expected_pot_id, ent.entity_key)
+            exists = (
+                endpoint in self.store.entity_label_index
+                or endpoint in self.store.entity_property_index
+            )
+            properties = resolve_entity_identity(
+                self.store.entity_property_index.get(endpoint, {}) if exists else None,
+                ent.properties,
+                pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+                entity_key=ent.entity_key,
+            )
             if ent.preserve_labels:
-                endpoint = (expected_pot_id, ent.entity_key)
                 if (
                     endpoint not in self.store.entity_label_index
                     and endpoint not in self.store.entity_property_index
@@ -248,10 +285,10 @@ class _Mutation:
                 pot_id=expected_pot_id,
                 entity_key=ent.entity_key,
                 properties=(
-                    ent.properties
+                    properties
                     if ent.preserve_labels
                     else merge_entity_display_properties(
-                        ent.properties,
+                        properties,
                         existing=self.store.entity_property_index.get(
                             (expected_pot_id, ent.entity_key), {}
                         ),
@@ -988,7 +1025,7 @@ def _row_from_dict(pot_id: str, raw: Mapping[str, Any]) -> ClaimRow:
     temporal_diagnostics = stored_temporal_diagnostics(
         raw.get("properties", {}), canonical_fields=raw
     )
-    return ClaimRow(
+    row = ClaimRow(
         pot_id=pot_id,
         predicate=raw["predicate"],
         subject_key=raw["subject_key"],
@@ -1015,17 +1052,44 @@ def _row_from_dict(pot_id: str, raw: Mapping[str, Any]) -> ClaimRow:
         evidence=_evidence_tuple(raw.get("evidence")),
         graph_contract_version=_coerce_str(raw.get("graph_contract_version")),
         ontology_version=_coerce_str(raw.get("ontology_version")),
-        record_id=str(raw.get("record_id") or ""),
+        record_id=stored_claim_record_id(raw, raw.get("properties", {})),
         retired=bool(raw.get("retired", False)),
         temporal_diagnostics=temporal_diagnostics,
     )
+    hydrated = _row_to_dict(row)
+    hydrated.pop("properties")
+    return replace(
+        row,
+        stored_source=StoredClaimSource(
+            fields=deepcopy(
+                {
+                    key: value
+                    for key, value in raw.items()
+                    if key
+                    not in {
+                        "pot_id",
+                        "properties",
+                    }
+                }
+            ),
+            hydrated_fields=hydrated,
+        ),
+    )
+
+
+def _stored_row_to_dict(row: ClaimRow) -> dict[str, Any]:
+    current = _row_to_dict(row)
+    properties = current.pop("properties")
+    stored = preserve_claim_source(current, row.stored_source)
+    stored["properties"] = properties
+    return stored
 
 
 def dump_store(store: InMemoryClaimQueryStore) -> dict[str, Any]:
     """Serialize a whole (multi-pot) claim store for persistence."""
     return {
         "format_version": "2",
-        "rows": [{"pot_id": r.pot_id, **_row_to_dict(r)} for r in store.rows],
+        "rows": [{"pot_id": r.pot_id, **_stored_row_to_dict(r)} for r in store.rows],
         "labels": [
             [pot_id, key, list(labels)]
             for (pot_id, key), labels in store.entity_label_index.items()

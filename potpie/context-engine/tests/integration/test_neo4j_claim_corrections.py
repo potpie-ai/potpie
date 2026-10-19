@@ -243,7 +243,8 @@ def test_closure_rejects_cross_kind_identity_collision_atomically(graph, prepare
     receipts = _receipts(graph)
     version = backend.mutation.current_version(pot)
     with pytest.raises(
-        ReconciliationApplyError, match="collides with an entity identity"
+        ReconciliationApplyError,
+        match="collides with an entity identity|physical identity is shared",
     ):
         _apply(graph, batch, "colliding-closure", context=context)
     assert physical_graph() == before

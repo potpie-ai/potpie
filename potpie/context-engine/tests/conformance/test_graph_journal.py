@@ -797,7 +797,7 @@ def test_identity_migration_rejects_duplicate_ids_without_activation(backend):
     result = backend.mutation.compare_and_apply(
         MutationBatch(
             entity_upserts=[
-                EntityUpsert(key, ("Entity", "Service"), {"uuid": "duplicate"})
+                EntityUpsert(key, ("Entity", "Service"), {"uuid": key})
                 for key in ("service:a", "service:b")
             ]
         ),
@@ -810,7 +810,17 @@ def test_identity_migration_rejects_duplicate_ids_without_activation(backend):
         backend.journal.graph.query(
             "MATCH (e:Entity {group_id:'legacy'}) SET e.record_id='duplicate', e.uuid='duplicate'"
         )
-    with pytest.raises(JournalError, match="ambiguous"):
+    elif backend.profile == "embedded":
+        state = json.loads(backend._path.read_text())
+        for pot_id, _, props in state["entity_properties"]:
+            if pot_id == "legacy":
+                props.update(record_id="duplicate", uuid="duplicate")
+        backend._path.write_text(json.dumps(state))
+    else:
+        for (pot_id, _), props in backend.store.entity_property_index.items():
+            if pot_id == "legacy":
+                props.update(record_id="duplicate", uuid="duplicate")
+    with pytest.raises(JournalError, match="ambiguous|shared by multiple"):
         backend.journal.activate(pot_id="legacy")
     assert backend.journal.journal_state("legacy") is None
     assert (

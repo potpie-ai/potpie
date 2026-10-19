@@ -35,6 +35,7 @@ from ._mutation_execution import (
     validate_new_preparation,
 )
 from .memory_journal import MemoryJournal, adopt_store, clone_store
+from .memory_legacy import validate_store_aliases
 
 if TYPE_CHECKING:
     from .backends.in_memory_backend import _Mutation
@@ -136,14 +137,26 @@ def apply_transaction(
                 provenance=provenance,
                 applied_at=applied_at,
             )
+        validate_store_aliases(writer.store, expected_pot_id)
         result = complete_execution(
             result,
             original,
             pot_id=expected_pot_id,
             version_before=current,
             provenance=provenance,
-            record_ids=_affected_claim_ids(
-                owner.store.rows, writer.store.rows, expected_pot_id
+            record_ids=tuple(
+                dict.fromkeys(
+                    (
+                        *_affected_claim_ids(
+                            owner.store.rows, writer.store.rows, expected_pot_id
+                        ),
+                        *(
+                            effect.after().value("record_id")
+                            for effect in validated.record_repairs
+                            if effect.before.kind == "claim"
+                        ),
+                    )
+                )
             ),
             applied_at=applied_at,
         )

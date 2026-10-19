@@ -111,6 +111,7 @@ def stored_temporal_diagnostics(
             "valid_from",
             "invalid_at",
             "valid_until",
+            "valid_to",
             "observed_at",
             "occurred_at",
         )
@@ -148,6 +149,7 @@ def stored_temporal_diagnostics(
         "valid_from",
         "invalid_at",
         "valid_until",
+        "valid_to",
         "observed_at",
         "occurred_at",
     ):
@@ -184,7 +186,7 @@ def stored_temporal_diagnostics(
         )
     start = instants.get("valid_from", instants.get("valid_at"))
     if start is not None:
-        for name in ("invalid_at", "valid_until"):
+        for name in ("invalid_at", "valid_until", "valid_to"):
             if name in instants and instants[name] <= start:
                 diagnostics[name] = "stored validity interval is not positive"
     return diagnostics

@@ -74,6 +74,11 @@ def _seed(backend, rows, *, journal=False):
                 inner.store.set_entity_label(
                     pot_id=POT, entity_key=key, labels=("Entity", "Service")
                 )
+                inner.store.set_entity_properties(
+                    pot_id=POT,
+                    entity_key=key,
+                    properties={"record_id": f"entity-record:{key}"},
+                )
 
     _transact(backend, seed)
     if journal:

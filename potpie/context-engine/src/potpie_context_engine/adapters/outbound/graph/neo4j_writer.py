@@ -10,6 +10,7 @@ the deterministic plan.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any, Callable, Coroutine, TypeVar
 from uuid import uuid4
 
@@ -121,15 +122,30 @@ class Neo4jGraphWriter(GraphWriterPort):
     ) -> int:
         if not items:
             return 0
-        return await self._with_driver(
-            lambda d: upsert_entities_async(
-                d,
+        if not provenance.mutation_id:
+            provenance = replace(provenance, mutation_id=uuid4().hex)
+        from .neo4j_legacy import prepare_entities, validate_aliases
+
+        async def write(transaction):
+            resolved = await prepare_entities(transaction, pot_id, items, provenance)
+            count = await upsert_entities_async(
+                _TransactionDriver(transaction),
                 pot_id,
-                items,
+                resolved,
                 provenance,
                 definition=self._definition,
             )
-        )
+            await validate_aliases(transaction, pot_id)
+            return count
+
+        if self._transaction is not None:
+            return await write(self._transaction)
+
+        async def own_transaction(driver):
+            async with driver.session() as session:
+                return await session.execute_write(write)
+
+        return await self._with_driver(own_transaction)
 
     async def claim_rows(self, pot_id: str) -> list[ClaimRow]:
         """Read complete claim history through the mutation's borrowed transaction."""

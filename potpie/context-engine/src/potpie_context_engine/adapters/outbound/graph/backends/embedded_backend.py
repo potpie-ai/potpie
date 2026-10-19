@@ -137,6 +137,14 @@ class _EmbeddedMutation:
     def current_version(self, pot_id: str) -> int:
         return self.backend._current_version(pot_id)
 
+    def legacy_inventory(self, pot_id: str):
+        return self.backend._read(lambda inner: inner.mutation.legacy_inventory(pot_id))
+
+    async def legacy_inventory_async(self, pot_id: str):
+        import asyncio
+
+        return await asyncio.to_thread(self.legacy_inventory, pot_id)
+
     def compare_and_apply(
         self,
         plan: MutationBatch,

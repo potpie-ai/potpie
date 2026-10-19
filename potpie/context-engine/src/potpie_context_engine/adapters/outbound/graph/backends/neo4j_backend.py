@@ -31,6 +31,7 @@ from potpie_context_engine.core.definition import (
 )
 from potpie_context_engine.core.graph_mutations import InvalidationOp, ProvenanceContext
 from potpie_context_engine.core.mutation_execution import MutationCapabilities
+from potpie_context_engine.core.legacy_records import LegacyInventory
 from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 from potpie_context_engine.core.ports.graph.mutation import (
@@ -230,6 +231,20 @@ class _Neo4jMutation:
 
     def current_version(self, pot_id: str) -> int:
         return _run_sync(self.current_version_async(pot_id))
+
+    async def legacy_inventory_async(self, pot_id: str) -> LegacyInventory:
+        from potpie_context_engine.adapters.outbound.graph.neo4j_legacy import (
+            legacy_inventory,
+        )
+
+        if not self.atomic_mutations_supported:
+            raise NotImplementedError(
+                "Neo4j legacy inventory requires native atomic mutations"
+            )
+        return await legacy_inventory(self._get_writer(), pot_id)
+
+    def legacy_inventory(self, pot_id: str) -> LegacyInventory:
+        return _run_sync(self.legacy_inventory_async(pot_id))
 
     async def compare_and_apply_async(
         self,

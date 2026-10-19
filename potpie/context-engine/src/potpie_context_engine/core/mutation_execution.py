@@ -59,6 +59,7 @@ def batch_has_work(batch: MutationBatch) -> bool:
         or batch.edge_upserts
         or batch.edge_deletes
         or batch.invalidations
+        or batch.record_repairs
     )
 
 

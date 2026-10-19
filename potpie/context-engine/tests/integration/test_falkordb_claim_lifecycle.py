@@ -568,7 +568,7 @@ def test_discovered_record_id_is_unique_beyond_candidate_scope(store, graph, col
             params={"identity": original.record_id},
         )
     before = snapshot(graph)
-    with pytest.raises(ClaimLifecycleConflict, match="identity"):
+    with pytest.raises(ValueError, match="identity"):
         apply(store, batch(edge(APR)), "reject-duplicate")
     assert snapshot(graph) == before
 
@@ -875,15 +875,18 @@ def test_prepared_claim_rejects_same_batch_entity_identity_collision(
     if identity_field == "record_id":
         item.properties["record_id"] = claim_id
     else:
-        item.properties.update(record_id=None, uuid=claim_id)
+        item.properties["uuid"] = claim_id
     version = store.mutation.current_version("p")
     prepared = PreparedMutation(
         "p", "staged-collision", "request", batch_fingerprint(plan), version, APR
     )
     before = snapshot(graph)
-    with pytest.raises(
-        ClaimLifecycleConflict, match="collides with an entity identity"
-    ):
+    rejection = (
+        "immutable entity identity"
+        if entity_state.startswith("existing")
+        else "collides with an entity identity"
+    )
+    with pytest.raises(ValueError, match=rejection):
         store.mutation.compare_and_apply(
             plan,
             expected_pot_id="p",
@@ -903,7 +906,7 @@ def test_prepared_claim_rejects_same_batch_entity_identity_collision(
 
 
 @pytest.mark.parametrize("journal", (False, True), ids=("ordinary", "journal"))
-def test_legacy_entity_uuid_is_promoted_before_authored_patch_in_collision_guard(
+def test_legacy_entity_uuid_is_not_promoted_by_ordinary_write_or_activation(
     graph, journal
 ):
     store = backend(graph)
@@ -931,9 +934,13 @@ def test_legacy_entity_uuid_is_promoted_before_authored_patch_in_collision_guard
         "MATCH (e:Entity {group_id:'p',entity_key:'service:api'}) SET e.uuid=$identity",
         params={"identity": claim_id},
     )
-    if journal:
-        store.journal.activate(pot_id="p", rollback_enabled=True)
     before = snapshot(graph)
+    if journal:
+        from potpie_context_engine.core.graph_journal import JournalError
+
+        with pytest.raises(JournalError, match="migration_required"):
+            store.journal.activate(pot_id="p", rollback_enabled=True)
+        assert snapshot(graph) == before
     version = store.mutation.current_version("p")
     prepared = PreparedMutation(
         "p",
@@ -943,9 +950,7 @@ def test_legacy_entity_uuid_is_promoted_before_authored_patch_in_collision_guard
         version,
         APR,
     )
-    with pytest.raises(
-        ClaimLifecycleConflict, match="collides with an entity identity"
-    ):
+    with pytest.raises(ValueError, match="migration_required"):
         store.mutation.compare_and_apply(
             plan,
             expected_pot_id="p",
@@ -963,4 +968,4 @@ def test_legacy_entity_uuid_is_promoted_before_authored_patch_in_collision_guard
     )
     assert graph.ro_query(
         "MATCH (e:Entity {group_id:'p',entity_key:'service:api'}) RETURN e.record_id,e.uuid"
-    ).result_set == [[claim_id if journal else None, claim_id]]
+    ).result_set == [[None, claim_id]]

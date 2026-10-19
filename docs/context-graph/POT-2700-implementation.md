@@ -41,7 +41,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | 9 | fix(graph): freeze correction targets and dependent effects | Preview/commit/verify targets identical; stale conflicts | Independent shared review approved. Engine core/unit 2265 passed 3 unrelated skips; Falkor server/Lite 472 passed 1 restart-opt-in skip; Neo 111 passed 1 restart-opt-in skip. Details below. |
 | 10 | fix(graph): normalize temporal writes and query semantics | Offset/boundary/occurrence/query-limit parity | Independent review approved; 2329 unit/core, 108 live temporal, 142 public API/CLI cases passed. Details below. |
 | 11 | fix(graph): separate execution success from current verification | Current lifecycle results independent of execution receipt | Checkpoint B approved. 2399 unit/core, 112 Falkor server/Lite, 24 Neo native, 115 root CLI/API cases passed; details below. |
-| 12 | feat(graph): add resumable legacy graph repair | Dry-run, resumability, ambiguity rejection, receipt preservation | Pending |
+| 12 | feat(graph): add resumable legacy graph repair | Dry-run, resumability, ambiguity rejection, receipt preservation | Independent shared/public review approved; raw repair manifests, exact bounded native publication, strict identity/time policy and authorized CLI/API. 2481 engine unit/core; final native repair 81 passed, 2 restart opt-ins separately proven. Details below. |
 | 13 | test(graph): require full backend and public API acceptance | Live native matrix, supported Windows, independent review/QA | Pending |
 
 Checkpoint A follows step 7, B follows step 11, release acceptance follows 13.
@@ -469,3 +469,67 @@ overlap and are not additive counts. Ruff, formatting and diff checks pass.
 
 No step 11 blocker remains. The raw legacy persistence and identity migration
 blockers recorded under step 12 still prevent release acceptance.
+
+## Step 12 approved design and implementation
+
+The design review approved one immutable RepairRun manifest atomically reserved
+with ordinary prepared child plans. There is no parent mutation or second commit
+coordinator. Prepared4/Receipt2/fingerprint1 remain unchanged; record_repairs is
+omitted from historical batch serialization when empty. JSON plan schema2 adds
+manifests while retaining strict schema1 readers. Completed child receipts are
+checked before expiry, revision or manifest execution gating. Unexecuted legacy
+preparations without the current contract require fresh proposals.
+
+The shared raw inventory retains field/property namespaces, presence, exact value
+types, native timestamp type metadata, labels, physical endpoints and scope. It
+never persists database-local locators. Each bounded child resolves complete raw
+before-images inside the existing atomic boundary, using indexed fingerprints
+that distinguish 1, 1.0 and true. The shared pure policy permits only UTC timestamp
+normalization and missing record_id backfill. Existing UUIDs/record IDs remain
+unchanged. Missing logical claim keys are not invented. Invalid/naive timestamps,
+sub-microsecond precision, contradictory aliases/scopes, nonpositive intervals,
+duplicate identities/logical entity keys and indistinguishable records block the
+run. Previously erased history remains explicitly unavailable.
+
+Memory/JSON retain a separate raw source frame so hydration cannot erase unresolved
+legacy evidence during unrelated writes. Internal-looking authored source keys
+remain intact. Ordinary entity writes preserve immutable identity and use stable
+mutation-derived IDs for new entities. Existing identity-less entities and touched
+legacy claims require explicit repair. Journal activation validates existing IDs;
+it no longer migrates them without a receipt. Repair publication shares graph,
+revision, receipt and journal HEAD boundaries; raw storage repairs are explicitly
+nonreversible through the typed journal restore schema.
+
+The public RepairRequest adds dry_run/apply and repair_id. Preview requires read
+access; apply requires admin access and existing destructive confirmation. One
+request-aware operation policy is used by client and server locking, confirmation
+and retry safety. Sync/async facades share the authorized async owner and existing
+loop/driver bridge. Human CLI preview shows bounded exact patches and findings;
+JSON shows the full frozen run. Generic commit cannot execute an unexecuted repair
+child without its trusted manifest context. Current-state verification of raw
+storage repairs is explicitly unsupported/inconclusive, while original execution
+metadata remains available. A second repair scan performs no duplicate work.
+
+Independent thermo-nuclear review approved the shared/public implementation after
+resolving authorization, raw numeric type equality, temporal validity, pot alias,
+reserved-looking source-key preservation, invalid schema types and verification
+false-success findings. The reviewer independently ran 130 shared cases and 36
+public/schema cases, and exercised expired partial/completed replay after reset.
+Primary reviewed adapter diffs and normalized administrative repair summaries
+across backends. Only explicit fixture identities and earlier ambiguity errors
+were adapted; no rollback or receipt assertions were removed.
+
+Validation before the release gate: full engine unit/core 2481 passed, 3 unrelated
+skips; final focused workflow/prepared/storage gate 75 passed; CLI/API/schema gate
+44 passed. Backend worker broad gates: memory/JSON 655 passed with 31 unselected
+native skips; Falkor server/Lite 756 passed with 3 opt-in restart skips and 64
+non-Falkor deselections; Neo4j 170 passed with 9 non-Neo deselections and no skips.
+Separate Falkor AOF and Neo4j actual restart checks passed. Latest primary native
+repair gate is recorded below once complete. Counts overlap. New/changed-code lint
+is clean apart from three pre-existing S101/S110 reports in unchanged root lines.
+Operational migration has not been run against any user store.
+
+Latest primary native repair gate: 81 passed, 2 opt-in restart skips in 36.16s,
+covering FalkorDB server/Lite and Neo4j, including the authorized 5001-record
+repair and replay. Separate actual restart evidence above remains applicable.
+Indexed before-image matching avoids rehashing the inventory for every effect.

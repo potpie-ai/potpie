@@ -246,8 +246,8 @@ def test_snapshot_response_loss_replays_authoritative_admin_receipt(graph, monke
 
 def test_repair_combines_all_entity_deltas_and_no_work_has_no_receipt(graph):
     graph.query(
-        "CREATE (:Entity:Activity {group_id:'p',entity_key:'service:web',description:'Web service'}),"
-        "(:Entity:Activity {group_id:'p',entity_key:'service:db',name:'db'})"
+        "CREATE (:Entity:Activity {group_id:'p',entity_key:'service:web',description:'Web service',record_id:'record-web',uuid:'uuid-web'}),"
+        "(:Entity:Activity {group_id:'p',entity_key:'service:db',name:'db',record_id:'record-db',uuid:'uuid-db'})"
     )
     store = backend(graph)
     report = store.analytics.repair("p", targets=("entity_summaries", "entity_labels"))
@@ -268,7 +268,7 @@ def test_repair_rejects_stale_selection_and_reselects_without_partial_write(
     )
 
     graph.query(
-        "CREATE (:Entity:Activity {group_id:'p',entity_key:'service:web',name:'web'})"
+        "CREATE (:Entity:Activity {group_id:'p',entity_key:'service:web',name:'web',record_id:'record-web',uuid:'uuid-web'})"
     )
     store, selected, original = backend(graph), False, FalkorDBRepair._entity_rows
 

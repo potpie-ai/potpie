@@ -126,6 +126,9 @@ class ClaimClosureResolution:
 
 def apply_claim_closure(row: ClaimRow, closure: ClaimClosureResolution) -> ClaimRow:
     """Validate one physical record and apply its frozen interval."""
+    from .claim_lifecycle import require_writable_claim
+
+    require_writable_claim(row)
     if ClaimTarget(row.claim_key, row.record_id) != closure.target:
         raise ClaimLifecycleConflict("frozen correction identity changed")
     if ClaimInterval.from_row(row) != closure.before:
@@ -232,6 +235,10 @@ def prepare_claim_closures(
                 if row.record_id in {c.target.record_id for c in op.closures}
             ]
         )
+        if any(row.temporal_diagnostics for row in selected):
+            raise ClaimLifecycleConflict(
+                "migration_required: correction target has ambiguous stored timestamps"
+            )
         if not unresolved and len(_selected_rows(op, selected)) != len(selected):
             raise ClaimLifecycleConflict(
                 "frozen correction target is outside its selected scope"

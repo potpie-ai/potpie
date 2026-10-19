@@ -599,10 +599,16 @@ class RemoteEngineClient(EngineClient):
         )
         if isinstance(envelope, Failure):
             return envelope
-        from potpie.runtime.operations import ENGINE_OPERATION_CATALOG
+        from potpie.runtime.operations import (
+            ENGINE_OPERATION_CATALOG,
+            effective_operation_spec,
+        )
 
         return await self._caller.send(
-            envelope.value, safety=ENGINE_OPERATION_CATALOG[operation].safety
+            envelope.value,
+            safety=effective_operation_spec(
+                ENGINE_OPERATION_CATALOG[operation], request
+            ).safety,
         )
 
 

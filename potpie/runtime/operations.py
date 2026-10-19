@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections import abc
 from collections.abc import Iterable
-from dataclasses import MISSING, dataclass, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass, replace
 from datetime import date, datetime
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -213,6 +213,7 @@ class OperationSpec:
     context_required: bool = True
     resource_type: str | None = None
     resource_identity_fields: tuple[str, ...] = ()
+    request_policy: str | None = None
 
     def __post_init__(self) -> None:
         if self.safety in {
@@ -307,6 +308,7 @@ _SPECS = (
         RepairResult,
         _WRITE,
         destructive=True,
+        request_policy="legacy_repair_v1",
     ),
     OperationSpec(
         EngineOperation.RESET_CONTEXT,
@@ -576,6 +578,7 @@ def operation_catalog_fingerprint() -> str:
             "context_required": spec.context_required,
             "resource_type": spec.resource_type,
             "resource_identity_fields": spec.resource_identity_fields,
+            **({"request_policy": spec.request_policy} if spec.request_policy else {}),
         }
         for spec in sorted(_SPECS, key=lambda item: item.operation.value)
     ]
@@ -694,9 +697,24 @@ def operation_schema(
         "context_required": spec.context_required,
         "resource_type": spec.resource_type,
         "resource_identity_fields": list(spec.resource_identity_fields),
+        **({"request_policy": spec.request_policy} if spec.request_policy else {}),
         "request": wire_schema(spec.request_type, table),
         "result": wire_schema(spec.result_type, table),
     }
+
+
+def effective_operation_spec(spec: OperationSpec, request: object) -> OperationSpec:
+    """Resolve typed request policy once for confirmation, locking and retries."""
+    if spec.request_policy == "legacy_repair_v1":
+        if type(request) is not RepairRequest:
+            raise TypeError("repair policy requires a typed RepairRequest")
+        if request.legacy_mode == "dry_run":
+            return replace(
+                spec, safety=SafetyClass.SHARED_CONTEXT_READ, destructive=False
+            )
+    elif spec.request_policy is not None:
+        raise ValueError("unsupported operation request policy")
+    return spec
 
 
 def operation_schema_document(

@@ -105,7 +105,7 @@ def test_supported_invalidation_publishes_revision_and_affected_record_receipt(g
         "CREATE (a:Entity:Service {group_id:$pot,entity_key:'service:api'}),"
         "(b:Entity:Service {group_id:$pot,entity_key:'service:db'}),"
         "(a)-[:RELATES_TO {group_id:$pot,name:'DEPENDS_ON',subject_key:'service:api',"
-        "object_key:'service:db',claim_key:'claim:entrypoint',uuid:'record:entrypoint'}]->(b)",
+        "object_key:'service:db',claim_key:'claim:entrypoint',uuid:'record:entrypoint',record_id:'record:entrypoint'}]->(b)",
         pot=pot,
     )
     assert backend.mutation.invalidate(pot_id=pot, claim_keys=["claim:entrypoint"]) == 1
@@ -118,8 +118,8 @@ def test_supported_invalidation_publishes_revision_and_affected_record_receipt(g
 def _malformed_entities(driver, pot):
     _run(
         driver,
-        "CREATE (:Entity:Repository {group_id:$pot,entity_key:'service:api'}),"
-        "(:Entity:Repository {group_id:$pot,entity_key:'service:db'})",
+        "CREATE (:Entity:Repository {group_id:$pot,entity_key:'service:api',record_id:'entity:api'}),"
+        "(:Entity:Repository {group_id:$pot,entity_key:'service:db',record_id:'entity:db'})",
         pot=pot,
     )
 

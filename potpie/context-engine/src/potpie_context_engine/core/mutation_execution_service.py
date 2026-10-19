@@ -57,6 +57,7 @@ from .mutation_verification import (
 from .mutation_workflow import MutationWorkflow
 from .reconciliation import MutationResult
 from .mutation_execution import MutationPersistenceError
+from .legacy_repair_run import RepairRun
 
 _LOG = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ def commit_mutation(
     defer_verification: bool = False,
     verify_receipt: Callable[..., GraphIngestionVerificationResult],
     quality_snapshot: Callable[..., Mapping[str, Any]],
+    _repair_run: RepairRun | None = None,
 ) -> GraphMutationCommitResult:
     """Apply a plan; defer_verification returns the receipt before readback.
 
@@ -150,6 +152,11 @@ def commit_mutation(
             detail="migration_required: legacy plan has no frozen preparation contract",
             recommended_next_action="Create a fresh proposal with a new request identity; this legacy plan was not executed.",
         )
+
+    if record.lowered_batch.record_repairs:
+        from .legacy_repair_service import require_repair_execution
+
+        require_repair_execution(self.plan_store, record, _repair_run)
 
     if record.is_expired(now=now):
         expired = replace(

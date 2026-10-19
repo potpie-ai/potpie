@@ -20,6 +20,20 @@ class ClaimLifecycleConflict(ValueError):
     """An assertion needs explicit correction or a fresh preparation."""
 
 
+def require_writable_claim(row: ClaimRow) -> None:
+    if row.temporal_diagnostics:
+        raise ClaimLifecycleConflict(
+            "migration_required: claim has ambiguous stored timestamps"
+        )
+    identity = row.record_id
+    if row.stored_source is not None:
+        identity = row.stored_source.fields.get("record_id")
+    if not isinstance(identity, str) or not identity.strip():
+        raise ClaimLifecycleConflict(
+            "migration_required: claim has no physical record_id"
+        )
+
+
 REVIEW_FIELDS = frozenset(
     {
         "evidence_review_required",
@@ -265,6 +279,13 @@ def resolve_claim_assertion(
     if incoming.retired:
         raise ClaimLifecycleConflict("assertion cannot retire a claim incarnation")
     rows = [row for row in candidates if row.pot_id == incoming.pot_id]
+    if any(
+        row.temporal_diagnostics and claim_scope(row) == claim_scope(incoming)
+        for row in rows
+    ):
+        raise ClaimLifecycleConflict(
+            "migration_required: assertion scope contains ambiguous stored timestamps"
+        )
     if resolution is None:
         resolution = _choose(
             incoming,
@@ -280,6 +301,7 @@ def resolve_claim_assertion(
         )
     existing = matches[0] if matches else None
     if existing is not None:
+        require_writable_claim(existing)
         if existing.retired or not _same_logical_claim(incoming, existing):
             raise ClaimLifecycleConflict(
                 "frozen incarnation does not match assertion scope"
@@ -304,6 +326,7 @@ def resolve_claim_assertion(
         if len(predecessors) != 1:
             raise ClaimLifecycleConflict("frozen predecessor is missing or ambiguous")
         previous = predecessors[0]
+        require_writable_claim(previous)
         if (
             previous.retired
             or claim_scope(previous) != claim_scope(incoming)
@@ -340,6 +363,7 @@ def resolve_claim_assertion(
     elif existing is not None:
         incoming = replace(
             incoming,
+            stored_source=existing.stored_source,
             properties={**existing.properties, **incoming.properties},
             claim_key=incoming.claim_key or existing.claim_key,
             fact=incoming.fact if incoming.fact is not None else existing.fact,

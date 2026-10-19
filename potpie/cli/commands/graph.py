@@ -14,7 +14,7 @@ import sys
 import time
 from contextlib import contextmanager
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -2623,6 +2623,14 @@ def graph_repair(
     entity_summaries: bool = typer.Option(False, "--entity-summaries"),
     entity_labels: bool = typer.Option(False, "--entity-labels"),
     all_: bool = typer.Option(False, "--all"),
+    legacy: bool = typer.Option(
+        False,
+        "--legacy",
+        help="Review or apply timestamp and physical identity repair.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    apply: bool = typer.Option(False, "--apply"),
+    repair_id: str = typer.Option(None, "--repair-id"),
     pot: str = typer.Option(None, "--pot"),
     yes: bool = typer.Option(
         False,
@@ -2635,6 +2643,26 @@ def graph_repair(
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
+        if legacy:
+            from potpie.cli.legacy_repair import format_legacy_repair, run_legacy_repair
+
+            if all_ or semantic_index or entity_summaries or entity_labels:
+                raise typer.BadParameter(
+                    "--legacy cannot be combined with other repair targets."
+                )
+            report = run_legacy_repair(
+                pot_id=pot_id,
+                dry_run=dry_run,
+                apply=apply,
+                repair_id=repair_id,
+                yes=yes,
+            )
+            _emit_graph_result(ctx, asdict(report), human=format_legacy_repair(report))
+            return
+        if dry_run or apply or repair_id:
+            raise typer.BadParameter(
+                "--dry-run, --apply and --repair-id require --legacy."
+            )
         targets = []
         if not all_:
             if semantic_index:

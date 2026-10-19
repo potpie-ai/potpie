@@ -765,9 +765,7 @@ def test_retired_endpoint_rejects_assertion_until_same_batch_reactivation(
 
 
 @pytest.mark.parametrize("mode", ["raw", "frozen"])
-def test_historical_entity_uuid_is_preserved_without_owning_record_identity(
-    backend, mode
-):
+def test_distinct_historical_entity_uuid_is_preserved(backend, mode):
     plan = _batch(_edge())
     if mode == "frozen":
         context = _freeze(backend, plan, "historical-alias")
@@ -775,7 +773,9 @@ def test_historical_entity_uuid_is_preserved_without_owning_record_identity(
     else:
         identity = str(uuid5(NAMESPACE_URL, f"potpie:claim:{POT}:historical-alias:0"))
         context = ProvenanceContext(mutation_id="historical-alias")
-    plan.entity_upserts[0].properties.update(record_id="entity:source", uuid=identity)
+    plan.entity_upserts[0].properties.update(
+        record_id="entity:source", uuid="historical:source"
+    )
     plan.entity_upserts[1].properties.update(record_id="entity:target")
     if context.prepared is not None:
         context = replace(
@@ -793,4 +793,4 @@ def test_historical_entity_uuid_is_preserved_without_owning_record_identity(
         pot_id=POT, entity_key="service:api"
     )
     assert properties["record_id"] == "entity:source"
-    assert properties["uuid"] == identity
+    assert properties["uuid"] == "historical:source"
