@@ -32,7 +32,7 @@ from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert
 from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 POT = "conformance-pot"
 
@@ -73,7 +73,7 @@ def _build(profile, tmp_path, monkeypatch=None):
 
 
 def _plan(summary="prefers structured logging"):
-    return ReconciliationPlan(
+    return MutationBatch(
         event_ref=EventRef(event_id="e1", source_system="agent", pot_id=POT),
         summary=summary,
         entity_upserts=[
