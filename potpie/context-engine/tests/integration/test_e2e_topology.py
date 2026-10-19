@@ -20,7 +20,7 @@ from potpie_context_engine.core.graph_mutations import (
     ProvenanceRef,
 )
 from potpie_context_engine.core.ports.pot_resolution import RepoRef
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 pytestmark = pytest.mark.integration
 
@@ -56,7 +56,7 @@ def _read_relates_to(settings, pot_id: str, predicate: str | None = None) -> lis
         drv.close()
 
 
-def _apply_plan(container, plan: ReconciliationPlan, *, expected_pot_id: str):
+def _apply_plan(container, plan: MutationBatch, *, expected_pot_id: str):
     assert container.backend is not None
     return asyncio.run(
         container.backend.mutation.apply_async(
@@ -136,8 +136,8 @@ def _live_owner_as_of(settings, pot_id: str, as_of_iso: str) -> str | None:
         drv.close()
 
 
-def _topology_plan(pot_id: str) -> ReconciliationPlan:
-    return ReconciliationPlan(
+def _topology_plan(pot_id: str) -> MutationBatch:
+    return MutationBatch(
         event_ref=EventRef(event_id="e2e-plan", source_system="test", pot_id=pot_id),
         summary="topology",
         entity_upserts=[
