@@ -16,7 +16,10 @@ silent stub.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterable, Mapping
+import threading
+from contextlib import contextmanager
+from functools import wraps
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,6 +37,26 @@ from potpie_context_engine.domain.retrieval_card import (
 )
 
 
+def coherent_store_read(method):
+    """Hold one store snapshot throughout a capability read, including nested reads."""
+
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        with self.store.read_guard():
+            return method(self, *args, **kwargs)
+
+    return read
+
+
+def _coherent_read(method):
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        with self.read_guard():
+            return method(self, *args, **kwargs)
+
+    return read
+
+
 @dataclass(slots=True)
 class InMemoryClaimQueryStore:
     rows: list[ClaimRow] = field(default_factory=list)
@@ -44,6 +67,24 @@ class InMemoryClaimQueryStore:
         default_factory=dict
     )
     embedder: EmbedderPort | None = None
+    state_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    before_read: Callable[[], None] | None = field(default=None, repr=False)
+    _read_context: threading.local = field(default_factory=threading.local, repr=False)
+
+    @contextmanager
+    def read_guard(self) -> Iterator[None]:
+        # Refresh before taking the state lock: embedded writers take the file
+        # lock first. Nested reads already own a coherent snapshot and must not
+        # refresh it halfway through an inspection or bulk property query.
+        nested = getattr(self._read_context, "depth", 0)
+        if not nested and self.before_read is not None:
+            self.before_read()
+        with self.state_lock:
+            self._read_context.depth = nested + 1
+            try:
+                yield
+            finally:
+                self._read_context.depth = nested
 
     @property
     def match_mode(self) -> str:
@@ -73,6 +114,7 @@ class InMemoryClaimQueryStore:
         bucket = self.entity_property_index.setdefault((pot_id, entity_key), {})
         bucket.update({k: v for k, v in properties.items()})
 
+    @_coherent_read
     def entity_properties_many(
         self, *, pot_id: str, entity_keys: Iterable[str]
     ) -> dict[str, dict[str, Any]]:
@@ -81,6 +123,7 @@ class InMemoryClaimQueryStore:
             for key in entity_keys
         }
 
+    @_coherent_read
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
         properties = self.entity_property_index.get((pot_id, entity_key), {})
         return {} if properties.get("retired", False) else dict(properties)
@@ -88,6 +131,7 @@ class InMemoryClaimQueryStore:
     # ------------------------------------------------------------------
     # ClaimQueryPort
     # ------------------------------------------------------------------
+    @_coherent_read
     def find_claims(self, filter_: ClaimQueryFilter) -> list[ClaimRow]:
         candidates = [
             row
@@ -115,6 +159,7 @@ class InMemoryClaimQueryStore:
             candidates = candidates[: filter_.limit]
         return candidates
 
+    @_coherent_read
     def entity_labels(
         self, *, pot_id: str, entity_keys: Iterable[str]
     ) -> Mapping[str, tuple[str, ...]]:

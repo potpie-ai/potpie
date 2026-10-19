@@ -104,7 +104,7 @@ def test_in_memory_completed_retry_returns_cached_receipt_without_notifying() ->
     assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
 
 
-def test_in_memory_overlapping_retry_waits_for_the_owner_and_applies_once() -> None:
+def test_in_memory_retry_reads_committed_receipt_while_observer_waits() -> None:
     entered_callback = threading.Event()
     release_callback = threading.Event()
     changes = 0
@@ -132,10 +132,10 @@ def test_in_memory_overlapping_retry_waits_for_the_owner_and_applies_once() -> N
             expected_pot_id=POT,
             provenance_context=_context(),
         )
-        assert not retry.done()
+        retry_result = retry.result(timeout=10)
+        assert retry_result.ok
         release_callback.set()
         owner_result = owner.result(timeout=10)
-        retry_result = retry.result(timeout=10)
 
     assert owner_result == retry_result
     assert changes == 1

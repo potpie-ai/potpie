@@ -29,10 +29,10 @@ from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
 )
-from potpie_context_engine.core.errors import GraphMutationVersionConflict
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
-from potpie_context_engine.core.ports.graph.mutation import MutationExecutionState
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
+from potpie_context_engine.core.ports.graph.mutation import MutationExecutionLookup
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
@@ -80,6 +80,56 @@ class _EmbeddedMutation:
             reconciliation_config=reconciliation_config,
         )
 
+    @property
+    def capabilities(self) -> MutationCapabilities:
+        return MutationCapabilities(
+            atomic_writes=True,
+            revision_check=True,
+            execution_lookup=True,
+            durable_receipts=True,
+        )
+
+    async def current_version_async(self, pot_id: str) -> int:
+        import asyncio
+
+        return await asyncio.to_thread(self.current_version, pot_id)
+
+    async def compare_and_apply_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
+        import asyncio
+
+        return await asyncio.to_thread(
+            self.compare_and_apply,
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
+        )
+
+    async def lookup_execution_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ) -> MutationExecutionLookup:
+        import asyncio
+
+        return await asyncio.to_thread(
+            self.lookup_execution,
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
+
     def current_version(self, pot_id: str) -> int:
         return self.backend._current_version(pot_id)
 
@@ -100,10 +150,23 @@ class _EmbeddedMutation:
             expected_version=expected_version,
         )
 
-    async def apply_async(self, *args: Any, **kwargs: Any) -> MutationResult:
+    async def apply_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
         import asyncio
 
-        return await asyncio.to_thread(self.apply, *args, **kwargs)
+        return await asyncio.to_thread(
+            self.apply,
+            plan,
+            expected_pot_id=expected_pot_id,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
+        )
 
     def lookup_execution(
         self,
@@ -111,7 +174,7 @@ class _EmbeddedMutation:
         *,
         expected_pot_id: str,
         mutation_id: str,
-    ):
+    ) -> MutationExecutionLookup:
         return self.backend._lookup_execution(
             plan,
             expected_pot_id=expected_pot_id,
@@ -133,13 +196,13 @@ class _EmbeddedAnalytics:
     backend: EmbeddedGraphBackend
 
     def counts(self, pot_id: str):
-        return self.backend._inner.analytics.counts(pot_id)
+        return self.backend._read(lambda inner: inner.analytics.counts(pot_id))
 
     def freshness(self, pot_id: str):
-        return self.backend._inner.analytics.freshness(pot_id)
+        return self.backend._read(lambda inner: inner.analytics.freshness(pot_id))
 
     def quality(self, pot_id: str):
-        return self.backend._inner.analytics.quality(pot_id)
+        return self.backend._read(lambda inner: inner.analytics.quality(pot_id))
 
     def repair(self, pot_id: str, **kwargs: Any):
         return self.backend._transact(
@@ -164,13 +227,9 @@ class _EmbeddedSnapshot:
         )
 
     def export_data(self, *, pot_id: str) -> dict[str, Any]:
-        with locked_json_store(self.backend._path):
-            store, registry = self.backend._load_state()
-            inner = self.backend._transaction_backend(store, registry)
-            payload = inner.snapshot.export_data(pot_id=pot_id)
-            self.backend._adopt_state(store, registry)
-            self.backend._revisions = dict(inner.revisions)
-            return payload
+        return self.backend._read(
+            lambda inner: inner.snapshot.export_data(pot_id=pot_id)
+        )
 
     def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
         with open(source, encoding="utf-8") as fh:
@@ -191,6 +250,14 @@ class _EmbeddedSnapshot:
         return self.backend._transact(
             lambda inner: inner.snapshot.import_data(pot_id=pot_id, payload=payload)
         )
+
+
+@dataclass(slots=True)
+class _EmbeddedState:
+    store: InMemoryClaimQueryStore
+    registry: MutationExecutionRegistry
+    revisions: dict[str, int]
+    journal_data: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -215,9 +282,10 @@ class EmbeddedGraphBackend:
     resource_exists: Any = None
 
     def __post_init__(self) -> None:
-        loaded_store, loaded_registry = self._load_state()
-        store = self.shared_store or loaded_store
-        registry = self.shared_execution_registry or loaded_registry
+        with locked_json_store(self._path):
+            state = self._load_state()
+        store = self.shared_store or state.store
+        registry = self.shared_execution_registry or state.registry
         store.embedder = self.embedder
         self._inner = InMemoryGraphBackend(
             store=store,
@@ -225,10 +293,13 @@ class EmbeddedGraphBackend:
             embedder=self.embedder,
             definition=self.definition,
             execution_registry=registry,
-            revisions=dict(self._revisions),
-            journal_data=deepcopy(self._journal_data),
+            revisions=dict(state.revisions),
+            journal_data=deepcopy(state.journal_data),
             resource_exists=self.resource_exists,
         )
+        self._revisions = dict(state.revisions)
+        self._journal_data = deepcopy(state.journal_data)
+        store.before_read = self._refresh
         self._mutation = _EmbeddedMutation(self)
         self._analytics = _EmbeddedAnalytics(self)
         self._snapshot = _EmbeddedSnapshot(self)
@@ -243,7 +314,7 @@ class EmbeddedGraphBackend:
 
     def _load_state(
         self,
-    ) -> tuple[InMemoryClaimQueryStore, MutationExecutionRegistry]:
+    ) -> _EmbeddedState:
         try:
             with open(self._path, encoding="utf-8") as fh:
                 payload = json.load(fh)
@@ -258,19 +329,19 @@ class EmbeddedGraphBackend:
             if "graph_journal" in payload
             else {}
         )
-        self._journal_data.clear()
-        self._journal_data.update(journal_data)
         raw_revisions = payload.get("graph_revisions") or {}
-        self._revisions = (
+        revisions = (
             {str(key): int(value) for key, value in raw_revisions.items()}
             if isinstance(raw_revisions, dict)
             else {}
         )
-        return (
+        return _EmbeddedState(
             load_store(payload),
             MutationExecutionRegistry(
                 execution_receipts_from_json(payload.get("mutation_receipts", []))
             ),
+            revisions,
+            journal_data,
         )
 
     def _write_state(
@@ -313,100 +384,85 @@ class EmbeddedGraphBackend:
         reconciliation_config: ReconciliationConfig | None,
         expected_version: int | None = None,
     ) -> MutationResult:
-        mutation_id = (
-            provenance_context.mutation_id if provenance_context is not None else None
-        )
         with locked_json_store(self._path):
-            store, registry = self._load_state()
-            if mutation_id:
-                lookup = registry.lookup(
-                    plan,
-                    expected_pot_id=expected_pot_id,
-                    mutation_id=mutation_id,
-                )
-                if lookup.state == MutationExecutionState.completed.value:
-                    assert lookup.result is not None
-                    self._adopt_state(store, registry)
-                    return lookup.result
-            current = self._revisions.get(expected_pot_id, 0)
-            if expected_version is not None and current != expected_version:
-                raise GraphMutationVersionConflict(
-                    expected=expected_version, current=current
-                )
-            inner = self._transaction_backend(store, registry)
-            result = inner.mutation.apply(
-                plan,
+            state = self._load_state()
+            receipt_count = len(state.registry.completed())
+            inner = self._transaction_backend(state)
+            kwargs = dict(
                 expected_pot_id=expected_pot_id,
                 provenance_context=provenance_context,
                 reconciliation_config=reconciliation_config,
             )
-            self._write_state(
-                inner.store,
-                registry,
-                revisions=inner.revisions,
-                journal_data=inner.journal_data,
+            result = (
+                inner.mutation.apply(plan, **kwargs)
+                if expected_version is None
+                else inner.mutation.compare_and_apply(
+                    plan, expected_version=expected_version, **kwargs
+                )
             )
-            self._revisions = dict(inner.revisions)
-            self._adopt_state(inner.store, registry, journal_data=inner.journal_data)
+            if len(inner.execution_registry.completed()) != receipt_count:
+                self._persist(inner)
+            self._adopt_state(inner)
             return result
 
     def _current_version(self, pot_id: str) -> int:
-        with locked_json_store(self._path):
-            store, registry = self._load_state()
-            self._adopt_state(store, registry)
-            return self._revisions.get(pot_id, 0)
+        return self._read(lambda inner: inner.mutation.current_version(pot_id))
 
     def _transact(
         self,
         operation: Callable[[InMemoryGraphBackend], _T],
     ) -> _T:
-        """Reload, mutate, and atomically persist one current disk snapshot."""
-
+        """Reload, mutate, persist, then publish one complete current snapshot."""
         with locked_json_store(self._path):
-            store, registry = self._load_state()
-            inner = self._transaction_backend(store, registry)
+            inner = self._transaction_backend(self._load_state())
             result = operation(inner)
-            self._write_state(
-                inner.store,
-                registry,
-                revisions=inner.revisions,
-                journal_data=inner.journal_data,
-            )
-            self._revisions = dict(inner.revisions)
-            self._adopt_state(inner.store, registry, journal_data=inner.journal_data)
+            self._persist(inner)
+            self._adopt_state(inner)
             return result
 
-    def _transaction_backend(
-        self,
-        store: InMemoryClaimQueryStore,
-        registry: MutationExecutionRegistry,
-    ) -> InMemoryGraphBackend:
+    def _persist(self, inner: InMemoryGraphBackend) -> None:
+        self._write_state(
+            inner.store,
+            inner.execution_registry,
+            revisions=inner.revisions,
+            journal_data=inner.journal_data,
+        )
+
+    def _read(self, operation: Callable[[InMemoryGraphBackend], _T]) -> _T:
+        with locked_json_store(self._path):
+            inner = self._transaction_backend(self._load_state())
+            result = operation(inner)
+            self._adopt_state(inner)
+            return result
+
+    def _refresh(self) -> None:
+        self._read(lambda _inner: None)
+
+    def _transaction_backend(self, state: _EmbeddedState) -> InMemoryGraphBackend:
         return InMemoryGraphBackend(
-            store=store,
+            store=state.store,
             profile_name=_PROFILE,
             embedder=self.embedder,
             definition=self.definition,
-            execution_registry=registry,
-            revisions=dict(self._revisions),
-            journal_data=deepcopy(self._journal_data),
+            execution_registry=state.registry,
+            revisions=state.revisions,
+            journal_data=state.journal_data,
             resource_exists=self.resource_exists,
         )
 
-    def _adopt_state(
-        self,
-        store: InMemoryClaimQueryStore,
-        registry: MutationExecutionRegistry,
-        journal_data: dict[str, Any] | None = None,
-    ) -> None:
-        if journal_data is not None:
-            self._journal_data.clear()
-            self._journal_data.update(deepcopy(journal_data))
-        self._inner.journal_data.clear()
-        self._inner.journal_data.update(deepcopy(self._journal_data))
-        _replace_store(self._inner.store, store, embedder=self.embedder)
-        self._inner.execution_registry.replace_completed(registry.completed())
-        self._inner.revisions.clear()
-        self._inner.revisions.update(self._revisions)
+    def _adopt_state(self, inner: InMemoryGraphBackend) -> None:
+        # Claim, semantic, inspection and bulk-property readers use this lock.
+        with self._inner.state_lock:
+            _replace_store(self._inner.store, inner.store, embedder=self.embedder)
+            self._inner.execution_registry.replace_completed(
+                inner.execution_registry.completed()
+            )
+            self._inner.revisions.clear()
+            self._inner.revisions.update(inner.revisions)
+            self._inner.journal_data.clear()
+            self._inner.journal_data.update(deepcopy(inner.journal_data))
+            self._revisions = dict(inner.revisions)
+            self._journal_data = deepcopy(inner.journal_data)
 
     def _lookup_execution(
         self,
@@ -415,15 +471,11 @@ class EmbeddedGraphBackend:
         expected_pot_id: str,
         mutation_id: str,
     ):
-        with locked_json_store(self._path):
-            store, registry = self._load_state()
-            lookup = registry.lookup(
-                plan,
-                expected_pot_id=expected_pot_id,
-                mutation_id=mutation_id,
+        return self._read(
+            lambda inner: inner.mutation.lookup_execution(
+                plan, expected_pot_id=expected_pot_id, mutation_id=mutation_id
             )
-            self._adopt_state(store, registry)
-        return lookup
+        )
 
     # --- capability bundle (delegate to the in-memory adapters) -------------
     @property

@@ -277,48 +277,36 @@ class MemoryJournal:
         )
 
     def apply(self, plan, *, original_plan, pot_id, mutation_id, provenance):
-        from .backends.in_memory_backend import _Mutation
+        """Capture one apply inside ``apply_transaction``'s isolated writer.
 
+        The transaction owns execution identity, metadata and publication. This
+        journal step only captures the graph delta and advances the journal head.
+        """
         state = self.journal_state(pot_id)
         assert state is not None
         receipt = self.get_receipt(pot_id=pot_id, commit_id=mutation_id)
-        if receipt is not None and receipt.fingerprint != mutation_batch_fingerprint(
-            original_plan
-        ):
-            raise JournalError("commit ID was reused with a different mutation")
-        prior = self.owner.execution_registry.lookup(
-            original_plan, expected_pot_id=pot_id, mutation_id=mutation_id
-        )
-        if prior.result is not None:
-            return prior.result
+        if receipt is not None:
+            raise JournalError("commit ID was reused")
         self._guard_write(state)
-        staged = clone_store(self.owner.store)
-        before = records_from_store(staged, pot_id)
-        writer = _Mutation(
-            staged,
-            definition=self.owner.definition,
-            embedder=self.owner.embedder,
-            journal_data=deepcopy(self.owner.journal_data),
-        )
-        result = writer._apply_uncached(
+        store = self.owner.store
+        before = records_from_store(store, pot_id)
+        old_properties = deepcopy(store.entity_property_index)
+        result = self.owner._apply_uncached(
             plan, expected_pot_id=pot_id, mutation_id=mutation_id
         )
         for ent in plan.entity_upserts:
-            props = staged.entity_property_index[(pot_id, ent.entity_key)]
-            old = self.owner.store.entity_property_index.get(
-                (pot_id, ent.entity_key), {}
-            )
+            props = store.entity_property_index[(pot_id, ent.entity_key)]
+            old = old_properties.get((pot_id, ent.entity_key), {})
             if old.get("record_id"):
                 props["record_id"] = old["record_id"]
             if old.get("uuid"):
                 props["uuid"] = old["uuid"]
             props["retired"] = False
-        migrate_ids(staged, pot_id)
-        after = records_from_store(staged, pot_id)
+        migrate_ids(store, pot_id)
         receipt = self._receipt(
             state,
             before,
-            after,
+            records_from_store(store, pot_id),
             commit_id=mutation_id,
             fingerprint=mutation_batch_fingerprint(original_plan),
             actor=provenance.actor_user_id
@@ -326,19 +314,8 @@ class MemoryJournal:
             else "system",
             message=plan.summary,
         )
-
-        def publish():
-            adopt_store(self.owner.store, staged)
-            self._append(state, receipt)
-            return result
-
-        return self.owner.execution_registry.execute(
-            original_plan,
-            expected_pot_id=pot_id,
-            mutation_id=mutation_id,
-            operation=publish,
-            on_completed=self.owner._notify,
-        )
+        self._append(state, receipt)
+        return result
 
     def plan_restore(self, *, pot_id, target_commit_id, expected_head, mode="revert"):
         with self.owner.state_lock:

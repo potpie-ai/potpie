@@ -25,13 +25,13 @@ from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
 )
-from potpie_context_engine.core.errors import GraphMutationVersionConflict
 from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
 from potpie_context_engine.core.graph_entity_summary import (
     merge_entity_display_properties,
     normalize_entity_properties,
 )
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
 from potpie_context_engine.core.graph_snapshot import (
     build_snapshot_payload,
     normalize_snapshot_payload,
@@ -47,7 +47,7 @@ from potpie_context_engine.core.ports.graph.inspection import (
 )
 from potpie_context_engine.core.ports.graph.mutation import (
     BackendReadiness,
-    MutationExecutionState,
+    MutationExecutionLookup,
 )
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.reconciliation import (
@@ -56,9 +56,6 @@ from potpie_context_engine.core.reconciliation import (
     MutationSummary,
 )
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
-from potpie_context_engine.core.reconciliation_validation import (
-    validate_reconciliation_plan,
-)
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
@@ -83,6 +80,7 @@ from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import 
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
     card_for_row,
+    coherent_store_read,
 )
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
@@ -117,55 +115,26 @@ class _Mutation:
         provenance_context: ProvenanceContext | None = None,
         reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
-        # Validate before mutating, exactly like the Neo4j/FalkorDB writers do
-        # (both route apply through apply_mutation_batch → this validator). Keeps
-        # the substrate from silently accepting malformed or cross-pot batches.
-        with self.state_lock:
-            validated_plan = deepcopy(plan)
-            validate_reconciliation_plan(
-                validated_plan,
-                expected_pot_id,
-                definition=self.definition,
-                config=reconciliation_config,
-            )
-            mutation_id = (
-                provenance_context.mutation_id
-                if provenance_context is not None and provenance_context.mutation_id
-                else uuid.uuid4().hex
-            )
-            from potpie_context_engine.adapters.outbound.graph.memory_journal import (
-                MemoryJournal,
-            )
+        from potpie_context_engine.adapters.outbound.graph.memory_transaction import (
+            apply_transaction,
+        )
 
-            if MemoryJournal(self).journal_state(expected_pot_id) is not None:
-                return MemoryJournal(self).apply(
-                    validated_plan,
-                    original_plan=plan,
-                    pot_id=expected_pot_id,
-                    mutation_id=mutation_id,
-                    provenance=provenance_context,
-                )
-            prior = self.execution_registry.lookup(
-                plan,
-                expected_pot_id=expected_pot_id,
-                mutation_id=mutation_id,
-            )
-            result = self.execution_registry.execute(
-                plan,
-                expected_pot_id=expected_pot_id,
-                mutation_id=mutation_id,
-                operation=lambda: self._apply_uncached(
-                    validated_plan,
-                    expected_pot_id=expected_pot_id,
-                    mutation_id=mutation_id,
-                ),
-                on_completed=self._notify,
-            )
-            if prior.state != MutationExecutionState.completed.value and result.ok:
-                self.revisions[expected_pot_id] = (
-                    self.revisions.get(expected_pot_id, 0) + 1
-                )
-            return result
+        return apply_transaction(
+            self,
+            plan,
+            expected_pot_id=expected_pot_id,
+            provenance=provenance_context,
+            reconciliation_config=reconciliation_config,
+        )
+
+    @property
+    def capabilities(self) -> MutationCapabilities:
+        return MutationCapabilities(
+            atomic_writes=True,
+            revision_check=True,
+            execution_lookup=True,
+            durable_receipts=False,
+        )
 
     def current_version(self, pot_id: str) -> int:
         with self.state_lock:
@@ -180,32 +149,51 @@ class _Mutation:
         provenance_context: ProvenanceContext | None = None,
         reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
-        with self.state_lock:
-            mutation_id = (
-                provenance_context.mutation_id
-                if provenance_context is not None and provenance_context.mutation_id
-                else None
-            )
-            if mutation_id:
-                replay = self.execution_registry.lookup(
-                    plan,
-                    expected_pot_id=expected_pot_id,
-                    mutation_id=mutation_id,
-                )
-                if replay.state == MutationExecutionState.completed.value:
-                    assert replay.result is not None
-                    return replay.result
-            current = self.revisions.get(expected_pot_id, 0)
-            if current != expected_version:
-                raise GraphMutationVersionConflict(
-                    expected=expected_version, current=current
-                )
-            return self.apply(
-                plan,
-                expected_pot_id=expected_pot_id,
-                provenance_context=provenance_context,
-                reconciliation_config=reconciliation_config,
-            )
+        from potpie_context_engine.adapters.outbound.graph.memory_transaction import (
+            apply_transaction,
+        )
+
+        return apply_transaction(
+            self,
+            plan,
+            expected_pot_id=expected_pot_id,
+            provenance=provenance_context,
+            reconciliation_config=reconciliation_config,
+            expected_version=expected_version,
+        )
+
+    async def current_version_async(self, pot_id: str) -> int:
+        return self.current_version(pot_id)
+
+    async def compare_and_apply_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
+        return self.compare_and_apply(
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
+        )
+
+    async def lookup_execution_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ) -> MutationExecutionLookup:
+        return self.lookup_execution(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
 
     def lookup_execution(
         self,
@@ -213,12 +201,13 @@ class _Mutation:
         *,
         expected_pot_id: str,
         mutation_id: str,
-    ):
-        return self.execution_registry.lookup(
-            plan,
-            expected_pot_id=expected_pot_id,
-            mutation_id=mutation_id,
-        )
+    ) -> MutationExecutionLookup:
+        with self.state_lock:
+            return self.execution_registry.lookup(
+                plan,
+                expected_pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+            )
 
     def _apply_uncached(
         self,
@@ -554,6 +543,7 @@ class _Mutation:
 class _Semantic:
     store: InMemoryClaimQueryStore
 
+    @coherent_store_read
     def search(
         self,
         *,
@@ -587,6 +577,7 @@ class _Semantic:
 class _Inspection:
     store: InMemoryClaimQueryStore
 
+    @coherent_store_read
     def neighborhood(
         self,
         *,
@@ -672,6 +663,7 @@ class _Inspection:
             truncated=truncated,
         )
 
+    @coherent_store_read
     def path(
         self, *, pot_id: str, from_key: str, to_key: str, max_depth: int = 4
     ) -> GraphSlice:
@@ -704,11 +696,13 @@ class _Inspection:
                     queue.append((nxt, trail + [row]))
         return GraphSlice(pot_id=pot_id)
 
+    @coherent_store_read
     def labels(
         self, *, pot_id: str, entity_keys: Iterable[str]
     ) -> Mapping[str, tuple[str, ...]]:
         return self.store.entity_labels(pot_id=pot_id, entity_keys=entity_keys)
 
+    @coherent_store_read
     def slice(self, *, pot_id: str, filter_: ClaimQueryFilter) -> GraphSlice:
         rows = self.store.find_claims(filter_)
         node_keys = {k for r in rows for k in (r.subject_key, r.object_key)}
@@ -738,6 +732,7 @@ class _Analytics:
     def _rows(self, pot_id: str) -> list[ClaimRow]:
         return [r for r in self.store.rows if r.pot_id == pot_id and not r.retired]
 
+    @coherent_store_read
     def counts(self, pot_id: str) -> Mapping[str, int]:
         rows = self._rows(pot_id)
         entities = {k for r in rows for k in (r.subject_key, r.object_key)}
@@ -749,6 +744,7 @@ class _Analytics:
             "invalidated": sum(1 for r in rows if r.invalid_at is not None),
         }
 
+    @coherent_store_read
     def freshness(self, pot_id: str) -> Mapping[str, Any]:
         stamps = [r.valid_at for r in self._rows(pot_id) if r.valid_at is not None]
         return {
@@ -757,6 +753,7 @@ class _Analytics:
             "stamped_claims": len(stamps),
         }
 
+    @coherent_store_read
     def quality(self, pot_id: str) -> Mapping[str, Any]:
         rows = self._rows(pot_id)
         return {
@@ -875,6 +872,7 @@ class _Snapshot:
             claim_count=len(payload["claims"]),
         )
 
+    @coherent_store_read
     def export_data(self, *, pot_id: str) -> dict[str, Any]:
         with self.state_lock:
             rows = [
@@ -1001,9 +999,8 @@ class _Snapshot:
 class InMemoryGraphBackend:
     """A complete ``GraphBackend`` over one in-memory claim store.
 
-    ``on_change`` is an optional hook invoked after every mutation — the
-    embedded backend uses it to persist the store to disk, reusing all the
-    capability adapters here unchanged.
+    ``on_change`` is an optional postcommit observer. Durable backends persist
+    their staged state before publication rather than using this observer.
     """
 
     store: InMemoryClaimQueryStore = field(default_factory=InMemoryClaimQueryStore)
@@ -1026,6 +1023,8 @@ class InMemoryGraphBackend:
     _snapshot: _Snapshot = field(init=False)
 
     def __post_init__(self) -> None:
+        # Store readers and all definition-bound writers share one publication lock.
+        self.state_lock = self.store.state_lock
         # The embedder powers vector search on read and embed-on-write; share it
         # with the store so ``find_claims`` and ``mutation.apply`` agree on mode.
         if self.embedder is not None and self.store.embedder is None:

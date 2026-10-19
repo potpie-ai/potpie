@@ -365,13 +365,11 @@ def test_stale_recovery_during_backend_callback_does_not_reapply() -> None:
             pot_id=POT,
             recover_stale=True,
         ).result(timeout=10)
-        store.save(active)
         release_callback.set()
         committed = owner.result(timeout=10)
 
-    assert recovering.ok is False
-    assert recovering.status == GraphMutationPlanStatus.committing.value
-    assert "still in flight" in (recovering.detail or "")
+    assert recovering.ok is True
+    assert recovering.status == GraphMutationPlanStatus.committed.value
     assert committed.ok is True
     assert recovering.mutation_id == committed.mutation_id
     assert mutation_count == 1

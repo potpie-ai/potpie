@@ -467,29 +467,10 @@ def commit_mutation(
         expected=record,
         replacement=committed,
     ):
-        current = self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-        return GraphMutationCommitResult(
-            ok=False,
-            plan_id=plan_id,
-            status=current.status,
-            risk=current.risk,
-            pot_id=pot_id,
-            mutation_id=execution_mutation_id,
-            applied_at=now,
-            expected_subgraph_versions=current.expected_subgraph_versions,
-            current_subgraph_versions=final_versions,
-            new_subgraph_versions=final_versions,
-            diff=current.diff,
-            claim_keys=_claim_keys_from_record(current),
-            approval=approval,
-            detail=(
-                "backend mutation completed, but the plan store rejected the "
-                "final compare-and-set; the stable mutation_id is recoverable"
-            ),
-            recommended_next_action=(
-                "Inspect the stored plan. If it remains committing after the "
-                "claim timeout, retry with recover_stale=True."
-            ),
+        # Another owner may have recovered the authoritative receipt while the
+        # original caller was delivering its post-commit observer notification.
+        return _commit_state_changed_result(
+            self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
         )
     verification = (
         verify_receipt(
