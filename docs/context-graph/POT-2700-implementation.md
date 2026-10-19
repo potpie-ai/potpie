@@ -31,7 +31,7 @@ Request reservation must be shared by all writers coordinating a pot.
 | Step | Commit subject | Gate | Status/evidence |
 | --- | --- | --- | --- |
 | 1 | test(graph): establish reliability contract and conformance harness | Existing baseline; isolated backend/process fixtures | 92 existing targeted tests + 4 new memory/JSON conformance tests pass; existing multiprocessing restart helper retained |
-| 2 | refactor(graph): isolate preparation execution and verification | Existing behavior and approval/authorization tests | Pending |
+| 2 | refactor(graph): isolate preparation execution and verification | Existing behavior and approval/authorization tests | 116 workbench/quality/inbox/runtime/record/correction tests pass; preparation, execution, state and verification each have a canonical module |
 | 3 | feat(graph): version prepared mutations and execution receipts | Stable preparation, fingerprint compatibility, explicit capabilities | Pending |
 | 4 | fix(graph): atomically publish memory and embedded mutations | Rollback, observer failure, coherent/fresh reads | Pending |
 | 5 | fix(graph): enforce native atomic execution and receipt metadata | Native concurrency, internal failure, restart replay | Pending |
