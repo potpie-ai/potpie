@@ -8,14 +8,14 @@ from potpie_context_engine.core.reconciliation_validation import (
     validate_reconciliation_plan,
 )
 from potpie_context_engine.core.context_events import EventRef
-from potpie_context_engine.core.errors import ReconciliationPlanValidationError
+from potpie_context_engine.core.errors import MutationBatchValidationError
 from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert
 from potpie_context_engine.core.ontology import (
     CANONICAL_EDGE_TYPES,
     CANONICAL_LABELS,
     EDGE_TYPES,
 )
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 pytestmark = pytest.mark.unit
 
@@ -37,7 +37,7 @@ def test_soft_fail_coerces_adr_like_batch(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL", "1")
     monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
 
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=_ref(),
         summary="adr",
         entity_upserts=[
@@ -89,7 +89,7 @@ def test_soft_fail_off_still_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_STRICT", "1")
     monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
 
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=_ref(),
         summary="x",
         entity_upserts=[
@@ -101,7 +101,7 @@ def test_soft_fail_off_still_rejects(monkeypatch: pytest.MonkeyPatch) -> None:
         ],
         edge_upserts=[],
     )
-    with pytest.raises(ReconciliationPlanValidationError):
+    with pytest.raises(MutationBatchValidationError):
         validate_reconciliation_plan(plan, "p1")
 
 
@@ -110,7 +110,7 @@ def test_strict_overrides_soft_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONTEXT_ENGINE_ONTOLOGY_STRICT", "1")
     monkeypatch.setenv("CONTEXT_ENGINE_INFER_LABELS", "0")
 
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=_ref(),
         summary="x",
         entity_upserts=[
@@ -122,12 +122,12 @@ def test_strict_overrides_soft_fail(monkeypatch: pytest.MonkeyPatch) -> None:
         ],
         edge_upserts=[],
     )
-    with pytest.raises(ReconciliationPlanValidationError):
+    with pytest.raises(MutationBatchValidationError):
         validate_reconciliation_plan(plan, "p1")
 
 
 def test_duplicate_entity_keys_are_merged_by_canonicalization() -> None:
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=_ref(),
         summary="dup",
         entity_upserts=[
@@ -151,7 +151,7 @@ def test_duplicate_entity_keys_are_merged_by_canonicalization() -> None:
 
 
 def test_invalid_iso_temporal_hard_error() -> None:
-    plan = ReconciliationPlan(
+    plan = MutationBatch(
         event_ref=_ref(),
         summary="t",
         entity_upserts=[
@@ -162,5 +162,5 @@ def test_invalid_iso_temporal_hard_error() -> None:
             ),
         ],
     )
-    with pytest.raises(ReconciliationPlanValidationError, match="ISO 8601"):
+    with pytest.raises(MutationBatchValidationError, match="ISO 8601"):
         validate_reconciliation_plan(plan, "p1")
