@@ -162,6 +162,3 @@ Do not resume older writers against migrated data. Recover with a forward fix or
 validated full-backup restoration while all writers are stopped. An uncoordinated
 binary downgrade is unsupported. Historical intervals erased before this change
 remain unavailable.
-
-The [implementation ledger](./pot-2700-implementation.md) records actual local and
-CI evidence separately, including incomplete platform gates.
