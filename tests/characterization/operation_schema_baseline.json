@@ -5315,6 +5315,21 @@
        "kind": "any"
       }
      }
+    },
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
     }
    ],
    "kind": "object",

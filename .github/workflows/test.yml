@@ -326,6 +326,7 @@ jobs:
           tests/integration/test_neo4j_temporal_reads.py
           tests/integration/test_neo4j_verification.py
           tests/integration/test_neo4j_legacy_repair.py
+          tests/integration/test_scoped_claim_reads.py
           -k "not restart"
 
       # Run serially after all other graph checks. Each endpoint and container ID

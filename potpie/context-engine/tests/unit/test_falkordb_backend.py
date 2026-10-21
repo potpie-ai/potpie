@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,6 +33,7 @@ from potpie_context_engine.core.identity import IdentityClass
 from potpie_context_engine.core.ontology import EntityTypeSpec
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
 from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.errors import ReconciliationApplyError
 
 pytestmark = pytest.mark.unit
 
@@ -70,7 +72,7 @@ class _Writer:
     async def ensure_indexes(self) -> bool:
         return True
 
-    async def claim_rows(self, pot_id):
+    async def claim_rows(self, pot_id, **scope):
         return []
 
     async def upsert_entities(self, pot_id, items, provenance: ProvenanceRef) -> int:
@@ -95,6 +97,31 @@ class _FakeResult:
     def __init__(self, names, rows):
         self.header = [[1, name] for name in names]
         self.result_set = rows
+
+
+@pytest.mark.asyncio
+async def test_injected_writer_requires_claim_reads_before_any_write():
+    writer = SimpleNamespace(
+        enabled=True,
+        upsert_entities=AsyncMock(),
+        upsert_edges=AsyncMock(),
+        delete_edges=AsyncMock(),
+        invalidate=AsyncMock(),
+    )
+    backend = FalkorDBGraphBackend(_Settings(), writer=writer)
+    plan = ReconciliationPlan(
+        entity_upserts=[
+            EntityUpsert("service:a", ("Service",)),
+            EntityUpsert("service:b", ("Service",)),
+        ],
+        edge_upserts=[EdgeUpsert("DEPENDS_ON", "service:a", "service:b")],
+    )
+    with pytest.raises(ReconciliationApplyError, match="scoped claim_rows"):
+        await backend.mutation.apply_async(plan, expected_pot_id="p")
+    writer.upsert_entities.assert_not_awaited()
+    writer.upsert_edges.assert_not_awaited()
+    writer.delete_edges.assert_not_awaited()
+    writer.invalidate.assert_not_awaited()
 
 
 class _RepairGraph:

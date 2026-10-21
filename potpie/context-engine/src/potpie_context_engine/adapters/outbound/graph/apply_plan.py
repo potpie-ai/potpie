@@ -18,6 +18,7 @@ from potpie_context_engine.core.claim_corrections import (
     prepare_claim_closures,
 )
 from potpie_context_engine.core.claim_preparation import prepare_assertions_from_rows
+from .claim_reads import candidate_scope
 
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_engine.core.reconciliation_validation import (
@@ -152,7 +153,26 @@ async def apply_mutation_batch(
         plan = deepcopy(plan)
         if plan.edge_upserts or plan.edge_deletes or plan.invalidations:
             bindings: list[SupersessionBinding] = []
-            rows = await graph_writer.claim_rows(expected_pot_id)
+            read = getattr(graph_writer, "claim_rows", None)
+            if not callable(read):
+                raise TypeError(
+                    "graph writer requires scoped claim_rows for edge mutations"
+                )
+            candidates = candidate_scope(plan)
+            rows = await read(expected_pot_id, **candidates)
+            # Closures validate the complete history of each selected candidate.
+            scopes = set(candidates["history_scopes"])
+            candidate_histories = {
+                (row.subject_key, row.predicate) for row in rows
+            } - scopes
+            histories = (
+                await read(expected_pot_id, history_scopes=candidate_histories)
+                if candidate_histories
+                else []
+            )
+            scopes.update(candidate_histories)
+            seen = {row.record_id for row in rows}
+            rows.extend(row for row in histories if row.record_id not in seen)
             rows = prepare_claim_closures(
                 plan,
                 rows,
@@ -161,6 +181,18 @@ async def apply_mutation_batch(
                 effective_at=prov.event_occurred_at or prov.valid_from,
                 singleton_predicates=definition.singleton_predicates,
             )
+            # Invalidation may add system assertions. Fetch their histories
+            # without replacing the virtual post-closure rows already staged.
+            extra_scopes = {
+                (edge.from_entity_key, edge.edge_type) for edge in plan.edge_upserts
+            } - scopes
+            histories = (
+                await read(expected_pot_id, history_scopes=extra_scopes)
+                if extra_scopes
+                else []
+            )
+            seen = {row.record_id for row in rows}
+            rows.extend(row for row in histories if row.record_id not in seen)
             prepare_assertions_from_rows(
                 plan,
                 rows,

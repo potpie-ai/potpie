@@ -48,9 +48,11 @@ def test_context_graph_apply_plan_is_legacy_not_implemented() -> None:
 
 def test_apply_mutation_batch_uses_provenance_context_without_event_ref() -> None:
     captured: dict[str, ProvenanceRef] = {}
+    read_scopes = []
 
     class _Writer:
-        async def claim_rows(self, pot_id):
+        async def claim_rows(self, pot_id, **scope):
+            read_scopes.append((pot_id, scope))
             return []
 
         async def upsert_entities(
@@ -102,6 +104,16 @@ def test_apply_mutation_batch_uses_provenance_context_without_event_ref() -> Non
 
     assert result.ok is True
     assert result.mutation_id == "mutation:reserved"
+    assert read_scopes == [
+        (
+            "p1",
+            {
+                "record_ids": (),
+                "history_scopes": (("service:payments-api", "DEPENDS_ON"),),
+                "corrections": (),
+            },
+        )
+    ]
     prov = captured["edges"]
     assert prov.mutation_id == "mutation:reserved"
     assert prov.source_event_id == "harness-run-1"

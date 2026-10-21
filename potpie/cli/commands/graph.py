@@ -2519,6 +2519,11 @@ def graph_import(
         "--no-resources",
         help="Import only graph entities and claims, ignoring bundled resources.",
     ),
+    mutation_id: str = typer.Option(
+        None,
+        "--mutation-id",
+        help="Fresh identity for an intentional restore; reuse only to retry that import.",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -2549,6 +2554,8 @@ def graph_import(
         ]
         if graph_only:
             rerun_parts.append("--graph-only")
+        if mutation_id is not None:
+            rerun_parts.extend(["--mutation-id", shlex.quote(mutation_id)])
         rerun_parts.append("--yes")
         documents_clause = " and document text" if "resources" in payload else ""
         confirmation = confirm_destructive_operation(
@@ -2561,7 +2568,9 @@ def graph_import(
         )
         manifest = run_engine_operation(
             get_engine_client(pot_id).import_snapshot(
-                EngineImportSnapshotRequest(version=2, payload=payload),
+                EngineImportSnapshotRequest(
+                    version=2, payload=payload, mutation_id=mutation_id
+                ),
                 confirmation=confirmation,
             )
         )

@@ -314,6 +314,28 @@ async def test_reset_retry_preserves_receipt_and_newer_resources() -> None:
 
 
 @pytest.mark.anyio
+async def test_new_identified_reset_purges_resources_once() -> None:
+    from potpie_context_engine.testing import InMemoryGraphBackend
+
+    backend = InMemoryGraphBackend()
+    resources = SimpleNamespace(purge_pot=MagicMock(return_value=True))
+    operations = LocalEngineOperations(
+        SimpleNamespace(backend=backend, resources=resources)
+    )
+    request = ResetContextRequest(mutation_id="fresh-reset")
+    first = await operations.reset_context(ContextIdentity("pot-1"), request)
+    assert isinstance(first, Success)
+    assert first.value.reset
+    assert first.value.resources_status == "completed"
+    assert first.value.resources_purged is True
+    replay = await operations.reset_context(ContextIdentity("pot-1"), request)
+    assert isinstance(replay, Success)
+    assert replay.value.resources_status == "unknown_on_recovery"
+    assert replay.value.execution == first.value.execution
+    resources.purge_pot.assert_called_once_with("pot-1")
+
+
+@pytest.mark.anyio
 async def test_resource_purge_failure_retains_reset_receipt() -> None:
     from potpie_context_engine.testing import InMemoryGraphBackend
 

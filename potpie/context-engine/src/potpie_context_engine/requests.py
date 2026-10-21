@@ -179,11 +179,20 @@ class ImportSnapshotRequest(EngineRequest):
     Version 1, the default, reads the file at ``source`` on the executing host.
     Version 2 takes no ``source``: ``payload`` is the snapshot itself, and its
     ``resources`` part, when present, restores document text with the graph.
+    Supply a fresh ``mutation_id`` to intentionally restore again after reset;
+    reuse it only to recover that import's receipt.
     """
 
     source: str = ""
     version: int = 1
     payload: Mapping[str, Any] = field(default_factory=dict)
+    mutation_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mutation_id is not None and (
+            not isinstance(self.mutation_id, str) or not self.mutation_id.strip()
+        ):
+            raise ValueError("mutation_id must be a nonempty string")
 
 
 @dataclass(frozen=True, slots=True)

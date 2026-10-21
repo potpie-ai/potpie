@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -18,6 +19,47 @@ from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import
 from potpie_context_engine.core.mutation_execution import MutationPersistenceError
 from potpie_context_engine.core.mutation_plan_store import InMemoryGraphPlanStore
 from potpie_context_engine.core.workbench_service import GraphWorkbenchService
+
+
+@pytest.mark.parametrize("persisted_input", [False, True])
+def test_datetime_payload_survives_reload_retry_and_commit(tmp_path, persisted_input):
+    backend = InMemoryGraphBackend()
+    workbench = GraphWorkbenchService(
+        backend=backend, plan_store=LocalJsonGraphPlanStore(tmp_path)
+    )
+    payload = {
+        "idempotency_key": "datetime-request",
+        "operations": [
+            {
+                "op": "link_entities",
+                "subgraph": "infra_topology",
+                "subject": {"key": "service:a", "type": "Service"},
+                "predicate": "DEPENDS_ON",
+                "object": {"key": "service:b", "type": "Service"},
+                "truth": "source_observation",
+                "evidence": [{"source_ref": "test:datetime"}],
+                "valid_from": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            }
+        ],
+    }
+    proposal = workbench.propose(payload, pot_id="p")
+    store = LocalJsonGraphPlanStore(tmp_path)
+    record = store.get(pot_id="p", plan_id=proposal.plan_id)
+    assert (
+        record.original_payload["operations"][0]["valid_from"]
+        == "2026-01-01T00:00:00+00:00"
+    )
+    assert store.list(pot_id="p") == (record,)
+    reopened = GraphWorkbenchService(backend=backend, plan_store=store)
+    retry_payload = record.original_payload if persisted_input else payload
+    assert reopened.propose(retry_payload, pot_id="p").plan_id == proposal.plan_id
+    committed = reopened.commit(proposal.plan_id, pot_id="p")
+    assert committed.ok
+    assert (
+        reopened.commit(proposal.plan_id, pot_id="p").mutation_id
+        == committed.mutation_id
+    )
+    assert backend.mutation.current_version("p") == 1
 
 
 def _proposal(store):

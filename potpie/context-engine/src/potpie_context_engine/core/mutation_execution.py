@@ -27,7 +27,9 @@ class MutationPersistenceError(ValueError):
 
 
 def request_fingerprint(payload: Mapping[str, Any]) -> str:
-    normalized = dict(payload)
+    from .graph_plans import _json_safe
+
+    normalized = _json_safe(dict(payload))
     normalized.pop("expected_subgraph_versions", None)
     encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.blake2b(encoded.encode("utf-8"), digest_size=20).hexdigest()

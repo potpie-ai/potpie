@@ -330,7 +330,9 @@ async def test_writer_claim_rows_reads_uncommitted_retired_history_from_borrowed
             pytest.fail("borrowed correction read must use its owning transaction")
 
         monkeypatch.setattr(writer, "_new_driver", no_second_driver)
-        rows = await writer.claim_rows(pot)
+        rows = await writer.claim_rows(
+            pot, history_scopes=(("service:api", "OWNED_BY"),)
+        )
         observed.extend(
             (row.record_id, row.retired, row.valid_at, row.invalid_at) for row in rows
         )

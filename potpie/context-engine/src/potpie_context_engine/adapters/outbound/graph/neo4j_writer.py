@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Any, Callable, Coroutine, TypeVar
+from typing import Any, Callable, Coroutine, Iterable, TypeVar
 from uuid import uuid4
 
 from potpie_context_engine.adapters.outbound.graph.cypher import (
@@ -147,17 +147,31 @@ class Neo4jGraphWriter(GraphWriterPort):
 
         return await self._with_driver(own_transaction)
 
-    async def claim_rows(self, pot_id: str) -> list[ClaimRow]:
-        """Read complete claim history through the mutation's borrowed transaction."""
+    async def claim_rows(
+        self,
+        pot_id: str,
+        *,
+        record_ids: Iterable[str] = (),
+        history_scopes: Iterable[tuple[str, str]] = (),
+        corrections: Iterable[EdgeDelete | InvalidationOp] = (),
+    ) -> list[ClaimRow]:
+        """Read selected histories through the mutation's borrowed transaction."""
+        from .claim_reads import claim_read_query
+
         _require_valid_pot_id(pot_id)
+        query = claim_read_query(
+            pot_id,
+            record_ids=record_ids,
+            history_scopes=history_scopes,
+            corrections=corrections,
+        )
+        if query is None:
+            return []
+        cypher, params = query
 
         async def read(driver: Any) -> list[ClaimRow]:
             async with driver.session() as session:
-                result = await session.run(
-                    "MATCH ()-[r:RELATES_TO {group_id:$pot}]->() "
-                    "RETURN properties(r) AS props",
-                    pot=pot_id,
-                )
+                result = await session.run(cypher, **params)
                 return [row_from_record(record) async for record in result]
 
         return await self._with_driver(read)

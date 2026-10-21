@@ -25,6 +25,21 @@ original revisions and timestamp. Supported reset always advances the revision,
 keeps receipts and invalidates outstanding preparations; replay cannot restore
 reset data. Existing restrictions in journal mode still apply.
 
+Snapshot imports default to a content-derived identity, so repeating an import
+recovers its original receipt even after reset. To intentionally restore the same
+snapshot again, pass a fresh identity:
+`potpie graph import <snapshot> --pot <pot> --mutation-id <fresh-id> --yes`.
+Typed callers use `ImportSnapshotRequest(mutation_id=..., ...)`; both path and
+inline imports, including resource archives, forward that identity. Reuse it only
+to retry that specific import.
+
+A newly executed reset purges configured document resources, including when its
+identity was supplied by the caller. Recovering a completed reset receipt never
+purges again, because newer documents may now exist. The public result preserves
+the graph receipt and reports resource purge status separately. `pot reset` and
+`pot archive` fail on incomplete teardown; archive marks the pot archived only
+after teardown completes.
+
 `claim_key` identifies a logical claim and `record_id` its physical incarnation.
 Retract then reassert creates another incarnation and preserves the earlier
 interval. Automatic singleton replacement requires the same pot, subgraph,
@@ -120,6 +135,12 @@ unsupported/ambiguous recovery does not become absence. Repair additionally need
 a coherent lossless `LegacyInventoryPort`/async equivalent with transaction limits,
 plus atomic `RepairRunStorePort` manifest-and-child reservation. Ordinary plan
 stores still work without repair, but cannot silently claim repair support.
+
+Injected raw writers used by the backend adapters must implement scoped
+`claim_rows`: reviewed record identities, touched subject/predicate histories and
+unresolved correction selectors. Return complete history within those scopes,
+including closed incarnations; an empty scope returns no rows. The mutation
+planner fetches any additional histories needed by corrections before writing.
 
 ## Operational rollout
 

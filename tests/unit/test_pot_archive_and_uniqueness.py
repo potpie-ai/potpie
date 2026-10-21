@@ -120,6 +120,36 @@ def _archive(service: LocalPotManagementService, ref: str) -> None:
     service.archive_pot(ref=ref)
 
 
+@pytest.mark.parametrize("command", ["reset", "archive"])
+@pytest.mark.parametrize(
+    "status,graph_reset",
+    [("failed", True), ("unknown_on_recovery", True), ("not_attempted", False)],
+)
+def test_partial_reset_stops_cli_and_does_not_archive(
+    service, engine, monkeypatch, command, status, graph_reset
+):
+    service.create_pot(name="keep-live", use=True)
+
+    async def partial_reset(request, *, confirmation=None):
+        return Success(
+            ResetContextResult(
+                context_id=engine.context_id,
+                reset=graph_reset,
+                mutation_id="reset-receipt",
+                resources_status=status,
+                detail="Graph reset completed; resource purge failed: lost purge",
+            )
+        )
+
+    monkeypatch.setattr(engine, "reset_context", partial_reset)
+    result = _run(service, command, "keep-live", "--confirm")
+    assert result.exit_code != 0
+    payload = _payload(result)
+    assert payload["code"] == "context_reset_incomplete"
+    assert "resource purge failed" in payload["message"]
+    assert service.active_pot().archived is False
+
+
 # --- archive is a lifecycle state -------------------------------------------
 
 

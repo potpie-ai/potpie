@@ -32,7 +32,11 @@ def export_archive(facade: ResourceFacade, *, pot_id: str) -> dict[str, Any]:
 
 
 def import_archive(
-    facade: ResourceFacade, *, pot_id: str, payload: dict[str, Any]
+    facade: ResourceFacade,
+    *,
+    pot_id: str,
+    payload: dict[str, Any],
+    mutation_id: str | None = None,
 ) -> SnapshotManifest:
     if facade.snapshot is None:
         raise CapabilityNotImplemented("resources.import_snapshot")
@@ -53,7 +57,8 @@ def import_archive(
     # Resource validation/conflict checking happens before publication. A graph
     # failure restores the prior resource tree; graph adapters commit atomically.
     with restorer(pot_id=pot_id, payload=resources):
-        manifest = facade.snapshot.import_data(pot_id=pot_id, payload=graph)
+        identity = {"mutation_id": mutation_id} if mutation_id is not None else {}
+        manifest = facade.snapshot.import_data(pot_id=pot_id, payload=graph, **identity)
     documents = {path.split("/", 1)[0] for path in resources["files"]}
     warnings: list[str] = []
     if facade.index is not None:

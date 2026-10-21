@@ -1231,6 +1231,11 @@ class ServiceEngineOperations:
         self, *, pot_id: str, request: ImportSnapshotRequest
     ) -> object:
         version = _snapshot_request_version(request.version)
+        identity = (
+            {"mutation_id": request.mutation_id}
+            if request.mutation_id is not None
+            else {}
+        )
         if version == 1:
             if request.payload:
                 raise ValueError(
@@ -1240,6 +1245,7 @@ class ServiceEngineOperations:
             return self._snapshot_port("import_").import_(
                 pot_id=pot_id,
                 source=_required_value(request.source, "source"),
+                **identity,
             )
         if request.source:
             raise ValueError(
@@ -1254,9 +1260,9 @@ class ServiceEngineOperations:
             # Graph and document text restore together: resource bytes are
             # staged and rolled back if the graph import fails.
             return self._snapshot_resources("import_snapshot").import_snapshot(
-                pot_id=pot_id, payload=payload
+                pot_id=pot_id, payload=payload, **identity
             )
-        return snapshot.import_data(pot_id=pot_id, payload=payload)
+        return snapshot.import_data(pot_id=pot_id, payload=payload, **identity)
 
     def _snapshot_resources(self, method: str) -> Any:
         resources = self._resources_or_none()

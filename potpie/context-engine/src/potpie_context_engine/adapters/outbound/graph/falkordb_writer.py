@@ -30,7 +30,7 @@ import logging
 import os
 import platform
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable
 from typing import Any, TypeVar
 
 from potpie_context_engine.core.definition import (
@@ -48,6 +48,8 @@ from potpie_context_engine.core.graph_mutations import (
     InvalidationOp,
     ProvenanceRef,
 )
+from potpie_context_engine.core.claim_codec import row_from_record
+from potpie_context_engine.core.ports.claim_query import ClaimRow
 
 from potpie_context_engine.adapters.outbound.graph.cypher import (
     _require_valid_pot_id,
@@ -673,6 +675,35 @@ class FalkorDBGraphWriter(GraphWriterPort):
         embedding_dim = int(getattr(self._embedder, "dimensions", 1536))
         await asyncio.to_thread(self._ensure_indexes_sync, graph, embedding_dim)
         return True
+
+    async def claim_rows(
+        self,
+        pot_id: str,
+        *,
+        record_ids: Iterable[str] = (),
+        history_scopes: Iterable[tuple[str, str]] = (),
+        corrections: Iterable[EdgeDelete | InvalidationOp] = (),
+    ) -> list[ClaimRow]:
+        """Read complete selected histories through the shared async shim."""
+        from .claim_reads import claim_read_query
+
+        _require_valid_pot_id(pot_id)
+        query = claim_read_query(
+            pot_id,
+            record_ids=record_ids,
+            history_scopes=history_scopes,
+            corrections=corrections,
+        )
+        if query is None:
+            return []
+        cypher, params = query
+
+        async def read(driver: Any) -> list[ClaimRow]:
+            async with driver.session() as session:
+                result = await session.run(cypher, **params)
+                return [row_from_record(record) async for record in result]
+
+        return await self._with_driver(read)
 
     @staticmethod
     def _ensure_indexes_sync(graph: Any, embedding_dim: int = 1536) -> None:

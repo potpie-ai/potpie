@@ -20,10 +20,11 @@ def reset_context(
 ) -> ResetContextResult:
     """Recover graph execution before evaluating current administrative policy.
 
-    Resource purge is a separate store operation. A supplied execution identity
+    Resource purge is a separate store operation. A completed execution replay
     never repeats that purge: newly imported resources must survive old retries.
     """
     result = None
+    replayed = False
     if mutation_id is not None:
         capabilities = getattr(backend.mutation, "capabilities", MutationCapabilities())
         lookup = (
@@ -59,6 +60,7 @@ def reset_context(
                         receipt.execution.to_dict() if receipt.execution else None
                     ),
                 }
+                replayed = True
         if result is None and (
             not isinstance(lookup, MutationExecutionLookup)
             or lookup.mutation_id != mutation_id
@@ -86,7 +88,7 @@ def reset_context(
     purged, detail = None, result.get("error")
     if resources is None:
         resource_status = "not_configured"
-    elif mutation_id is not None:
+    elif replayed:
         resource_status = "unknown_on_recovery"
     elif not reset_ok:
         resource_status = "not_attempted"

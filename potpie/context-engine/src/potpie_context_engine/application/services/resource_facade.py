@@ -146,13 +146,15 @@ class ResourceFacade:
         return export_archive(self, pot_id=pot_id)
 
     def import_snapshot(
-        self, *, pot_id: str, payload: dict[str, Any]
+        self, *, pot_id: str, payload: dict[str, Any], mutation_id: str | None = None
     ) -> SnapshotManifest:
         """Restore validated graph data and its original document text."""
         reject_journal_admin(self, pot_id, "resource snapshot import")
         from .snapshot_archive import import_archive
 
-        return import_archive(self, pot_id=pot_id, payload=payload)
+        return import_archive(
+            self, pot_id=pot_id, payload=payload, mutation_id=mutation_id
+        )
 
     @journal_resource_workflow
     def import_dir(
