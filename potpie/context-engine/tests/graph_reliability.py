@@ -73,6 +73,7 @@ def isolated_backend(profile: str, home: Path, monkeypatch):
         "CONTEXT_ENGINE_FALKORDB_GRAPH_NAME", "reliability_" + uuid.uuid4().hex
     )
     monkeypatch.setenv("CONTEXT_ENGINE_FALKORDB_LITE_PATH", str(home / "graph.db"))
+    monkeypatch.setenv("CONTEXT_ENGINE_LADYBUG_PATH", str(home / "ladybug.db"))
     if profile == "neo4j":
         endpoint = os.environ.get("PROTOCOL_TEST_NEO4J_URI")
         if not endpoint:

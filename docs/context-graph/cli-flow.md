@@ -178,7 +178,7 @@ potpie ui      [--open/--no-open] [--pot <ref>]   # <ref> may be managed:<id>
   explicit integration-auth report.
 - **`setup`** — idempotent first-run that builds a `SetupPlan`
   (config/storage/daemon/active `default` pot/source registration/skills). `--backend`
-  picks the GraphBackend profile (default `falkordb_lite`) and refuses an unknown
+  picks the GraphBackend profile (Windows default `ladybug`, macOS/Linux default `falkordb_lite`) and refuses an unknown
   profile with `validation_error`; `--embeddings` picks the local embedder (default
   `auto`: sentence-transformers when the `embeddings` extra is installed, otherwise
   the bundled hashing embedder) and `--embedding-model` the model setup prepares;
@@ -922,7 +922,7 @@ potpie backend use <profile>        # advisory only — NOT persisted
 potpie backend doctor               # backend.mutation.readiness()
 ```
 
-`KNOWN_PROFILES` = `in_memory, embedded, neo4j, falkordb, falkordb_lite, postgres,
+`KNOWN_PROFILES` = `in_memory, embedded, ladybug, neo4j, falkordb, falkordb_lite, postgres,
 chroma, hosted`. **`backend use` is advisory only** (`persisted: False`) — it
 suggests setting `CONTEXT_ENGINE_BACKEND`; it does not switch the live backend.
 CLI code never queries SQLite/Neo4j/vector indexes/state tables directly — it routes
@@ -934,7 +934,8 @@ through services and capability ports.
 
 | Variable | Purpose / default |
 |---|---|
-| `CONTEXT_ENGINE_BACKEND` | preferred backend selector (host default `falkordb_lite`) |
+| `CONTEXT_ENGINE_BACKEND` | preferred backend selector (Windows default `ladybug`; macOS/Linux default `falkordb_lite`) |
+| `CONTEXT_ENGINE_LADYBUG_PATH` / `LADYBUG_PATH` | Ladybug database path (first wins); default `<home>/context_graph/ladybug.db` |
 | `GRAPH_DB_BACKEND` | legacy fallback selector (ingestion server default `neo4j`) |
 | `CONTEXT_ENGINE_HOST_MODE` | `daemon` (default) \| `in_process` |
 | `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder |
@@ -968,7 +969,7 @@ flowchart LR
   cf_write -.-> cf_read
 ```
 
-Local first run (OSS default — `falkordb_lite`, detached daemon, skills installed
+Local first run (OSS default — `ladybug` on Windows, `falkordb_lite` on macOS/Linux, detached daemon, skills installed
 during setup):
 
 **Published package:**

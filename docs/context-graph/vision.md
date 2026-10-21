@@ -119,7 +119,7 @@ There are three intended product boundaries. Only the first is shipped today.
 
 | Boundary | Status | Description |
 |---|---|---|
-| **Local OSS self-serve** | **Shipped (V1.5)** | Installed with the CLI. `potpie setup` provisions config, local stores, the active `default` pot, source registration, the daemon, and skills. State stays local by default. Default backend `falkordb_lite` (no Docker/Neo4j/cloud needed). |
+| **Local OSS self-serve** | **Shipped (V1.5)** | Installed with the CLI. `potpie setup` provisions config, local stores, the active `default` pot, source registration, the daemon, and skills. State stays local by default. Default backend `ladybug` on Windows, `falkordb_lite` on macOS/Linux (no Docker/Neo4j/cloud needed). |
 | **Managed Potpie graph** | **Roadmap** | A managed backend API hosting the same engine-owned domain on hosted stores with hosted auth/collaboration. The graph model is identical; deployment-specific composition and clients provide the boundary. |
 | **Event Ledger** | **Roadmap** | A separate managed-or-self-hostable source-event service (webhooks, polling, replay cursors) that local or managed graphs *pull* from; it is never the graph source of truth. |
 
@@ -181,7 +181,7 @@ So "v2" survives solely as the envelope version on workbench responses. What shi
   --verify`**. `graph mutate` is a **legacy wrapper** that internally calls
   propose+commit; `potpie record` remains the compatibility write path
   ([writing.md](./writing.md)).
-- **Defaults:** `falkordb_lite` embedded backend, a detached `daemon` host mode, the
+- **Defaults:** `ladybug` on Windows and `falkordb_lite` on macOS/Linux, a detached `daemon` host mode, the
   bundled local embedder, installed skills, and the zero-token `graph nudge` a
   harness can call from its own hooks — all
   with no mandatory Docker, Neo4j, Postgres, or cloud service.

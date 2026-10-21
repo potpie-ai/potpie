@@ -330,14 +330,14 @@ class EmbeddedGraphBackend:
     resource_exists: Any = None
 
     def __post_init__(self) -> None:
-        with locked_json_store(self._path):
+        with self._locked_store():
             state = self._load_state()
         store = self.shared_store or state.store
         registry = self.shared_execution_registry or state.registry
         store.embedder = self.embedder
         self._inner = InMemoryGraphBackend(
             store=store,
-            profile_name=_PROFILE,
+            profile_name=self.profile,
             embedder=self.embedder,
             definition=self.definition,
             execution_registry=registry,
@@ -360,6 +360,9 @@ class EmbeddedGraphBackend:
     def _path(self) -> Path:
         return self.home / "graph.json"
 
+    def _locked_store(self):
+        return locked_json_store(self._path)
+
     def _load_state(
         self,
     ) -> _EmbeddedState:
@@ -381,6 +384,13 @@ class EmbeddedGraphBackend:
             raise MutationPersistenceError(
                 "embedded graph state is malformed JSON"
             ) from exc
+        state = self._decode_state(payload)
+        if loaded:
+            self._state_observed = True
+        return state
+
+    def _decode_state(self, payload: Any) -> _EmbeddedState:
+        """Validate and hydrate authority shared by durable local stores."""
         if not isinstance(payload, dict):
             raise MutationPersistenceError("embedded graph state must be an object")
         if "schema_version" in payload:
@@ -444,8 +454,6 @@ class EmbeddedGraphBackend:
             dict(revisions),
             journal_data,
         )
-        if loaded:
-            self._state_observed = True
         return state
 
     def _write_state(
@@ -483,7 +491,7 @@ class EmbeddedGraphBackend:
         reconciliation_config: ReconciliationConfig | None,
         expected_version: int | None = None,
     ) -> MutationResult:
-        with locked_json_store(self._path):
+        with self._locked_store():
             state = self._load_state()
             receipt_count = len(state.registry.completed())
             inner = self._transaction_backend(state)
@@ -512,7 +520,7 @@ class EmbeddedGraphBackend:
         operation: Callable[[InMemoryGraphBackend], _T],
     ) -> _T:
         """Reload, mutate, persist, then publish one complete current snapshot."""
-        with locked_json_store(self._path):
+        with self._locked_store():
             inner = self._transaction_backend(self._load_state())
             result = operation(inner)
             self._persist(inner)
@@ -528,7 +536,7 @@ class EmbeddedGraphBackend:
         )
 
     def _read(self, operation: Callable[[InMemoryGraphBackend], _T]) -> _T:
-        with locked_json_store(self._path):
+        with self._locked_store():
             inner = self._transaction_backend(self._load_state())
             result = operation(inner)
             self._adopt_state(inner)
@@ -540,7 +548,7 @@ class EmbeddedGraphBackend:
     def _transaction_backend(self, state: _EmbeddedState) -> InMemoryGraphBackend:
         return InMemoryGraphBackend(
             store=state.store,
-            profile_name=_PROFILE,
+            profile_name=self.profile,
             embedder=self.embedder,
             definition=self.definition,
             execution_registry=state.registry,
@@ -615,7 +623,7 @@ class EmbeddedGraphBackend:
 
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
-            profile=_PROFILE,
+            profile=self.profile,
             mutation=True,
             claim_query=True,
             semantic=True,

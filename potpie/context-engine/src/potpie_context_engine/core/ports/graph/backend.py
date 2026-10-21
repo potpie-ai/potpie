@@ -12,7 +12,8 @@ analytics, snapshot — as ``CapabilityNotImplemented`` until built.
 Profiles (``profile`` property) select the concrete backend:
 
     in_memory   real, used for tests + conformance
-    falkordb_lite OSS local default on Python >=3.12
+    falkordb_lite OSS local default on POSIX, Python >=3.12
+    ladybug     embedded local default on Windows
     embedded    JSON-persisted local fallback
     falkordb    external FalkorDB profile
     neo4j       shape-first production target (delegates to existing Neo4j code)

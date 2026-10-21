@@ -74,7 +74,9 @@ def runtime(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_setup_orchestrator_provisions_and_creates_default_pot(runtime) -> None:
-    report = runtime.root.setup.run(SetupPlan(repo="potpie", agent="claude"))
+    report = runtime.root.setup.run(
+        SetupPlan(repo="potpie", agent="claude", host_mode="in_process")
+    )
 
     assert report.ok
     states = {step.step: step.state for step in report.steps}
@@ -105,8 +107,8 @@ def test_setup_prepares_backend_embedder(tmp_path, monkeypatch) -> None:
 
 
 def test_setup_is_idempotent(runtime) -> None:
-    runtime.root.setup.run(SetupPlan(repo="potpie"))
-    report = runtime.root.setup.run(SetupPlan(repo="potpie"))
+    runtime.root.setup.run(SetupPlan(repo="potpie", host_mode="in_process"))
+    report = runtime.root.setup.run(SetupPlan(repo="potpie", host_mode="in_process"))
 
     assert report.ok
     source = next(step for step in report.steps if step.step == "source")
@@ -165,7 +167,7 @@ def test_setup_preview_classifies_owners_and_host_gated_hardness(runtime) -> Non
 
 
 def test_setup_state_store_and_migrator_skip_cleanly(runtime) -> None:
-    report = runtime.root.setup.run(SetupPlan(repo="potpie"))
+    report = runtime.root.setup.run(SetupPlan(repo="potpie", host_mode="in_process"))
     states = {step.step: step.state for step in report.steps}
 
     assert states["state_store.provision"] == SKIPPED
@@ -357,18 +359,37 @@ def test_local_runtime_accepts_backend_env(
     assert runtime.root.backend.profile == profile
 
 
-def test_local_runtime_defaults_to_falkordb_lite(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [("win32", "ladybug"), ("darwin", "falkordb_lite"), ("linux", "falkordb_lite")],
+)
+def test_local_runtime_uses_platform_backend_default(
+    platform: str, expected: str, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from potpie_context_engine.core import lifecycle
+
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
     monkeypatch.delenv("CONTEXT_ENGINE_BACKEND", raising=False)
     monkeypatch.delenv("GRAPH_DB_BACKEND", raising=False)
 
-    runtime = build_local_runtime()
+    with monkeypatch.context() as platform_patch:
+        platform_patch.setattr(lifecycle.sys, "platform", platform)
+        assert default_backend_profile() == expected
+        assert lifecycle.SetupPlan().backend == expected
 
-    assert default_backend_profile() == "falkordb_lite"
-    assert runtime.root.backend.profile == "falkordb_lite"
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_default_backend_preserves_primary_env_precedence(
+    platform, monkeypatch
+) -> None:
+    from potpie_context_engine.core import lifecycle
+
+    monkeypatch.setattr(lifecycle.sys, "platform", platform)
+    monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", " embedded ")
+    monkeypatch.setenv("GRAPH_DB_BACKEND", "neo4j")
+
+    assert default_backend_profile() == "embedded"
 
 
 def test_default_backend_ignores_blank_primary_env(monkeypatch) -> None:

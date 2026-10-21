@@ -24,20 +24,20 @@ from potpie_context_engine.adapters.outbound.graph.inbox_stores.local_json impor
 from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import (
     LocalJsonGraphPlanStore,
 )
-from potpie_context_engine.core.workbench_service import (
-    GraphWorkbenchService,
-)
 from potpie_context_engine.core.context_events import EventRef
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.graph_mutations import EdgeUpsert, EntityUpsert
 from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
 from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.workbench_service import (
+    GraphWorkbenchService,
+)
 
 POT = "conformance-pot"
 
 # Profiles that implement all six capabilities end to end.
-FULL_PROFILES = ["in_memory", "embedded"]
+FULL_PROFILES = ["in_memory", "embedded", "ladybug"]
 
 # Profiles with the canonical source-of-truth ports wired and projections
 # deliberately fail-closed until implemented.
@@ -55,6 +55,19 @@ RUNNABLE_PROFILES = FULL_PROFILES + ["falkordb_lite"]
 
 
 def _build(profile, tmp_path, monkeypatch=None):
+    if profile == "ladybug":
+        import importlib.util
+        import os
+
+        if importlib.util.find_spec("ladybug") is None:
+            if os.environ.get("POTPIE_REQUIRE_LADYBUG") == "1":
+                pytest.fail("required Ladybug native dependency is unavailable")
+            pytest.skip("optional Ladybug native dependency is unavailable")
+        from potpie_context_engine.adapters.outbound.graph.backends.ladybug_backend import (
+            LadybugGraphBackend,
+        )
+
+        return LadybugGraphBackend(home=tmp_path)
     if profile == "embedded":
         from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
             EmbeddedGraphBackend,

@@ -86,6 +86,7 @@ from potpie_context_engine.api import (
     protocols_definition,
 )
 from potpie_context_engine.core.runtime import build_graph_runtime
+from potpie_context_engine.core.lifecycle import default_setup_backend
 from potpie_context_engine.core.coherence import assert_runtime_coherence
 from potpie_context_engine.core.ports.resource_index import ResourceIndexError
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
@@ -137,7 +138,7 @@ def default_backend_profile() -> str:
         profile = (os.getenv(env_name) or "").strip().lower()
         if profile:
             return profile
-    return "falkordb_lite"
+    return default_setup_backend()
 
 
 def default_host_mode() -> str:

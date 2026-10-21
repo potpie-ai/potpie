@@ -75,6 +75,17 @@ def context_engine_falkordb_lite_path() -> str:
     return str(base / "context_graph" / "falkordb.db")
 
 
+def context_engine_ladybug_path() -> str:
+    value = (os.getenv("CONTEXT_ENGINE_LADYBUG_PATH") or "").strip() or (
+        os.getenv("LADYBUG_PATH") or ""
+    ).strip()
+    if value:
+        return value
+    home = (os.getenv("CONTEXT_ENGINE_HOME") or "").strip()
+    base = Path(home).expanduser() if home else Path.home() / ".potpie"
+    return str(base / "context_graph" / "ladybug.db")
+
+
 class EnvContextEngineSettings(ContextEngineSettingsPort):
     def is_enabled(self) -> bool:
         raw = os.getenv("CONTEXT_GRAPH_ENABLED")
@@ -119,6 +130,9 @@ class EnvContextEngineSettings(ContextEngineSettingsPort):
 
     def falkordb_lite_path(self) -> str:
         return context_engine_falkordb_lite_path()
+
+    def ladybug_path(self) -> str:
+        return context_engine_ladybug_path()
 
     def backfill_max_prs_per_run(self) -> int:
         raw = os.getenv("CONTEXT_GRAPH_BACKFILL_MAX_PRS_PER_RUN", "100").strip()

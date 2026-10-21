@@ -29,7 +29,7 @@ classifiers = [
     "Topic :: Software Development",
 ]
 # Base = the local product: the CLI, the daemon (the aiohttp runtime plus the
-# graph explorer's FastAPI app) and the local FalkorDB backend. Embeddings
+# graph explorer's FastAPI app) and the platform's local graph backend. Embeddings
 # (torch), ingestion clients, telemetry and the CLI logo are extras, so a bare
 # install pulls no ML stack. The engine pin must stay the one unconditional
 # `==` requirement on it: the release validator reads it.

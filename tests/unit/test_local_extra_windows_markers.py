@@ -1,7 +1,5 @@
 """The ``local`` extra installs on Windows, where FalkorDBLite has no build."""
 
-# ruff: noqa: S101 - pytest assertions are intentional.
-
 from __future__ import annotations
 
 import tomllib
@@ -39,11 +37,11 @@ def _local_extra_installs(environment: dict[str, str]) -> set[str]:
     return installed
 
 
-def test_windows_skips_the_embedded_store_and_keeps_the_server_client() -> None:
+def test_windows_installs_ladybug_and_keeps_the_server_client() -> None:
     installed = _local_extra_installs(_environment("win32", "Windows"))
 
     assert installed.isdisjoint(_EMBEDDED_STORE)
-    assert "falkordb" in installed
+    assert {"ladybug", "falkordb"} <= installed
 
 
 @pytest.mark.parametrize(
@@ -56,3 +54,4 @@ def test_other_platforms_install_the_embedded_store(
     installed = _local_extra_installs(_environment(sys_platform, platform_system))
 
     assert _EMBEDDED_STORE | {"falkordb"} <= installed
+    assert "ladybug" not in installed

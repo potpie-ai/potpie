@@ -352,6 +352,10 @@ jobs:
     # behavior. A focused subset: the full suite assumes POSIX in many places.
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - name: Checkout
@@ -360,7 +364,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -383,6 +387,31 @@ jobs:
           tests/unit/test_cli_install_status_path.py
           tests/unit/test_local_extra_windows_markers.py
           tests/unit/test_local_extra_next_action.py
+
+      - name: Require native Ladybug persistence and semantic contracts
+        working-directory: potpie/context-engine
+        env:
+          POTPIE_REQUIRE_LADYBUG: "1"
+          POTPIE_RELIABILITY_PROFILES: ladybug
+        run: >-
+          uv run --project . pytest -p no:cacheprovider -p tests.required_acceptance
+          tests/integration/test_ladybug_roundtrip.py
+          tests/unit/test_ladybug_windows_bootstrap.py
+          tests/unit/test_settings_graph_backend.py
+          tests/conformance/test_graph_backend_conformance.py -k "ladybug or settings_graph_backend"
+          tests/conformance/test_graph_reliability.py
+
+      - name: Require Ladybug daemon round trip and Windows defaults
+        env:
+          POTPIE_REQUIRE_LADYBUG: "1"
+        run: >-
+          uv run pytest -p no:cacheprovider
+          tests/integration/test_ladybug_runtime.py
+          tests/unit/test_ladybug_registry.py
+          tests/unit/test_runtime_composition.py::test_local_runtime_uses_platform_backend_default
+          tests/unit/test_runtime_composition.py::test_default_backend_preserves_primary_env_precedence
+          tests/unit/test_runtime_composition.py::test_default_backend_ignores_blank_primary_env
+          tests/unit/test_cli_bootstrap_status.py
 
       - name: Require Windows memory and JSON graph persistence
         working-directory: potpie/context-engine
