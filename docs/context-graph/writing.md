@@ -329,7 +329,7 @@ preparation, use the atomic request reservation and compare-and-apply contract,
 and recover original receipts on retry. Review-required operations retain their
 approval requirements. A missing atomic capability fails before writing. The
 result retains the public semantic result shape; request/plan/execution identities
-allow recoverable retries. See [reliable mutations](./reliable-mutations.md).
+allow recoverable retries.
 
 **What reaches Spine B today:**
 
@@ -366,9 +366,7 @@ logical identity across reasserted incarnations. Shared lifecycle policy restric
 singleton supersession to the same source and environment, while corrections
 carry exact reviewed incarnation targets and dependent effects. Occurrence,
 validity and observation times remain distinct. Receipt replay precedes stale
-revision checks and does not regenerate preparation. Complete backend capability,
-recovery and migration contracts are in
-[reliable-mutations.md](./reliable-mutations.md).
+revision checks and does not regenerate preparation.
 
 ---
 

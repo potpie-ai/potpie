@@ -876,9 +876,8 @@ potpie graph repair --legacy --apply --repair-id <id> [--yes/-y] [--pot <ref>]
   Dry-run requires read access and displays bounded changes/findings; global
   `--json` includes the entire run. Apply requires admin access, confirmation and
   the reviewed ID. Retry that ID to recover completed child receipts. Expiry or a
-  revision conflict requires fresh preparation for remaining work. See
-  [reliable mutations and rollout](./reliable-mutations.md) before migrating;
-  stop all old writers, and do not rely on a schema marker to fence them.
+  revision conflict requires fresh preparation for remaining work. Before
+  migrating, stop all old writers, and do not rely on a schema marker to fence them.
 - **`graph neighborhood`** is the **Traverse** axis (first-class), backed by
   `backend.inspection.neighborhood`. `graph inspect` is a legacy alias that warns
   toward `neighborhood`. The normal JSON slice has a 32 KiB byte budget with
