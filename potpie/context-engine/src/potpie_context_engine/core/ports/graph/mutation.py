@@ -16,6 +16,18 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
+from potpie_context_engine.core.legacy_records import LegacyInventory
+
+
+@runtime_checkable
+class LegacyInventoryPort(Protocol):
+    def legacy_inventory(self, pot_id: str) -> LegacyInventory: ...
+
+
+@runtime_checkable
+class AsyncLegacyInventoryPort(Protocol):
+    async def legacy_inventory_async(self, pot_id: str) -> LegacyInventory: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +85,40 @@ class AtomicGraphMutationPort(Protocol):
 
 
 @runtime_checkable
+class AsyncAtomicGraphMutationPort(Protocol):
+    async def current_version_async(self, pot_id: str) -> int: ...
+
+    async def compare_and_apply_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> MutationResult: ...
+
+
+@runtime_checkable
+class RecoverableGraphMutationPort(Protocol):
+    @property
+    def capabilities(self) -> MutationCapabilities: ...
+
+    def lookup_execution(
+        self, plan: MutationBatch, *, expected_pot_id: str, mutation_id: str
+    ) -> MutationExecutionLookup: ...
+
+
+@runtime_checkable
+class AsyncRecoverableGraphMutationPort(Protocol):
+    @property
+    def capabilities(self) -> MutationCapabilities: ...
+
+    async def lookup_execution_async(
+        self, plan: MutationBatch, *, expected_pot_id: str, mutation_id: str
+    ) -> MutationExecutionLookup: ...
+
+
+@runtime_checkable
 class GraphMutationPort(Protocol):
     """Apply typed mutation plans and lifecycle operations to the claim store."""
 
@@ -118,9 +164,11 @@ class GraphMutationPort(Protocol):
         number of claims invalidated."""
         ...
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
         """Hard-reset all graph state for a pot. Returns a summary of what was
-        removed."""
+        removed and its execution identity for recoverable retries."""
         ...
 
     def readiness(self, pot_id: str) -> BackendReadiness:
@@ -130,6 +178,9 @@ class GraphMutationPort(Protocol):
 
 __all__ = [
     "AtomicGraphMutationPort",
+    "AsyncAtomicGraphMutationPort",
+    "RecoverableGraphMutationPort",
+    "AsyncRecoverableGraphMutationPort",
     "BackendReadiness",
     "GraphMutationPort",
     "MutationExecutionLookup",

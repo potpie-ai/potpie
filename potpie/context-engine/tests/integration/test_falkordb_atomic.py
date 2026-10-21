@@ -237,6 +237,9 @@ def test_evidence_marker_refresh_preserves_invalidation_and_claim(
         batch(
             {
                 "invalid_at": invalid_at,
+                "valid_at": (
+                    datetime.now(timezone.utc) - timedelta(days=30)
+                ).isoformat(),
                 "invalidation_reason": "scheduled source retirement",
                 "invalidated_by": "refresh:scheduled",
             }
@@ -251,13 +254,15 @@ def test_evidence_marker_refresh_preserves_invalidation_and_claim(
             include_invalidated=True,
         )
     )[0]
+    review = batch(
+        {
+            "evidence_review_required": True,
+            "evidence_review_reason": "source version changed",
+        }
+    )
+    review.edge_upserts[0].metadata_review_record_id = before.record_id
     backend.mutation.apply(
-        batch(
-            {
-                "evidence_review_required": True,
-                "evidence_review_reason": "source version changed",
-            }
-        ),
+        review,
         expected_pot_id="marker",
         provenance_context=_context("marker-refresh"),
     )
@@ -281,15 +286,21 @@ def test_evidence_marker_refresh_preserves_invalidation_and_claim(
         expected_pot_id="marker",
         provenance_context=_context("ordinary-reassert"),
     )
-    revived = backend.claim_query.find_claims(
+    reasserted = backend.claim_query.find_claims(
         ClaimQueryFilter(
             pot_id="marker",
             claim_key_in=("claim:guide-api",),
             include_invalidated=True,
         )
     )
-    assert len(revived) == 1
-    assert revived[0].invalid_at is None
+    old = next(row for row in reasserted if row.record_id == before.record_id)
+    assert old.invalid_at.isoformat() == invalid_at
+    if expiry_days > 0:
+        assert len(reasserted) == 1
+    else:
+        assert len(reasserted) == 2
+        current = next(row for row in reasserted if row.record_id != before.record_id)
+        assert current.invalid_at is None
 
 
 def test_single_query_failure_rolls_back_graph_revision_and_receipt(

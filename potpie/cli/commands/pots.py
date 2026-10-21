@@ -610,11 +610,24 @@ def pot_reset(
 
 
 def _resources_purged(result: Any) -> bool | None:
-    """The resource store's own answer from a reset, never a literal.
+    """Require completed teardown before reset success or archive publication.
 
     ``None`` means no resource store was composed: neither a purge nor a failed
     one, so it must not print the same sentence as ``False``.
     """
+    status = getattr(result, "resources_status", "not_configured")
+    if not result.reset or status not in {"completed", "not_configured"}:
+        fail(
+            code="context_reset_incomplete",
+            message=getattr(result, "detail", None)
+            or "Context reset did not complete graph and resource teardown.",
+            detail={
+                "graph_reset": bool(result.reset),
+                "mutation_id": getattr(result, "mutation_id", None),
+                "resources_status": status,
+            },
+            next_action="resolve the failure and retry the reset or archive command",
+        )
     return getattr(result, "resources_purged", None)
 
 

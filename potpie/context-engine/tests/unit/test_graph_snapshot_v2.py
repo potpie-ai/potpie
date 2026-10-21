@@ -65,9 +65,15 @@ def test_v2_round_trip_preserves_entities_metadata_and_is_idempotent() -> None:
     isolated = next(row for row in exported["entities"] if row["key"] == "isolated")
     assert isolated == {
         "key": "isolated",
-        "labels": ["Document"],
-        "properties": {"title": "Only node"},
+        "labels": ["Document", "Entity"],
+        "properties": {
+            "title": "Only node",
+            "record_id": isolated["properties"]["record_id"],
+        },
     }
+    assert isolated["properties"]["record_id"]
+    assert exported["claims"][0]["record_id"]
+    assert first.metadata["execution"] == second.metadata["execution"]
 
 
 @pytest.mark.parametrize(
@@ -114,6 +120,27 @@ def test_legacy_snapshot_migrates_keyless_claim_and_is_retry_safe() -> None:
     assert {row["key"] for row in exported["entities"]} == {"a", "b"}
 
 
+@pytest.mark.parametrize("changed_identity", [None, "different-explicit-id"])
+def test_import_cannot_invent_overlapping_incarnation(changed_identity) -> None:
+    source = _backend_with_snapshot_data().snapshot.export_data(pot_id="source")
+    target = InMemoryGraphBackend()
+    target.snapshot.import_data(pot_id="target", payload=source)
+    before = target.snapshot.export_data(pot_id="target")
+    incoming = deepcopy(before)
+    row = incoming["claims"][0]
+    row["record_id"] = changed_identity
+    row["properties"].pop("record_id", None)
+    row["properties"].pop("uuid", None)
+    # Force a different legacy-normalized identity even when the original
+    # archive was itself imported without an identity.
+    row["description"] = "legacy archive observation"
+    version = target.mutation.current_version("target")
+    with pytest.raises(ValueError, match="overlapping logical history"):
+        target.snapshot.import_data(pot_id="target", payload=incoming)
+    assert target.snapshot.export_data(pot_id="target") == before
+    assert target.mutation.current_version("target") == version
+
+
 def test_embedded_export_reloads_current_disk_state(tmp_path) -> None:
     stale = EmbeddedGraphBackend(home=tmp_path)
     writer = EmbeddedGraphBackend(home=tmp_path)
@@ -126,8 +153,12 @@ def test_embedded_export_reloads_current_disk_state(tmp_path) -> None:
             "claims": [],
         },
     )
+    identity = writer.claim_query.entity_properties(pot_id="p", entity_key="only")[
+        "record_id"
+    ]
+    assert identity
     assert stale.snapshot.export_data(pot_id="p")["entities"] == [
-        {"key": "only", "labels": ["Entity"], "properties": {}}
+        {"key": "only", "labels": ["Entity"], "properties": {"record_id": identity}}
     ]
 
 

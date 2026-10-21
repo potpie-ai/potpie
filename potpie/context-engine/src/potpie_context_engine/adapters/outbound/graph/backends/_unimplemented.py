@@ -67,7 +67,9 @@ class UnimplementedMutation:
     ) -> int:
         return _raise(self.profile, "mutation", "invalidate")
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
         return _raise(self.profile, "mutation", "reset_pot")
 
     def readiness(self, pot_id: str) -> BackendReadiness:

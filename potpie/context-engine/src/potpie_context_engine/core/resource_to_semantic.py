@@ -161,6 +161,11 @@ class DependentClaim:
     subject_key: str
     object_key: str
     subgraph: str = RESOURCE_SUBGRAPH
+    claim_key: str | None = None
+    record_id: str | None = None
+    environment: str | None = None
+    source_system: str | None = None
+    source_ref: str | None = None
 
 
 def document_key(doc: str) -> str:
@@ -192,6 +197,11 @@ def _dependent_retractions(
             "subject": {"key": claim.subject_key},
             "object": {"key": claim.object_key},
             "reason": reason,
+            "environment": claim.environment,
+            "target_claim_keys": [claim.claim_key] if claim.claim_key else [],
+            "target_claim_record_ids": [claim.record_id] if claim.record_id else [],
+            "target_source_system": claim.source_system,
+            "target_source_ref": claim.source_ref,
         }
         for claim in claims
     ]
@@ -335,6 +345,7 @@ def resource_delete_to_semantic_request(
     pot_id: str,
     doc: str,
     section_slugs: tuple[str, ...],
+    revision: int | None = None,
     dependent_claims: tuple[DependentClaim, ...] = (),
 ) -> SemanticMutationRequest:
     """Build the graph write that retracts every section of a removed document.
@@ -380,7 +391,7 @@ def resource_delete_to_semantic_request(
     return SemanticMutationRequest(
         pot_id=pot_id,
         operations=tuple(SemanticMutation.parse(op) for op in ops),
-        idempotency_key=f"resource-delete:{doc}:{','.join(section_slugs)}",
+        idempotency_key=f"resource-delete:{doc}:{revision}:{','.join(section_slugs)}",
         created_by=MutationActor(surface=_SURFACE, harness="resource_rm"),
         allow_review_required=True,
         approved_by=_APPROVED_BY_DELETE,

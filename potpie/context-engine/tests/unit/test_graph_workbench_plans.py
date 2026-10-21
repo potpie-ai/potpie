@@ -38,6 +38,25 @@ class _MemoryPlanStore:
         self.records: dict[tuple[str, str], GraphMutationPlanRecord] = {}
         self.lock = threading.Lock()
 
+    def reserve_idempotency(self, *, record, idempotency_key, request_fingerprint):
+        from potpie_context_engine.core.mutation_execution import (
+            request_fingerprint as fingerprint,
+        )
+
+        with self.lock:
+            for existing in self.records.values():
+                if (
+                    existing.pot_id == record.pot_id
+                    and existing.reserves_idempotency
+                    and existing.original_payload.get("idempotency_key")
+                    == idempotency_key
+                ):
+                    if fingerprint(existing.original_payload) != request_fingerprint:
+                        raise ValueError("idempotency_key has different content")
+                    return existing, False
+            self.records[(record.pot_id, record.plan_id)] = record
+            return record, True
+
     def save(self, record: GraphMutationPlanRecord) -> None:
         with self.lock:
             self.records[(record.pot_id, record.plan_id)] = record
@@ -191,13 +210,20 @@ def _idempotency_propose_worker(home, seconds, ready, results) -> None:
 
 
 class _RaiseOnceMutation:
+    @property
+    def capabilities(self):
+        return self.inner.capabilities
+
     def __init__(self, inner, *, after_side_effect: bool) -> None:
         self.inner = inner
         self.after_side_effect = after_side_effect
         self.mutation_ids: list[str | None] = []
         self.raised = False
 
-    def apply(self, plan, **kwargs):
+    def current_version(self, pot_id):
+        return self.inner.current_version(pot_id)
+
+    def compare_and_apply(self, plan, **kwargs):
         provenance = kwargs.get("provenance_context")
         self.mutation_ids.append(
             provenance.mutation_id if provenance is not None else None
@@ -205,9 +231,9 @@ class _RaiseOnceMutation:
         if not self.raised:
             self.raised = True
             if self.after_side_effect:
-                self.inner.apply(plan, **kwargs)
+                self.inner.compare_and_apply(plan, **kwargs)
             raise RuntimeError("injected mutation failure")
-        return self.inner.apply(plan, **kwargs)
+        return self.inner.compare_and_apply(plan, **kwargs)
 
     def lookup_execution(self, plan, **kwargs):
         return self.inner.lookup_execution(plan, **kwargs)
@@ -276,7 +302,7 @@ def test_crashed_committing_plan_has_single_stale_recovery_claimer() -> None:
         replace(
             proposed,
             status=GraphMutationPlanStatus.committing.value,
-            mutation_id="mutation:crash-recovery",
+            mutation_id=proposed.mutation_id,
             commit_attempt_id="attempt:crashed-worker",
             commit_attempt_started_at=datetime.now(timezone.utc)
             - timedelta(seconds=10),
@@ -300,7 +326,7 @@ def test_crashed_committing_plan_has_single_stale_recovery_claimer() -> None:
 
     assert sum(result.ok for result in results) == 1
     assert mutation_count == 1
-    assert {result.mutation_id for result in results} == {"mutation:crash-recovery"}
+    assert {result.mutation_id for result in results} == {proposed.mutation_id}
     stored = store.get(pot_id=POT, plan_id=proposal.plan_id)
     assert stored is not None
     assert stored.status == GraphMutationPlanStatus.committed.value
@@ -346,13 +372,11 @@ def test_stale_recovery_during_backend_callback_does_not_reapply() -> None:
             pot_id=POT,
             recover_stale=True,
         ).result(timeout=10)
-        store.save(active)
         release_callback.set()
         committed = owner.result(timeout=10)
 
-    assert recovering.ok is False
-    assert recovering.status == GraphMutationPlanStatus.committing.value
-    assert "still in flight" in (recovering.detail or "")
+    assert recovering.ok is True
+    assert recovering.status == GraphMutationPlanStatus.committed.value
     assert committed.ok is True
     assert recovering.mutation_id == committed.mutation_id
     assert mutation_count == 1
@@ -776,20 +800,20 @@ def test_commit_rejects_stale_plan_after_graph_version_changes() -> None:
     assert result.current_subgraph_versions["_global"] > 0
 
 
-def test_commit_rejects_stale_same_count_claim_overwrite() -> None:
+def test_commit_rejects_stale_same_count_claim_refresh() -> None:
     workbench, backend, _store = _service()
     initial = workbench.propose(_timeout_payload(10), pot_id=POT)
     assert workbench.commit(initial.plan_id, pot_id=POT).ok
 
-    stale = workbench.propose(_timeout_payload(20), pot_id=POT)
-    fresh = workbench.propose(_timeout_payload(30), pot_id=POT)
+    stale = workbench.propose(_timeout_payload(10), pot_id=POT)
+    fresh = workbench.propose(_timeout_payload(10), pot_id=POT)
     assert workbench.commit(fresh.plan_id, pot_id=POT).ok
     assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
 
     rejected = workbench.commit(stale.plan_id, pot_id=POT)
     assert rejected.status == "conflict"
     rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
-    assert rows[0].fact == "Ledger timeout is 30 seconds"
+    assert rows[0].fact == "Ledger timeout is 10 seconds"
 
 
 def test_competing_plans_compare_and_apply_once_per_backend_instance() -> None:
@@ -862,12 +886,19 @@ def test_embedded_competing_processes_atomically_compare_and_apply(tmp_path) -> 
     assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
 
 
-def test_verify_detects_later_content_change_at_same_claim_key() -> None:
-    workbench, _backend, _store = _service()
+def test_verify_detects_out_of_band_content_change_at_same_claim_key() -> None:
+    workbench, backend, _store = _service()
     first = workbench.propose(_timeout_payload(10), pot_id=POT)
     assert workbench.commit(first.plan_id, pot_id=POT, verify=True).ok
     second = workbench.propose(_timeout_payload(30), pot_id=POT)
-    assert workbench.commit(second.plan_id, pot_id=POT).ok
+    assert not second.ok
+    assert "explicit correction" in (second.detail or "")
+    # Corruption outside the supported mutation boundary must still be detected.
+    from dataclasses import replace
+
+    backend.store.rows[0] = replace(
+        backend.store.rows[0], fact="unexpected overwritten content"
+    )
 
     verification = workbench.verify_commit(first.plan_id, pot_id=POT)
     assert verification.ok is False
@@ -935,7 +966,9 @@ def test_idempotency_key_binding_survives_plan_store_restart(tmp_path) -> None:
     assert conflict.status == "invalid"
 
 
-def test_conflicted_idempotent_request_can_roll_forward_after_restart(tmp_path) -> None:
+def test_conflicted_idempotent_request_requires_new_identity_after_restart(
+    tmp_path,
+) -> None:
     backend = InMemoryGraphBackend()
     store = LocalJsonGraphPlanStore(home=tmp_path)
     service = GraphWorkbenchService(backend=backend, plan_store=store)
@@ -955,6 +988,12 @@ def test_conflicted_idempotent_request_can_roll_forward_after_restart(tmp_path) 
         _timeout_payload(20, idempotency_key="request:roll-forward"), pot_id=POT
     )
 
+    assert fresh.plan_id == stale.plan_id
+    assert not fresh.ok
+    assert restarted.commit(fresh.plan_id, pot_id=POT).status == "conflict"
+    fresh = restarted.propose(
+        _timeout_payload(20, idempotency_key="request:new-preparation"), pot_id=POT
+    )
     assert fresh.plan_id != stale.plan_id
     assert restarted.commit(fresh.plan_id, pot_id=POT).ok
 
@@ -1076,7 +1115,7 @@ def test_supersede_claim_requires_approval_then_replaces_live_claim() -> None:
     assert proposal.ok is True
     assert proposal.status == "review_required"
     assert proposal.risk == "high"
-    assert proposal.diff.edge_upserts == 1
+    assert proposal.diff.edge_upserts == 2  # replacement and reviewed SUPERSEDES effect
     assert proposal.diff.invalidations == 1
     blocked = workbench.commit(proposal.plan_id, pot_id=POT)
     assert blocked.ok is False
@@ -1090,13 +1129,16 @@ def test_supersede_claim_requires_approval_then_replaces_live_claim() -> None:
 
     assert committed.ok is True
     live_rows = backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))
-    assert len(live_rows) == 1
+    assert len(live_rows) == 2
+    assert any(row.predicate == "SUPERSEDES" for row in live_rows)
+    live_rows = [row for row in live_rows if row.predicate == "DEPENDS_ON"]
     assert live_rows[0].predicate == "DEPENDS_ON"
     assert live_rows[0].object_key == "service:ledger-v2"
     all_rows = backend.claim_query.find_claims(
         ClaimQueryFilter(pot_id=POT, include_invalidated=True)
     )
-    assert len(all_rows) == 2
+    assert len(all_rows) == 3
+    all_rows = [row for row in all_rows if row.predicate == "DEPENDS_ON"]
     assert any(
         row.object_key == "service:ledger-api" and row.invalid_at for row in all_rows
     )
@@ -1174,7 +1216,7 @@ def test_local_json_plan_store_rejects_a_stale_state_transition(tmp_path) -> Non
     claimed = replace(
         expected,
         status=GraphMutationPlanStatus.committing.value,
-        mutation_id="mutation:local-cas",
+        mutation_id=expected.mutation_id,
         commit_attempt_id="attempt:local-cas",
         commit_attempt_started_at=attempt_started_at,
     )
@@ -1190,7 +1232,7 @@ def test_local_json_plan_store_rejects_a_stale_state_transition(tmp_path) -> Non
     )
     reloaded = first_store.get(pot_id=POT, plan_id=proposal.plan_id)
     assert reloaded is not None
-    assert reloaded.mutation_id == "mutation:local-cas"
+    assert reloaded.mutation_id == expected.mutation_id
     assert reloaded.commit_attempt_id == "attempt:local-cas"
     assert reloaded.commit_attempt_started_at == attempt_started_at
 
@@ -1429,7 +1471,7 @@ def test_a_conflict_names_the_commits_that_landed_in_between() -> None:
     assert "Plans pin the whole pot's version" in result.detail
     assert "nothing from this plan was applied" in result.detail
     assert result.recommended_next_action == (
-        "Re-run `potpie graph propose --file <the same file>` and commit the new "
+        "Use a fresh idempotency_key and re-run `potpie graph propose`, then commit the new "
         "plan_id; nothing from this plan was applied."
     )
 
@@ -1526,3 +1568,38 @@ def test_commit_status_preserves_durable_failure_and_repair(status) -> None:
     assert (
         "backend readiness" if status == "error" else "fresh proposal"
     ) in result.recommended_next_action
+
+
+def test_empty_prepared_commit_gets_authoritative_receipt_without_revision() -> None:
+    from dataclasses import replace
+    from potpie_context_engine.core.mutation_execution import batch_fingerprint
+    from potpie_context_engine.core.reconciliation import MutationBatch
+
+    workbench, backend, store = _service()
+    proposal = workbench.propose(_link_payload(), pot_id=POT)
+    record = store.get(pot_id=POT, plan_id=proposal.plan_id)
+    batch = MutationBatch()
+    record = replace(
+        record,
+        lowered_batch=batch,
+        prepared=replace(
+            record.prepared,
+            batch_fingerprint=batch_fingerprint(batch),
+        ),
+    )
+    store.save(record)
+    result = workbench.commit(record.plan_id, pot_id=POT)
+    assert result.ok
+    assert backend.mutation.current_version(POT) == 0
+    lookup = backend.mutation.lookup_execution(
+        batch, expected_pot_id=POT, mutation_id=result.mutation_id
+    )
+    assert lookup.state == "completed"
+    assert (
+        lookup.result.execution.version_before
+        == lookup.result.execution.version_after
+        == 0
+    )
+    assert (
+        workbench.commit(record.plan_id, pot_id=POT).mutation_id == result.mutation_id
+    )

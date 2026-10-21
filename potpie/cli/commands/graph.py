@@ -14,7 +14,7 @@ import sys
 import time
 from contextlib import contextmanager
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -1763,6 +1763,11 @@ def graph_commit(
             "reported in verification.status and as a warning"
         ),
     ),
+    recover_stale: bool = typer.Option(
+        True,
+        "--recover-stale/--no-recover-stale",
+        help="Permit recovery of stale attempts after authoritative execution lookup",
+    ),
     pot: str = typer.Option(None, "--pot"),
 ) -> None:
     with _graph_command("graph.commit") as ctx:
@@ -1781,6 +1786,7 @@ def graph_commit(
             pot_id=pot_id,
             approved_by=approved_by,
             verify=verify,
+            recover_stale=recover_stale,
             history_command=(
                 f"potpie --json graph history --plan {quoted_plan} --pot {quoted_pot}"
             ),
@@ -2513,6 +2519,11 @@ def graph_import(
         "--no-resources",
         help="Import only graph entities and claims, ignoring bundled resources.",
     ),
+    mutation_id: str = typer.Option(
+        None,
+        "--mutation-id",
+        help="Fresh identity for an intentional restore; reuse only to retry that import.",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -2543,6 +2554,8 @@ def graph_import(
         ]
         if graph_only:
             rerun_parts.append("--graph-only")
+        if mutation_id is not None:
+            rerun_parts.extend(["--mutation-id", shlex.quote(mutation_id)])
         rerun_parts.append("--yes")
         documents_clause = " and document text" if "resources" in payload else ""
         confirmation = confirm_destructive_operation(
@@ -2555,7 +2568,9 @@ def graph_import(
         )
         manifest = run_engine_operation(
             get_engine_client(pot_id).import_snapshot(
-                EngineImportSnapshotRequest(version=2, payload=payload),
+                EngineImportSnapshotRequest(
+                    version=2, payload=payload, mutation_id=mutation_id
+                ),
                 confirmation=confirmation,
             )
         )
@@ -2617,6 +2632,14 @@ def graph_repair(
     entity_summaries: bool = typer.Option(False, "--entity-summaries"),
     entity_labels: bool = typer.Option(False, "--entity-labels"),
     all_: bool = typer.Option(False, "--all"),
+    legacy: bool = typer.Option(
+        False,
+        "--legacy",
+        help="Review or apply timestamp and physical identity repair.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    apply: bool = typer.Option(False, "--apply"),
+    repair_id: str = typer.Option(None, "--repair-id"),
     pot: str = typer.Option(None, "--pot"),
     yes: bool = typer.Option(
         False,
@@ -2629,6 +2652,26 @@ def graph_repair(
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
+        if legacy:
+            from potpie.cli.legacy_repair import format_legacy_repair, run_legacy_repair
+
+            if all_ or semantic_index or entity_summaries or entity_labels:
+                raise typer.BadParameter(
+                    "--legacy cannot be combined with other repair targets."
+                )
+            report = run_legacy_repair(
+                pot_id=pot_id,
+                dry_run=dry_run,
+                apply=apply,
+                repair_id=repair_id,
+                yes=yes,
+            )
+            _emit_graph_result(ctx, asdict(report), human=format_legacy_repair(report))
+            return
+        if dry_run or apply or repair_id:
+            raise typer.BadParameter(
+                "--dry-run, --apply and --repair-id require --legacy."
+            )
         targets = []
         if not all_:
             if semantic_index:

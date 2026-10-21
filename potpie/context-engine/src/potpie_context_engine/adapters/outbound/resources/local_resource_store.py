@@ -776,11 +776,23 @@ class LocalResourceStore:
             return ()
 
     # --- teardown -----------------------------------------------------------
-    def delete(self, *, pot_id: str, slug: str) -> bool:
+    def delete(
+        self, *, pot_id: str, slug: str, expected_revision: int | None = None
+    ) -> bool:
         doc = require_resource_slug(slug, kind="document")
         pot_root = self._pot_root(pot_id)
         with _pot_lock(pot_root, exclusive=False):
             with _document_lock(pot_root, doc):
+                current = _load_manifest(pot_root / doc, pot_id=pot_id, doc=doc)
+                if (
+                    current is not None
+                    and expected_revision is not None
+                    and current.revision != expected_revision
+                ):
+                    raise ResourceStoreError(
+                        "resource_revision_changed",
+                        "Document changed before deletion; newer bytes were preserved.",
+                    )
                 return _remove_tree(pot_root / doc)
 
     def purge_pot(self, pot_id: str) -> bool:

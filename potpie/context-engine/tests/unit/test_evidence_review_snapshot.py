@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 import pytest
 
 from potpie_context_engine.core.ports.claim_query import ClaimRow
+from potpie_context_engine.core.workbench_service import GraphWorkbenchService
+from potpie_context_engine.core.mutation_plan_store import InMemoryGraphPlanStore
 from potpie_context_engine.core.semantic_mutation_validator import (
     validate_semantic_request,
 )
@@ -16,7 +18,13 @@ from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend im
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
 from potpie_context_engine.application.services.resource_facade import (
     ResourceFacade,
-    _claim_snapshot,
+)
+
+from potpie_context_engine.application.services.resource_review import (
+    build_review_operations,
+)
+from potpie_context_engine.core.claim_codec import (
+    claim_preservation_snapshot as _claim_snapshot,
 )
 
 pytestmark = pytest.mark.unit
@@ -28,6 +36,7 @@ def _row() -> ClaimRow:
     return ClaimRow(
         pot_id=POT,
         claim_key="claim:guide-api",
+        record_id="record:guide-api-1",
         predicate="DOCUMENTS",
         subject_key="document:guide",
         object_key="service:api",
@@ -59,6 +68,8 @@ def _backend(row: ClaimRow) -> InMemoryGraphBackend:
     backend.store.set_entity_label(
         pot_id=POT, entity_key=row.object_key, labels=("Entity", "Service")
     )
+    for key in (row.subject_key, row.object_key):
+        backend.store.entity_property_index[(POT, key)] = {"record_id": f"entity:{key}"}
     return backend
 
 
@@ -69,7 +80,12 @@ class _UnusedStore:
 class _RacingGraph:
     def __init__(self, backend: InMemoryGraphBackend) -> None:
         self.backend = backend
-        self.delegate = DefaultGraphService(backend=backend)
+        self.delegate = DefaultGraphService(
+            backend=backend,
+            record_workbench=GraphWorkbenchService(
+                backend=backend, plan_store=InMemoryGraphPlanStore()
+            ),
+        )
 
     def mutate(self, request):
         current = self.backend.store.rows[0]
@@ -90,6 +106,19 @@ class _CapturingGraph:
         return type("Result", (), {"ok": True})()
 
 
+def _apply_review(facade, **kwargs):
+    operations = build_review_operations(facade.claims, **kwargs)
+    result = facade.graph.mutate(
+        SemanticMutationRequest(
+            pot_id=kwargs["pot_id"],
+            operations=operations,
+            allow_review_required=True,
+            approved_by="resource_evidence_lifecycle",
+        )
+    )
+    return tuple(issue.message for issue in result.issues) if not result.ok else ()
+
+
 def test_intervening_content_update_rejects_marker_and_keeps_newer_fact() -> None:
     copied = _row()
     backend = _backend(copied)
@@ -97,7 +126,8 @@ def test_intervening_content_update_rejects_marker_and_keeps_newer_fact() -> Non
         store=_UnusedStore(), graph=_RacingGraph(backend), claims=backend.claim_query
     )
 
-    errors = facade._mark_claims_for_review(
+    errors = _apply_review(
+        facade,
         pot_id=POT,
         rows=[copied],
         refs=("resource:guide/overview/1@rev1",),
@@ -116,11 +146,17 @@ def test_duplicate_exact_claim_key_rejects_preservation_marker() -> None:
     backend.store.add(dataclasses.replace(row, fact="duplicate row"))
     facade = ResourceFacade(
         store=_UnusedStore(),
-        graph=DefaultGraphService(backend=backend),
+        graph=DefaultGraphService(
+            backend=backend,
+            record_workbench=GraphWorkbenchService(
+                backend=backend, plan_store=InMemoryGraphPlanStore()
+            ),
+        ),
         claims=backend.claim_query,
     )
 
-    errors = facade._mark_claims_for_review(
+    errors = _apply_review(
+        facade,
         pot_id=POT,
         rows=[row],
         refs=("resource:guide/overview/1@rev1",),
@@ -181,11 +217,17 @@ def test_unchanged_exact_marker_succeeds_and_preserves_claim() -> None:
     backend = _backend(row)
     facade = ResourceFacade(
         store=_UnusedStore(),
-        graph=DefaultGraphService(backend=backend),
+        graph=DefaultGraphService(
+            backend=backend,
+            record_workbench=GraphWorkbenchService(
+                backend=backend, plan_store=InMemoryGraphPlanStore()
+            ),
+        ),
         claims=backend.claim_query,
     )
 
-    errors = facade._mark_claims_for_review(
+    errors = _apply_review(
+        facade,
         pot_id=POT,
         rows=[row],
         refs=("resource:guide/overview/1@rev1",),
@@ -202,24 +244,20 @@ def test_unchanged_exact_marker_succeeds_and_preserves_claim() -> None:
     assert marked.properties["evidence_review_required"] is True
 
 
-def test_marker_idempotency_key_tracks_exact_claim_snapshot() -> None:
+def test_review_preparation_preserves_exact_snapshot_without_a_separate_execution():
     row = _row()
     backend = _backend(row)
-    graph = _CapturingGraph()
-    facade = ResourceFacade(
-        store=_UnusedStore(), graph=graph, claims=backend.claim_query
-    )
     args = {
         "pot_id": POT,
         "refs": ("resource:guide/overview/1@rev1",),
-        "reason": "source revision changed",
+        "reason": "changed",
     }
-
-    assert facade._mark_claims_for_review(rows=[row], **args) == ()
-    assert facade._mark_claims_for_review(rows=[row], **args) == ()
-    changed = dataclasses.replace(row, fact="new fact", properties={"generation": 2})
-    assert facade._mark_claims_for_review(rows=[changed], **args) == ()
-
-    first, repeated, updated = (request.idempotency_key for request in graph.requests)
+    first = build_review_operations(backend.claim_query, rows=[row], **args)
+    repeated = build_review_operations(backend.claim_query, rows=[row], **args)
+    updated = build_review_operations(
+        backend.claim_query, rows=[dataclasses.replace(row, fact="changed")], **args
+    )
     assert first == repeated
     assert updated != first
+    assert first[0].extra["_preserve_claim_record_id"] == row.record_id
+    assert backend.mutation.current_version(POT) == 0

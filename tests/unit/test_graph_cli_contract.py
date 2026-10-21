@@ -342,6 +342,7 @@ class _Workbench:
         approved_by=None,
         verify=False,
         defer_verification=False,
+        recover_stale=True,
     ):
         self.commit_calls.append((plan_id, pot_id, approved_by, verify))
         self.deferred_verification.append(defer_verification)

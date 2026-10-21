@@ -301,3 +301,53 @@ def test_parallel_claim_identity_survives_endpoint_normalization(discriminator):
         "staging",
     }
     assert {edge.from_entity_key for edge in plan.edge_upserts} == {"service:api"}
+
+
+@pytest.mark.parametrize(
+    "scope", [{"source_system": "ticketing"}, {"subgraph": "knowledge"}]
+)
+def test_canonicalization_preserves_competing_source_and_subgraph_claims(scope):
+    props = {
+        "claim_key": "same",
+        "source_ref": "stable",
+        "source_system": "git",
+        "subgraph": "infra_topology",
+    }
+    plan = _plan(
+        edge_upserts=[
+            EdgeUpsert("DEPENDS_ON", "service:a", "service:b", props),
+            EdgeUpsert("DEPENDS_ON", "service:a", "service:b", {**props, **scope}),
+        ]
+    )
+    canonicalize_reconciliation_plan(plan)
+    assert len(plan.edge_upserts) == 2
+
+
+def test_duplicate_deletions_reach_the_shared_duplicate_target_guard():
+    plan = _plan(
+        edge_deletes=[
+            EdgeDelete("DEPENDS_ON", "service:a", "service:b") for _ in range(2)
+        ]
+    )
+    canonicalize_reconciliation_plan(plan)
+    assert len(plan.edge_deletes) == 2
+
+
+def test_property_projection_survives_canonicalization_without_label_inference():
+    from potpie_context_engine.core.graph_plans import (
+        mutation_batch_from_dict,
+        mutation_batch_to_dict,
+    )
+    from potpie_context_engine.core.reconciliation_validation import (
+        validate_reconciliation_plan,
+    )
+
+    plan = _plan(
+        entity_upserts=[
+            EntityUpsert("service:a", (), {"invalidated": True}, preserve_labels=True)
+        ]
+    )
+    validate_reconciliation_plan(plan, "pot-1")
+    assert plan.entity_upserts[0].preserve_labels
+    assert plan.entity_upserts[0].labels == ()
+    assert mutation_batch_from_dict(mutation_batch_to_dict(plan)) == plan

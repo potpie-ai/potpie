@@ -179,21 +179,49 @@ class ImportSnapshotRequest(EngineRequest):
     Version 1, the default, reads the file at ``source`` on the executing host.
     Version 2 takes no ``source``: ``payload`` is the snapshot itself, and its
     ``resources`` part, when present, restores document text with the graph.
+    Supply a fresh ``mutation_id`` to intentionally restore again after reset;
+    reuse it only to recover that import's receipt.
     """
 
     source: str = ""
     version: int = 1
     payload: Mapping[str, Any] = field(default_factory=dict)
+    mutation_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mutation_id is not None and (
+            not isinstance(self.mutation_id, str) or not self.mutation_id.strip()
+        ):
+            raise ValueError("mutation_id must be a nonempty string")
 
 
 @dataclass(frozen=True, slots=True)
 class RepairRequest(EngineRequest):
     targets: tuple[str, ...] = ()
+    legacy_mode: str | None = None
+    repair_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.legacy_mode not in {None, "dry_run", "apply"}:
+            raise ValueError("legacy_mode must be dry_run or apply")
+        if self.legacy_mode is not None and self.targets:
+            raise ValueError(
+                "legacy repair cannot be combined with derived repair targets"
+            )
+        if self.legacy_mode == "apply" and not self.repair_id:
+            raise ValueError("legacy apply requires the reviewed repair_id")
+        if self.legacy_mode is None and self.repair_id is not None:
+            raise ValueError("repair_id requires legacy repair mode")
+        if self.repair_id is not None and (
+            not isinstance(self.repair_id, str) or not self.repair_id.strip()
+        ):
+            raise ValueError("repair_id must be a nonempty string")
 
 
 @dataclass(frozen=True, slots=True)
 class ResetContextRequest(EngineRequest):
-    pass
+    mutation_id: str | None = None
+    """Identity returned by an earlier reset, for graph execution recovery."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +240,7 @@ class CommitRequest(EngineRequest):
     # Return the durable receipt before the slow readback; the caller verifies
     # it separately so a failed check cannot hide a write that landed.
     defer_verification: bool = False
+    recover_stale: bool = True
 
 
 @dataclass(frozen=True, slots=True)

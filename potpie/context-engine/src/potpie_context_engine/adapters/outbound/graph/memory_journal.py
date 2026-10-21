@@ -35,33 +35,27 @@ from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
 )
 
 
-def migrate_ids(store, pot_id: str) -> None:
-    """Assign identity under the caller's write guard; reject duplicate stored IDs."""
-    keys = {key for pid, key in store.entity_label_index if pid == pot_id}
-    keys.update(key for pid, key in store.entity_property_index if pid == pot_id)
-    keys.update(
-        key
-        for r in store.rows
-        if r.pot_id == pot_id
-        for key in (r.subject_key, r.object_key)
-    )
-    used = set()
-    for key in sorted(keys):
-        props = store.entity_property_index.setdefault((pot_id, key), {})
-        record_id = props.get("record_id") or props.get("uuid") or uuid.uuid4().hex
-        if not isinstance(record_id, str) or record_id in used:
-            raise JournalError("ambiguous entity record identity")
-        used.add(record_id)
-        props["record_id"] = record_id
-        store.entity_label_index.setdefault((pot_id, key), ("Entity",))
-    for i, row in enumerate(store.rows):
-        if row.pot_id != pot_id:
-            continue
-        record_id = row.record_id or uuid.uuid4().hex
-        if not isinstance(record_id, str) or record_id in used:
-            raise JournalError("ambiguous claim record identity")
-        used.add(record_id)
-        store.rows[i] = replace(row, record_id=record_id)
+def validate_ids(store, pot_id: str) -> None:
+    """Journal activation validates existing identity without migrating data."""
+    from potpie_context_engine.core.legacy_records import validate_alias_ownership
+
+    from .memory_legacy import _inventory_entries
+
+    records = tuple(record for record, _ in _inventory_entries(store, pot_id))
+    try:
+        validate_alias_ownership(records)
+    except ValueError as exc:
+        raise JournalError(str(exc)) from exc
+    for record in records:
+        identity = record.value("record_id")
+        if not isinstance(identity, str) or not identity.strip():
+            raise JournalError("migration_required: journal record has no record_id")
+        if record.kind == "claim" and (
+            record.subject_pot_id != pot_id or record.object_pot_id != pot_id
+        ):
+            raise JournalError(
+                "migration_required: journal claim has missing endpoints"
+            )
 
 
 def records_from_store(store, pot_id: str) -> dict[str, JournalRecord]:
@@ -89,7 +83,14 @@ def records_from_store(store, pot_id: str) -> dict[str, JournalRecord]:
         body = {
             f.name: deepcopy(getattr(row, f.name))
             for f in fields(row)
-            if f.name not in {"pot_id", "record_id", "retired"}
+            if f.name
+            not in {
+                "pot_id",
+                "record_id",
+                "retired",
+                "temporal_diagnostics",
+                "stored_source",
+            }
         }
         body["active"] = not row.retired
         for name, key in (
@@ -145,6 +146,7 @@ def publish_records(store, records, *, mutation_id: str) -> None:
             ]
             if len(matches) != 1:
                 raise JournalError("restore requires exactly one stored incarnation")
+            row = replace(row, stored_source=store.rows[matches[0]].stored_source)
             store.rows[matches[0]] = row
 
 
@@ -186,15 +188,13 @@ class MemoryJournal:
             state = self.journal_state(pot_id)
             if state:
                 return state
-            staged = clone_store(self.owner.store)
-            migrate_ids(staged, pot_id)
+            validate_ids(self.owner.store, pot_id)
             state = JournalState(
                 pot_id,
                 uuid.uuid4().hex,
                 rollback_enabled=rollback_enabled,
                 limits=limits or JournalLimits(),
             )
-            adopt_store(self.owner.store, staged)
             self.owner.journal_data["states"][pot_id] = state
             self.owner.journal_data.setdefault("receipts", {})[pot_id] = []
             self.owner._notify()
@@ -276,69 +276,51 @@ class MemoryJournal:
             self.owner.revisions.get(state.pot_id, 0) + 1
         )
 
-    def apply(self, plan, *, original_plan, pot_id, mutation_id, provenance):
-        from .backends.in_memory_backend import _Mutation
+    def apply(
+        self, plan, *, original_plan, pot_id, mutation_id, provenance, applied_at
+    ):
+        """Capture one apply inside ``apply_transaction``'s isolated writer.
 
+        The transaction owns execution identity, metadata and publication. This
+        journal step only captures the graph delta and advances the journal head.
+        """
         state = self.journal_state(pot_id)
         assert state is not None
         receipt = self.get_receipt(pot_id=pot_id, commit_id=mutation_id)
-        if receipt is not None and receipt.fingerprint != mutation_batch_fingerprint(
-            original_plan
-        ):
-            raise JournalError("commit ID was reused with a different mutation")
-        prior = self.owner.execution_registry.lookup(
-            original_plan, expected_pot_id=pot_id, mutation_id=mutation_id
-        )
-        if prior.result is not None:
-            return prior.result
+        if receipt is not None:
+            raise JournalError("commit ID was reused")
         self._guard_write(state)
-        staged = clone_store(self.owner.store)
-        before = records_from_store(staged, pot_id)
-        writer = _Mutation(
-            staged,
-            definition=self.owner.definition,
-            embedder=self.owner.embedder,
-            journal_data=deepcopy(self.owner.journal_data),
+        store = self.owner.store
+        before = records_from_store(store, pot_id)
+        result = self.owner._apply_uncached(
+            plan,
+            expected_pot_id=pot_id,
+            mutation_id=mutation_id,
+            provenance=provenance,
+            applied_at=applied_at,
         )
-        result = writer._apply_uncached(
-            plan, expected_pot_id=pot_id, mutation_id=mutation_id
-        )
-        for ent in plan.entity_upserts:
-            props = staged.entity_property_index[(pot_id, ent.entity_key)]
-            old = self.owner.store.entity_property_index.get(
-                (pot_id, ent.entity_key), {}
-            )
-            if old.get("record_id"):
-                props["record_id"] = old["record_id"]
-            if old.get("uuid"):
-                props["uuid"] = old["uuid"]
-            props["retired"] = False
-        migrate_ids(staged, pot_id)
-        after = records_from_store(staged, pot_id)
+        validate_ids(store, pot_id)
         receipt = self._receipt(
             state,
             before,
-            after,
+            records_from_store(store, pot_id),
             commit_id=mutation_id,
             fingerprint=mutation_batch_fingerprint(original_plan),
-            actor=provenance.actor_user_id
-            if provenance and provenance.actor_user_id
-            else "system",
+            actor=(
+                provenance.actor_user_id
+                if provenance and provenance.actor_user_id
+                else "system"
+            ),
             message=plan.summary,
+            origin="repair" if plan.record_repairs else None,
+            unsupported_reason=(
+                "raw legacy repair cannot be restored by the typed journal schema"
+                if plan.record_repairs
+                else None
+            ),
         )
-
-        def publish():
-            adopt_store(self.owner.store, staged)
-            self._append(state, receipt)
-            return result
-
-        return self.owner.execution_registry.execute(
-            original_plan,
-            expected_pot_id=pot_id,
-            mutation_id=mutation_id,
-            operation=publish,
-            on_completed=self.owner._notify,
-        )
+        self._append(state, receipt)
+        return result
 
     def plan_restore(self, *, pot_id, target_commit_id, expected_head, mode="revert"):
         with self.owner.state_lock:
@@ -520,64 +502,6 @@ class MemoryJournal:
             self.owner.journal_data["states"][pot_id] = state
             self.owner._notify()
             return deepcopy(state)
-
-
-def repair_journaled(analytics, pot_id, targets):
-    from potpie_context_engine.core.graph_mutations import EntityUpsert
-    from potpie_context_engine.core.journal_context import (
-        JournalWriteContext,
-        journal_write_context,
-    )
-    from potpie_context_engine.core.ports.graph.analytics import RepairReport
-    from potpie_context_engine.core.reconciliation import MutationBatch
-
-    from .entity_label_repair import repaired_entity_labels, wants_entity_label_repair
-    from .entity_summary_repair import (
-        repaired_entity_properties,
-        wants_entity_summary_repair,
-    )
-
-    with analytics.mutation.state_lock:
-        operations, repaired = [], {"entity_summaries": 0, "entity_labels": 0}
-        for (pid, key), properties in analytics.store.entity_property_index.items():
-            if pid != pot_id or properties.get("retired", False):
-                continue
-            labels = analytics.store.entity_label_index.get((pid, key), ())
-            props = (
-                repaired_entity_properties(key, properties)
-                if wants_entity_summary_repair(targets)
-                else None
-            )
-            fixed_labels = (
-                repaired_entity_labels(
-                    key, labels, entity_types=analytics.definition.entity_types
-                )
-                if wants_entity_label_repair(targets)
-                else None
-            )
-            if props is not None or fixed_labels is not None:
-                operations.append(
-                    EntityUpsert(key, tuple(fixed_labels or labels), props or {})
-                )
-                repaired["entity_summaries"] += props is not None
-                repaired["entity_labels"] += fixed_labels is not None
-        if operations:
-            with journal_write_context(
-                JournalWriteContext(origin="repair", required_access="admin")
-            ):
-                analytics.mutation.apply(
-                    MutationBatch(
-                        summary="Repair entity summaries/labels",
-                        entity_upserts=operations,
-                    ),
-                    expected_pot_id=pot_id,
-                )
-        return RepairReport(
-            pot_id=pot_id,
-            targets=tuple(targets),
-            repaired=repaired,
-            detail="semantic repairs captured in graph journal",
-        )
 
 
 def clone_store(store):

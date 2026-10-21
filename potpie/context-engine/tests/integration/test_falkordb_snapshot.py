@@ -252,7 +252,8 @@ def test_nested_and_json_looking_properties_survive_falkor_embedded_falkor(
     assert web["properties"]["json_looking_string"] == '{"must":"stay a string"}'
     assert web["properties"]["optional"] is None
     isolated = next(row for row in last["entities"] if row["key"] == "doc:isolated")
-    assert isolated["properties"] == {"meta": {"kind": "runbook"}}
+    assert isolated["properties"]["meta"] == {"kind": "runbook"}
+    assert isinstance(isolated["properties"]["record_id"], str)
     claim = last["claims"][0]
     assert claim["properties"] == original["claims"][0]["properties"]
     assert claim["invalid_at"] == "2026-08-01T00:00:00+00:00"

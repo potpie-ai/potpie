@@ -32,6 +32,7 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     shutdown_embedded_servers,
 )
 from potpie_context_engine.core.errors import GraphSubstrateUnavailable
+from potpie_context_engine.core.claim_lifecycle import ClaimLifecycleConflict
 from potpie_context_engine.core.api import (
     DEFAULT_GRAPH_DEFINITION,
     EdgeTypeSpec,
@@ -71,9 +72,16 @@ class _FakeGraph:
         if "DETACH DELETE" in cypher:
             self._deleted = True
             return _FakeResult()
+        if "UNION ALL" in cypher and "AS identity" in cypher:
+            # No existing identities in these new-claim shim fixtures.
+            return _FakeResult()
         if "count(n) AS cnt" in cypher:
             val = 0 if self._deleted else self._count
             return _FakeResult(header=[[1, "cnt"]], result_set=[[val]])
+        if "CREATE (a)-[r:RELATES_TO]" in cypher:
+            # These writer-shim tests supply existing endpoints; candidate
+            # reads are empty and one new physical relationship is created.
+            return _FakeResult(header=[[1, "cnt"]], result_set=[[1]])
         return _FakeResult()
 
     def ro_query(self, cypher: str, params=None):
@@ -394,7 +402,9 @@ async def test_writer_never_embeds_unsafe_registered_labels_in_cypher() -> None:
     assert all("Bad-Label" not in query for query, _ in graph.queries)
 
 
-async def test_writer_uses_bound_extension_predicate_for_invalidation() -> None:
+async def test_writer_uses_bound_extension_predicate_and_requires_resolved_invalidation() -> (
+    None
+):
     definition = DEFAULT_GRAPH_DEFINITION.extend(
         GraphExtension(
             name="widgets",
@@ -425,21 +435,17 @@ async def test_writer_uses_bound_extension_predicate_for_invalidation() -> None:
         definition=definition,
     )
 
-    await writer.invalidate(
-        "p1",
-        [
-            InvalidationOp(
-                target_entity_key=None,
-                target_edge=("CONNECTS_WIDGET", "widget:a", "widget:b"),
-                reason="superseded",
-            )
-        ],
-        ProvenanceRef(pot_id="p1", source_event_id="e1"),
+    operation = InvalidationOp(
+        None, ("CONNECTS_WIDGET", "widget:a", "widget:b"), "superseded"
     )
-
-    assert any(
-        params.get("predicate") == "CONNECTS_WIDGET" for _, params in graph.queries
-    )
+    provenance = ProvenanceRef(pot_id="p1", source_event_id="e1")
+    with pytest.raises(
+        ClaimLifecycleConflict, match="resolved inside the atomic mutation boundary"
+    ):
+        await writer.invalidate("p1", [operation], provenance)
+    operation.closures = ()
+    assert await writer.invalidate("p1", [operation], provenance) == 0
+    assert not graph.queries
 
 
 async def test_upsert_edges_writes_falkordb_vecf32_embedding() -> None:
@@ -464,8 +470,8 @@ async def test_upsert_edges_writes_falkordb_vecf32_embedding() -> None:
     assert len(vector_writes) == 1
     _, params = vector_writes[0]
     assert params["embedding"] == [0.1, 0.2, 0.3]
-    assert params["embedding_model"] == "fake-embedder"
-    assert params["embedding_dim"] == 3
+    assert params["props"]["embedding_model"] == "fake-embedder"
+    assert params["props"]["embedding_dim"] == 3
 
 
 def test_build_falkordb_graph_server_mode_requires_url() -> None:

@@ -868,8 +868,16 @@ potpie graph inspect <entity_key> [--depth 2] [--pot <ref>]      # legacy alias 
 potpie graph export <file|folder> [--overwrite] [--graph-only] [--pot <ref>]
 potpie graph import <file|folder> [--graph-only] [--yes/-y] [--pot <ref>]
 potpie graph repair [--semantic-index] [--entity-summaries] [--entity-labels] [--all] [--yes/-y] [--pot <ref>]
+potpie graph repair --legacy --dry-run [--repair-id <id>] [--pot <ref>]
+potpie graph repair --legacy --apply --repair-id <id> [--yes/-y] [--pot <ref>]
 ```
 
+- **Legacy repair** reserves a frozen timestamp/physical-ID repair for review.
+  Dry-run requires read access and displays bounded changes/findings; global
+  `--json` includes the entire run. Apply requires admin access, confirmation and
+  the reviewed ID. Retry that ID to recover completed child receipts. Expiry or a
+  revision conflict requires fresh preparation for remaining work. Before
+  migrating, stop all old writers, and do not rely on a schema marker to fence them.
 - **`graph neighborhood`** is the **Traverse** axis (first-class), backed by
   `backend.inspection.neighborhood`. `graph inspect` is a legacy alias that warns
   toward `neighborhood`. The normal JSON slice has a 32 KiB byte budget with

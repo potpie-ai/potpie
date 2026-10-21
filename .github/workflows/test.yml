@@ -188,6 +188,13 @@ jobs:
 
   potpie-context-engine:
     runs-on: ubuntu-latest
+    env:
+      POTPIE_RELIABILITY_PROFILES: in_memory,embedded,falkordb_lite,falkordb,neo4j
+      PROTOCOL_TEST_FALKORDB_URL: redis://127.0.0.1:6380
+      POTPIE_JOURNAL_FALKOR_PORT: "6380"
+      PROTOCOL_TEST_NEO4J_URI: bolt://127.0.0.1:7687
+      PROTOCOL_TEST_NEO4J_USERNAME: neo4j
+      PROTOCOL_TEST_NEO4J_PASSWORD: protocol-test
     strategy:
       fail-fast: false
       matrix:
@@ -222,6 +229,9 @@ jobs:
       # below and use their own graph names.
       protocol-falkordb:
         image: falkordb/falkordb:v4.16.0
+        env:
+          BROWSER: "0"
+          REDIS_ARGS: "--appendonly yes --appendfsync always"
         ports:
           - 6380:6379
         options: >-
@@ -287,6 +297,56 @@ jobs:
           PROTOCOL_TEST_NEO4J_PASSWORD: protocol-test
         run: uv run --project . pytest tests -m "not premerge_journey"
 
+      - name: Require graph reliability acceptance without skips
+        working-directory: potpie/context-engine
+        run: >-
+          uv run --project . pytest -p tests.required_acceptance
+          tests/conformance/test_graph_reliability.py
+          tests/conformance/test_public_semantic_mutation_reliability.py
+          tests/conformance/test_record_capture_acceptance.py
+          tests/unit/test_record_recovery.py
+          tests/conformance/test_temporal_backend_acceptance.py
+          tests/conformance/test_graph_journal.py
+          tests/integration/test_falkordb_atomic.py
+          tests/integration/test_falkordb_reliability.py
+          tests/integration/test_falkordb_revision_integrity.py
+          tests/integration/test_falkordb_write_entrypoints.py
+          tests/integration/test_falkordb_roundtrip.py
+          tests/integration/test_falkordb_claim_lifecycle.py
+          tests/integration/test_falkordb_claim_corrections.py
+          tests/integration/test_falkordb_temporal.py
+          tests/integration/test_falkordb_verification.py
+          tests/integration/test_falkordb_legacy_repair.py
+          tests/integration/test_neo4j_atomic_mutations.py
+          tests/integration/test_neo4j_execution_reliability.py
+          tests/integration/test_neo4j_revision_integrity.py
+          tests/integration/test_neo4j_write_entrypoints.py
+          tests/integration/test_neo4j_claim_lifecycle.py
+          tests/integration/test_neo4j_claim_corrections.py
+          tests/integration/test_neo4j_temporal_reads.py
+          tests/integration/test_neo4j_verification.py
+          tests/integration/test_neo4j_legacy_repair.py
+          tests/integration/test_scoped_claim_reads.py
+          -k "not restart"
+
+      # Run serially after all other graph checks. Each endpoint and container ID
+      # refer to the same service; no image/name discovery can select another DB.
+      - name: Require native restart and public repair recovery
+        working-directory: potpie/context-engine
+        env:
+          POTPIE_TEST_FALKORDB_RESTART_CONTAINER: ${{ job.services.protocol-falkordb.id }}
+          PROTOCOL_TEST_NEO4J_CONTAINER: ${{ job.services.protocol-neo4j.id }}
+          POTPIE_JOURNAL_CRASH_CONTAINER: pie-journal-crash-ci
+          POTPIE_JOURNAL_CRASH_PORT: "6381"
+        run: >-
+          uv run --project . pytest -p tests.required_acceptance
+          tests/integration/test_falkordb_reliability.py::test_server_aof_receipt_survives_restart
+          tests/integration/test_falkordb_reliability.py::test_lite_receipt_survives_process_restart
+          'tests/integration/test_falkordb_legacy_repair.py::test_repaired_receipt_survives_server_restart[server]'
+          tests/integration/test_neo4j_execution_reliability.py::test_native_server_restart_retains_execution_receipt
+          tests/conformance/test_public_repair_restart.py
+          tests/conformance/test_journal_crash.py
+
   potpie-windows-unit:
     # Windows-specific daemon lifecycle, liveness, git probe and install-status
     # behavior. A focused subset: the full suite assumes POSIX in many places.
@@ -309,7 +369,7 @@ jobs:
 
       - name: Install dependencies
         # The extras the VS Code extension installs on Windows.
-        run: uv sync --frozen --no-cache --extra daemon --extra auth --extra telemetry
+        run: uv sync --frozen --all-packages --no-cache --extra daemon --extra auth --extra telemetry
 
       - name: Run Windows-relevant unit tests
         run: >-
@@ -323,6 +383,24 @@ jobs:
           tests/unit/test_cli_install_status_path.py
           tests/unit/test_local_extra_windows_markers.py
           tests/unit/test_local_extra_next_action.py
+
+      - name: Require Windows memory and JSON graph persistence
+        working-directory: potpie/context-engine
+        env:
+          POTPIE_RELIABILITY_PROFILES: in_memory,embedded
+        run: >-
+          uv run --project . pytest -p no:cacheprovider -p tests.required_acceptance
+          tests/conformance/test_graph_reliability.py
+          tests/conformance/test_public_semantic_mutation_reliability.py
+          tests/unit/test_record_recovery.py
+          tests/unit/test_memory_embedded_atomicity.py
+          tests/unit/test_plan_storage_reliability.py
+          tests/unit/test_memory_legacy_repair.py
+          tests/unit/test_legacy_repair_workflow.py
+          tests/unit/test_mutation_apply_once.py::test_embedded_concurrent_processes_share_one_durable_receipt
+          tests/unit/test_graph_workbench_plans.py::test_embedded_competing_processes_atomically_compare_and_apply
+          tests/unit/test_graph_workbench_plans.py::test_idempotency_key_different_bodies_race_atomically_across_processes
+          tests/unit/test_graph_workbench_plans.py::test_local_json_plan_store_compare_and_set_is_process_safe
 
   premerge-cli-journey:
     if: github.event_name == 'pull_request'

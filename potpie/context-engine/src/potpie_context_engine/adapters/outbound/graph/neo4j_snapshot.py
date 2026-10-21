@@ -2,32 +2,20 @@
 
 from __future__ import annotations
 
-import re
+from dataclasses import replace
 from typing import Any, Mapping
 
-from potpie_context_engine.core.graph_snapshot import (
-    normalize_snapshot_payload,
-    validate_snapshot_merge,
-)
+from potpie_context_engine.core.graph_snapshot_mutation import prepare_snapshot_import
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
-from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
 from potpie_context_engine.adapters.outbound.graph.native_snapshot import (
     claim_row,
     entity_row,
     imported_manifest,
     payload_from_rows,
     read_payload,
-    stored_claim,
-    stored_entity,
     write_payload,
-    validate_native_snapshot_properties,
 )
 
-_LABEL = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
-_REVISION_CONSTRAINT = (
-    "CREATE CONSTRAINT potpie_revision_unique IF NOT EXISTS "
-    "FOR (r:PotpieRevision) REQUIRE r.pot_id IS UNIQUE"
-)
 _SNAPSHOT = """
 OPTIONAL MATCH (e:Entity {group_id:$pot})
 WITH collect(CASE WHEN e IS NULL THEN null ELSE
@@ -38,8 +26,16 @@ RETURN entities,collect(CASE WHEN r IS NULL THEN null ELSE properties(r) END) AS
 
 
 class Neo4jSnapshot:
-    def __init__(self, settings: Any) -> None:
+    def __init__(self, settings: Any, *, mutation: Any = None) -> None:
         self._settings = settings
+        self._mutation = mutation
+
+    def _mutation_port(self) -> Any:
+        if self._mutation is None:
+            from .backends.neo4j_backend import Neo4jGraphBackend
+
+            self._mutation = Neo4jGraphBackend(self._settings).mutation
+        return self._mutation
 
     def _driver(self) -> Any:
         from neo4j import GraphDatabase
@@ -60,25 +56,44 @@ class Neo4jSnapshot:
             driver.close()
 
     def import_data(
-        self, *, pot_id: str, payload: Mapping[str, Any]
+        self, *, pot_id: str, payload: Mapping[str, Any], mutation_id: str | None = None
     ) -> SnapshotManifest:
-        incoming = normalize_snapshot_payload(payload, target_pot_id=pot_id)
-        validate_native_snapshot_properties(incoming)
-        _validate_labels(incoming)
-        driver = self._driver()
-        try:
-            with driver.session() as session:
-                session.execute_write(_ensure_revision_constraint)
-                session.execute_write(lambda tx: _merge(tx, pot_id, incoming))
-        finally:
-            driver.close()
-        return imported_manifest("memory", incoming, pot_id=pot_id)
+        mutation = self._mutation_port()
+        if not mutation.atomic_mutations_supported:
+            raise NotImplementedError(
+                "Neo4j snapshot import requires native atomic mutations"
+            )
+        version = mutation.current_version(pot_id)
+        batch, provenance = prepare_snapshot_import(
+            pot_id=pot_id,
+            payload=payload,
+            expected_version=version,
+            mutation_id=mutation_id,
+        )
+        result = mutation.compare_and_apply(
+            batch,
+            expected_pot_id=pot_id,
+            expected_version=version,
+            provenance_context=provenance,
+        )
+        return replace(
+            imported_manifest("memory", batch.snapshot_import, pot_id=pot_id),
+            metadata={
+                "mutation_id": result.mutation_id,
+                "execution": result.execution.to_dict() if result.execution else None,
+                "administrative_summary": dict(result.administrative_summary),
+            },
+        )
 
     def export(self, *, pot_id: str, destination: str) -> SnapshotManifest:
         return write_payload(destination, self.export_data(pot_id=pot_id))
 
-    def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
-        result = self.import_data(pot_id=pot_id, payload=read_payload(source))
+    def import_(
+        self, *, pot_id: str, source: str, mutation_id: str | None = None
+    ) -> SnapshotManifest:
+        result = self.import_data(
+            pot_id=pot_id, payload=read_payload(source), mutation_id=mutation_id
+        )
         return SnapshotManifest(
             pot_id=result.pot_id,
             location=str(source),
@@ -103,72 +118,6 @@ def _read(tx: Any, pot_id: str) -> dict[str, Any]:
         ),
         claim_rows=(claim_row(props) for props in claims),
     )
-
-
-def _ensure_revision_constraint(tx: Any) -> None:
-    tx.run(_REVISION_CONSTRAINT).consume()
-
-
-def _merge(tx: Any, pot_id: str, incoming: Mapping[str, Any]) -> None:
-    # This read-dependent update takes Neo4j's node write lock. Validation and
-    # every canonical write below consequently share one serializable pot gate.
-    revision = tx.run(
-        "MERGE (v:PotpieRevision {pot_id:$pot}) ON CREATE SET v.version=0,v.lock_sequence=0 "
-        "SET v.lock_sequence=v.lock_sequence+1 RETURN v.version",
-        pot=pot_id,
-    ).single()
-    if revision is None:
-        raise RuntimeError("failed to lock Neo4j pot revision")
-    existing = _read(tx, pot_id)
-    validate_snapshot_merge(
-        existing_entities=existing["entities"],
-        existing_claims=existing["claims"],
-        incoming=incoming,
-    )
-    existing_entity_keys = {row["key"] for row in existing["entities"]}
-    existing_claim_keys = {row["claim_key"] for row in existing["claims"]}
-    new_entities = [
-        row for row in incoming["entities"] if row["key"] not in existing_entity_keys
-    ]
-    new_claims = [
-        row for row in incoming["claims"] if row["claim_key"] not in existing_claim_keys
-    ]
-    if not new_entities and not new_claims:
-        return
-    for entity in new_entities:
-        key, labels, props = stored_entity(entity, pot_id)
-        suffix = "".join(f":{label}" for label in labels)
-        tx.run(
-            "MERGE (e:Entity {group_id:$pot,entity_key:$key}) SET e += $props "
-            f"SET e{suffix}",
-            pot=pot_id,
-            key=key,
-            props=_coerce_props_for_neo4j(props),
-        ).consume()
-    for claim in new_claims:
-        props = stored_claim(claim, pot_id)
-        tx.run(
-            "MATCH (a:Entity {group_id:$pot,entity_key:$subject}),"
-            "(b:Entity {group_id:$pot,entity_key:$object}) "
-            "MERGE (a)-[r:RELATES_TO {group_id:$pot,claim_key:$claim_key}]->(b) "
-            "SET r += $props",
-            pot=pot_id,
-            subject=claim["subject_key"],
-            object=claim["object_key"],
-            claim_key=claim["claim_key"],
-            props=_coerce_props_for_neo4j(props),
-        ).consume()
-    tx.run(
-        "MATCH (v:PotpieRevision {pot_id:$pot}) SET v.version=v.version+1",
-        pot=pot_id,
-    ).consume()
-
-
-def _validate_labels(payload: Mapping[str, Any]) -> None:
-    for entity in payload["entities"]:
-        labels = tuple(entity["labels"])
-        if any(not _LABEL.fullmatch(label) for label in labels):
-            raise ValueError(f"invalid snapshot entity label: {labels!r}")
 
 
 __all__ = ["Neo4jSnapshot"]

@@ -92,6 +92,7 @@ def _lower_semantic_request(
 ) -> SemanticMutationPlan:
     batch = MutationBatch()
     provenance = _provenance_from_request(request)
+    anchor = (plan.prepared_at or datetime.now(timezone.utc)).isoformat()
 
     # Dedup entity upserts by key (a later op may re-reference the same entity).
     entity_by_key: dict[str, EntityUpsert] = {}
@@ -106,12 +107,17 @@ def _lower_semantic_request(
             batch=batch,
             entity_by_key=entity_by_key,
             claim_query=claim_query,
+            anchor=anchor,
         )
         if outcome.op_index in plan.correction_targets:
             for invalidation in batch.invalidations[first_invalidation:]:
-                invalidation.target_claim_keys = plan.correction_targets[
-                    outcome.op_index
-                ]
+                targets = plan.correction_targets[outcome.op_index]
+                invalidation.target_claim_keys = tuple(
+                    target.claim_key for target in targets
+                )
+                invalidation.target_claim_record_ids = tuple(
+                    target.record_id for target in targets
+                )
         new_accepted.append(
             LoweredOperation(
                 op_index=outcome.op_index,
@@ -143,6 +149,7 @@ def _lower_op(
     batch: MutationBatch,
     entity_by_key: dict[str, EntityUpsert],
     claim_query=None,
+    anchor: str,
 ) -> list[str]:
     name = op.op
     if name == SemanticMutationOp.upsert_entity.value:
@@ -153,31 +160,25 @@ def _lower_op(
         SemanticMutationOp.assert_claim.value,
     ):
         return _lower_claim(
-            op, request=request, batch=batch, entity_by_key=entity_by_key
+            op, request=request, batch=batch, entity_by_key=entity_by_key, anchor=anchor
         )
     if name == SemanticMutationOp.append_event.value:
         return _lower_event(
-            op, request=request, batch=batch, entity_by_key=entity_by_key
+            op, request=request, batch=batch, entity_by_key=entity_by_key, anchor=anchor
         )
     if name in (
         SemanticMutationOp.end_relation_validity.value,
         SemanticMutationOp.retract_claim.value,
     ):
-        _lower_retract(op, batch=batch)
+        _lower_retract(op, batch=batch, anchor=anchor)
         return []
     if name == SemanticMutationOp.supersede_claim.value:
         return _lower_supersede_claim(
-            op,
-            request=request,
-            batch=batch,
-            entity_by_key=entity_by_key,
+            op, request=request, batch=batch, entity_by_key=entity_by_key, anchor=anchor
         )
     if name == SemanticMutationOp.merge_duplicate_entities.value:
         return _lower_merge_duplicate_entities(
-            op,
-            request=request,
-            batch=batch,
-            entity_by_key=entity_by_key,
+            op, request=request, batch=batch, entity_by_key=entity_by_key, anchor=anchor
         )
     if name == SemanticMutationOp.patch_entity.value:
         _lower_patch_entity(
@@ -189,10 +190,7 @@ def _lower_op(
         return []
     if name == SemanticMutationOp.transition_state.value:
         return _lower_transition_state(
-            op,
-            request=request,
-            batch=batch,
-            entity_by_key=entity_by_key,
+            op, request=request, batch=batch, entity_by_key=entity_by_key, anchor=anchor
         )
     return []
 
@@ -203,6 +201,7 @@ def _lower_claim(
     request: SemanticMutationRequest,
     batch: MutationBatch,
     entity_by_key: dict[str, EntityUpsert],
+    anchor: str,
 ) -> list[str]:
     subject = _ensure_entity(op.subject, entity_by_key, default_label="Observation")
     predicate = (op.predicate or "RELATED_TO").strip().upper()
@@ -251,6 +250,7 @@ def _lower_claim(
         subject_key=subject.entity_key,
         object_key=object_key,
         predicate=predicate,
+        anchor=anchor,
     )
     batch.edge_upserts.append(
         EdgeUpsert(
@@ -258,6 +258,7 @@ def _lower_claim(
             from_entity_key=subject.entity_key,
             to_entity_key=object_key,
             properties=props,
+            metadata_review_record_id=op.extra.get("_preserve_claim_record_id"),
         )
     )
     return [claim_key]
@@ -269,16 +270,17 @@ def _lower_event(
     request: SemanticMutationRequest,
     batch: MutationBatch,
     entity_by_key: dict[str, EntityUpsert],
+    anchor: str,
 ) -> list[str]:
     # Anchor an Activity entity (the caller's subject, or one minted from the
     # verb + occurred_at so re-submits are idempotent).
     if op.subject is not None:
         activity = _ensure_entity(op.subject, entity_by_key, default_label="Activity")
     else:
-        anchor = f"{op.verb}:{op.occurred_at or ''}:{op.description or ''}"
+        activity_seed = f"{op.verb}:{op.occurred_at or ''}:{op.description or ''}"
         activity = _ensure_entity(
             GraphEntityRef(
-                key=normalize_entity_key(f"activity:{_short(anchor)}"),
+                key=normalize_entity_key(f"activity:{_short(activity_seed)}"),
                 type="Activity",
                 properties={
                     "verb_class": op.verb,
@@ -317,6 +319,7 @@ def _lower_event(
             object_key=to_key,
             predicate=predicate,
             truth_override=op.truth or _EVENT_TRUTH,
+            anchor=anchor,
         )
         batch.edge_upserts.append(
             EdgeUpsert(
@@ -341,9 +344,9 @@ def _lower_event(
     return claim_keys
 
 
-def _lower_retract(op: SemanticMutation, *, batch: MutationBatch) -> None:
+def _lower_retract(op: SemanticMutation, *, batch: MutationBatch, anchor: str) -> None:
     reason = op.reason or "retracted via semantic mutation"
-    valid_to = _utc_iso(op.valid_until) if op.valid_until else _now_iso()
+    valid_to = _utc_iso(op.valid_until) if op.valid_until else anchor
     if op.op == SemanticMutationOp.end_relation_validity.value and not (
         op.subject is not None and op.predicate and op.object is not None
     ):
@@ -379,6 +382,7 @@ def _lower_supersede_claim(
     request: SemanticMutationRequest,
     batch: MutationBatch,
     entity_by_key: dict[str, EntityUpsert],
+    anchor: str,
 ) -> list[str]:
     if (
         op.subject is None
@@ -389,17 +393,35 @@ def _lower_supersede_claim(
         return []
 
     predicate = op.predicate.strip().upper()
+    cutover = (
+        _utc_iso(op.valid_until or op.valid_from)
+        if op.valid_until or op.valid_from
+        else anchor
+    )
+    if (
+        op.valid_until
+        and op.valid_from
+        and _utc_iso(op.valid_until) != _utc_iso(op.valid_from)
+    ):
+        from .claim_lifecycle import ClaimLifecycleConflict
+
+        raise ClaimLifecycleConflict(
+            "supersede valid_from and valid_until must name the same cutover; use separate operations for a gap"
+        )
     replacement_op = replace(
         op,
         op=SemanticMutationOp.assert_claim.value,
         object=op.superseded_by,
         superseded_by=None,
+        valid_from=cutover,
+        valid_until=None,
     )
     claim_keys = _lower_claim(
         replacement_op,
         request=request,
         batch=batch,
         entity_by_key=entity_by_key,
+        anchor=anchor,
     )
     reason = op.reason or "claim superseded via semantic mutation"
     old_subject_key = normalize_entity_key(op.subject.key)
@@ -422,7 +444,8 @@ def _lower_supersede_claim(
             target_edge=(predicate, old_subject_key, old_object_key),
             reason=reason,
             superseded_by_key=replacement_key,
-            valid_to=_utc_iso(op.valid_until) if op.valid_until else _now_iso(),
+            valid_to=cutover,
+            replacement_claim_key=claim_keys[0],
         )
     )
     return claim_keys
@@ -434,13 +457,14 @@ def _lower_merge_duplicate_entities(
     request: SemanticMutationRequest,
     batch: MutationBatch,
     entity_by_key: dict[str, EntityUpsert],
+    anchor: str,
 ) -> list[str]:
     if op.subject is None or op.object is None:
         return []
 
     winning_key = normalize_entity_key(op.object.key)
     reason = op.reason or "duplicate entity merge"
-    occurred_at = op.observed_at or _now_iso()
+    occurred_at = _utc_iso(op.occurred_at or op.observed_at or anchor)
     external_ids = _merge_external_ids(op)
     losing = _ensure_entity(
         GraphEntityRef(
@@ -487,6 +511,7 @@ def _lower_merge_duplicate_entities(
         subject_key=losing.entity_key,
         object_key=winning.entity_key,
         predicate=predicate,
+        anchor=anchor,
     )
     props.update(
         {
@@ -579,11 +604,12 @@ def _lower_transition_state(
     request: SemanticMutationRequest,
     batch: MutationBatch,
     entity_by_key: dict[str, EntityUpsert],
+    anchor: str,
 ) -> list[str]:
     if op.subject is None or not (op.from_state and op.to_state):
         return []
 
-    occurred_at = op.observed_at or _now_iso()
+    occurred_at = _utc_iso(op.occurred_at or op.observed_at or anchor)
     transition_props = {
         "lifecycle_state": op.to_state,
         "previous_lifecycle_state": op.from_state,
@@ -649,6 +675,7 @@ def _lower_transition_state(
         object_key=target.entity_key,
         predicate=predicate,
         truth_override=_EVENT_TRUTH,
+        anchor=anchor,
     )
     props.update(
         {
@@ -742,6 +769,7 @@ def _claim_properties(
     object_key: str,
     predicate: str,
     truth_override: str | None = None,
+    anchor: str,
 ) -> dict[str, object]:
     truth = truth_override or op.truth or DEFAULT_TRUTH_CLASS
     evidence_strength = evidence_strength_for_truth(truth)
@@ -751,7 +779,7 @@ def _claim_properties(
         {**dict(ev.metadata), "source_ref": ev.source_ref, "authority": ev.authority}
         for ev in op.evidence
     ]
-    valid_at = _utc_iso(_valid_at_for_claim(op, truth=truth))
+    valid_at = _utc_iso(_valid_at_for_claim(op, truth=truth, anchor=anchor))
     props: dict[str, object] = {
         "claim_key": claim_key,
         "subgraph": subgraph,
@@ -760,15 +788,16 @@ def _claim_properties(
         "confidence": op.confidence if op.confidence is not None else 1.0,
         "fact": fact,
         "description": op.description,
+        "source_identity_stable": bool(source_refs),
         "source_refs": source_refs,
         "evidence": evidence_dicts,
         "source_system": request.created_by.surface or "agent",
-        "source_ref": source_refs[0]
-        if source_refs
-        else (request.idempotency_key or claim_key),
+        "source_ref": (
+            source_refs[0] if source_refs else (request.idempotency_key or claim_key)
+        ),
         "valid_at": valid_at,
         "valid_from": valid_at,
-        "observed_at": _utc_iso(op.observed_at) if op.observed_at else _now_iso(),
+        "observed_at": _utc_iso(op.observed_at) if op.observed_at else anchor,
         "created_by": _actor_dict(request),
         "graph_contract_version": request.graph_contract_version
         or GRAPH_CONTRACT_VERSION,
@@ -799,6 +828,13 @@ def _claim_properties(
     preserved_source_system = op.extra.get("_preserve_source_system")
     if isinstance(preserved_source_system, str):
         props["source_system"] = preserved_source_system
+    if op.extra.get("_preserve_claim_record_id"):
+        props["source_ref"] = op.extra.get("_preserve_source_ref")
+        snapshot = op.extra.get("_expected_claim_snapshot", {})
+        props["subgraph"] = snapshot.get("subgraph")
+        props["source_identity_stable"] = snapshot.get("properties", {}).get(
+            "source_identity_stable", False
+        )
     # Carry the scope hierarchy for the readers (R4) when the subject/object
     # properties or op extras name a code scope.
     code_scope = _code_scope_for(op)
@@ -807,14 +843,14 @@ def _claim_properties(
     return props
 
 
-def _valid_at_for_claim(op: SemanticMutation, *, truth: str) -> str:
+def _valid_at_for_claim(op: SemanticMutation, *, truth: str, anchor: str) -> str:
     if op.valid_from:
         return op.valid_from
     if (
         truth == _EVENT_TRUTH or op.op == SemanticMutationOp.append_event.value
     ) and op.occurred_at:
         return op.occurred_at
-    return _now_iso()
+    return anchor
 
 
 def _structured_claim_fields_for(op: SemanticMutation) -> dict[str, object]:
@@ -1001,15 +1037,10 @@ def _short(text: str, *, length: int = 12) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()[:length]
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _utc_iso(value: str) -> str:
-    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
+    from .claim_codec import normalize_timestamp
+
+    return normalize_timestamp(value, field="semantic")
 
 
 __all__ = ["lower_semantic_request"]

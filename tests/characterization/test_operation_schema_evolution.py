@@ -83,6 +83,10 @@ def evolution_violations(old: Mapping[str, Json], new: Mapping[str, Json]) -> li
                     f"operation {name!r} changed {key}: "
                     f"{before[key]!r} -> {after[key]!r}"
                 )
+        if "request_policy" in before and before["request_policy"] != after.get(
+            "request_policy"
+        ):
+            violations.append(f"operation {name!r} changed request_policy")
         comparer.node(before["request"], after["request"], f"{name}.request", "request")
         comparer.node(before["result"], after["result"], f"{name}.result", "result")
     return violations
@@ -145,7 +149,12 @@ class _Comparer:
                 continue
             if "required" in replacement and "required" not in field:
                 self._fail(f"{field_path} became required")
-            elif "required" not in field and _default(field) != _default(replacement):
+            elif "required" not in field and not self._compatible_default(
+                _default(field),
+                _default(replacement),
+                field["schema"],
+                replacement["schema"],
+            ):
                 self._fail(
                     f"{field_path} changed default: "
                     f"{_default(field)!r} -> {_default(replacement)!r}"
@@ -154,6 +163,51 @@ class _Comparer:
         for name, field in after.items():
             if name not in before_names and "required" in field:
                 self._fail(f"{path}.{name} was added as a required field")
+
+    def _compatible_default(self, old_value, new_value, old_schema, new_schema) -> bool:
+        if json.dumps(old_value, sort_keys=True) == json.dumps(
+            new_value, sort_keys=True
+        ):
+            return True
+        old_schema = self._resolve(old_schema, self._old_types)
+        new_schema = self._resolve(new_schema, self._new_types)
+        if (
+            old_schema.get("kind") != "object"
+            or new_schema.get("kind") != "object"
+            or not isinstance(old_value, dict)
+            or not isinstance(new_value, dict)
+        ):
+            return False
+        before = {field["name"]: field for field in old_schema["fields"]}
+        after = {field["name"]: field for field in new_schema["fields"]}
+        if not old_value.keys() <= new_value.keys():
+            return False
+        for name, value in old_value.items():
+            if (
+                name not in before
+                or name not in after
+                or not self._compatible_default(
+                    value,
+                    new_value[name],
+                    before[name]["schema"],
+                    after[name]["schema"],
+                )
+            ):
+                return False
+        for name in new_value.keys() - old_value.keys():
+            field = after.get(name)
+            if (
+                name in before
+                or field is None
+                or "required" in field
+                or "default" not in field
+            ):
+                return False
+            if json.dumps(new_value[name], sort_keys=True) != json.dumps(
+                field["default"], sort_keys=True
+            ):
+                return False
+        return True
 
     def _members(
         self, old: list[Json], new: list[Json], path: str, position: str
@@ -362,6 +416,90 @@ def test_a_protocol_version_bump_is_the_sanctioned_break() -> None:
     new["operations"].pop("lookup")
 
     assert evolution_violations(_document(), new) == []
+
+
+def _nested_default_document():
+    document = _document()
+    document["types"]["Diff"] = {
+        "kind": "object",
+        "fields": [
+            {"name": "count", "schema": {"kind": "integer"}, "default": 0},
+        ],
+    }
+    _fields(document, "LookupResult").append(
+        {
+            "name": "diff",
+            "schema": {"kind": "ref", "name": "Diff"},
+            "default": {"count": 0},
+        }
+    )
+    return document
+
+
+def test_nested_dataclass_default_grows_only_with_matching_optional_field():
+    old = _nested_default_document()
+    new = copy.deepcopy(old)
+    _fields(new, "Diff").append(
+        {
+            "name": "claim_closures",
+            "schema": {"kind": "array", "items": {"kind": "string"}},
+            "default": [],
+        }
+    )
+    _fields(new, "LookupResult")[-1]["default"]["claim_closures"] = []
+    assert evolution_violations(old, new) == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "leaf_type",
+        "removed_member",
+        "undeclared_member",
+        "required_member",
+        "wrong_default",
+        "map_change",
+    ],
+)
+def test_nested_default_exceptions_remain_breaking(change):
+    old = _nested_default_document()
+    new = copy.deepcopy(old)
+    value = _fields(new, "LookupResult")[-1]["default"]
+    if change == "leaf_type":
+        value["count"] = False
+    elif change == "removed_member":
+        value.pop("count")
+    elif change == "undeclared_member":
+        value["extra"] = []
+    elif change == "map_change":
+        schema = {
+            "kind": "map",
+            "keys": {"kind": "string"},
+            "values": {"kind": "integer"},
+        }
+        _fields(old, "LookupResult")[-1]["schema"] = schema
+        _fields(new, "LookupResult")[-1]["schema"] = schema
+        value["extra"] = 0
+    else:
+        field = {"name": "extra", "schema": {"kind": "integer"}, "default": 0}
+        if change == "required_member":
+            field.pop("default")
+            field["required"] = True
+        _fields(new, "Diff").append(field)
+        value["extra"] = 1
+    assert evolution_violations(old, new)
+
+
+@pytest.mark.parametrize("policy", [None, "changed_v2"])
+def test_published_request_policy_cannot_disappear_or_change(policy):
+    old = _document()
+    old["operations"]["lookup"]["request_policy"] = "policy_v1"
+    new = copy.deepcopy(old)
+    if policy is None:
+        del new["operations"]["lookup"]["request_policy"]
+    else:
+        new["operations"]["lookup"]["request_policy"] = policy
+    assert "operation 'lookup' changed request_policy" in evolution_violations(old, new)
 
 
 def _regenerate(argv: list[str]) -> int:

@@ -540,7 +540,9 @@ def test_pot_reset_dispatches_typed_operation_for_exact_resolved_context(
     assert result.exit_code == 0, result.output
     assert selected_contexts == ["p1"]
     assert len(client.calls) == 1
-    assert client.calls[0][0].to_payload() == {}
+    from potpie.runtime.codec import compact_payload
+
+    assert compact_payload(client.calls[0][0]) == {}
     assert client.calls[0][1] == DestructiveConfirmation(confirmed=True)
 
 

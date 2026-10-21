@@ -7,7 +7,6 @@ graph surface.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
 
 import pytest
 
@@ -31,13 +30,14 @@ from potpie_context_engine.core.graph_views import UnknownGraphViewError
 from potpie_context_engine.core.reconciliation import (
     MutationBatch,
     MutationResult,
-    MutationSummary,
 )
 from potpie_context_engine.core.reconciliation_config import (
     ReconciliationConfig,
     current_reconciliation_config,
 )
 from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
+from potpie_context_engine.core.workbench_service import GraphWorkbenchService
+from potpie_context_engine.testing import InMemoryGraphPlanStore
 
 pytestmark = pytest.mark.unit
 
@@ -1271,22 +1271,28 @@ def test_decision_record_creates_decided_and_affects_memory(service) -> None:
 
 
 class _CapturingMutation:
-    def __init__(self) -> None:
-        self.calls: list[
-            tuple[
-                MutationBatch,
-                str,
-                ProvenanceContext | None,
-                ReconciliationConfig | None,
-                ReconciliationConfig | None,
-            ]
-        ] = []
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.calls = []
 
-    def apply(
+    @property
+    def capabilities(self):
+        return self.inner.capabilities
+
+    def current_version(self, pot_id):
+        return self.inner.current_version(pot_id)
+
+    def lookup_execution(self, plan, *, expected_pot_id, mutation_id):
+        return self.inner.lookup_execution(
+            plan, expected_pot_id=expected_pot_id, mutation_id=mutation_id
+        )
+
+    def compare_and_apply(
         self,
         plan: MutationBatch,
         *,
         expected_pot_id: str,
+        expected_version: int,
         provenance_context: ProvenanceContext | None = None,
         reconciliation_config: ReconciliationConfig | None = None,
     ) -> MutationResult:
@@ -1299,28 +1305,28 @@ class _CapturingMutation:
                 current_reconciliation_config(),
             )
         )
-        return MutationResult(
-            ok=True,
-            mutation_id="mutation-1",
-            mutation_summary=MutationSummary(
-                entity_upserts_applied=len(plan.entity_upserts),
-                edge_upserts_applied=len(plan.edge_upserts),
-                invalidations_applied=len(plan.invalidations),
-            ),
+        return self.inner.compare_and_apply(
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
         )
-
-    def __getattr__(self, name: str) -> Any:
-        raise AssertionError(f"unexpected mutation port call: {name}")
 
 
 def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
     backend = InMemoryGraphBackend()
-    mutation = _CapturingMutation()
+    mutation = _CapturingMutation(backend.mutation)
     backend._mutation = mutation
     reconciliation_config = ReconciliationConfig(infer_canonical_labels=False)
     service = DefaultGraphService(
         backend=backend,
         reconciliation_config=reconciliation_config,
+        record_workbench=GraphWorkbenchService(
+            backend=backend,
+            plan_store=InMemoryGraphPlanStore(),
+            reconciliation_config=reconciliation_config,
+        ),
     )
     request = SemanticMutationRequest.parse(
         {
@@ -1360,7 +1366,7 @@ def test_mutate_passes_lowered_provenance_to_mutation_port() -> None:
     assert provenance.actor_user_id == "user:alice"
     assert provenance.actor_surface == "cli"
     assert provenance.actor_client_name == "codex"
-    assert passed_config is None
+    assert passed_config is reconciliation_config
     assert active_config is reconciliation_config
 
 

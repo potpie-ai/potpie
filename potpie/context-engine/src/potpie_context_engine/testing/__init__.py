@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from potpie_context_engine.core.mutation_plan_store import (
+    InMemoryGraphPlanStore as InMemoryGraphPlanStore,
+)
+
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-import hashlib
-import json
-from pathlib import Path
 import threading
+from pathlib import Path
 from typing import Callable
 
 from potpie_context_engine.core.api import (
@@ -17,7 +19,6 @@ from potpie_context_engine.core.api import (
     DocumentManifest,
     GraphDefinition,
     GraphInboxItem,
-    GraphMutationPlanRecord,
     ResourceStoreStatus,
     SectionManifest,
     parse_resource_id,
@@ -42,6 +43,7 @@ from potpie_context_engine.adapters.outbound.resources.local_resource_store impo
     _document_fingerprint,
     _with_pending_review,
 )
+from potpie_context_engine.core.ports.resource_store import ResourceStoreError
 from potpie_context_engine.testing.conformance import (
     GraphBackendConformanceMixin,
     ResourceStoreConformanceMixin,
@@ -49,118 +51,6 @@ from potpie_context_engine.testing.conformance import (
     run_resource_store_conformance,
     write_import_directory,
 )
-
-
-def _request_fingerprint(payload) -> str:
-    normalized = dict(payload)
-    normalized.pop("expected_subgraph_versions", None)
-    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=20).hexdigest()
-
-
-@dataclass(slots=True)
-class InMemoryGraphPlanStore:
-    _records: dict[tuple[str, str], GraphMutationPlanRecord] = field(
-        default_factory=dict
-    )
-    _lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def save(self, record: GraphMutationPlanRecord) -> None:
-        with self._lock:
-            self._records[(record.pot_id, record.plan_id)] = record
-
-    def reserve_idempotency(
-        self,
-        *,
-        record: GraphMutationPlanRecord,
-        idempotency_key: str,
-        request_fingerprint: str,
-    ) -> tuple[GraphMutationPlanRecord, bool]:
-        with self._lock:
-            for (pot_id, _), existing in self._records.items():
-                if pot_id != record.pot_id:
-                    continue
-                key = str(
-                    existing.original_payload.get("idempotency_key") or ""
-                ).strip()
-                if key != idempotency_key or not existing.reserves_idempotency:
-                    continue
-                if (
-                    _request_fingerprint(existing.original_payload)
-                    != request_fingerprint
-                ):
-                    raise ValueError(
-                        f"idempotency_key {idempotency_key!r} is already bound to "
-                        f"plan {existing.plan_id!r} with different content"
-                    )
-                if existing.status not in {"conflict", "error", "expired"}:
-                    return existing, False
-            self._records[(record.pot_id, record.plan_id)] = record
-            return record, True
-
-    def get(self, *, pot_id: str, plan_id: str) -> GraphMutationPlanRecord | None:
-        with self._lock:
-            return self._records.get((pot_id, plan_id))
-
-    def compare_and_set(
-        self,
-        *,
-        expected: GraphMutationPlanRecord,
-        replacement: GraphMutationPlanRecord,
-    ) -> bool:
-        key = (expected.pot_id, expected.plan_id)
-        if key != (replacement.pot_id, replacement.plan_id):
-            raise ValueError("plan compare-and-set cannot change plan identity")
-        with self._lock:
-            if self._records.get(key) != expected:
-                return False
-            self._records[key] = replacement
-            return True
-
-    def list(
-        self,
-        *,
-        pot_id: str,
-        plan_id: str | None = None,
-        mutation_id: str | None = None,
-        since: datetime | None = None,
-        until: datetime | None = None,
-        limit: int | None = None,
-    ) -> tuple[GraphMutationPlanRecord, ...]:
-        with self._lock:
-            records = [
-                record
-                for (record_pot, _), record in self._records.items()
-                if record_pot == pot_id
-                and (plan_id is None or record.plan_id == plan_id)
-                and (mutation_id is None or record.mutation_id == mutation_id)
-                and (since is None or record.created_at >= since)
-                and (until is None or record.created_at <= until)
-            ]
-        records.sort(key=lambda record: record.created_at, reverse=True)
-        return tuple(records[:limit] if limit is not None else records)
-
-    async def save_async(self, record: GraphMutationPlanRecord) -> None:
-        self.save(record)
-
-    async def reserve_idempotency_async(self, **kwargs):
-        return self.reserve_idempotency(**kwargs)
-
-    async def get_async(
-        self, *, pot_id: str, plan_id: str
-    ) -> GraphMutationPlanRecord | None:
-        return self.get(pot_id=pot_id, plan_id=plan_id)
-
-    async def compare_and_set_async(
-        self,
-        *,
-        expected: GraphMutationPlanRecord,
-        replacement: GraphMutationPlanRecord,
-    ) -> bool:
-        return self.compare_and_set(expected=expected, replacement=replacement)
-
-    async def list_async(self, **kwargs):
-        return self.list(**kwargs)
 
 
 @dataclass(slots=True)
@@ -523,9 +413,21 @@ class InMemoryResourceStore:
             )
             return manifest
 
-    def delete(self, *, pot_id: str, slug: str) -> bool:
+    def delete(
+        self, *, pot_id: str, slug: str, expected_revision: int | None = None
+    ) -> bool:
         doc = require_resource_slug(slug, kind="document")
         with self._lock:
+            current = self._documents.get((pot_id, doc))
+            if (
+                current is not None
+                and expected_revision is not None
+                and current.manifest.revision != expected_revision
+            ):
+                raise ResourceStoreError(
+                    "resource_revision_changed",
+                    "Document changed before deletion; newer bytes were preserved.",
+                )
             return self._documents.pop((pot_id, doc), None) is not None
 
     def purge_pot(self, pot_id: str) -> bool:

@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.graph_snapshot import (
-    normalize_snapshot_payload,
     validate_snapshot_merge,
 )
+from potpie_context_engine.core.graph_snapshot_mutation import normalize_snapshot_import
 from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
 from potpie_context_engine.core.resource_snapshot import normalize_resource_snapshot
 
@@ -32,13 +32,17 @@ def export_archive(facade: ResourceFacade, *, pot_id: str) -> dict[str, Any]:
 
 
 def import_archive(
-    facade: ResourceFacade, *, pot_id: str, payload: dict[str, Any]
+    facade: ResourceFacade,
+    *,
+    pot_id: str,
+    payload: dict[str, Any],
+    mutation_id: str | None = None,
 ) -> SnapshotManifest:
     if facade.snapshot is None:
         raise CapabilityNotImplemented("resources.import_snapshot")
-    graph = normalize_snapshot_payload(
+    graph = normalize_snapshot_import(
         {key: value for key, value in payload.items() if key != "resources"},
-        target_pot_id=pot_id,
+        pot_id=pot_id,
     )
     resources = normalize_resource_snapshot(payload.get("resources"))
     restorer = getattr(facade.store, "restore_snapshot", None)
@@ -53,7 +57,8 @@ def import_archive(
     # Resource validation/conflict checking happens before publication. A graph
     # failure restores the prior resource tree; graph adapters commit atomically.
     with restorer(pot_id=pot_id, payload=resources):
-        manifest = facade.snapshot.import_data(pot_id=pot_id, payload=graph)
+        identity = {"mutation_id": mutation_id} if mutation_id is not None else {}
+        manifest = facade.snapshot.import_data(pot_id=pot_id, payload=graph, **identity)
     documents = {path.split("/", 1)[0] for path in resources["files"]}
     warnings: list[str] = []
     if facade.index is not None:

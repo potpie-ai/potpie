@@ -30,7 +30,7 @@ import logging
 import os
 import platform
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable
 from typing import Any, TypeVar
 
 from potpie_context_engine.core.definition import (
@@ -48,11 +48,11 @@ from potpie_context_engine.core.graph_mutations import (
     InvalidationOp,
     ProvenanceRef,
 )
+from potpie_context_engine.core.claim_codec import row_from_record
+from potpie_context_engine.core.ports.claim_query import ClaimRow
 
 from potpie_context_engine.adapters.outbound.graph.cypher import (
-    _render_fact,
     _require_valid_pot_id,
-    _stable_source_ref,
     apply_invalidations_async,
     delete_edges_async,
     upsert_edges_async,
@@ -61,7 +61,6 @@ from potpie_context_engine.adapters.outbound.graph.cypher import (
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
-from potpie_context_engine.domain.retrieval_card import build_retrieval_card
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +131,10 @@ class _FalkorAsyncResult:
     async def single(self) -> dict[str, Any] | None:
         return self._records[0] if self._records else None
 
+    async def __aiter__(self):
+        for record in self._records:
+            yield record
+
     async def consume(self) -> None:
         return None
 
@@ -154,6 +157,18 @@ class _FalkorAsyncSession:
         return False
 
     async def run(self, cypher: str, **params: Any) -> _FalkorAsyncResult:
+        # Falkor's vector storage type is an encoding concern of this binding.
+        # Keep it on the same exact physical claim write as the scalar fields.
+        props = params.get("props")
+        if isinstance(props, dict) and props.get("fact_embedding") is not None:
+            props = dict(props)
+            params["embedding"] = props.pop("fact_embedding")
+            params["props"] = props
+            cypher = cypher.replace(
+                "SET r += $props",
+                "SET r += $props SET r.fact_embedding=vecf32($embedding)",
+            )
+
         def _run() -> list[dict[str, Any]]:
             pot_id = params.get("group_id") or params.get("gid") or params.get("pot_id")
             guarded = cypher
@@ -661,6 +676,35 @@ class FalkorDBGraphWriter(GraphWriterPort):
         await asyncio.to_thread(self._ensure_indexes_sync, graph, embedding_dim)
         return True
 
+    async def claim_rows(
+        self,
+        pot_id: str,
+        *,
+        record_ids: Iterable[str] = (),
+        history_scopes: Iterable[tuple[str, str]] = (),
+        corrections: Iterable[EdgeDelete | InvalidationOp] = (),
+    ) -> list[ClaimRow]:
+        """Read complete selected histories through the shared async shim."""
+        from .claim_reads import claim_read_query
+
+        _require_valid_pot_id(pot_id)
+        query = claim_read_query(
+            pot_id,
+            record_ids=record_ids,
+            history_scopes=history_scopes,
+            corrections=corrections,
+        )
+        if query is None:
+            return []
+        cypher, params = query
+
+        async def read(driver: Any) -> list[ClaimRow]:
+            async with driver.session() as session:
+                result = await session.run(cypher, **params)
+                return [row_from_record(record) async for record in result]
+
+        return await self._with_driver(read)
+
     @staticmethod
     def _ensure_indexes_sync(graph: Any, embedding_dim: int = 1536) -> None:
         for stmt in _index_statements(embedding_dim):
@@ -697,16 +741,9 @@ class FalkorDBGraphWriter(GraphWriterPort):
                 items,
                 provenance,
                 definition=self._definition,
+                embedder=self._embedder,
             )
         )
-        if self._embedder is not None and written:
-            await asyncio.to_thread(
-                self._write_edge_vectors_sync,
-                self._get_graph(),
-                pot_id,
-                items,
-                provenance,
-            )
         return written
 
     async def delete_edges(
@@ -765,89 +802,6 @@ class FalkorDBGraphWriter(GraphWriterPort):
         )
         rows = getattr(result, "result_set", None) or []
         return int(rows[0][0]) if rows and rows[0] else 0
-
-    def _write_edge_vectors_sync(
-        self,
-        graph: Any,
-        pot_id: str,
-        items: list[EdgeUpsert],
-        provenance: ProvenanceRef,
-    ) -> None:
-        if self._embedder is None:
-            return
-        for item in items:
-            raw_props = dict(item.properties)
-            source_ref = _stable_source_ref(
-                predicate=item.edge_type,
-                from_key=item.from_entity_key,
-                to_key=item.to_entity_key,
-                provenance=provenance,
-            )
-            if isinstance(raw_props.get("source_ref"), str) and raw_props["source_ref"]:
-                source_ref = raw_props["source_ref"]
-            fact = _render_fact(
-                predicate=item.edge_type,
-                from_key=item.from_entity_key,
-                to_key=item.to_entity_key,
-                extra=raw_props,
-            )
-            card = build_retrieval_card(
-                description=raw_props.get("description")
-                if isinstance(raw_props.get("description"), str)
-                else None,
-                fact=fact,
-                subject_key=item.from_entity_key,
-                predicate=item.edge_type,
-                object_key=item.to_entity_key,
-                scope=raw_props.get("code_scope")
-                if isinstance(raw_props.get("code_scope"), dict)
-                else None,
-            )
-            if not card:
-                continue
-            claim_key = raw_props.get("claim_key")
-            try:
-                # Keep embedding inside the try: a model error must degrade to
-                # "no vector enrichment", not abort the already-written edge.
-                embedding = [float(x) for x in self._embedder.embed(card)]
-                graph.query(
-                    """
-                    MATCH (:Entity {group_id: $gid, entity_key: $from_key})
-                          -[r:RELATES_TO {
-                              group_id: $gid,
-                              name: $predicate,
-                              subject_key: $from_key,
-                              object_key: $to_key,
-                              source_ref: $source_ref
-                          }]->
-                          (:Entity {group_id: $gid, entity_key: $to_key})
-                    WHERE $claim_key IS NULL OR r.claim_key = $claim_key
-                    SET r.fact_embedding = vecf32($embedding),
-                        r.embedding_model = $embedding_model,
-                        r.embedding_dim = $embedding_dim
-                    """,
-                    params={
-                        "gid": pot_id,
-                        "predicate": item.edge_type,
-                        "from_key": item.from_entity_key,
-                        "to_key": item.to_entity_key,
-                        "source_ref": source_ref,
-                        "claim_key": claim_key,
-                        "embedding": embedding,
-                        "embedding_model": getattr(self._embedder, "name", "unknown"),
-                        "embedding_dim": int(
-                            getattr(self._embedder, "dimensions", len(embedding))
-                        ),
-                    },
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "falkordb vector write skipped for %s:%s->%s: %s",
-                    item.edge_type,
-                    item.from_entity_key,
-                    item.to_entity_key,
-                    exc,
-                )
 
 
 __all__ = [

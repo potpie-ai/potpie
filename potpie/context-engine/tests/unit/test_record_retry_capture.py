@@ -84,9 +84,7 @@ def test_unwired_service_refuses_to_claim_retry_safety():
         graph.record(request())
 
 
-async def test_async_reservation_fallback_ignores_rejected_key_reuse():
-    from potpie_context_engine.core.workbench_service import _request_fingerprint
-
+async def test_legacy_store_cannot_advertise_atomic_reservation():
     from potpie_context_engine.testing import InMemoryGraphPlanStore, build_test_backend
 
     class LegacyPlanStore:
@@ -108,16 +106,8 @@ async def test_async_reservation_fallback_ignores_rejected_key_reuse():
             return self.store.compare_and_set(**kwargs)
 
     runtime = build_graph_runtime(build_test_backend(), LegacyPlanStore())
-    receipt = runtime.record(request())
-    assert receipt.accepted
-    assert not runtime.record(replace(request(), summary="Changed body")).accepted
-    original = runtime.plan_store.get(
-        pot_id="capture", plan_id=receipt.metadata["plan_id"]
-    )
-    reserved, created = await runtime.plan_store.reserve_idempotency_async(
-        record=original,
-        idempotency_key=request().idempotency_key,
-        request_fingerprint=_request_fingerprint(original.original_payload),
-    )
-    assert not created
-    assert reserved.plan_id == original.plan_id
+    result = runtime.record(request())
+    assert not result.accepted
+    assert "atomic request reservation" in result.detail
+    with pytest.raises(ValueError, match="atomic request reservation"):
+        await runtime.plan_store.reserve_idempotency_async()

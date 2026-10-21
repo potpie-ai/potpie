@@ -48,8 +48,13 @@ def test_context_graph_apply_plan_is_legacy_not_implemented() -> None:
 
 def test_apply_mutation_batch_uses_provenance_context_without_event_ref() -> None:
     captured: dict[str, ProvenanceRef] = {}
+    read_scopes = []
 
     class _Writer:
+        async def claim_rows(self, pot_id, **scope):
+            read_scopes.append((pot_id, scope))
+            return []
+
         async def upsert_entities(
             self, pot_id: str, items: list[EntityUpsert], provenance: ProvenanceRef
         ) -> int:
@@ -99,6 +104,16 @@ def test_apply_mutation_batch_uses_provenance_context_without_event_ref() -> Non
 
     assert result.ok is True
     assert result.mutation_id == "mutation:reserved"
+    assert read_scopes == [
+        (
+            "p1",
+            {
+                "record_ids": (),
+                "history_scopes": (("service:payments-api", "DEPENDS_ON"),),
+                "corrections": (),
+            },
+        )
+    ]
     prov = captured["edges"]
     assert prov.mutation_id == "mutation:reserved"
     assert prov.source_event_id == "harness-run-1"
@@ -119,8 +134,10 @@ def test_context_graph_reset_pot_delegates_to_backend() -> None:
         "pot_id": "pot1",
         "ok": True,
         "graph_writer": {"ok": True},
+        "mutation_id": None,
+        "execution": None,
     }
-    backend.mutation.reset_pot.assert_called_once_with("pot1")
+    backend.mutation.reset_pot.assert_called_once_with("pot1", mutation_id=None)
 
 
 def test_context_graph_reset_pot_stops_on_backend_failure() -> None:
@@ -134,6 +151,8 @@ def test_context_graph_reset_pot_stops_on_backend_failure() -> None:
         "pot_id": "pot1",
         "ok": False,
         "graph_writer": {"ok": False, "error": "bad"},
+        "mutation_id": None,
+        "execution": None,
         "error": "bad",
     }
 

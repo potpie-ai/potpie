@@ -10,7 +10,9 @@ the deterministic plan.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Coroutine, TypeVar
+from dataclasses import replace
+from typing import Any, Callable, Coroutine, Iterable, TypeVar
+from uuid import uuid4
 
 from potpie_context_engine.adapters.outbound.graph.cypher import (
     _require_valid_pot_id,
@@ -25,11 +27,14 @@ from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
 )
+from potpie_context_engine.core.claim_codec import row_from_record
+from potpie_context_engine.core.ports.claim_query import ClaimRow
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
     EdgeUpsert,
     EntityUpsert,
     InvalidationOp,
+    ProvenanceContext,
     ProvenanceRef,
 )
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
@@ -117,15 +122,59 @@ class Neo4jGraphWriter(GraphWriterPort):
     ) -> int:
         if not items:
             return 0
-        return await self._with_driver(
-            lambda d: upsert_entities_async(
-                d,
+        if not provenance.mutation_id:
+            provenance = replace(provenance, mutation_id=uuid4().hex)
+        from .neo4j_legacy import prepare_entities, validate_aliases
+
+        async def write(transaction):
+            resolved = await prepare_entities(transaction, pot_id, items, provenance)
+            count = await upsert_entities_async(
+                _TransactionDriver(transaction),
                 pot_id,
-                items,
+                resolved,
                 provenance,
                 definition=self._definition,
             )
+            await validate_aliases(transaction, pot_id)
+            return count
+
+        if self._transaction is not None:
+            return await write(self._transaction)
+
+        async def own_transaction(driver):
+            async with driver.session() as session:
+                return await session.execute_write(write)
+
+        return await self._with_driver(own_transaction)
+
+    async def claim_rows(
+        self,
+        pot_id: str,
+        *,
+        record_ids: Iterable[str] = (),
+        history_scopes: Iterable[tuple[str, str]] = (),
+        corrections: Iterable[EdgeDelete | InvalidationOp] = (),
+    ) -> list[ClaimRow]:
+        """Read selected histories through the mutation's borrowed transaction."""
+        from .claim_reads import claim_read_query
+
+        _require_valid_pot_id(pot_id)
+        query = claim_read_query(
+            pot_id,
+            record_ids=record_ids,
+            history_scopes=history_scopes,
+            corrections=corrections,
         )
+        if query is None:
+            return []
+        cypher, params = query
+
+        async def read(driver: Any) -> list[ClaimRow]:
+            async with driver.session() as session:
+                result = await session.run(cypher, **params)
+                return [row_from_record(record) async for record in result]
+
+        return await self._with_driver(read)
 
     async def upsert_edges(
         self, pot_id: str, items: list[EdgeUpsert], provenance: ProvenanceRef
@@ -173,59 +222,44 @@ class Neo4jGraphWriter(GraphWriterPort):
             )
         )
 
-    async def reset_pot(self, pot_id: str) -> dict[str, Any]:
+    async def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
+        reset_id = mutation_id if mutation_id is not None else uuid4().hex
+        pending = {"mutation_id": reset_id, "execution": None}
         if not self.enabled:
-            return {"ok": False, "error": "context_graph_disabled"}
+            return {"ok": False, "error": "context_graph_disabled", **pending}
         try:
             _require_valid_pot_id(pot_id)
         except ValueError as exc:
-            return {"ok": False, "error": f"invalid_pot_id: {exc}"}
-
-        async def _do(driver: Any) -> dict[str, Any]:
-            async with driver.session() as session:
-                res = await session.run(
-                    "MATCH (n {group_id: $gid}) RETURN count(n) AS cnt", gid=pot_id
-                )
-                rec = await res.single()
-                await res.consume()
-                before = int(rec["cnt"]) if rec is not None else 0
-
-                sweep = await session.run(
-                    """
-                    MATCH (n {group_id: $gid})
-                    CALL (n) {
-                        DETACH DELETE n
-                    } IN TRANSACTIONS OF $batch ROWS
-                    """,
-                    gid=pot_id,
-                    batch=500,
-                )
-                await sweep.consume()
-
-                vres = await session.run(
-                    "MATCH (n {group_id: $gid}) RETURN count(n) AS cnt", gid=pot_id
-                )
-                vrec = await vres.single()
-                await vres.consume()
-                remaining = int(vrec["cnt"]) if vrec is not None else 0
-            if remaining:
-                return {
-                    "ok": False,
-                    "error": "group_id_reset_incomplete",
-                    "group_id_nodes_before": before,
-                    "group_id_nodes_remaining": remaining,
-                }
-            return {
-                "ok": True,
-                "group_id_nodes_before": before,
-                "group_id_nodes_remaining": 0,
-            }
+            return {"ok": False, "error": f"invalid_pot_id: {exc}", **pending}
 
         try:
-            return await self._with_driver(_do)
+            if not isinstance(reset_id, str) or not reset_id:
+                raise ValueError("reset mutation_id must be a nonempty string")
+            if self._transaction is not None:
+                raise RuntimeError(
+                    "reset must use the owning canonical mutation transaction"
+                )
+            from .neo4j_atomic import apply_atomic
+            from potpie_context_engine.core.reconciliation import MutationBatch
+
+            result = await apply_atomic(
+                self,
+                MutationBatch(reset_pot=True),
+                expected_pot_id=pot_id,
+                provenance_context=ProvenanceContext(mutation_id=reset_id),
+                definition=self._definition,
+            )
+            return {
+                "ok": result.ok,
+                **result.administrative_summary,
+                "mutation_id": result.mutation_id,
+                "execution": result.execution.to_dict() if result.execution else None,
+            }
         except Exception as exc:  # noqa: BLE001
             logger.warning("reset_pot failed: %s", exc)
-            return {"ok": False, "error": str(exc)}
+            return {"ok": False, "error": str(exc), **pending}
 
 
 class _TransactionSession:

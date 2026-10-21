@@ -7,10 +7,9 @@ lifecycle code.
 
 from __future__ import annotations
 
-import hashlib
-import json
+
 import logging
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -52,14 +51,9 @@ from potpie_context_engine.core.resource_to_semantic import (
     ResourceDeleteResult,
     ResourceImportResult,
     document_key,
-    resource_delete_to_semantic_request,
-    resource_import_to_semantic_request,
     section_key,
 )
 from potpie_context_engine.core.semantic_mutations import (
-    MutationActor,
-    SemanticMutation,
-    SemanticMutationRequest,
     SemanticMutationResult,
 )
 
@@ -152,13 +146,15 @@ class ResourceFacade:
         return export_archive(self, pot_id=pot_id)
 
     def import_snapshot(
-        self, *, pot_id: str, payload: dict[str, Any]
+        self, *, pot_id: str, payload: dict[str, Any], mutation_id: str | None = None
     ) -> SnapshotManifest:
         """Restore validated graph data and its original document text."""
         reject_journal_admin(self, pot_id, "resource snapshot import")
         from .snapshot_archive import import_archive
 
-        return import_archive(self, pot_id=pot_id, payload=payload)
+        return import_archive(
+            self, pot_id=pot_id, payload=payload, mutation_id=mutation_id
+        )
 
     @journal_resource_workflow
     def import_dir(
@@ -182,8 +178,6 @@ class ResourceFacade:
         """
         from .protocol_resources import protect_protocol_source
 
-        prior = self._current_manifest(pot_id=pot_id, slug=slug)
-
         if _protocols_enabled(self.graph):
             protect_protocol_source(
                 self.store,
@@ -202,9 +196,7 @@ class ResourceFacade:
             source_kind=source_kind,
         )
         index_report = self._index_document(pot_id=pot_id, manifest=manifest)
-        manifest, review_claims, review_errors = self._review_claims_for_import(
-            pot_id=pot_id, prior=prior, current=manifest
-        )
+        review_claims, review_errors = (), ()
         if self.graph is None:
             return ResourceImportResult(
                 manifest=manifest,
@@ -212,18 +204,20 @@ class ResourceFacade:
                 review_required_claim_keys=review_claims,
                 review_marker_errors=review_errors,
             )
-        mutation = self.graph.mutate(
-            resource_import_to_semantic_request(
-                manifest,
-                dependent_claims=self._dependent_claims(
-                    pot_id=pot_id,
-                    section_keys=tuple(
-                        section_key(manifest.doc, slug)
-                        for slug in manifest.sections_removed
-                    ),
-                ),
-            )
+        from .resource_graph_mutations import import_graph
+
+        mutation = import_graph(self, manifest)
+        review_claims = (
+            mutation.review_required_claim_keys
+            if mutation.ok and mutation.status == "applied"
+            else ()
         )
+        if mutation.ok and mutation.status == "applied":
+            manifest = self._clear_graph_review(manifest)
+        elif manifest.pending_review_refs:
+            review_errors = (
+                mutation.detail or "resource graph review and cleanup did not commit",
+            )
         return ResourceImportResult(
             manifest=manifest,
             graph=mutation,
@@ -238,6 +232,22 @@ class ResourceFacade:
             review_marker_errors=review_errors,
         )
 
+    def _clear_graph_review(self, manifest: DocumentManifest) -> DocumentManifest:
+        if not manifest.pending_review_refs:
+            return manifest
+        cleared = self.store.clear_pending_review(
+            pot_id=manifest.pot_id,
+            slug=manifest.doc,
+            expected_revision=manifest.revision,
+            expected_refs=manifest.pending_review_refs,
+        )
+        return replace(
+            manifest,
+            pending_review_refs=cleared.pending_review_refs,
+            pending_review_sections=cleared.pending_review_sections,
+            pending_review_reason=cleared.pending_review_reason,
+        )
+
     def _current_manifest(self, *, pot_id: str, slug: str) -> DocumentManifest | None:
         try:
             return self.store.current_manifest(pot_id=pot_id, slug=slug)
@@ -245,227 +255,6 @@ class ResourceFacade:
             if exc.code == RESOURCE_NOT_FOUND:
                 return None
             raise
-
-    def _review_claims_for_import(
-        self,
-        *,
-        pot_id: str,
-        prior: DocumentManifest | None,
-        current: DocumentManifest,
-    ) -> tuple[DocumentManifest, tuple[str, ...], tuple[str, ...]]:
-        refs = current.pending_review_refs
-        sections = current.pending_review_sections
-        reason = current.pending_review_reason
-        if prior is not None and prior.revision != current.revision:
-            kept = set(current.sections_kept)
-            changed_sections = tuple(
-                section for section in prior.sections if section.slug not in kept
-            )
-            refs = tuple(
-                dict.fromkeys(
-                    (
-                        *refs,
-                        *(
-                            ref
-                            for section in changed_sections
-                            for chunk in section.chunks
-                            for ref in (
-                                format_resource_id(prior.doc, section.slug, chunk.seq),
-                                format_resource_id(
-                                    prior.doc,
-                                    section.slug,
-                                    chunk.seq,
-                                    revision=prior.revision,
-                                ),
-                            )
-                        ),
-                    )
-                )
-            )
-            sections = tuple(
-                dict.fromkeys(
-                    (*sections, *(section.slug for section in changed_sections))
-                )
-            )
-            reason = f"document {prior.doc!r} changed in revision {current.revision}"
-        if not refs or not sections or not reason:
-            return current, (), ()
-        keys, errors = self._claim_keys_citing(
-            pot_id=pot_id,
-            refs=refs,
-            doc=current.doc,
-            sections=sections,
-            reason=reason,
-        )
-        if not errors:
-            cleared = self.store.clear_pending_review(
-                pot_id=pot_id,
-                slug=current.doc,
-                expected_revision=current.revision,
-                expected_refs=refs,
-            )
-            if cleared.revision == current.revision and not cleared.pending_review_refs:
-                current = replace(
-                    current,
-                    pending_review_refs=(),
-                    pending_review_sections=(),
-                    pending_review_reason=None,
-                )
-            else:
-                current = cleared
-        return current, keys, errors
-
-    def _claim_keys_citing(
-        self,
-        *,
-        pot_id: str,
-        refs: tuple[str, ...],
-        doc: str,
-        sections: tuple[str, ...],
-        reason: str,
-    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        if self.claims is None or not refs:
-            return (), ()
-        rows = self.claims.find_claims(
-            ClaimQueryFilter(pot_id=pot_id, include_invalidated=True)
-        )
-        affected = []
-        section_set = set(sections)
-        exact = set(refs)
-        for row in rows:
-            cited = tuple(
-                dict.fromkeys(
-                    (
-                        *row.source_refs,
-                        *(str(item.get("source_ref") or "") for item in row.evidence),
-                    )
-                )
-            )
-            matched = False
-            for source_ref in cited:
-                if source_ref in exact:
-                    matched = True
-                    break
-                try:
-                    parsed = parse_resource_id(source_ref)
-                except ResourceStoreError:
-                    continue
-                if parsed.doc == doc and parsed.section in section_set:
-                    matched = True
-                    break
-            if matched and row.predicate != SECTION_PREDICATE:
-                affected.append(row)
-        marker_errors = self._mark_claims_for_review(
-            pot_id=pot_id,
-            rows=affected,
-            refs=tuple(dict.fromkeys(refs)),
-            reason=reason,
-        )
-        keys = tuple(
-            sorted(
-                {
-                    row.claim_key
-                    for row in affected
-                    if row.claim_key and row.predicate != SECTION_PREDICATE
-                }
-            )
-        )
-        return (() if marker_errors else keys), marker_errors
-
-    def _mark_claims_for_review(
-        self,
-        *,
-        pot_id: str,
-        rows: list[Any],
-        refs: tuple[str, ...],
-        reason: str,
-    ) -> tuple[str, ...]:
-        """Persist evidence-review metadata without changing conclusion text."""
-        if not rows:
-            return ()
-        if self.graph is None or self.claims is None:
-            return (
-                "evidence review markers were not persisted because no graph write service is wired",
-            )
-        keys = {key for row in rows for key in (row.subject_key, row.object_key)}
-        labels = self.claims.entity_labels(pot_id=pot_id, entity_keys=keys)
-
-        def concrete_type(key: str) -> str | None:
-            concrete = sorted(
-                label for label in labels.get(key, ()) if label != "Entity"
-            )
-            return concrete[0] if concrete else None
-
-        operations = []
-        for row in rows:
-            evidence = [dict(item) for item in row.evidence]
-            if not evidence:
-                evidence = [{"source_ref": ref} for ref in row.source_refs]
-            raw = {
-                "op": "assert_claim",
-                "subgraph": row.subgraph or "knowledge",
-                "predicate": row.predicate,
-                "subject": {
-                    "key": row.subject_key,
-                    "type": concrete_type(row.subject_key),
-                },
-                "object": {
-                    "key": row.object_key,
-                    "type": concrete_type(row.object_key),
-                },
-                "truth": row.truth or "agent_claim",
-                "confidence": row.confidence,
-                "description": row.description or row.fact,
-                "environment": row.environment,
-                "valid_from": row.valid_at.isoformat() if row.valid_at else None,
-                "valid_until": row.valid_until.isoformat() if row.valid_until else None,
-                "observed_at": row.observed_at.isoformat() if row.observed_at else None,
-                "evidence": evidence,
-                "extra": {
-                    "evidence_review_required": True,
-                    "evidence_review_reason": reason,
-                    "evidence_review_refs": list(refs),
-                    "_preserve_claim_key": row.claim_key,
-                    "_preserve_claim_properties": dict(row.properties),
-                    "_preserve_claim_fact": row.fact,
-                    "_preserve_source_system": row.source_system,
-                    "_expected_claim_snapshot": _claim_snapshot(row),
-                },
-            }
-            operations.append(SemanticMutation.parse(raw))
-        review_digest = hashlib.sha256(
-            json.dumps(
-                [asdict(operation) for operation in operations],
-                sort_keys=True,
-                separators=(",", ":"),
-                default=str,
-            ).encode("utf-8")
-        ).hexdigest()[:20]
-        try:
-            result = self.graph.mutate(
-                SemanticMutationRequest(
-                    pot_id=pot_id,
-                    operations=tuple(operations),
-                    idempotency_key=f"resource-evidence-review:{review_digest}",
-                    created_by=MutationActor(
-                        surface="resource", harness="resource_facade"
-                    ),
-                    allow_review_required=True,
-                    approved_by="resource_evidence_lifecycle",
-                )
-            )
-        except Exception as exc:
-            logger.exception("failed to persist evidence review markers")
-            return (f"evidence review markers were not persisted: {exc}",)
-        if not result.ok:
-            errors = (
-                tuple(issue.message or issue.code for issue in result.issues)
-                or tuple(result.warnings)
-                or (result.detail or "graph rejected evidence review markers",)
-            )
-            logger.warning("failed to persist evidence review markers: %s", errors)
-            return errors
-        return ()
 
     def _index_document(
         self, *, pot_id: str, manifest: DocumentManifest
@@ -663,7 +452,7 @@ class ResourceFacade:
         what the *graph* did instead of inferring it from the store.
         """
         try:
-            sections = self.store.list(pot_id=pot_id, slug=slug)
+            manifest = self.store.current_manifest(pot_id=pot_id, slug=slug)
         except ResourceStoreError as exc:
             if getattr(exc, "code", None) == RESOURCE_NOT_FOUND:
                 return ResourceDeleteResult(removed=False)
@@ -672,7 +461,6 @@ class ResourceFacade:
 
         if _protocols_enabled(self.graph):
             protect_protocol_source(self.store, self.claims, pot_id=pot_id, slug=slug)
-        manifest = self.store.current_manifest(pot_id=pot_id, slug=slug)
         evidence_refs = tuple(
             ref
             for section in manifest.sections
@@ -688,7 +476,7 @@ class ResourceFacade:
             )
         )
         reason = f"document {slug!r} was explicitly deleted"
-        self.store.set_pending_review(
+        manifest = self.store.set_pending_review(
             pot_id=pot_id,
             slug=slug,
             refs=evidence_refs,
@@ -696,52 +484,41 @@ class ResourceFacade:
             reason=reason,
             expected_revision=manifest.revision,
         )
-        review_claims, review_errors = self._claim_keys_citing(
-            pot_id=pot_id,
-            refs=evidence_refs,
-            doc=slug,
-            sections=tuple(section.slug for section in manifest.sections),
-            reason=reason,
-        )
-        if review_errors:
-            return ResourceDeleteResult(
-                removed=False,
-                review_marker_errors=review_errors,
-            )
-        cleared = self.store.clear_pending_review(
-            pot_id=pot_id,
-            slug=slug,
-            expected_revision=manifest.revision,
-            expected_refs=evidence_refs,
-        )
-        if cleared.pending_review_refs:
-            return ResourceDeleteResult(
-                removed=False,
-                review_marker_errors=(
-                    "document changed while evidence review was being recorded; retry deletion",
-                ),
-            )
         graph_result = None
-        if self.graph is not None and sections:
-            slugs = tuple(section.slug for section in sections)
-            graph_result = self.graph.mutate(
-                resource_delete_to_semantic_request(
-                    pot_id=pot_id,
-                    doc=slug,
-                    section_slugs=slugs,
-                    dependent_claims=self._dependent_claims(
-                        pot_id=pot_id,
-                        section_keys=tuple(section_key(slug, s) for s in slugs),
+        review_claims, review_errors = (), ()
+        if self.graph is not None:
+            from .resource_graph_mutations import delete_graph
+
+            graph_result = delete_graph(self, manifest)
+            if not graph_result.ok or graph_result.status != "applied":
+                return ResourceDeleteResult(
+                    removed=False,
+                    graph=graph_result,
+                    review_marker_errors=(
+                        graph_result.detail
+                        or "resource graph review and cleanup did not commit",
                     ),
                 )
-            )
+            review_claims = graph_result.review_required_claim_keys
+            cleared = self._clear_graph_review(manifest)
+            if cleared.pending_review_refs:
+                return ResourceDeleteResult(
+                    removed=False,
+                    graph=graph_result,
+                    review_required_claim_keys=review_claims,
+                    review_marker_errors=(
+                        "document changed while graph review was committed; retry deletion",
+                    ),
+                )
         # Before the bytes go: a chunk id that still ranks in search but no
         # longer resolves is the one failure mode a caller cannot diagnose,
         # and dropping index rows for a document that then survives a failed
         # store delete only costs a rebuild.
         self._drop_from_index(pot_id=pot_id, slug=slug)
         return ResourceDeleteResult(
-            removed=self.store.delete(pot_id=pot_id, slug=slug),
+            removed=self.store.delete(
+                pot_id=pot_id, slug=slug, expected_revision=manifest.revision
+            ),
             graph=graph_result,
             review_required_claim_keys=review_claims,
             review_marker_errors=review_errors,
@@ -767,9 +544,8 @@ class ResourceFacade:
         the request already retracts those, and emitting them twice would put
         two ops for one claim in a single plan.
 
-        Degrades to no cleanup rather than blocking the delete when no claim
-        query is wired: losing the bytes with stale claims behind them is the
-        status quo, and refusing to delete would be worse.
+        Graph preparation requires a claim query and preserves every physical
+        dependency, including same-triple claims in different source scopes.
         """
         if self.claims is None or not section_keys:
             return ()
@@ -781,11 +557,16 @@ class ResourceFacade:
                 ClaimQueryFilter(pot_id=pot_id, object_key_in=section_keys)
             ),
         ]
-        found: dict[tuple[str, str, str], DependentClaim] = {}
+        found: dict[str, DependentClaim] = {}
         for row in rows:
             if row.predicate == SECTION_PREDICATE:
                 continue
-            identity = (row.predicate, row.subject_key, row.object_key)
+            if not row.record_id or not row.claim_key:
+                raise ResourceStoreError(
+                    "migration_required",
+                    "resource dependency lacks claim/incarnation identity",
+                )
+            identity = row.record_id
             found.setdefault(
                 identity,
                 DependentClaim(
@@ -795,6 +576,11 @@ class ResourceFacade:
                     # Retract in the subgraph the claim was written into, not
                     # the resource store's own.
                     subgraph=row.subgraph or RESOURCE_SUBGRAPH,
+                    claim_key=row.claim_key,
+                    record_id=row.record_id,
+                    environment=row.environment,
+                    source_system=row.source_system,
+                    source_ref=row.source_ref,
                 ),
             )
         return tuple(found.values())
@@ -983,28 +769,3 @@ def _index_profile(index: ResourceIndexPort | None) -> str:
 
 
 __all__ = ["ResourceFacade"]
-
-
-def _claim_snapshot(row: Any) -> dict[str, Any]:
-    def timestamp(value: Any) -> str | None:
-        return value.isoformat() if value is not None else None
-
-    return {
-        "claim_key": row.claim_key,
-        "predicate": row.predicate,
-        "subject_key": row.subject_key,
-        "object_key": row.object_key,
-        "fact": row.fact,
-        "description": row.description,
-        "source_system": row.source_system,
-        "source_refs": list(row.source_refs),
-        "evidence": [dict(item) for item in row.evidence],
-        "properties": dict(row.properties),
-        "valid_at": timestamp(row.valid_at),
-        "invalid_at": timestamp(row.invalid_at),
-        "valid_until": timestamp(row.valid_until),
-        "observed_at": timestamp(row.observed_at),
-        "truth": row.truth,
-        "confidence": row.confidence,
-        "environment": row.environment,
-    }

@@ -39,6 +39,7 @@ from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import 
     row_from_record as _row_from_record,
 )
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
+    claim_matches_post_filter,
     stamp_scored_rows,
     stamp_similarity,
     vector_candidate_k,
@@ -55,28 +56,22 @@ CALL db.index.vector.queryRelationships($index_name, $k, $embedding)
 YIELD relationship AS r, score
 MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
 WHERE r.group_id = $gid
-  AND ($include_retired OR coalesce(r.retired,false)=false)
+  AND ($include_retired OR (coalesce(r.retired,false)=false AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false))
   AND ($preds IS NULL OR r.name IN $preds)
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
+  AND ($record_ids IS NULL OR coalesce(r.record_id, r.uuid) IN $record_ids)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
   AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
   AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
-  AND ($include_invalid OR (
-    (coalesce(r.valid_from, r.valid_at) IS NULL OR coalesce(r.valid_from, r.valid_at) <= $query_time)
-    AND (r.valid_until IS NULL OR $query_time < r.valid_until)
-    AND (r.invalid_at IS NULL OR $query_time < r.invalid_at)
-  ))
-  AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
-  AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
   AND ($subject_label IS NULL OR $subject_label IN labels(a))
   AND ($object_label IS NULL OR $object_label IN labels(b))
+  AND ($endpoint_label IS NULL OR $endpoint_label IN labels(a) OR $endpoint_label IN labels(b))
 RETURN r{.*, fact_embedding: NULL} AS props, score
 ORDER BY score DESC
-LIMIT $limit
 """
 
 _ENTITY_PROPERTIES_CYPHER = """
@@ -141,12 +136,14 @@ class Neo4jClaimQueryStore:
             # only when an explicit anchor exists to avoid full-partition scans.
             pass
 
+        query_time = filter_.as_of or datetime.now(timezone.utc)
         params = {
             "gid": filter_.pot_id,
             "preds": list(filter_.predicate_in) or None,
             "subjects": list(filter_.subject_key_in) or None,
             "objects": list(filter_.object_key_in) or None,
             "claim_keys": list(filter_.claim_key_in) or None,
+            "record_ids": list(filter_.record_id_in) or None,
             "subgraphs": list(filter_.subgraph_in) or None,
             "excluded_subgraphs": list(filter_.subgraph_not_in) or None,
             "mutation_ids": list(filter_.mutation_id_in) or None,
@@ -160,36 +157,50 @@ class Neo4jClaimQueryStore:
             "include_invalid": bool(filter_.include_invalidated),
             "include_retired": bool(filter_.include_retired),
             "as_of": _iso(filter_.as_of),
-            "query_time": _iso(filter_.as_of or datetime.now(timezone.utc)),
+            "query_time": _iso(query_time),
             "va_after": _iso(filter_.valid_at_after),
             "va_before": _iso(filter_.valid_at_before),
             "subject_label": filter_.subject_label,
             "object_label": filter_.object_label,
         }
         if filter_.fact_query and self._embedder is not None:
-            rows = self._find_claims_vector(filter_, params)
+            rows = self._find_claims_vector(filter_, params, query_time=query_time)
             if rows:
                 return rows
 
-        rows = self._find_claims_lexical(filter_, params)
+        rows = self._find_claims_lexical(filter_, params, query_time=query_time)
 
         if filter_.limit is not None and filter_.limit >= 0:
             rows = rows[: filter_.limit]
         return rows
 
     def _find_claims_lexical(
-        self, filter_: ClaimQueryFilter, params: Mapping[str, object]
+        self,
+        filter_: ClaimQueryFilter,
+        params: Mapping[str, object],
+        *,
+        query_time: datetime,
     ) -> list[ClaimRow]:
         driver = self._get_driver()
         with driver.session() as session:
             records = list(session.run(_FIND_CLAIMS_CYPHER, **params))
-        rows = [_row_from_record(rec) for rec in records]
+        rows = [
+            row
+            for rec in records
+            if claim_matches_post_filter(
+                row := _row_from_record(rec), filter_, query_time=query_time
+            )
+        ]
         if filter_.fact_query:
             rows = stamp_similarity(rows, filter_.fact_query)
         return rows
 
     def _find_claims_vector(
-        self, filter_: ClaimQueryFilter, params: Mapping[str, object]
+        self,
+        filter_: ClaimQueryFilter,
+        params: Mapping[str, object],
+        *,
+        query_time: datetime,
     ) -> list[ClaimRow]:
         assert filter_.fact_query is not None
         assert self._embedder is not None
@@ -204,7 +215,6 @@ class Neo4jClaimQueryStore:
                 "k": vector_candidate_k(
                     limit, selective=vector_filter_is_selective(filter_)
                 ),
-                "limit": limit,
             }
             driver = self._get_driver()
             with driver.session() as session:
@@ -212,9 +222,13 @@ class Neo4jClaimQueryStore:
         except Exception:
             return []
         rows = [
-            (float(rec.get("score", 0.0)), _row_from_record(rec)) for rec in records
+            (float(rec.get("score", 0.0)), row)
+            for rec in records
+            if claim_matches_post_filter(
+                row := _row_from_record(rec), filter_, query_time=query_time
+            )
         ]
-        return stamp_scored_rows(rows)
+        return stamp_scored_rows(rows[:limit])
 
     def entity_labels(
         self, *, pot_id: str, entity_keys: Iterable[str]

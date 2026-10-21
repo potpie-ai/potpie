@@ -7,7 +7,8 @@ intentionally storage-adapter internal: application services depend on
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Iterable, Protocol
+from potpie_context_engine.core.ports.claim_query import ClaimRow
 
 from potpie_context_engine.core.graph_mutations import (
     EdgeDelete,
@@ -28,6 +29,20 @@ class GraphWriterPort(Protocol):
         """Idempotently create entity / claim / vector indexes."""
         ...
 
+    async def claim_rows(
+        self,
+        pot_id: str,
+        *,
+        record_ids: Iterable[str] = (),
+        history_scopes: Iterable[tuple[str, str]] = (),
+        corrections: Iterable[EdgeDelete | InvalidationOp] = (),
+    ) -> list[ClaimRow]:
+        """Read complete selected histories within the writer's atomic boundary.
+
+        Empty scopes return no rows; they must never select the entire pot.
+        """
+        ...
+
     async def upsert_entities(
         self, pot_id: str, items: list[EntityUpsert], provenance: ProvenanceRef
     ) -> int: ...
@@ -44,7 +59,9 @@ class GraphWriterPort(Protocol):
         self, pot_id: str, items: list[InvalidationOp], provenance: ProvenanceRef
     ) -> int: ...
 
-    async def reset_pot(self, pot_id: str) -> dict[str, Any]: ...
+    async def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]: ...
 
 
 __all__ = ["GraphWriterPort"]

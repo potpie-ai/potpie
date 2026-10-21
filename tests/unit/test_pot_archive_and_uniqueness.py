@@ -120,6 +120,36 @@ def _archive(service: LocalPotManagementService, ref: str) -> None:
     service.archive_pot(ref=ref)
 
 
+@pytest.mark.parametrize("command", ["reset", "archive"])
+@pytest.mark.parametrize(
+    "status,graph_reset",
+    [("failed", True), ("unknown_on_recovery", True), ("not_attempted", False)],
+)
+def test_partial_reset_stops_cli_and_does_not_archive(
+    service, engine, monkeypatch, command, status, graph_reset
+):
+    service.create_pot(name="keep-live", use=True)
+
+    async def partial_reset(request, *, confirmation=None):
+        return Success(
+            ResetContextResult(
+                context_id=engine.context_id,
+                reset=graph_reset,
+                mutation_id="reset-receipt",
+                resources_status=status,
+                detail="Graph reset completed; resource purge failed: lost purge",
+            )
+        )
+
+    monkeypatch.setattr(engine, "reset_context", partial_reset)
+    result = _run(service, command, "keep-live", "--confirm")
+    assert result.exit_code != 0
+    payload = _payload(result)
+    assert payload["code"] == "context_reset_incomplete"
+    assert "resource purge failed" in payload["message"]
+    assert service.active_pot().archived is False
+
+
 # --- archive is a lifecycle state -------------------------------------------
 
 
@@ -406,7 +436,9 @@ def _engine_client(service: LocalPotManagementService, selector: str):
         backend=SimpleNamespace(
             profile="embedded",
             mutation=SimpleNamespace(
-                reset_pot=MagicMock(side_effect=lambda pot_id: {"pot_id": pot_id})
+                reset_pot=MagicMock(
+                    side_effect=lambda pot_id, *, mutation_id=None: {"pot_id": pot_id}
+                )
             ),
         ),
         agent_context=SimpleNamespace(search=MagicMock(return_value={"matches": 0})),
@@ -435,7 +467,9 @@ async def test_an_archived_pot_id_reaches_only_the_graph_reset(service) -> None:
     assert searched.error.code == "pot_archived"
     services.agent_context.search.assert_not_called()
     assert isinstance(reset, Success)
-    services.backend.mutation.reset_pot.assert_called_once_with(dead.pot_id)
+    services.backend.mutation.reset_pot.assert_called_once_with(
+        dead.pot_id, mutation_id=None
+    )
 
 
 @pytest.mark.anyio

@@ -467,15 +467,23 @@ def test_import_nudges_again_when_the_last_scope_edge_is_retracted(tmp_path):
     assert "DOCUMENTS" in action and f"document:{DOC}" in action
 
 
-def test_import_nudges_for_scope_when_no_claim_query_is_wired(tmp_path):
-    """Unknown is not 'linked': with nothing to count, the nudge is the honest
-    default — a document nothing can find is the costlier silence."""
+def test_import_rejects_graph_reconciliation_without_claim_query(tmp_path):
+    """An incomplete read set cannot authorize cleanup or report graph success."""
     host = _host()
     host.resources.claims = None
 
     result = _run(["import", str(_import_dir(tmp_path / "in")), "--doc", DOC])
 
-    assert "DOCUMENTS" in json.loads(result.stdout)["recommended_next_action"]
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "not_implemented"
+    assert "resources.graph_reconciliation" in payload["message"]
+    assert (
+        host.runtime.backend.claim_query.find_claims(
+            ClaimQueryFilter(pot_id="p", include_invalidated=True)
+        )
+        == []
+    )
 
 
 def test_import_scope_nudge_points_at_the_commands_the_catalog_lists(tmp_path):

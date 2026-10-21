@@ -17,7 +17,9 @@ parse boundary and normalized into ``operations=[...]`` immediately.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from datetime import datetime
+from typing import Any, Callable, Mapping
+from .claim_corrections import ClaimTarget
 
 from potpie_context_engine.core.graph_contract import (
     GRAPH_CONTRACT_VERSION,
@@ -29,6 +31,11 @@ from potpie_context_engine.core.graph_contract import (
 class SemanticMutationParseError(ValueError):
     """Raised when a mutation payload is structurally malformed (not a
     semantic/ontology error — that is the validator's job)."""
+
+
+# Host-side source adapters resolve effects during first preparation. The
+# callback is never serialized or invoked during execution/recovery.
+SemanticOperationResolver = Callable[[], tuple["SemanticMutation", ...]]
 
 
 # --- Building blocks --------------------------------------------------------
@@ -160,6 +167,9 @@ class SemanticMutation:
     reason: str | None = None
     superseded_by: GraphEntityRef | None = None
     target_claim_keys: tuple[str, ...] = ()
+    target_claim_record_ids: tuple[str, ...] = ()
+    target_source_system: str | None = None
+    target_source_ref: str | None = None
 
     # patch_entity / transition_state
     patch: Mapping[str, Any] = field(default_factory=dict)
@@ -233,6 +243,11 @@ class SemanticMutation:
             target_claim_keys=tuple(
                 str(key) for key in _as_list(raw.get("target_claim_keys"))
             ),
+            target_claim_record_ids=tuple(
+                str(key) for key in _as_list(raw.get("target_claim_record_ids"))
+            ),
+            target_source_system=_opt_str(raw.get("target_source_system")),
+            target_source_ref=_opt_str(raw.get("target_source_ref")),
             patch=patch,
             expected_entity_version=_opt_str(
                 raw.get("expected_entity_version")
@@ -375,7 +390,8 @@ class SemanticMutationPlan:
     provenance: Any = None
     warnings: tuple[str, ...] = ()
     # Resolved against the proposal snapshot; lowering must not broaden these.
-    correction_targets: dict[int, tuple[str, ...]] = field(default_factory=dict)
+    correction_targets: dict[int, tuple[ClaimTarget, ...]] = field(default_factory=dict)
+    prepared_at: datetime | None = None
 
     @property
     def errors(self) -> tuple[SemanticMutationValidationIssue, ...]:
@@ -404,6 +420,8 @@ class SemanticMutationResult:
     detail: str | None = None
     graph_contract_version: str = GRAPH_CONTRACT_VERSION
     ontology_version: str = ONTOLOGY_VERSION
+    plan_id: str | None = None
+    review_required_claim_keys: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -414,6 +432,7 @@ class SemanticMutationResult:
             "graph_contract_version": self.graph_contract_version,
             "ontology_version": self.ontology_version,
             "operations_accepted": self.operations_accepted,
+            "plan_id": self.plan_id,
             "warnings": list(self.warnings),
             "issues": [i.to_dict() for i in self.issues],
         }
@@ -429,6 +448,8 @@ class SemanticMutationResult:
                 out["mutation_id"] = self.mutation_id
         if self.claim_keys:
             out["claim_keys"] = list(self.claim_keys)
+        if self.review_required_claim_keys:
+            out["review_required_claim_keys"] = list(self.review_required_claim_keys)
         if self.subgraphs:
             out["subgraphs"] = list(self.subgraphs)
         if self.detail:

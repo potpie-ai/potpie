@@ -237,7 +237,7 @@ def test_fact_query_uses_native_relationship_vector_index_when_embedder_present(
     assert "ORDER BY score ASC" in cypher
     assert params["embedding"] == [0.1, 0.2, 0.3]
     assert params["k"] == 50
-    assert params["limit"] == params["k"]
+    assert "LIMIT" not in cypher
     assert rows[0].subject_key == "a"
     assert rows[0].properties["semantic_similarity"] == pytest.approx(0.88)
 
@@ -404,7 +404,7 @@ def test_fact_query_applies_label_filters_in_python() -> None:
     assert "labels(" not in vector_cypher
     # With a label filter pending in Python, the query keeps the whole
     # candidate set instead of pre-trimming to the requested limit.
-    assert vector_params["limit"] == vector_params["k"]
+    assert "LIMIT" not in vector_cypher
 
 
 def test_fact_query_vector_result_clamped_to_limit() -> None:

@@ -7,26 +7,36 @@ swap in a transactional store behind the same port.
 
 from __future__ import annotations
 
-import json
-import logging
-import hashlib
+from potpie_context_engine.core.mutation_execution import (
+    request_fingerprint as _request_fingerprint,
+)
+
+from io import StringIO
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from potpie_context_engine.core.graph_plans import GraphMutationPlanRecord
+from potpie_context_engine.core.legacy_repair_run import (
+    RepairRun,
+    validate_repair_reservation,
+    validate_repair_child_reservations,
+)
 from potpie_context_engine.adapters.outbound.graph._local_json_atomic import (
     locked_json_store,
+    durable_json_replace,
+    strict_json_load,
 )
 from potpie_context_engine.adapters.outbound.local_paths import default_home
 
-logger = logging.getLogger(__name__)
+from potpie_context_engine.core.mutation_execution import MutationPersistenceError
 
 
 @dataclass(slots=True)
 class LocalJsonGraphPlanStore:
     home: Path = field(default_factory=default_home)
+    _observed_state: bool = field(default=False, init=False, repr=False)
 
     @property
     def _path(self) -> Path:
@@ -40,6 +50,44 @@ class LocalJsonGraphPlanStore:
             by_pot[record.plan_id] = record.to_dict()
             self._save(state)
 
+    def reserve_repair_run(
+        self, run: RepairRun, child_records: tuple[GraphMutationPlanRecord, ...]
+    ) -> tuple[RepairRun, bool]:
+        with locked_json_store(self._path):
+            state = self._load()
+            by_pot = state.setdefault("repair_runs", {}).setdefault(run.pot_id, {})
+            existing = (
+                RepairRun.from_dict(by_pot[run.repair_id])
+                if run.repair_id in by_pot
+                else None
+            )
+            if not validate_repair_reservation(run, child_records, existing):
+                return existing, False
+            plans = state["plans"].setdefault(run.pot_id, {})
+            if any(record.plan_id in plans for record in child_records):
+                raise MutationPersistenceError(
+                    "repair child plan identity is already reserved"
+                )
+            validate_repair_child_reservations(
+                (GraphMutationPlanRecord.from_dict(raw) for raw in plans.values()),
+                child_records,
+            )
+            plans.update({record.plan_id: record.to_dict() for record in child_records})
+            by_pot[run.repair_id] = run.to_dict()
+            state["schema_version"] = 2
+            self._save(state)
+            return run, True
+
+    def get_repair_run(self, *, pot_id: str, repair_id: str) -> RepairRun | None:
+        raw = self._load().get("repair_runs", {}).get(pot_id, {}).get(repair_id)
+        return RepairRun.from_dict(raw) if raw is not None else None
+
+    async def reserve_repair_run_async(self, run, child_records):
+        return self.reserve_repair_run(run, child_records)
+
+    async def get_repair_run_async(self, **kwargs):
+        return self.get_repair_run(**kwargs)
+
     def reserve_idempotency(
         self,
         *,
@@ -51,8 +99,6 @@ class LocalJsonGraphPlanStore:
             state = self._load()
             by_pot = state.setdefault("plans", {}).setdefault(record.pot_id, {})
             for raw in by_pot.values():
-                if not isinstance(raw, dict):
-                    continue
                 existing = GraphMutationPlanRecord.from_dict(raw)
                 key = str(
                     existing.original_payload.get("idempotency_key") or ""
@@ -68,8 +114,6 @@ class LocalJsonGraphPlanStore:
                         f"idempotency_key {idempotency_key!r} is already bound to "
                         f"plan {existing.plan_id!r} with different content"
                     )
-                if existing.status in {"conflict", "error", "expired"}:
-                    continue
                 return existing, False
             by_pot[record.plan_id] = record.to_dict()
             self._save(state)
@@ -115,11 +159,7 @@ class LocalJsonGraphPlanStore:
         by_pot = self._load().get("plans", {}).get(pot_id, {})
         if not isinstance(by_pot, dict):
             return ()
-        records = [
-            GraphMutationPlanRecord.from_dict(raw)
-            for raw in by_pot.values()
-            if isinstance(raw, dict)
-        ]
+        records = [GraphMutationPlanRecord.from_dict(raw) for raw in by_pot.values()]
         if plan_id:
             records = [record for record in records if record.plan_id == plan_id]
         if mutation_id:
@@ -144,25 +184,91 @@ class LocalJsonGraphPlanStore:
         try:
             raw = self._path.read_text(encoding="utf-8")
         except FileNotFoundError:
-            return {"plans": {}}
-        except OSError as exc:
-            logger.warning("graph plan store unreadable at %s: %s", self._path, exc)
-            return {"plans": {}}
+            if self._observed_state:
+                raise MutationPersistenceError(
+                    "previously observed plan store is missing"
+                )
+            return {"schema_version": 1, "plans": {}}
+        except (OSError, UnicodeError) as exc:
+            raise MutationPersistenceError(
+                f"graph plan store unreadable: {self._path}"
+            ) from exc
         try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.warning("graph plan store corrupt at %s; resetting", self._path)
-            return {"plans": {}}
-        if not isinstance(data, dict):
-            return {"plans": {}}
-        data.setdefault("plans", {})
-        return data
+            data = strict_json_load(StringIO(raw))
+            if (
+                not isinstance(data, dict)
+                or type(data.get("schema_version", 1)) is not int
+                or data.get("schema_version", 1) not in {1, 2}
+            ):
+                raise ValueError("unsupported graph plan store schema")
+            if not isinstance(data.get("plans"), dict):
+                raise ValueError("graph plan store requires a plans object")
+            for pot_id, plans in data["plans"].items():
+                if (
+                    not isinstance(pot_id, str)
+                    or not pot_id
+                    or not isinstance(plans, dict)
+                ):
+                    raise ValueError("invalid pot plan collection")
+                reservations = set()
+                for plan_id, payload in plans.items():
+                    record = GraphMutationPlanRecord.from_dict(payload)
+                    if (record.pot_id, record.plan_id) != (pot_id, plan_id):
+                        raise ValueError("plan storage identity mismatch")
+                    key = str(
+                        record.original_payload.get("idempotency_key") or ""
+                    ).strip()
+                    if key and record.reserves_idempotency:
+                        if key in reservations:
+                            raise ValueError("duplicate permanent request reservation")
+                        reservations.add(key)
+            _validate_repair_runs(data)
+            self._observed_state = True
+            return data
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise MutationPersistenceError(
+                f"graph plan store is invalid: {self._path}: {exc}"
+            ) from exc
 
     def _save(self, data: dict[str, Any]) -> None:
-        self.home.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-        tmp.replace(self._path)
+        _validate_repair_runs(data)
+        durable_json_replace(self._path, data)
+        self._observed_state = True
+
+
+def _validate_repair_runs(data: dict[str, Any]) -> None:
+    if data.get("schema_version", 1) == 1:
+        if "repair_runs" in data:
+            raise MutationPersistenceError(
+                "repair manifests require plan store schema 2"
+            )
+        return
+    runs = data.get("repair_runs")
+    if not isinstance(runs, dict):
+        raise MutationPersistenceError("plan store schema 2 requires repair manifests")
+    bound = set()
+    for pot_id, by_pot in runs.items():
+        if not isinstance(by_pot, dict):
+            raise MutationPersistenceError("invalid repair manifest collection")
+        for repair_id, raw in by_pot.items():
+            run = RepairRun.from_dict(raw)
+            if (run.pot_id, run.repair_id) != (pot_id, repair_id):
+                raise MutationPersistenceError(
+                    "repair manifest storage identity mismatch"
+                )
+            children = []
+            for child in run.children:
+                key = (pot_id, child.plan_id)
+                if key in bound:
+                    raise MutationPersistenceError(
+                        "repair child belongs to multiple manifests"
+                    )
+                bound.add(key)
+                raw_child = data["plans"].get(pot_id, {}).get(child.plan_id)
+                if raw_child is None:
+                    raise MutationPersistenceError("repair child is missing")
+                children.append(GraphMutationPlanRecord.from_dict(raw_child))
+            run.validate_children(children)
 
 
 def _record_in_window(
@@ -181,13 +287,6 @@ def _record_in_window(
             continue
         return True
     return False
-
-
-def _request_fingerprint(payload: dict[str, Any] | Any) -> str:
-    normalized = dict(payload)
-    normalized.pop("expected_subgraph_versions", None)
-    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.blake2b(encoded.encode("utf-8"), digest_size=20).hexdigest()
 
 
 __all__ = ["LocalJsonGraphPlanStore"]

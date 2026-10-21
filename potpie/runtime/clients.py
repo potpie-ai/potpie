@@ -22,6 +22,7 @@ from potpie.runtime.operations import (
     DaemonControlOperation,
     EngineOperation,
     SafetyClass,
+    effective_operation_spec,
     operation_capabilities,
     operation_catalog_fingerprint,
 )
@@ -708,7 +709,9 @@ class TypedOperationHandler:
                 host_handler=host_handler,
                 extension=extension,
             )
-        spec = ENGINE_OPERATION_CATALOG[request.operation]
+        spec = effective_operation_spec(
+            ENGINE_OPERATION_CATALOG[request.operation], request.payload
+        )
         if not spec.context_required:
             if self._context_free_handler is None:
                 return Failure(
@@ -991,7 +994,9 @@ class DaemonEngineClient(EngineClient):
         envelope = envelope_or_error.value
         response_or_error = await self._send(
             envelope,
-            safety=ENGINE_OPERATION_CATALOG[operation].safety,
+            safety=effective_operation_spec(
+                ENGINE_OPERATION_CATALOG[operation], request
+            ).safety,
         )
         if isinstance(response_or_error, Failure):
             return response_or_error
@@ -1247,6 +1252,7 @@ def _build_operation_request(
                 },
             )
         )
+    spec = effective_operation_spec(spec, payload)
     if confirmation is not None and not spec.destructive:
         return Failure(
             ProtocolError(

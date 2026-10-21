@@ -35,13 +35,15 @@ class GraphSnapshotPort(Protocol):
         """Return the portable, JSON-safe snapshot payload in memory."""
         ...
 
-    def import_(self, *, pot_id: str, source: str) -> SnapshotManifest:
+    def import_(
+        self, *, pot_id: str, source: str, mutation_id: str | None = None
+    ) -> SnapshotManifest:
         """Load a snapshot from ``source`` into ``pot_id``, rebuilding
         projections for this backend profile."""
         ...
 
     def import_data(
-        self, *, pot_id: str, payload: Mapping[str, Any]
+        self, *, pot_id: str, payload: Mapping[str, Any], mutation_id: str | None = None
     ) -> SnapshotManifest:
         """Validate and merge an in-memory portable snapshot payload."""
         ...

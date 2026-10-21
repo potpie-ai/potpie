@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
+from potpie_context_engine.core.claim_storage import StoredClaimSource
+
 
 @dataclass(frozen=True, slots=True)
 class ClaimRow:
@@ -56,6 +58,12 @@ class ClaimRow:
     ontology_version: str | None = None
     record_id: str = ""
     retired: bool = False
+    temporal_diagnostics: Mapping[str, str] = field(default_factory=dict)
+    """Read evidence about malformed legacy values; never authored claim data."""
+    stored_source: StoredClaimSource | None = field(
+        default=None, compare=False, repr=False
+    )
+    """Lossless embedded source fields; excluded from graph/journal/snapshot schemas."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +81,7 @@ class ClaimQueryFilter:
     subject_key_in: tuple[str, ...] = ()
     object_key_in: tuple[str, ...] = ()
     claim_key_in: tuple[str, ...] = ()
+    record_id_in: tuple[str, ...] = ()
     subgraph_in: tuple[str, ...] = ()
     subgraph_not_in: tuple[str, ...] = ()
     mutation_id_in: tuple[str, ...] = ()

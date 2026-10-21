@@ -42,7 +42,8 @@ def _plan(summary: str = "API uses structured logging") -> MutationBatch:
         ),
         summary=summary,
         entity_upserts=[
-            EntityUpsert(entity_key="pref:logging", labels=("Preference",))
+            EntityUpsert(entity_key="pref:logging", labels=("Preference",)),
+            EntityUpsert(entity_key="service:api", labels=("Service",)),
         ],
         edge_upserts=[
             EdgeUpsert(
@@ -104,7 +105,7 @@ def test_in_memory_completed_retry_returns_cached_receipt_without_notifying() ->
     assert len(backend.claim_query.find_claims(ClaimQueryFilter(pot_id=POT))) == 1
 
 
-def test_in_memory_overlapping_retry_waits_for_the_owner_and_applies_once() -> None:
+def test_in_memory_retry_reads_committed_receipt_while_observer_waits() -> None:
     entered_callback = threading.Event()
     release_callback = threading.Event()
     changes = 0
@@ -132,10 +133,10 @@ def test_in_memory_overlapping_retry_waits_for_the_owner_and_applies_once() -> N
             expected_pot_id=POT,
             provenance_context=_context(),
         )
-        assert not retry.done()
+        retry_result = retry.result(timeout=10)
+        assert retry_result.ok
         release_callback.set()
         owner_result = owner.result(timeout=10)
-        retry_result = retry.result(timeout=10)
 
     assert owner_result == retry_result
     assert changes == 1
@@ -204,7 +205,11 @@ def test_completed_retry_after_reset_returns_receipt_without_resurrecting_graph(
         expected_pot_id=POT,
         provenance_context=_context(),
     )
-    assert backend.mutation.reset_pot(POT) == {"removed_claims": 1}
+    reset = backend.mutation.reset_pot(POT)
+    assert reset["removed_claims"] == 1
+    assert reset["mutation_id"]
+    assert reset["execution"]["version_before"] == 1
+    assert reset["execution"]["version_after"] == 2
 
     if profile == "embedded":
         backend = EmbeddedGraphBackend(home=tmp_path)
@@ -246,14 +251,17 @@ def test_embedded_stale_lifecycle_writes_preserve_newer_graph_and_receipt(
         provenance_context=_context(),
     )
 
-    assert (
-        stale.mutation.invalidate(
-            pot_id=POT,
-            claim_keys=("claim:does-not-exist",),
-        )
-        == 0
-    )
-    assert stale.mutation.reset_pot("different-pot") == {"removed_claims": 0}
+    from potpie_context_engine.core.claim_lifecycle import ClaimLifecycleConflict
+
+    version = writer.mutation.current_version(POT)
+    with pytest.raises(ClaimLifecycleConflict, match="missing"):
+        stale.mutation.invalidate(pot_id=POT, claim_keys=("claim:does-not-exist",))
+    assert writer.mutation.current_version(POT) == version
+    reset = stale.mutation.reset_pot("different-pot")
+    assert reset["removed_claims"] == 0
+    assert reset["mutation_id"]
+    assert reset["execution"]["version_before"] == 0
+    assert reset["execution"]["version_after"] == 1
     assert stale.provision().ok
 
     fresh = EmbeddedGraphBackend(home=tmp_path)

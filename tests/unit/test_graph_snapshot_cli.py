@@ -476,14 +476,18 @@ def test_version_2_snapshot_requests_and_results_cross_the_wire_as_data() -> Non
         request_id="request-1",
         operation=EngineOperation.IMPORT_SNAPSHOT,
         selector=selector,
-        payload=ImportSnapshotRequest(version=2, payload=_payload()),
+        payload=ImportSnapshotRequest(
+            version=2, payload=_payload(), mutation_id="restore-1"
+        ),
         compatibility_ticket="ticket",
     )
 
     decoded = decode_request(encode_request(request))
 
     assert decoded.ok, decoded
-    assert decoded.value.payload == ImportSnapshotRequest(version=2, payload=_payload())
+    assert decoded.value.payload == ImportSnapshotRequest(
+        version=2, payload=_payload(), mutation_id="restore-1"
+    )
 
     export_request = EngineOperationRequest(
         protocol_version=PROTOCOL_VERSION,
@@ -638,3 +642,67 @@ def test_a_document_and_its_graph_move_to_another_pot(runtime, tmp_path) -> None
         )
     )
     assert repeated["claims"] == imported["claims"]
+
+
+@pytest.mark.parametrize("graph_only", [False, True])
+def test_cli_restores_same_snapshot_after_reset_with_fresh_identity(
+    runtime, tmp_path, graph_only
+):
+    runner = CliRunner()
+    assert runner.invoke(pots.pot_app, ["create", "restore-me", "--use"]).exit_code == 0
+    _import_document(tmp_path, pot="restore-me", text="Restore this runbook.")
+    folder = tmp_path / "backup"
+    flags = ["--graph-only"] if graph_only else []
+    exported = _detail(runner.invoke(graph.graph_app, ["export", str(folder), *flags]))
+    assert runner.invoke(pots.pot_app, ["create", "target", "--use"]).exit_code == 0
+    imported = _detail(
+        runner.invoke(graph.graph_app, ["import", str(folder), "--yes", *flags])
+    )
+    assert imported["claims"] == exported["claims"] > 0
+    reset = runner.invoke(pots.pot_app, ["reset", "--confirm"])
+    assert reset.exit_code == 0, reset.output
+    empty = _detail(
+        runner.invoke(graph.graph_app, ["export", str(tmp_path / "empty"), *flags])
+    )
+    assert empty["entities"] == empty["claims"] == 0
+    args = [
+        "import",
+        str(folder),
+        "--yes",
+        "--mutation-id",
+        "restore-after-reset",
+        *flags,
+    ]
+    _detail(runner.invoke(graph.graph_app, args))
+    restored = _detail(
+        runner.invoke(graph.graph_app, ["export", str(tmp_path / "restored"), *flags])
+    )
+    assert restored["entities"] == exported["entities"]
+    assert restored["claims"] == exported["claims"]
+    if not graph_only:
+        assert (
+            tmp_path / "restored/resources" / DOC / "restart/0000.txt"
+        ).read_text() == "Restore this runbook."
+    # Retrying the same identity stays idempotent.
+    _detail(runner.invoke(graph.graph_app, args))
+
+
+def test_version_1_import_forwards_explicit_restore_identity(tmp_path):
+    backend = InMemoryGraphBackend()
+    operations = LocalEngineOperations(SimpleNamespace(backend=backend))
+    source = tmp_path / "graph.json"
+    source.write_text(json.dumps(_payload()))
+    context = ContextIdentity("p")
+    request = ImportSnapshotRequest(source=str(source), mutation_id="first-restore")
+    first = asyncio.run(operations.import_snapshot(context, request))
+    assert first.ok
+    backend.mutation.reset_pot("p")
+    restored = asyncio.run(
+        operations.import_snapshot(
+            context,
+            ImportSnapshotRequest(source=str(source), mutation_id="next-restore"),
+        )
+    )
+    assert restored.ok
+    assert restored.value.metadata["mutation_id"] == "next-restore"
+    assert len(backend.snapshot.export_data(pot_id="p")["entities"]) == 2

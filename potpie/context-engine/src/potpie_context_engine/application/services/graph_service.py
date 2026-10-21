@@ -92,7 +92,6 @@ from potpie_context_engine.core.ports.graph_service import (
 )
 from potpie_context_engine.core.reconciliation_config import (
     ReconciliationConfig,
-    reconciliation_config_scope,
 )
 from potpie_context_engine.core.reconciliation_flags import (
     reconciliation_config_from_env,
@@ -103,6 +102,7 @@ from potpie_context_engine.core.semantic_mutation_validator import (
     validate_semantic_request,
 )
 from potpie_context_engine.core.semantic_mutations import (
+    SemanticOperationResolver,
     SemanticMutationRequest,
     SemanticMutationResult,
 )
@@ -153,6 +153,7 @@ class DefaultGraphService:
     envelope shape for the same ``--include`` flag."""
 
     _orchestrator: ReadOrchestrator = field(init=False)
+    _mutation_workbench: GraphWorkbenchService = field(init=False)
 
     def __post_init__(self) -> None:
         # One read trunk over the backend's canonical claim store, plus the
@@ -177,6 +178,20 @@ class DefaultGraphService:
                 definition=self.definition,
                 claim_query=self.backend.claim_query,
             )
+
+        from potpie_context_engine.core.mutation_plan_store import (
+            InMemoryGraphPlanStore,
+        )
+
+        self._mutation_workbench = self.record_workbench or GraphWorkbenchService(
+            backend=self.backend,
+            plan_store=InMemoryGraphPlanStore(),
+            definition=self.definition,
+            policy=self.policy,
+            reconciliation_config=self.reconciliation_config,
+            validator=self.validator,
+            lowerer=self.lowerer,
+        )
 
     @property
     def backed_includes(self) -> frozenset[str]:
@@ -239,49 +254,17 @@ class DefaultGraphService:
             source_id=source_id,
             definition=self.definition,
         )
-        if request.idempotency_key:
-            from potpie_context_engine.application.services.record_capture import (
-                record_once,
-            )
+        from potpie_context_engine.application.services.record_capture import (
+            record_once,
+        )
 
-            return record_once(
-                request,
-                sem_request,
-                source_id=source_id,
-                workbench=self.record_workbench,
-            )
-        result = self.mutate(sem_request)
-
-        accepted = result.status in ("applied", "validated")
-        status = {
-            "applied": "recorded",
-            "validated": "recorded",
-            "review_required": "review_required",
-            "rejected": "rejected",
-            "error": "rejected",
-        }.get(result.status, "rejected")
-        detail = result.detail
-        if not detail and result.issues:
-            detail = "; ".join(i.message for i in result.issues if i.is_error) or None
-        return RecordReceipt(
-            pot_id=request.pot_id,
-            record_type=record_type,
-            accepted=accepted and result.ok,
-            record_id=source_id,
-            status=status,
-            mutations_applied=result.operations_applied,
-            detail=detail,
-            metadata={
-                "graph_contract_version": result.graph_contract_version,
-                "ontology_version": result.ontology_version,
-                "mutation_id": result.mutation_id,
-                "claim_keys": list(result.claim_keys),
-                "subgraph": result.subgraphs[0] if result.subgraphs else None,
-                "subgraphs": list(result.subgraphs),
-                "truth": sem_request.operations[0].truth,
-                "risk": result.risk,
-                "auto_committed": result.auto_committed,
-            },
+        return record_once(
+            request,
+            sem_request,
+            source_id=source_id,
+            workbench=self.record_workbench
+            if request.idempotency_key
+            else self._mutation_workbench,
         )
 
     # --- Graph Surface Lite -------------------------------------------------
@@ -807,124 +790,22 @@ class DefaultGraphService:
             matching_repositories=tuple(matching_repositories),
         )
 
-    def mutate(self, request: SemanticMutationRequest) -> SemanticMutationResult:
-        assert self.validator is not None
-        assert self.lowerer is not None
-        plan = self.validator(request)
-        if plan.decision == "rejected":
-            return SemanticMutationResult(
-                ok=False,
-                status="rejected",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                operations_accepted=len(plan.accepted_ops),
-                issues=plan.issues,
-                detail="; ".join(i.message for i in plan.errors) or None,
-            )
-
-        # Lower the accepted ops (for preview counts + apply).
-        self.lowerer(request, plan)
-        preview = _batch_counts(plan)
-        claim_keys = tuple(k for op in plan.accepted_ops for k in op.claim_keys)
-        subgraphs = tuple(
-            sorted({op.subgraph for op in plan.accepted_ops if op.subgraph})
+    def mutate(
+        self,
+        request: SemanticMutationRequest,
+        *,
+        resolve_operations: SemanticOperationResolver | None = None,
+    ) -> SemanticMutationResult:
+        from potpie_context_engine.application.services.semantic_execution import (
+            mutate_prepared,
         )
 
-        if request.dry_run:
-            return SemanticMutationResult(
-                ok=True,
-                status="validated",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                would_apply=(plan.decision == "apply"),
-                operations_accepted=len(plan.accepted_ops),
-                preview=preview,
-                claim_keys=claim_keys,
-                subgraphs=subgraphs,
-                warnings=_warnings(plan),
-                issues=plan.issues,
+        if request.idempotency_key and self.record_workbench is None:
+            raise ValueError(
+                "mutation idempotency requires a shared plan store; use build_graph_runtime"
             )
-
-        if (
-            plan.decision == "apply"
-            and not self.policy.allow_auto_commit
-            and not request.approved_by
-        ):
-            return SemanticMutationResult(
-                ok=True,
-                status="review_required",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                auto_committed=False,
-                operations_accepted=len(plan.accepted_ops),
-                claim_keys=claim_keys,
-                subgraphs=subgraphs,
-                warnings=_warnings(plan),
-                issues=plan.issues,
-                detail="runtime mutation policy requires explicit approval",
-            )
-
-        if plan.decision == "review_required":
-            return SemanticMutationResult(
-                ok=True,
-                status="review_required",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                auto_committed=False,
-                operations_accepted=len(plan.accepted_ops),
-                operations_applied=0,
-                claim_keys=claim_keys,
-                subgraphs=subgraphs,
-                warnings=_warnings(plan),
-                issues=plan.issues,
-                detail="operations require review and have no auto-apply path in V1.5",
-            )
-
-        # decision == "apply"
-        if plan.batch is None or not (
-            plan.batch.entity_upserts
-            or plan.batch.edge_upserts
-            or plan.batch.invalidations
-        ):
-            return SemanticMutationResult(
-                ok=True,
-                status="applied",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                auto_committed=True,
-                operations_accepted=len(plan.accepted_ops),
-                operations_applied=0,
-                mutations_applied=preview,
-                warnings=_warnings(plan),
-                issues=plan.issues,
-            )
-
-        with reconciliation_config_scope(self.reconciliation_config):
-            result = self.backend.mutation.apply(
-                plan.batch,
-                expected_pot_id=request.pot_id,
-                provenance_context=plan.provenance,
-            )
-        summary = result.mutation_summary
-        return SemanticMutationResult(
-            ok=result.ok,
-            status="applied" if result.ok else "error",
-            risk=plan.risk,
-            pot_id=request.pot_id,
-            auto_committed=result.ok,
-            mutation_id=result.mutation_id,
-            operations_accepted=len(plan.accepted_ops),
-            operations_applied=len(plan.accepted_ops) if result.ok else 0,
-            mutations_applied={
-                "entity_upserts": summary.entity_upserts_applied,
-                "edge_upserts": summary.edge_upserts_applied,
-                "invalidations": summary.invalidations_applied,
-            },
-            claim_keys=claim_keys,
-            subgraphs=subgraphs,
-            warnings=_warnings(plan),
-            issues=plan.issues,
-            detail=result.error,
+        return mutate_prepared(
+            self._mutation_workbench, request, resolve_operations=resolve_operations
         )
 
     async def resolve_async(self, request: ResolveRequest) -> AgentEnvelope:
@@ -953,118 +834,10 @@ class DefaultGraphService:
     async def mutate_async(
         self, request: SemanticMutationRequest
     ) -> SemanticMutationResult:
-        """Async-native mutation; the backend sync bridge is never invoked."""
-        assert self.validator is not None
-        assert self.lowerer is not None
-        plan = self.validator(request)
-        if plan.decision == "rejected":
-            return SemanticMutationResult(
-                ok=False,
-                status="rejected",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                operations_accepted=len(plan.accepted_ops),
-                issues=plan.issues,
-                detail="; ".join(i.message for i in plan.errors) or None,
-            )
-        self.lowerer(request, plan)
-        preview = _batch_counts(plan)
-        claim_keys = tuple(k for op in plan.accepted_ops for k in op.claim_keys)
-        subgraphs = tuple(
-            sorted({op.subgraph for op in plan.accepted_ops if op.subgraph})
-        )
-        if request.dry_run:
-            return SemanticMutationResult(
-                ok=True,
-                status="validated",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                would_apply=(plan.decision == "apply"),
-                operations_accepted=len(plan.accepted_ops),
-                preview=preview,
-                claim_keys=claim_keys,
-                subgraphs=subgraphs,
-                warnings=_warnings(plan),
-                issues=plan.issues,
-            )
-        if (
-            plan.decision == "apply"
-            and not self.policy.allow_auto_commit
-            and not request.approved_by
-        ):
-            return SemanticMutationResult(
-                ok=True,
-                status="review_required",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                auto_committed=False,
-                operations_accepted=len(plan.accepted_ops),
-                claim_keys=claim_keys,
-                subgraphs=subgraphs,
-                warnings=_warnings(plan),
-                issues=plan.issues,
-                detail="runtime mutation policy requires explicit approval",
-            )
-        if plan.decision == "review_required":
-            return SemanticMutationResult(
-                ok=True,
-                status="review_required",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                auto_committed=False,
-                operations_accepted=len(plan.accepted_ops),
-                claim_keys=claim_keys,
-                subgraphs=subgraphs,
-                warnings=_warnings(plan),
-                issues=plan.issues,
-                detail="operations require review and have no auto-apply path in V1.5",
-            )
-        if plan.batch is None or not (
-            plan.batch.entity_upserts
-            or plan.batch.edge_upserts
-            or plan.batch.invalidations
-        ):
-            return SemanticMutationResult(
-                ok=True,
-                status="applied",
-                risk=plan.risk,
-                pot_id=request.pot_id,
-                auto_committed=True,
-                operations_accepted=len(plan.accepted_ops),
-                operations_applied=0,
-                mutations_applied=preview,
-                warnings=_warnings(plan),
-                issues=plan.issues,
-            )
-        with reconciliation_config_scope(self.reconciliation_config):
-            result = await self.backend.mutation.apply_async(
-                plan.batch,
-                expected_pot_id=request.pot_id,
-                provenance_context=plan.provenance,
-            )
-        summary = result.mutation_summary
-        return SemanticMutationResult(
-            ok=result.ok,
-            status="applied" if result.ok else "error",
-            risk=plan.risk,
-            pot_id=request.pot_id,
-            auto_committed=result.ok,
-            mutation_id=result.mutation_id,
-            operations_accepted=len(plan.accepted_ops),
-            operations_applied=len(plan.accepted_ops) if result.ok else 0,
-            mutations_applied={
-                "entity_upserts": summary.entity_upserts_applied,
-                "edge_upserts": summary.edge_upserts_applied,
-                "invalidations": summary.invalidations_applied,
-            },
-            claim_keys=claim_keys,
-            subgraphs=subgraphs,
-            warnings=_warnings(plan),
-            issues=plan.issues,
-            detail=result.error,
-        )
+        from potpie_context_engine.core.runtime import run_in_worker_thread
 
-    # --- status -------------------------------------------------------------
+        return await run_in_worker_thread(self.mutate, request)
+
     def data_plane_status(self, pot_id: str) -> DataPlaneStatus:
         readiness = self.backend.mutation.readiness(pot_id)
         counts = _safe(lambda: dict(self.backend.analytics.counts(pot_id)), {})
@@ -1956,21 +1729,6 @@ def _row_matches_source_ref(row: ClaimRow, source_ref: str) -> bool:
         if isinstance(ref, str):
             refs.append(ref)
     return any(ref.strip().lower() == wanted for ref in refs if ref)
-
-
-def _batch_counts(plan) -> dict[str, int]:
-    batch = plan.batch
-    if batch is None:
-        return {"entity_upserts": 0, "edge_upserts": 0, "invalidations": 0}
-    return {
-        "entity_upserts": len(batch.entity_upserts),
-        "edge_upserts": len(batch.edge_upserts),
-        "invalidations": len(batch.invalidations),
-    }
-
-
-def _warnings(plan) -> tuple[str, ...]:
-    return tuple(i.message for i in plan.issues if not i.is_error)
 
 
 def _row_env(row: ClaimRow) -> str | None:

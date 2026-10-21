@@ -43,7 +43,6 @@ from potpie_context_engine import (
 )
 from potpie_context_engine.application.services.resource_journal import (
     JOURNAL_CAPTURE_ACTIVE,
-    refuse_while_journaling,
 )
 from potpie_context_engine.core.api import run_in_worker_thread
 from potpie_context_engine.core.commit_service import (
@@ -139,7 +138,6 @@ from potpie_context_engine.results import (
     DescribeResult,
     ExportSnapshotResult,
     GraphJournalResult,
-    ResetContextResult,
     ResourceIndexRebuildResult,
     ResourceListResult,
 )
@@ -503,6 +501,16 @@ class ServiceEngineOperations:
     async def repair(
         self, context: ContextIdentity, request: RepairRequest
     ) -> Outcome[object]:
+        if request.legacy_mode is not None:
+            return await self._authorized_graph_call(
+                "legacy_repair",
+                context,
+                lambda workbench: workbench.repair_legacy_async(
+                    pot_id=context.value,
+                    mode=request.legacy_mode,
+                    repair_id=request.repair_id,
+                ),
+            )
         return await self._call(
             lambda: self._services.backend.analytics.repair(
                 context.value,
@@ -513,35 +521,18 @@ class ServiceEngineOperations:
     async def reset_context(
         self, context: ContextIdentity, request: ResetContextRequest
     ) -> Outcome[object]:
-        del request
+        from potpie_context_engine.application.services.context_reset import (
+            reset_context,
+        )
 
-        def reset() -> ResetContextResult:
-            # A pot whose graph journal is capturing is refused before anything
-            # is touched: the graph reset and the document purge each refuse on
-            # their own, so checking once here keeps reset and archive from
-            # stopping half-way (graph cleared, documents kept).
-            refuse_while_journaling(
-                getattr(self._services.backend, "journal", None),
-                context.value,
-                "pot reset",
+        return await self._call(
+            lambda: reset_context(
+                self._services.backend,
+                self._resources_or_none(),
+                pot_id=context.value,
+                mutation_id=request.mutation_id,
             )
-            result = self._services.backend.mutation.reset_pot(context.value)
-            reset_ok = bool(result.get("ok", True))
-            # Documents go only after the graph reset succeeded: a failed reset
-            # must not leave live claims citing chunk ids that no longer exist.
-            resources = self._resources_or_none()
-            purged = (
-                bool(resources.purge_pot(context.value))
-                if reset_ok and resources is not None
-                else None
-            )
-            return ResetContextResult(
-                context_id=context.value,
-                reset=reset_ok,
-                resources_purged=purged,
-            )
-
-        return await self._call(reset)
+        )
 
     async def propose(
         self, context: ContextIdentity, request: ProposeRequest
@@ -565,6 +556,7 @@ class ServiceEngineOperations:
                 approved_by=request.approved_by,
                 verify=request.verify,
                 defer_verification=request.defer_verification,
+                recover_stale=request.recover_stale,
             )
         )
 
@@ -1023,6 +1015,17 @@ class ServiceEngineOperations:
         context: ContextIdentity,
         call: Callable[[Any], Awaitable[Any]],
     ) -> Outcome[object]:
+        result = await self._authorized_graph_call(operation, context, call)
+        if isinstance(result, Failure):
+            return result
+        return Success(GraphJournalResult.from_value(result.value))
+
+    async def _authorized_graph_call(
+        self,
+        operation: str,
+        context: ContextIdentity,
+        call: Callable[[Any], Awaitable[Any]],
+    ) -> Outcome[object]:
         """Run one commit-service call inside this pot's commit grant.
 
         Every call that reaches here passed the resource manager, which
@@ -1055,7 +1058,7 @@ class ServiceEngineOperations:
             )
         except Exception as exc:
             return await self._dependency_failure(operation, exc)
-        return Success(GraphJournalResult.from_value(value))
+        return Success(value)
 
     async def invoke(
         self,
@@ -1228,6 +1231,11 @@ class ServiceEngineOperations:
         self, *, pot_id: str, request: ImportSnapshotRequest
     ) -> object:
         version = _snapshot_request_version(request.version)
+        identity = (
+            {"mutation_id": request.mutation_id}
+            if request.mutation_id is not None
+            else {}
+        )
         if version == 1:
             if request.payload:
                 raise ValueError(
@@ -1237,6 +1245,7 @@ class ServiceEngineOperations:
             return self._snapshot_port("import_").import_(
                 pot_id=pot_id,
                 source=_required_value(request.source, "source"),
+                **identity,
             )
         if request.source:
             raise ValueError(
@@ -1251,9 +1260,9 @@ class ServiceEngineOperations:
             # Graph and document text restore together: resource bytes are
             # staged and rolled back if the graph import fails.
             return self._snapshot_resources("import_snapshot").import_snapshot(
-                pot_id=pot_id, payload=payload
+                pot_id=pot_id, payload=payload, **identity
             )
-        return snapshot.import_data(pot_id=pot_id, payload=payload)
+        return snapshot.import_data(pot_id=pot_id, payload=payload, **identity)
 
     def _snapshot_resources(self, method: str) -> Any:
         resources = self._resources_or_none()

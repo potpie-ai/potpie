@@ -258,7 +258,7 @@ def test_public_async_runtime_recovers_a_stale_commit_attempt() -> None:
         crashed = replace(
             record,
             status=GraphMutationPlanStatus.committing.value,
-            mutation_id="mutation:runtime-recovery",
+            mutation_id=record.mutation_id,
             commit_attempt_id="attempt:crashed-runtime",
             commit_attempt_started_at=datetime.now(timezone.utc)
             - timedelta(minutes=10),
@@ -275,7 +275,7 @@ def test_public_async_runtime_recovers_a_stale_commit_attempt() -> None:
         )
 
         assert recovered.ok
-        assert recovered.mutation_id == "mutation:runtime-recovery"
+        assert recovered.mutation_id == record.mutation_id
 
     asyncio.run(journey())
 
@@ -552,6 +552,38 @@ class _AsyncMutation:
         self.inner = inner
         self.seen_configs: list[ReconciliationConfig | None] = []
 
+    @property
+    def capabilities(self):
+        return self.inner.capabilities
+
+    async def current_version_async(self, pot_id):
+        return await self.inner.current_version_async(pot_id)
+
+    async def compare_and_apply_async(
+        self,
+        plan,
+        *,
+        expected_pot_id,
+        expected_version,
+        provenance_context=None,
+        reconciliation_config=None,
+    ):
+        self.seen_configs.append(current_reconciliation_config())
+        return await self.inner.compare_and_apply_async(
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
+        )
+
+    async def lookup_execution_async(self, plan, *, expected_pot_id, mutation_id):
+        return await self.inner.lookup_execution_async(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
+
     async def apply_async(
         self,
         plan: MutationBatch,
@@ -597,6 +629,9 @@ class _AsyncClaims:
 class _AsyncStore:
     def __init__(self, inner) -> None:
         self.inner = inner
+
+    async def reserve_idempotency_async(self, **kwargs):
+        return await self.inner.reserve_idempotency_async(**kwargs)
 
     async def save_async(self, item):
         self.inner.save(item)
@@ -685,6 +720,38 @@ class _SyncMutation:
         self.inner = inner
         self.seen_configs: list[ReconciliationConfig | None] = []
 
+    @property
+    def capabilities(self):
+        return self.inner.capabilities
+
+    def current_version(self, pot_id):
+        return self.inner.current_version(pot_id)
+
+    def compare_and_apply(
+        self,
+        plan,
+        *,
+        expected_pot_id,
+        expected_version,
+        provenance_context=None,
+        reconciliation_config=None,
+    ):
+        self.seen_configs.append(current_reconciliation_config())
+        return self.inner.compare_and_apply(
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=provenance_context,
+            reconciliation_config=reconciliation_config,
+        )
+
+    def lookup_execution(self, plan, *, expected_pot_id, mutation_id):
+        return self.inner.lookup_execution(
+            plan,
+            expected_pot_id=expected_pot_id,
+            mutation_id=mutation_id,
+        )
+
     def apply(
         self,
         plan: MutationBatch,
@@ -732,6 +799,38 @@ class _SyncOnlyBackend:
     def bind_definition(self, definition):
         self._replace_inner(self.inner.bind_definition(definition))
         return self
+
+
+@pytest.mark.parametrize("declared", [False, True])
+def test_runtime_never_infers_atomic_authority_from_method_presence(declared):
+    from potpie_context_engine.core.errors import CapabilityNotImplemented
+    from potpie_context_engine.core.mutation_execution import MutationCapabilities
+    from potpie_context_engine.core.ports.graph.mutation import (
+        RecoverableGraphMutationPort,
+    )
+
+    class UnsupportedMutation(_SyncMutation):
+        @property
+        def capabilities(self):
+            if not declared:
+                raise AttributeError("capabilities")
+            return MutationCapabilities()
+
+    class UnsupportedBackend(_SyncOnlyBackend):
+        def _replace_inner(self, inner):
+            super()._replace_inner(inner)
+            self.mutation = UnsupportedMutation(inner.mutation)
+
+    backend = UnsupportedBackend()
+    runtime = build_graph_runtime(
+        backend, InMemoryGraphPlanStore(), InMemoryGraphInboxStore(), _definition()
+    )
+    assert isinstance(runtime.backend.mutation, RecoverableGraphMutationPort)
+    assert not runtime.backend.mutation.capabilities.atomic_writes
+    assert not runtime.backend.mutation.atomic_mutations_supported
+    with pytest.raises(CapabilityNotImplemented):
+        runtime.mutate(_request())
+    assert backend.inner.mutation.current_version("p") == 0
 
 
 def test_sync_only_mutation_uses_non_blocking_async_bridge() -> None:

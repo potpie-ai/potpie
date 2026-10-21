@@ -396,17 +396,14 @@ def test_reasserted_claim_carries_no_stale_invalidation_metadata(
         assert not row.properties.get(dead_mark), (
             f"revived claim still carries {dead_mark}"
         )
-    if profile not in FULL_PROFILES:
-        # The canonical writers revive the tombstone in place, so this stamp is
-        # the only record that the claim was ever retracted. It is written from
-        # a CASE over the pre-clear ``invalid_at``, which only reads correctly
-        # if the clear happens in a later SET clause — assert the value, not
-        # just the absence of the dead marks, or that ordering can regress
-        # silently. (``in_memory``/``embedded`` keep the tombstone as its own
-        # row instead and have no need for it.)
-        assert row.properties.get("revived_at"), (
-            "an in-place revive must record that it happened"
+    history = backend.claim_query.find_claims(
+        ClaimQueryFilter(
+            pot_id=POT, predicate_in=("DEPENDS_ON",), include_invalidated=True
         )
+    )
+    assert len(history) == 2
+    assert len({claim.record_id for claim in history}) == 2
+    assert sum(claim.invalid_at is not None for claim in history) == 1
 
 
 @pytest.mark.parametrize("profile", PARTIAL_PROFILES)

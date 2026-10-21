@@ -3,61 +3,21 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Any
 
-from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
 from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
 
-# Edge properties that are part of the canonical V1.5 contract or backend system
-# frame. These are hydrated into first-class ``ClaimRow`` fields or intentionally
-# hidden from the reader extras bag. ``ClaimRow.properties`` is for non-contract
-# annotations only.
-CONTRACT_EDGE_KEYS = frozenset(
-    {
-        "created_at",
-        "created_by",
-        "claim_key",
-        "confidence",
-        "description",
-        "embedding_dim",
-        "embedding_model",
-        "environment",
-        "evidence",
-        "evidence_strength",
-        "expired_at",
-        "fact",
-        "fact_embedding",
-        "group_id",
-        "graph_contract_version",
-        "identity_key",
-        "idempotency_key",
-        "invalid_at",
-        "mutation_id",
-        "name",
-        "object_key",
-        "observed_at",
-        "ontology_version",
-        "record_id",
-        "retired",
-        "__potpie_snapshot_properties_v2",
-        "__potpie_snapshot_claim_fields_v2",
-        "source_ref",
-        "source_refs",
-        "source_system",
-        "subgraph",
-        "subject_key",
-        "truth",
-        "uuid",
-        "valid_at",
-        "valid_from",
-        "valid_until",
-    }
+from potpie_context_engine.core.claim_codec import (
+    CONTRACT_EDGE_KEYS,
+    RESERVED_EDGE_KEYS,
+    _as_utc,
+    iso,
+    parse_dt,
+    row_from_record,
+    vector_property,
 )
-RESERVED_EDGE_KEYS = CONTRACT_EDGE_KEYS
 
 
 def claim_is_applicable(row: ClaimRow, *, as_of: datetime | None = None) -> bool:
@@ -94,140 +54,45 @@ def claim_matches_time_filter(
     )
 
 
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+def claim_matches_post_filter(
+    row: ClaimRow, filter_: ClaimQueryFilter, *, query_time: datetime
+) -> bool:
+    """Hydrated predicates that must run before ranking and the result limit."""
+    if not claim_matches_time_filter(row, filter_, query_time=query_time):
+        return False
+    for values, actual in (
+        (filter_.environment_in, row.environment),
+        (filter_.truth_in, row.truth),
+    ):
+        if values and (actual or "").lower() not in {value.lower() for value in values}:
+            return False
+    if filter_.exact_text_in or filter_.exact_text_pattern:
+        import re
 
-
-def parse_dt(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    # neo4j.time.DateTime -> native
-    to_native = getattr(value, "to_native", None)
-    if callable(to_native):
-        try:
-            native = to_native()
-        except Exception:  # noqa: BLE001
-            return None
-        return native if isinstance(native, datetime) else None
-    return None
-
-
-def iso(value: datetime | None) -> str | None:
-    return _as_utc(value).isoformat() if value is not None else None
-
-
-def vector_property(value: Any) -> tuple[float, ...] | None:
-    """Coerce a stored vector property into the ClaimRow tuple shape."""
-    if value is None:
-        return None
-    if isinstance(value, (list, tuple)):
-        try:
-            return tuple(float(x) for x in value)
-        except (TypeError, ValueError):
-            return None
-    try:
-        return tuple(float(x) for x in list(value))
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _decode_json_value(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    stripped = value.strip()
-    if not stripped or stripped[0] not in "[{":
-        return value
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError:
-        return value
-
-
-def _coerce_str(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _str_tuple(value: Any) -> tuple[str, ...]:
-    value = _decode_json_value(value)
-    if isinstance(value, str):
-        return (value,) if value else ()
-    if isinstance(value, (list, tuple)):
-        return tuple(str(item) for item in value if item is not None and str(item))
-    return ()
-
-
-def _evidence_tuple(value: Any) -> tuple[Mapping[str, Any], ...]:
-    value = _decode_json_value(value)
-    if not isinstance(value, (list, tuple)):
-        return ()
-    out: list[Mapping[str, Any]] = []
-    for item in value:
-        item = _decode_json_value(item)
-        if isinstance(item, Mapping):
-            out.append(dict(item))
-    return tuple(out)
-
-
-def _reader_extras(props: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        k: _decode_json_value(v)
-        for k, v in props.items()
-        if k not in CONTRACT_EDGE_KEYS
-    }
-
-
-def row_from_record(rec: Mapping[str, Any]) -> ClaimRow:
-    """Build a ``ClaimRow`` from one Cypher record containing ``props``."""
-    props = dict(rec.get("props") or {})
-    truth = _coerce_str(props.get("truth"))
-    source_refs = _str_tuple(props.get("source_refs"))
-    return ClaimRow(
-        pot_id=str(props.get("group_id") or rec.get("gid") or ""),
-        predicate=str(props.get("name") or ""),
-        subject_key=str(props.get("subject_key") or ""),
-        object_key=str(props.get("object_key") or ""),
-        valid_at=parse_dt(props.get("valid_from") or props.get("valid_at")),
-        invalid_at=parse_dt(props.get("invalid_at")),
-        evidence_strength=evidence_strength_for_truth(truth),
-        source_system=_coerce_str(props.get("source_system")),
-        source_ref=_coerce_str(props.get("source_ref")),
-        fact=_coerce_str(props.get("fact")),
-        properties=_reader_extras(props),
-        fact_embedding=vector_property(props.get("fact_embedding")),
-        claim_key=_coerce_str(props.get("claim_key")),
-        subgraph=_coerce_str(props.get("subgraph")),
-        truth=truth,
-        confidence=_coerce_float(props.get("confidence")),
-        description=_coerce_str(props.get("description")),
-        environment=_coerce_str(props.get("environment")),
-        observed_at=parse_dt(props.get("observed_at")),
-        valid_until=parse_dt(props.get("valid_until")),
-        mutation_id=_coerce_str(props.get("mutation_id")),
-        source_refs=source_refs,
-        evidence=_evidence_tuple(props.get("evidence")),
-        graph_contract_version=_coerce_str(props.get("graph_contract_version")),
-        ontology_version=_coerce_str(props.get("ontology_version")),
-        record_id=str(props.get("record_id") or ""),
-        retired=bool(props.get("retired", False)),
-    )
+        haystack = " ".join(
+            str(value)
+            for value in (
+                row.subject_key,
+                row.object_key,
+                row.claim_key,
+                row.fact,
+                row.description,
+                row.source_ref,
+                row.source_refs,
+                row.properties,
+            )
+            if value is not None
+        ).lower()
+        if filter_.exact_text_in and not any(
+            needle.lower() in haystack for needle in filter_.exact_text_in
+        ):
+            return False
+        if (
+            filter_.exact_text_pattern
+            and re.fullmatch(filter_.exact_text_pattern, haystack) is None
+        ):
+            return False
+    return True
 
 
 def embedding_score(fact: str | None, query: str) -> float:
@@ -278,27 +143,13 @@ WHERE ($include_retired OR (coalesce(r.retired,false)=false AND coalesce(a.retir
   AND ($subjects IS NULL OR r.subject_key IN $subjects)
   AND ($objects IS NULL OR r.object_key IN $objects)
   AND ($claim_keys IS NULL OR r.claim_key IN $claim_keys)
+  AND ($record_ids IS NULL OR coalesce(r.record_id, r.uuid) IN $record_ids)
   AND ($subgraphs IS NULL OR r.subgraph IN $subgraphs)
   AND ($excluded_subgraphs IS NULL OR NOT (r.subgraph IN $excluded_subgraphs))
   AND ($mutation_ids IS NULL OR r.mutation_id IN $mutation_ids)
   AND ($source_refs IS NULL OR r.source_ref IN $source_refs OR any(ref IN [] + coalesce(r.source_refs, []) WHERE ref IN $source_refs))
   AND ($sources IS NULL OR r.source_system IN $sources)
-  AND ($exact_text IS NULL OR any(needle IN $exact_text WHERE
-    toLower(coalesce(r.subject_key, '') + ' ' + coalesce(r.object_key, '') + ' ' +
-      coalesce(r.claim_key, '') + ' ' + coalesce(r.fact, '') + ' ' +
-      coalesce(r.description, '') + ' ' + coalesce(r.source_ref, '') + ' ' +
-      reduce(text = '', ref IN [] + coalesce(r.source_refs, []) | text + ' ' + ref))
-    CONTAINS needle))
-  AND ($environments IS NULL OR toLower(coalesce(r.environment, '')) IN $environments)
-  AND ($truths IS NULL OR toLower(coalesce(r.truth, '')) IN $truths)
   AND ($endpoint_label IS NULL OR $endpoint_label IN labels(a) OR $endpoint_label IN labels(b))
-  AND ($include_invalid OR (
-    (coalesce(r.valid_from, r.valid_at) IS NULL OR coalesce(r.valid_from, r.valid_at) <= $query_time)
-    AND (r.valid_until IS NULL OR $query_time < r.valid_until)
-    AND (r.invalid_at IS NULL OR $query_time < r.invalid_at)
-  ))
-  AND ($va_after IS NULL OR (r.valid_at IS NOT NULL AND r.valid_at >= $va_after))
-  AND ($va_before IS NULL OR r.valid_at IS NULL OR r.valid_at <= $va_before)
   AND ($subject_label IS NULL OR $subject_label IN labels(a))
   AND ($object_label IS NULL OR $object_label IN labels(b))
 RETURN r{.*, fact_embedding: NULL} AS props

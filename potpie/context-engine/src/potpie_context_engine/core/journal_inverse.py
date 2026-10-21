@@ -30,6 +30,13 @@ from potpie_context_engine.core.journal_fields import (
     set_field,
 )
 from potpie_context_engine.core.ontology import SYSTEM_EDGE_TYPES
+from .claim_codec import row_from_record
+from .claim_lifecycle import (
+    ClaimLifecycleConflict,
+    claim_scope,
+    has_stable_source,
+    validate_incarnation_history,
+)
 
 
 def protocols_enabled_for(definition: GraphDefinition) -> bool:
@@ -107,7 +114,7 @@ def validate_state(
         )
         for key, r in entities.items()
     ]
-    edges, singletons = [], {}
+    edges, singletons, history = [], {}, []
     now = datetime.now(timezone.utc)
     for claim in claims:
         body = claim.fields
@@ -134,6 +141,20 @@ def validate_state(
             }
         )
         predicate = body["predicate"]
+        row = row_from_record(
+            {
+                "props": {
+                    **properties,
+                    "group_id": claim.pot_id,
+                    "name": predicate,
+                    "record_id": claim.record_id,
+                    "claim_key": claim.logical_key,
+                    "subject_key": source.logical_key,
+                    "object_key": target.logical_key,
+                }
+            }
+        )
+        history.append(row)
         invalid_at = body.get("invalid_at") or properties.get("invalid_at")
         valid_until = body.get("valid_until") or properties.get("valid_until")
         valid_at = body.get("valid_at") or properties.get("valid_at")
@@ -186,10 +207,11 @@ def validate_state(
             and spec.singleton
             and evidence_strength_for_truth(properties.get("truth")) == "deterministic"
         ):
-            key = (source.record_id, predicate)
-            prior = singletons.setdefault(key, target.record_id)
-            if prior != target.record_id:
-                raise JournalError("singleton cardinality conflict")
+            if has_stable_source(row):
+                key = claim_scope(row)
+                prior = singletons.setdefault(key, target.record_id)
+                if prior != target.record_id:
+                    raise JournalError("singleton cardinality conflict")
         refs = list(body.get("source_refs", properties.get("source_refs", ())))
         source_ref = body.get("source_ref", properties.get("source_ref"))
         if source_ref:
@@ -217,6 +239,10 @@ def validate_state(
                 and (resource_exists is None or not resource_exists(ref))
             ):
                 raise JournalError("resource reference cannot be verified")
+    try:
+        validate_incarnation_history(history)
+    except ClaimLifecycleConflict as exc:
+        raise JournalError(str(exc)) from exc
     errors = definition.validate_structural_mutations(entity_ops, edges)
     if errors:
         raise JournalError(
