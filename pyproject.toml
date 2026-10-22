@@ -28,11 +28,6 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development",
 ]
-# Base = the local product: the CLI, the daemon (the aiohttp runtime plus the
-# graph explorer's FastAPI app) and the platform's local graph backend. Embeddings
-# (torch), ingestion clients, telemetry and the CLI logo are extras, so a bare
-# install pulls no ML stack. The engine pin must stay the one unconditional
-# `==` requirement on it: the release validator reads it.
 dependencies = [
     "aiohttp>=3.14.3",
     "click>=8.1.8",
@@ -46,22 +41,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# CVE floors move with the packages they constrain: a floor kept in the base
-# for a package that only an extra installs protects nobody.
-#
-# `daemon` and `local` name parts of the base. They stay so installers that
-# pass them (`local,auth,telemetry`, or `daemon,auth,telemetry` on Windows)
-# keep resolving. The FalkorDBLite platform markers live once, on the engine's
-# `local` extra.
 daemon = ["potpie-context-engine[http]"]
 local = ["potpie-context-engine[local]"]
 auth = ["keyring>=25.0.0"]
-# sentence-transformers (and torch). Without it the `auto` embedder uses the
-# bundled hashing embedder.
 embeddings = ["potpie-context-engine[embeddings]"]
 ingest = [
     "potpie-context-engine[github,reconciliation-agent]",
-    # CVE floors for PyGithub's and the reconciliation agent's dependencies.
     "pydantic-ai-slim>=2.53.0",
     "pyjwt>=2.15.0",
 ]
@@ -69,13 +54,10 @@ telemetry = [
     "potpie-context-engine[observability]",
     "sentry-sdk>=2.61.1,<3.0.0",
 ]
-# Pillow renders the CLI's animated logo; the CLI probes for it.
 ui = ["pillow>=12.3.0"]
-# Everything, including the engine's Neo4j, Postgres and Hatchet adapters.
 all = [
     "potpie[daemon,local,auth,embeddings,ingest,telemetry,ui]",
     "potpie-context-engine[all]",
-    # CVE floor for hatchet-sdk's settings dependency.
     "pydantic-settings>=2.14.2",
 ]
 
@@ -99,16 +81,13 @@ include = [
 exclude = [
     "**/tests/**",
     "/potpie/context-engine",
-    # The graph explorer's build inputs; only the built `dist/` ships.
+    "/potpie/falkordblite",
     "/potpie/daemon/http/ui/frontend/*",
     "!/potpie/daemon/http/ui/frontend/dist",
     "/potpie/integrations",
     "/potpie/parsing",
     "/potpie/sandbox",
 ]
-# Prune excluded directories instead of walking them. Otherwise the `!` lines
-# in the root .gitignore re-include files under them, which is how
-# context-engine test fixtures reached the wheel.
 skip-excluded-dirs = true
 
 [tool.hatch.build.targets.sdist]
@@ -142,30 +121,20 @@ exclude = [
 ]
 
 [tool.uv]
-# litellm>=1.83.10 clears CVE-2026-40217 (<1.83.10) but pins openai==2.24.0, which conflicts with
-# pydantic-ai + context-engine; override to the root stack.
 override-dependencies = [
     "python-dotenv>=1.2.2",
     "openai>=2.7.1",
     "idna>=3.15",
-    # CVE-2026-69247: floor at 50.0.0 (vulnerable: >=44.0.0, <50.0.0).
     "cryptography>=50.0.0",
-    # CVE-2026-59881 / CVE-2026-69243 / CVE-2026-69244: floor at 3.14.3.
     "aiohttp>=3.14.3",
-    # GitPython GHSA-3f7w-8rr8-f37f / GHSA-539m-9xh6-q6rr (<=3.1.56) and
-    # GHSA-wvpp-8hx9-p66j / related Highs (<=3.1.57): floor at 3.1.58.
     "gitpython>=3.1.58",
     "starlette>=1.3.1",
     "pyjwt>=2.15.0",
     "urllib3>=2.8.0",
     "virtualenv>=21.7.13",
     "pydantic-settings>=2.14.2",
-    # Vanta pydantic-ai-slim advisories: 2.53.0 clears the affected 1.x and 2.x ranges.
     "pydantic-ai-slim>=2.53.0",
-    # CVE-2025-3000: torch <= 2.12.1; 2.13.0 is the first patched release on PyPI.
     "torch>=2.13.0",
-    # GHSA-8xx6-hgc6-gc2m and related httpx2/httpcore2 advisories: keep the
-    # transitive genai-prices client stack on patched releases.
     "httpx2>=2.12.0",
     "httpcore2>=2.10.0",
     "anyio>=4.14.2",
@@ -181,9 +150,11 @@ members = [
     "potpie/parsing",
     "potpie/sandbox",
 ]
+exclude = ["potpie/falkordblite"]
 
 [tool.uv.sources]
 potpie-context-engine = { workspace = true, editable = true }
+potpie-falkordblite = { path = "potpie/falkordblite" }
 
 [dependency-groups]
 dev = [

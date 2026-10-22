@@ -445,12 +445,20 @@ limits        import 64 MiB of UTF-8 per call; get at most 128 ids per call
   citing a changed or removed section are flagged `evidence_review_required`,
   not rewritten; fixing them is an ordinary propose/commit correction. Retention
   is unbounded until `resource rm`.
-- **Retrieval index.** `sqlite_hybrid` (default: BM25 plus vectors, fused by
-  reciprocal rank, reporting itself lexical with a reason when vectors are
-  unavailable), `sqlite_fts`, or `none`, chosen by
-  `CONTEXT_ENGINE_RESOURCE_INDEX`, then the `resource_index` config key. Import
-  writes lexical rows inline; vectors drain in the background in the daemon or
-  an in-process engine host. Similarity bands are calibrated for
+- **Retrieval index.** `qdrant_hybrid` (default) combines SQLite BM25 and Qdrant
+  vectors using reciprocal rank fusion. `sqlite_hybrid` remains a compatibility
+  alias; `sqlite_fts` selects text search alone and `none` disables retrieval.
+  `CONTEXT_ENGINE_RESOURCE_INDEX` takes precedence over the `resource_index`
+  config key. Import writes lexical rows inline. SQLite retains text, cached
+  embeddings and a durable queue of Qdrant updates and deletions; vectors drain
+  in the background in the daemon or an in-process engine host. Qdrant stores
+  vectors and pot/document routing identifiers, including document slugs;
+  resource text remains in SQLite. If Qdrant is
+  unavailable, retrieval remains lexical and reports a reason. The worker
+  retries failures with a five-second backoff and resumes pending publication
+  from cached embeddings, without re-embedding them. See the
+  [Qdrant service setup](../getting-started/installation.md#step-2-start-qdrant-for-resource-semantic-search).
+  Similarity bands are calibrated for
   `all-MiniLM-L6-v2` only: other embedders get rank-and-coverage relevance and
   refuse an explicit passage `--query-threshold`.
 - **Teardown.** `pot reset` and `pot archive` purge the pot's documents and index

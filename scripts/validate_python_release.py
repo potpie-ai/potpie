@@ -30,6 +30,7 @@ except ImportError as exc:  # pragma: no cover - exercised in CI bootstrap failu
 ROOT = Path(__file__).resolve().parents[1]
 PYPI_BASE = "https://pypi.org/pypi"
 CONTEXT_ENGINE_NAME = "potpie-context-engine"
+NATIVE_FALKORDBLITE_NAME = "potpie-falkordblite"
 PACKAGE_SOURCES = {
     "context-engine": (
         "potpie/context-engine/pyproject.toml",
@@ -227,6 +228,72 @@ def validate_external_dependencies(
         )
 
 
+def validate_native_dependency_availability(
+    selected_keys: set[str], preexisting_packages: set[str]
+) -> None:
+    """Require the repaired native distribution before publishing its consumer.
+
+    A combined release may resume using an already-published engine; its
+    dependencies come from that immutable release, not the checkout. Likewise,
+    Potpie-only releases must not inspect the repository's engine metadata.
+    """
+    if (
+        "context-engine" not in selected_keys
+        or CONTEXT_ENGINE_NAME in preexisting_packages
+    ):
+        return
+
+    source, _ = PACKAGE_SOURCES["context-engine"]
+    local_dependencies = (
+        load_toml(source)
+        .get("project", {})
+        .get("optional-dependencies", {})
+        .get("local", [])
+    )
+    matches = []
+    for dependency in local_dependencies:
+        try:
+            requirement = Requirement(dependency)
+        except InvalidRequirement as exc:
+            fail(f"invalid local dependency in {source}: {dependency!r}: {exc}")
+        if canonicalize_name(requirement.name) == NATIVE_FALKORDBLITE_NAME:
+            matches.append(requirement)
+    if not matches:
+        return
+    if len(matches) != 1:
+        fail(f"{source} must declare {NATIVE_FALKORDBLITE_NAME} only once")
+
+    requirement = matches[0]
+    specifiers = list(requirement.specifier)
+    if requirement.url or len(specifiers) != 1 or specifiers[0].operator != "==":
+        fail(
+            f"{source} must pin {NATIVE_FALKORDBLITE_NAME} to one concrete "
+            f"PyPI version; found {requirement}"
+        )
+    version = specifiers[0].version
+    try:
+        parsed_version = Version(version)
+    except InvalidVersion:
+        fail(
+            f"{source} must pin {NATIVE_FALKORDBLITE_NAME} to one concrete "
+            f"PyPI version; found =={version}"
+        )
+    if parsed_version.local is not None:
+        fail(
+            f"{NATIVE_FALKORDBLITE_NAME}=={version} cannot use a local version "
+            "for a PyPI release"
+        )
+
+    # Check every target's declared dependency. Evaluating the Linux ARM marker
+    # here would let a release running on x64 publish an unresolvable ARM wheel.
+    if not package_version_exists(NATIVE_FALKORDBLITE_NAME, version):
+        fail(
+            f"{NATIVE_FALKORDBLITE_NAME}=={version} must already exist on pypi "
+            f"before publishing {CONTEXT_ENGINE_NAME}; publish the corrected "
+            "native dependency first"
+        )
+
+
 def validate_release_source() -> None:
     ref_type = os.getenv("GITHUB_REF_TYPE", "")
     ref_name = os.getenv("GITHUB_REF_NAME", "")
@@ -382,6 +449,7 @@ def main() -> int:
         CONTEXT_ENGINE_NAME,
         context_engine_version,
     )
+    validate_native_dependency_availability(selected_key_set, preexisting_packages)
     metadata_path = emit_metadata(
         args.output_dir,
         scope,

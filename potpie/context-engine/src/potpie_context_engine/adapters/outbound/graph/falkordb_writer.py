@@ -59,6 +59,10 @@ from potpie_context_engine.adapters.outbound.graph.cypher import (
     upsert_entities_async,
 )
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
+from potpie_context_engine.adapters.outbound.graph.falkordb_native import (
+    validate_falkordb_lite_binaries,
+    validate_falkordb_lite_installation,
+)
 
 from potpie_context_engine.domain.ports.settings import ContextEngineSettingsPort
 
@@ -229,6 +233,7 @@ def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
 
         return FalkorDB.from_url(url).select_graph(name)
     # Lite (default): embedded FalkorDBLite over a local file — no server.
+    validate_falkordb_lite_installation()
     try:
         from redislite.falkordb_client import FalkorDB as LiteFalkorDB
     except ModuleNotFoundError as exc:
@@ -245,6 +250,7 @@ def build_falkordb_graph(settings: ContextEngineSettingsPort) -> Any:
             recommended_next_action=_local_extra_next_action(),
         ) from exc
 
+    validate_falkordb_lite_binaries()
     path = settings.falkordb_lite_path()
     parent = os.path.dirname(path)
     if parent:

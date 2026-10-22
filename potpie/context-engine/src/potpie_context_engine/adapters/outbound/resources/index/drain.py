@@ -70,7 +70,10 @@ class ResourceIndexDrain:
         it costs nothing when unused.
         """
         try:
-            if not self.index.capabilities().semantic:
+            if not (
+                self.index.capabilities().semantic
+                or getattr(self.index, "drain_when_unavailable", False)
+            ):
                 return False
         except Exception as exc:  # noqa: BLE001 - a broken index must not block boot
             logger.debug("resource index drain not started: %s", exc)
@@ -86,9 +89,8 @@ class ResourceIndexDrain:
                 target=self._run, name=self.name, daemon=True
             )
             self._thread.start()
-        # Anything imported before the thread existed is already pending, so
-        # the first pass has to happen without waiting for the idle tick.
-        self._wake.set()
+        # The loop performs its first pass immediately. Setting the wake event
+        # here would race that pass and bypass its failure backoff.
         return True
 
     def signal(self) -> None:
@@ -131,7 +133,9 @@ class ResourceIndexDrain:
                         report.embedded,
                         report.remaining,
                     )
-                if report.remaining:
+                if report.detail:
+                    wait = ERROR_BACKOFF_SECONDS
+                elif report.remaining:
                     # More than one budget's worth is outstanding: go straight
                     # round again rather than sleeping on a known backlog.
                     continue

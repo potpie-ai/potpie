@@ -520,6 +520,15 @@ engine operation, so the in-process runtime and the local daemon answer
 identically; the resource store in [architecture.md](./architecture.md) owns the data model, the
 retrieval index and the lifecycle.
 
+The default `qdrant_hybrid` profile combines SQLite text search with a Qdrant
+service; `sqlite_hybrid` remains a compatibility alias. Follow the
+[Qdrant setup instructions](../getting-started/installation.md#step-2-start-qdrant-for-resource-semantic-search),
+or select `sqlite_fts` for text search alone. SQLite keeps text and cached
+embeddings locally, with durable pending updates and deletions for Qdrant.
+When the service is unavailable, retrieval stays lexical and `index status`
+reports the reason. Background retries resume publication from the cached
+embeddings when the service returns.
+
 - **`import`** reads the chunk directory an extraction script produced
   (`<section>/<seq>.txt` plus `meta.json`) on the caller's side and ships its
   contents, never a path. Bytes land first, then the `Document`/`DocumentSection`
@@ -939,7 +948,9 @@ through services and capability ports.
 | `GRAPH_DB_BACKEND` | legacy fallback selector (ingestion server default `neo4j`) |
 | `CONTEXT_ENGINE_HOST_MODE` | `daemon` (default) \| `in_process` |
 | `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder |
-| `CONTEXT_ENGINE_RESOURCE_INDEX` | resource retrieval index profile: `sqlite_hybrid` (default) \| `sqlite_fts` \| `none`; overrides the `resource_index` config key |
+| `CONTEXT_ENGINE_RESOURCE_INDEX` | resource retrieval index profile: `qdrant_hybrid` (default) \| `sqlite_hybrid` (compatibility alias) \| `sqlite_fts` \| `none`; overrides the `resource_index` config key |
+| `CONTEXT_ENGINE_QDRANT_URL` | Qdrant HTTP service URL; default `http://127.0.0.1:6333` |
+| `CONTEXT_ENGINE_QDRANT_API_KEY` | optional API key for the Qdrant service |
 | `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL` | downgrade-instead-of-fail validation |
 | `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED` | service-side LLM reconciliation (**default off**) |
 | `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | batch chunk size (default 20) |
@@ -950,7 +961,8 @@ The protocol ontology has no environment switch; it is the `graph.protocols`
 config key (see `config` under *Top-level commands*).
 
 Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >
-`falkordb_lite`. There is **no `NotImplementedError` gate** on falkordb anywhere.
+platform default (`ladybug` on Windows, `falkordb_lite` on macOS/Linux).
+There is **no `NotImplementedError` gate** on falkordb anywhere.
 
 ---
 
@@ -980,7 +992,9 @@ potpie setup --repo . --agent claude
 potpie status
 ```
 
-The base package is the complete local product. Add the `embeddings` extra
+The base package includes the local graph engine. Resource semantic search uses
+the separate [Qdrant service](../getting-started/installation.md#step-2-start-qdrant-for-resource-semantic-search);
+`sqlite_fts` provides text search without that service. Add the `embeddings` extra
 (`uv tool install 'potpie[embeddings]'`) for sentence-transformers semantic
 search; without it, setup uses the bundled hashing embedder.
 

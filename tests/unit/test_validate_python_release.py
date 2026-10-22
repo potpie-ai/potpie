@@ -37,7 +37,11 @@ def test_all_release_accepts_matching_dependency_chain(
         "package_requirement",
         lambda *_args: release.Requirement("potpie-context-engine[all]==0.2.0"),
     )
-    monkeypatch.setattr(release, "package_version_exists", lambda *_args: False)
+    monkeypatch.setattr(
+        release,
+        "package_version_exists",
+        lambda name, _version: name == release.NATIVE_FALKORDBLITE_NAME,
+    )
     monkeypatch.setattr(
         release.subprocess,
         "run",
@@ -97,6 +101,138 @@ def test_potpie_only_publish_requires_engine_on_pypi(
         "for a potpie-only release" in capsys.readouterr().err
     )
     assert checked == [("potpie-context-engine", "0.2.0")]
+
+
+def _native_dependency(monkeypatch: pytest.MonkeyPatch, requirement: str) -> None:
+    monkeypatch.setattr(
+        release,
+        "load_toml",
+        lambda _source: {
+            "project": {"optional-dependencies": {"local": [requirement]}}
+        },
+    )
+
+
+@pytest.mark.parametrize("selected", [{"context-engine"}, {"context-engine", "potpie"}])
+def test_engine_publish_requires_native_pin_even_on_other_platforms(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    selected: set[str],
+) -> None:
+    _native_dependency(
+        monkeypatch,
+        'potpie-falkordblite==0.10.0.post1; sys_platform == "linux" '
+        'and platform_machine == "aarch64"',
+    )
+    checked = []
+
+    def version_exists(name: str, version: str) -> bool:
+        checked.append((name, version))
+        return False
+
+    monkeypatch.setattr(release, "package_version_exists", version_exists)
+    with pytest.raises(SystemExit):
+        release.validate_native_dependency_availability(selected, set())
+
+    assert checked == [("potpie-falkordblite", "0.10.0.post1")]
+    assert "publish the corrected native dependency first" in capsys.readouterr().err
+
+
+def test_engine_publish_accepts_published_native_pin(monkeypatch) -> None:
+    _native_dependency(monkeypatch, "potpie-falkordblite==0.10.0.post1")
+    checked = []
+
+    def version_exists(name: str, version: str) -> bool:
+        checked.append((name, version))
+        return True
+
+    monkeypatch.setattr(release, "package_version_exists", version_exists)
+    release.validate_native_dependency_availability({"context-engine"}, set())
+    assert checked == [("potpie-falkordblite", "0.10.0.post1")]
+
+
+def test_missing_native_release_stops_preflight_before_emitting_metadata(
+    monkeypatch, tmp_path
+) -> None:
+    _native_dependency(monkeypatch, "potpie-falkordblite==0.10.0.post1")
+    monkeypatch.setattr(
+        release,
+        "pyproject_package",
+        lambda key: package(key, "potpie-context-engine", "0.3.0"),
+    )
+    monkeypatch.setattr(release, "validate_release_source", lambda: None)
+    monkeypatch.setattr(release, "package_version_exists", lambda *_args: False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_python_release.py",
+            "--release-scope",
+            "context-engine",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    with pytest.raises(SystemExit):
+        release.main()
+    assert not (tmp_path / "release-metadata.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("selected", "preexisting"),
+    [
+        ({"potpie"}, set()),
+        ({"context-engine", "potpie"}, {"potpie-context-engine"}),
+    ],
+)
+def test_existing_engine_release_does_not_read_checkout_native_dependencies(
+    monkeypatch, selected, preexisting
+) -> None:
+    monkeypatch.setattr(
+        release,
+        "load_toml",
+        lambda *_args: pytest.fail("this release does not publish the checkout engine"),
+    )
+    monkeypatch.setattr(
+        release,
+        "package_version_exists",
+        lambda *_args: pytest.fail("no native dependency lookup is needed"),
+    )
+    release.validate_native_dependency_availability(selected, preexisting)
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        "potpie-falkordblite",
+        "potpie-falkordblite>=0.10.0.post1",
+        "potpie-falkordblite==0.10.*",
+        "potpie-falkordblite==0.10.0+local",
+        "potpie-falkordblite @ https://example.com/native.whl",
+    ],
+)
+def test_native_release_dependency_requires_concrete_index_pin(
+    monkeypatch, capsys, requirement
+) -> None:
+    _native_dependency(monkeypatch, requirement)
+    monkeypatch.setattr(
+        release,
+        "package_version_exists",
+        lambda *_args: pytest.fail("invalid requirement must fail before index lookup"),
+    )
+    with pytest.raises(SystemExit):
+        release.validate_native_dependency_availability({"context-engine"}, set())
+    assert "PyPI" in capsys.readouterr().err
+
+
+def test_engine_without_native_fork_has_no_fork_release_prerequisite(monkeypatch):
+    _native_dependency(monkeypatch, "falkordblite>=0.10.0")
+    monkeypatch.setattr(
+        release,
+        "package_version_exists",
+        lambda *_args: pytest.fail("removed native fork has no release prerequisite"),
+    )
+    release.validate_native_dependency_availability({"context-engine"}, set())
 
 
 def test_combined_release_allows_preexisting_engine_for_exact_resume(

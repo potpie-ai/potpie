@@ -871,13 +871,10 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/70/03/afbb6e0f03c302aa9b64a38e1a2c43664f86921f0dcbf03ec9e31da06ac6/falkordblite-0.10.0.tar.gz", hash = "sha256:65a72abafd30711f699c15571df6959edb8901605053ce940ccdd837832e709b", size = 23675620, upload-time = "2026-05-02T13:12:29.429Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/43/39d8cf13964784447676d24f0cefa3bdc99c10e647c71e6a4172d302dcac/falkordblite-0.10.0-cp312-cp312-macosx_10_13_x86_64.macosx_15_0_arm64.whl", hash = "sha256:741fda166170513db1815d5369870e47d44da2e9b85320fddbc50c88a7338d51", size = 17752268, upload-time = "2026-05-02T13:11:57.906Z" },
-    { url = "https://files.pythonhosted.org/packages/61/17/3ec180ca7c2e79a0c3e9912ac04b446e733745cd944845fe4306be016efd/falkordblite-0.10.0-cp312-cp312-manylinux_2_39_aarch64.whl", hash = "sha256:bfe1f47ae03decdc0ad111ec82606bac82ee6cdd7fea04cbcff1283608cc2d2e", size = 34579293, upload-time = "2026-05-02T13:12:01.601Z" },
     { url = "https://files.pythonhosted.org/packages/8a/5e/d343c5249bd24c6614e8c1b718a73bb9f68beb2cf90464bc51c9436d25af/falkordblite-0.10.0-cp312-cp312-manylinux_2_39_x86_64.whl", hash = "sha256:ee9659bd0c7cdf0c2532977f2ec8bf1d1ab01cb3b6776e50c67046481f3162c7", size = 36154066, upload-time = "2026-05-02T13:12:05.435Z" },
     { url = "https://files.pythonhosted.org/packages/f6/1e/18612dc9e75e5c02a281a49d97b56b5504eb5907f971c68e8a5801033f36/falkordblite-0.10.0-cp313-cp313-macosx_10_13_x86_64.macosx_15_0_arm64.whl", hash = "sha256:54a051cbc0bb25b30e65f46ddb1b63149a80bb7004c97615d39c491d492a6d9b", size = 17752240, upload-time = "2026-05-02T13:12:08.837Z" },
-    { url = "https://files.pythonhosted.org/packages/29/b3/63f9b1168c4d1abbee4418a0a165496f57cd4b93a261cb481272ce353890/falkordblite-0.10.0-cp313-cp313-manylinux_2_39_aarch64.whl", hash = "sha256:ce1bd408ebaafc3dbdf39e860888382aae69de2b3c949dadfd132779130b99b2", size = 34579294, upload-time = "2026-05-02T13:12:12.069Z" },
     { url = "https://files.pythonhosted.org/packages/2e/cf/d792cf46292f7756f96727916e77ebf9821371e22bff65ed8e90db6b80b9/falkordblite-0.10.0-cp313-cp313-manylinux_2_39_x86_64.whl", hash = "sha256:7d52a3665f6de30cbffc5809a1c6d722492c95bf8dae4a7ee108ca58da939b25", size = 36154069, upload-time = "2026-05-02T13:12:15.742Z" },
     { url = "https://files.pythonhosted.org/packages/ab/57/eb2ac5824f7831fcb550468cc504a944adfee1b0c5a09b4bc684b0217976/falkordblite-0.10.0-cp314-cp314-macosx_10_15_x86_64.macosx_15_0_arm64.whl", hash = "sha256:5eff806e09902b36f34a7c058de0dcf237f0ae047d2b39c0423a5d6a52193341", size = 17752257, upload-time = "2026-05-02T13:12:18.896Z" },
-    { url = "https://files.pythonhosted.org/packages/61/13/76932987b43286443088be9d1ebdbc6999ac084d5c40dbfe4a4704aa264b/falkordblite-0.10.0-cp314-cp314-manylinux_2_39_aarch64.whl", hash = "sha256:6cd10bb1b0e35946e0e4c06bd0c16298fe6df70e8e18bc055db0d60359c7271c", size = 34579275, upload-time = "2026-05-02T13:12:22.181Z" },
     { url = "https://files.pythonhosted.org/packages/3f/a6/6eba83964a0633aeee698a1fbd23b954ce39ee4cfd7eced73f52d95ca89a/falkordblite-0.10.0-cp314-cp314-manylinux_2_39_x86_64.whl", hash = "sha256:b36665ebd9e2d5e38b401b34f7ba6f0b22e5b88cbc817971c8c1d71a8ad305f7", size = 36154066, upload-time = "2026-05-02T13:12:26.001Z" },
 ]
 
@@ -2573,24 +2570,26 @@ name = "potpie-context-engine"
 version = "0.2.0"
 source = { editable = "potpie/context-engine" }
 dependencies = [
+    { name = "httpx" },
     { name = "pydantic" },
-    { name = "sqlite-vec" },
 ]
 
 [package.optional-dependencies]
 all = [
     { name = "aiohttp" },
     { name = "falkordb" },
-    { name = "falkordblite", marker = "sys_platform != 'win32'" },
+    { name = "falkordblite", marker = "(platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "fastapi" },
     { name = "hatchet-sdk" },
     { name = "hiredis", marker = "sys_platform != 'win32'" },
     { name = "httpx" },
     { name = "ladybug", marker = "sys_platform == 'win32'" },
     { name = "neo4j" },
-    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-exporter-otlp", marker = "(platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64') or sys_platform != 'win32'" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "(platform_machine == 'ARM64' and sys_platform == 'win32') or (platform_machine == 'aarch64' and sys_platform == 'win32') or (platform_machine == 'arm64' and sys_platform == 'win32')" },
     { name = "opentelemetry-instrumentation-openai" },
     { name = "opentelemetry-sdk" },
+    { name = "potpie-falkordblite", marker = "(platform_machine == 'ARM64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux')" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-ai-slim" },
     { name = "pydantic-deep" },
@@ -2632,16 +2631,18 @@ ladybug = [
 ]
 local = [
     { name = "falkordb" },
-    { name = "falkordblite", marker = "sys_platform != 'win32'" },
+    { name = "falkordblite", marker = "(platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "hiredis", marker = "sys_platform != 'win32'" },
     { name = "ladybug", marker = "sys_platform == 'win32'" },
+    { name = "potpie-falkordblite", marker = "(platform_machine == 'ARM64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux')" },
     { name = "redis", marker = "sys_platform != 'win32'" },
 ]
 neo4j = [
     { name = "neo4j" },
 ]
 observability = [
-    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-exporter-otlp", marker = "(platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64') or sys_platform != 'win32'" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "(platform_machine == 'ARM64' and sys_platform == 'win32') or (platform_machine == 'aarch64' and sys_platform == 'win32') or (platform_machine == 'arm64' and sys_platform == 'win32')" },
     { name = "opentelemetry-instrumentation-openai" },
     { name = "opentelemetry-sdk" },
     { name = "sentry-sdk" },
@@ -2664,19 +2665,22 @@ dev = [
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'hatchet'", specifier = ">=3.14.3" },
     { name = "falkordb", marker = "extra == 'local'", specifier = ">=1.6.1" },
-    { name = "falkordblite", marker = "python_full_version >= '3.12' and sys_platform != 'win32' and extra == 'local'", specifier = ">=0.10.0" },
+    { name = "falkordblite", marker = "(python_full_version >= '3.12' and platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and sys_platform == 'linux' and extra == 'local') or (python_full_version >= '3.12' and sys_platform != 'linux' and sys_platform != 'win32' and extra == 'local')", specifier = ">=0.10.0" },
     { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.115.0" },
     { name = "hatchet-sdk", marker = "extra == 'hatchet'", specifier = ">=1.29.0" },
     { name = "hiredis", marker = "python_full_version >= '3.12' and sys_platform != 'win32' and extra == 'local'", specifier = ">=3.0.0" },
+    { name = "httpx", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.28.0" },
     { name = "ladybug", marker = "sys_platform == 'win32' and extra == 'local'", specifier = ">=0.20.4,<0.21" },
     { name = "ladybug", marker = "extra == 'ladybug'", specifier = ">=0.20.4,<0.21" },
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=5.28.0" },
     { name = "openai", marker = "extra == 'benchmarks'", specifier = ">=1.50.0" },
-    { name = "opentelemetry-exporter-otlp", marker = "extra == 'observability'", specifier = ">=1.27.0" },
+    { name = "opentelemetry-exporter-otlp", marker = "(platform_machine != 'ARM64' and platform_machine != 'aarch64' and platform_machine != 'arm64' and extra == 'observability') or (sys_platform != 'win32' and extra == 'observability')", specifier = ">=1.27.0" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "(platform_machine == 'ARM64' and sys_platform == 'win32' and extra == 'observability') or (platform_machine == 'aarch64' and sys_platform == 'win32' and extra == 'observability') or (platform_machine == 'arm64' and sys_platform == 'win32' and extra == 'observability')", specifier = ">=1.27.0" },
     { name = "opentelemetry-instrumentation-openai", marker = "extra == 'observability'", specifier = ">=0.40b0" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.27.0" },
     { name = "potpie-context-engine", extras = ["http", "local", "neo4j", "postgres", "hatchet", "observability", "embeddings", "github", "reconciliation-agent"], marker = "extra == 'all'", editable = "potpie/context-engine" },
+    { name = "potpie-falkordblite", marker = "(platform_machine == 'ARM64' and sys_platform == 'linux' and extra == 'local') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'local') or (platform_machine == 'arm64' and sys_platform == 'linux' and extra == 'local')", directory = "potpie/falkordblite" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-ai-slim", marker = "extra == 'reconciliation-agent'", specifier = ">=2.53.0" },
@@ -2690,7 +2694,6 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=5.6.0" },
     { name = "sentry-sdk", marker = "extra == 'observability'", specifier = ">=2.61.1,<3.0.0" },
     { name = "sqlalchemy", marker = "extra == 'postgres'", specifier = ">=2.0" },
-    { name = "sqlite-vec", specifier = ">=0.1.6" },
     { name = "starlette", marker = "extra == 'http'", specifier = ">=1.3.1" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'http'", specifier = ">=0.32.0" },
 ]
@@ -2698,6 +2701,25 @@ provides-extras = ["http", "local", "ladybug", "neo4j", "postgres", "benchmarks"
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest-cov", specifier = ">=7.1.0" }]
+
+[[package]]
+name = "potpie-falkordblite"
+version = "0.10.0.post1"
+source = { directory = "potpie/falkordblite" }
+dependencies = [
+    { name = "falkordb" },
+    { name = "psutil" },
+    { name = "redis" },
+    { name = "setuptools" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "falkordb", specifier = ">=1.6.1,<1.8" },
+    { name = "psutil" },
+    { name = "redis", specifier = ">=7.1,<8" },
+    { name = "setuptools", specifier = ">38.0" },
+]
 
 [[package]]
 name = "potpie-integrations"
@@ -3866,18 +3888,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f2/e3/5aa06f167559f8c0bdae487e297d23ba548150ab016a3418265d617a4985/sqlalchemy-2.0.50-cp314-cp314t-win32.whl", hash = "sha256:1fbd55a969d7ac44a98e3dec75016074f809fa08f871585ace58dde110d1bf3e", size = 2150823, upload-time = "2026-05-24T20:08:58.644Z" },
     { url = "https://files.pythonhosted.org/packages/65/9b/112fb8f977582d7489d036e409e3723948bcf5320b3ac465f3c481bbe8f9/sqlalchemy-2.0.50-cp314-cp314t-win_amd64.whl", hash = "sha256:c5c3cdb753a9004183e1ccb634b41611654c989e61bc68617ce878e46d6f1e51", size = 2185794, upload-time = "2026-05-24T20:09:00.319Z" },
     { url = "https://files.pythonhosted.org/packages/d0/10/f7220e9b784d295d241c86ed99aeb537f92afcd469a64861f2717e9bb077/sqlalchemy-2.0.50-py3-none-any.whl", hash = "sha256:92064363517a3ff8212b5a93b8c62876579d8dfd1ca5b561335f30152d884fa9", size = 1943861, upload-time = "2026-05-24T19:59:01.119Z" },
-]
-
-[[package]]
-name = "sqlite-vec"
-version = "0.1.9"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/85/9fad0045d8e7c8df3e0fa5a56c630e8e15ad6e5ca2e6106fceb666aa6638/sqlite_vec-0.1.9-py3-none-macosx_10_6_x86_64.whl", hash = "sha256:1b62a7f0a060d9475575d4e599bbf94a13d85af896bc1ce86ee80d1b5b48e5fb", size = 131171, upload-time = "2026-03-31T08:02:31.717Z" },
-    { url = "https://files.pythonhosted.org/packages/a4/3d/3677e0cd2f92e5ebc43cd29fbf565b75582bff1ccfa0b8327c7508e1084f/sqlite_vec-0.1.9-py3-none-macosx_11_0_arm64.whl", hash = "sha256:1d52e30513bae4cc9778ddbf6145610434081be4c3afe57cd877893bad9f6b6c", size = 165434, upload-time = "2026-03-31T08:02:32.712Z" },
-    { url = "https://files.pythonhosted.org/packages/00/d4/f2b936d3bdc38eadcbd2a87875815db36430fab0363182ba5d12cd8e0b51/sqlite_vec-0.1.9-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4e921e592f24a5f9a18f590b6ddd530eb637e2d474e3b1972f9bbeb773aa3cb9", size = 160076, upload-time = "2026-03-31T08:02:33.796Z" },
-    { url = "https://files.pythonhosted.org/packages/6f/ad/6afd073b0f817b3e03f9e37ad626ae341805891f23c74b5292818f49ac63/sqlite_vec-0.1.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux1_x86_64.whl", hash = "sha256:1515727990b49e79bcaf75fdee2ffc7d461f8b66905013231251f1c8938e7786", size = 163388, upload-time = "2026-03-31T08:02:34.888Z" },
-    { url = "https://files.pythonhosted.org/packages/42/89/81b2907cda14e566b9bf215e2ad82fc9b349edf07d2010756ffdb902f328/sqlite_vec-0.1.9-py3-none-win_amd64.whl", hash = "sha256:4a28dc12fa4b53d7b1dced22da2488fade444e96b5d16fd2d698cd670675cf32", size = 292804, upload-time = "2026-03-31T08:02:36.035Z" },
 ]
 
 [[package]]

@@ -1,0 +1,26 @@
+[build-system]
+requires = [
+    "setuptools==83.0.0",
+    "wheel==0.48.0",
+    "auditwheel==6.8.2; sys_platform == 'linux'",
+    "patchelf==0.19.1.0; sys_platform == 'linux'",
+]
+build-backend = "_build"
+backend-path = ["."]
+
+[project]
+name = "potpie-falkordblite"
+version = "0.10.0.post1"
+description = "Potpie's Linux ARM64 packaging repair for FalkorDBLite 0.10.0"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "redis>=7.1,<8",
+    "falkordb>=1.6.1,<1.8",
+    "psutil",
+    "setuptools>38.0",
+]
+
+[project.urls]
+Source = "https://github.com/potpie-ai/potpie"
+Upstream = "https://github.com/FalkorDB/falkordblite"
