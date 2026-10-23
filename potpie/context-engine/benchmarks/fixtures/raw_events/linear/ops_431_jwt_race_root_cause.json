@@ -1,0 +1,84 @@
+{
+  "connector": "linear",
+  "event_type": "issue",
+  "action": "create",
+  "source_id": "linear:issue:OPS-431:create",
+  "occurred_at": "2026-01-15T00:00:00Z",
+  "repo_name": "acme/platform",
+  "payload": {
+    "action": "create",
+    "type": "Issue",
+    "createdAt": "2026-05-30T11:42:08.000Z",
+    "webhookId": "wh-linear-ops431-create",
+    "data": {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "identifier": "OPS-431",
+      "title": "Root cause: JWT token expiry race between refresh worker and request handler",
+      "description": "## Summary\n\nIdentified the root cause of the intermittent 401s tracked in **OPS-355**: a **JWT token expiry race condition** inside **auth-service**.\n\n## Root cause\n\nauth-service runs two independent code paths that both evaluate token expiry without coordination:\n\n1. **Request handler** — validates the bearer token on `/v1/introspect` and API calls\n2. **Background refresh worker** — proactively rotates refresh tokens nearing expiry\n\nUnder concurrent load both paths can observe the same session within a narrow window (~50–120ms). The worker rotates the refresh token and invalidates the prior access token while an in-flight request still presents the old token. The handler rejects it with **401 Unauthorized** even though the client believed the token was valid milliseconds earlier.\n\nThere is no shared lock or single source of truth for \"token generation epoch\" across the worker and handler.\n\n## Related\n\n- Parent / symptom ticket: **OPS-355**\n\n## Fix direction\n\n- Serialize refresh via Redis distributed lock keyed on `session_id`\n- Introduce monotonic `token_version` checked atomically in both paths\n- Add integration test reproducing concurrent refresh + introspect\n\n## Owners\n\n- @maya-chen (auth-service lead)\n- @jordan-park (SRE on-call)",
+      "priority": 1,
+      "priorityLabel": "Urgent",
+      "url": "https://linear.app/acme/issue/OPS-431",
+      "createdAt": "2026-05-30T11:42:08.000Z",
+      "updatedAt": "2026-05-30T11:42:08.000Z",
+      "state": {
+        "id": "state-in-progress-002",
+        "name": "In Progress",
+        "type": "started",
+        "color": "#f2c94c"
+      },
+      "team": {
+        "id": "team-ops-001",
+        "key": "OPS",
+        "name": "Operations"
+      },
+      "teamId": "team-ops-001",
+      "assignee": {
+        "id": "user-maya-chen",
+        "name": "Maya Chen",
+        "displayName": "Maya Chen",
+        "email": "maya.chen@example.test"
+      },
+      "creator": {
+        "id": "user-maya-chen",
+        "name": "Maya Chen",
+        "displayName": "Maya Chen",
+        "email": "maya.chen@example.test"
+      },
+      "labels": [
+        {
+          "id": "label-incident",
+          "name": "incident",
+          "color": "#eb5757"
+        },
+        {
+          "id": "label-auth",
+          "name": "auth-service",
+          "color": "#2f80ed"
+        },
+        {
+          "id": "label-root-cause",
+          "name": "root-cause",
+          "color": "#9b51e0"
+        }
+      ],
+      "project": {
+        "id": "proj-platform-reliability",
+        "name": "Platform Reliability"
+      },
+      "relations": [
+        {
+          "type": "related",
+          "issue": {
+            "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "identifier": "OPS-355",
+            "title": "Intermittent 401 errors from auth-service under concurrent load"
+          }
+        }
+      ]
+    }
+  },
+  "_meta": {
+    "captured_from": "synthetic",
+    "redactions": []
+  }
+}

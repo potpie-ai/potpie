@@ -14,6 +14,7 @@ venv/
 !potpie/context-engine/benchmarks/data/**/*.json
 !potpie/context-engine/tests/data/**/*.json
 !potpie/context-engine/tests/fixtures/**/*.json
+!potpie/context-engine/benchmarks/fixtures/raw_events/**/*.json
 # Vendored Daytona local-dev stack (config bound into the compose containers)
 !potpie/sandbox/daytona/**/*.json
 # Potpie CLI setup-wizard logo (generated asset, must ship in the package)
