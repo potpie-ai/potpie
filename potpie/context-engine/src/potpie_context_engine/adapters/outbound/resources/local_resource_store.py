@@ -1,23 +1,18 @@
-"""Local filesystem resource store — chunk bytes under the Potpie home.
+"""Store document chunks and retrieval metadata under the Potpie home.
 
 Layout, per "Resource store" in ``docs/context-graph/architecture.md``::
 
     <home>/resources/<pot_dir>/<doc>/<section>/<seq>.txt
     <home>/resources/<pot_dir>/<doc>/meta.json
 
-The on-disk ``meta.json`` is *not* the manifest the design rejected. That
-decision ("Manifest lives on the graph nodes") is about the source of truth for
-document *structure*, which stays in the graph and is read via
-``graph describe document:<slug>``. This file is storage detail: R11 says
-``resource get`` does no graph query, yet the CLI contract has ``get`` return
-``revision`` and ``source_ref`` and ``list`` return chunk labels. Those come
-from here. Nothing reads it to answer a structural question.
+The graph owns document structure, which callers read through
+``graph describe document:<slug>``. The local ``meta.json`` supplies revisions,
+source references, and chunk labels for ``resource get`` and ``resource list``.
+Those commands read this metadata without a graph query, as required by R11.
 
-Beyond ``LocalResourceStore`` this module holds the pieces every
-``ResourceStorePort`` implementation shares — reading and validating an import
-directory, computing the revision diff, hydrating a ``Chunk`` — so a second
-store (the in-memory stub today, S3 later) satisfies the same contract by
-construction rather than by copying it.
+The module also validates import directories, computes revision differences,
+and constructs ``Chunk`` values. Other ``ResourceStorePort`` implementations,
+including the in-memory store, reuse these helpers.
 """
 
 from __future__ import annotations

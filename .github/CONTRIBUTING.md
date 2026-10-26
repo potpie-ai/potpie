@@ -1,50 +1,49 @@
 # Contributing to Potpie
 
-Thank you for your interest in contributing to Potpie! We welcome and appreciate all contributions, whether you’re fixing bugs, improving documentation, or adding new features. This guide will help you get started.
+Contribute bug fixes, features, documentation, and code reviews. This guide covers
+local setup and the pull request workflow.
 
-## Table of Contents
+## Table of contents
 
-1. [Code of Conduct](#code-of-conduct)
-2. [How to Contribute](#how-to-contribute)
-3. [Getting Started](#getting-started)
-4. [Development Workflow](#development-workflow)
-5. [Submitting Pull Requests](#submitting-pull-requests)
-6. [Documentation](#documentation)
-7. [Community and Support](#community-and-support)
+1. [Code of conduct](#code-of-conduct)
+2. [How to contribute](#how-to-contribute)
+3. [Getting started](#getting-started)
+4. [Development workflow](#development-workflow)
+5. [Testing](#testing)
+6. [Submitting pull requests](#submitting-pull-requests)
+7. [Documentation](#documentation)
+8. [Community and support](#community-and-support)
 
----
+## Code of conduct
 
-## Code of Conduct
+Participation in the Potpie project requires following our
+[code of conduct](./CODE_OF_CONDUCT.md).
 
-Please note that by participating in the Potpie project, you agree to abide by our [Code of Conduct](./CODE_OF_CONDUCT.md). This is to ensure a positive, welcoming environment for all contributors.
+## How to contribute
 
-## How to Contribute
+- Report bugs or request features.
+- Add or improve documentation.
+- Review pull requests.
+- Write code and fix issues.
 
-There are several ways you can contribute to Potpie:
+Look for issues labeled `good first issue` or `help wanted` if you need a place
+to start.
 
-- Reporting bugs or suggesting improvements.
-- Submitting feature requests.
-- Adding documentation and improving existing content.
-- Reviewing pull requests.
-- Writing code and fixing issues.
-
-If you’re unsure about how to get started, feel free to browse our issues labeled `good first issue` and `help wanted`. We also welcome you to join our discussions to understand the project better.
-
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
-Ensure you have the following software installed:
+Install the following:
 
 - [Git](https://git-scm.com/)
 - [Python 3.12+](https://www.python.org/)
-- [uv](https://docs.astral.sh/uv/) - Fast Python package installer (install via `curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- [Docker](https://www.docker.com/) (if applicable)
+- [uv](https://docs.astral.sh/uv/), the Python package installer
+- [Docker](https://www.docker.com/), if your development setup requires it
 
-### Fork and Clone the Repository
+### Fork and clone the repository
 
-1. **Fork** the repository on GitHub.
-2. **Clone** your forked repository:
+1. Fork the repository on GitHub.
+2. Clone your fork:
 
    ```bash
    git clone https://github.com/your-username/potpie.git
@@ -57,31 +56,26 @@ Ensure you have the following software installed:
    git remote add upstream https://github.com/potpie-ai/potpie.git
    ```
 
-### Set Up Your Environment
+### Set up your environment
 
-Follow the project’s installation and setup instructions in the [README.md](./README.md) file to prepare your local environment.
+Follow the installation and setup instructions in the [README](../README.md).
 
-## Development Workflow
+## Development workflow
 
-To ensure consistency and quality in the codebase, please adhere to the following workflow:
+1. Create a branch named for the feature or bug fix:
 
-1. **Create a Branch**:
-   - Branches should be named according to the feature or bug fix. For example:
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
 
-     ```bash
-     git checkout -b feature/your-feature-name
-     ```
+2. Make your changes and follow the existing code conventions.
+3. Commit with a message that states what the change does:
 
-2. **Make Changes**: Write clear, concise code and ensure that you follow any established coding conventions.
+   ```bash
+   git commit -m "Add feature to handle XYZ"
+   ```
 
-3. **Commit Your Changes**:
-   - Write descriptive commit messages. Use imperative mood and provide context if necessary:
-
-     ```bash
-     git commit -m "Add feature to handle XYZ"
-     ```
-
-4. **Push to Your Fork**:
+4. Push to your fork:
 
    ```bash
    git push origin feature/your-feature-name
@@ -89,36 +83,23 @@ To ensure consistency and quality in the codebase, please adhere to the followin
 
 ## Testing
 
-Testing is essential for maintaining the stability of Potpie. We encourage you to:
+Write unit tests for new features and update tests when behavior changes. Run the
+relevant tests before opening a pull request.
 
-- Write unit tests for new features.
-- Update existing tests when modifying functionality.
-- Ensure all tests pass before submitting a pull request.
+## Submitting pull requests
 
-## Submitting Pull Requests
+1. Open a pull request against the Potpie repository with a descriptive title.
+2. Explain what changed and why. Link related issues, such as `Closes #123`.
+3. Request a review from a project maintainer and address the feedback.
 
-When you’re ready to submit your changes:
-
-1. **Open a Pull Request (PR)**:
-   - Go to the Potpie repository and select **New Pull Request**.
-   - Choose your branch and provide a meaningful title and description.
-
-2. **Describe Your Changes**:
-   - Include a detailed description of what you have done and why.
-   - Link related issues (e.g., `Closes #123`).
-
-3. **Request a Review**:
-   - After submitting your PR, request a review from a project maintainer.
-
-4. **Respond to Feedback**:
-   - Be responsive to any feedback you receive. Once changes are approved, a maintainer will merge your PR.
+A maintainer merges the pull request after approval.
 
 ## Documentation
 
-User-facing docs live under [`docs/`](../docs/). If your change affects a command, setup step, or integration that users see, update the matching page there.
+User-facing docs live under [`docs/`](../docs/). If your change affects a command,
+setup step, or integration that users see, update the matching page there.
 
-## Community and Support
+## Community and support
 
-Open a Github issue to connect with other contributors, ask questions, and get support.
-
-Thank you for your contribution to Potpie! 🥧
+Open a [GitHub issue](https://github.com/potpie-ai/potpie/issues) to ask questions,
+report bugs, or request changes.

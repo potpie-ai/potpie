@@ -23,40 +23,13 @@ def create_graph(repo_dir):
     seen_relationships = set()
 
     for root, dirs, files in os.walk(repo_dir):
-        # Get relative path from repo_dir to avoid skipping paths that contain .repos_local etc.
-        try:
-            rel_path = Path(root).relative_to(repo_dir)
-            # Handle root directory (rel_path == '.') and convert to tuple
-            rel_parts = rel_path.parts if rel_path != Path(".") else ()
-        except ValueError:
-            # If relative_to fails, skip this path (shouldn't happen in normal os.walk)
-            continue
-
-        # Skip .git directory (worktrees have .git as a file, not a directory)
-        skip_this_dir = False
-        if ".git" in rel_parts:
-            # Find where .git appears in the relative path
-            for i, part in enumerate(rel_parts):
-                if part == ".git":
-                    # Check if this .git is a directory
-                    git_path = Path(repo_dir) / Path(*rel_parts[: i + 1])
-                    if git_path.is_dir():
-                        # Skip this .git directory
-                        skip_this_dir = True
-                        break
-                    # If it's a file, it's a worktree - continue processing
-                    break
-
-        if skip_this_dir:
-            continue
-
-        # Skip hidden directories except .github, .vscode, etc. that might contain code
-        # Only check relative path parts, not the base path
-        if any(
-            part.startswith(".") and part not in [".github", ".vscode"]
-            for part in rel_parts
-        ):
-            continue
+        # Prune descendants without rejecting a repository in a hidden parent.
+        # A worktree's .git file remains in files and follows normal file checks.
+        dirs[:] = [
+            name
+            for name in dirs
+            if not name.startswith(".") or name in {".github", ".vscode"}
+        ]
 
         for file in files:
             file_path = os.path.join(root, file)
@@ -88,12 +61,8 @@ def create_graph(repo_dir):
             # Process all tags in file
             for tag in get_tags(file_path, file_rel_path):
                 if tag.kind == "def":
-                    if tag.type == "class":
-                        node_type = "CLASS"
-                        current_class = tag.name
-                        current_method = None
-                    elif tag.type == "interface":
-                        node_type = "INTERFACE"
+                    if tag.type in {"class", "interface"}:
+                        node_type = tag.type.upper()
                         current_class = tag.name
                         current_method = None
                     elif tag.type in ["method", "function"]:
@@ -193,7 +162,7 @@ def create_graph(repo_dir):
 def create_relationship(
     G, source, target, relationship_type, seen_relationships, extra_data=None
 ):
-    """Helper to create relationships with proper direction checking"""
+    """Add a reference edge if its direction is allowed and it is new."""
     if source == target:
         return False
 
@@ -208,41 +177,19 @@ def create_relationship(
     if rel_key in seen_relationships or reverse_key in seen_relationships:
         return False
 
-    # Only create relationship if we have right direction:
-    # 1. Interface method implementations should point to interface declaration
-    # 2. Method calls should point to method definitions
-    # 3. Class references should point to class definitions
-    valid_direction = False
+    if relationship_type != "REFERENCES":
+        return False
+    if not (
+        source_data.get("type") == "FUNCTION"
+        or target_data.get("type") == "CLASS"
+        or source_data.get("type") == "FILE"
+        and target_data.get("type") == "FUNCTION"
+    ):
+        return False
 
-    if relationship_type == "REFERENCES":
-        # Implementation -> Interface
-        if (
-            source_data.get("type") == "FUNCTION"
-            and target_data.get("type") == "FUNCTION"
-            and "Impl" in source
-        ):  # Implementation class
-            valid_direction = True
-
-        # Caller -> Callee
-        elif source_data.get("type") == "FUNCTION":
-            valid_direction = True
-
-        # Class Usage -> Class Definition
-        elif target_data.get("type") == "CLASS":
-            valid_direction = True
-
-        # Module-level call -> Function
-        elif (
-            source_data.get("type") == "FILE" and target_data.get("type") == "FUNCTION"
-        ):
-            valid_direction = True
-
-    if valid_direction:
-        G.add_edge(source, target, type=relationship_type, **(extra_data or {}))
-        seen_relationships.add(rel_key)
-        return True
-
-    return False
+    G.add_edge(source, target, type=relationship_type, **(extra_data or {}))
+    seen_relationships.add(rel_key)
+    return True
 
 
 def is_text_file(file_path):

@@ -1,15 +1,10 @@
-"""High-level client over :class:`SandboxService`.
+"""High-level client for the sandbox library.
 
-The library's intended import. Construct one per process (or per worker) with
-:meth:`SandboxClient.from_env`; every other entry point in potpie should go
-through it. The client never exposes the underlying providers — callers ask
-for a :class:`WorkspaceHandle` and operate on it.
-
-Helpers (`read_file`, `write_file`, `list_dir`, `search`, `commit`, `push`,
-`status`, `diff`) take a fast path through the host filesystem when the
-backend exposes one (`handle.local_path is not None`) and otherwise dispatch
-through `exec`. That preserves backend portability without paying for a
-sub-process when we already have direct fs access.
+Construct a client with :meth:`SandboxClient.from_env`, or share a container
+between clients with :meth:`SandboxClient.from_container`. Callers acquire a
+:class:`WorkspaceHandle` and use it for file, command, and Git operations.
+File helpers use the host filesystem when the handle exposes a local path.
+Other backends use their native file operations or command execution.
 """
 
 from __future__ import annotations
@@ -57,25 +52,17 @@ class SandboxOpError(SandboxCoreError):
 
 
 def _err_payload(result: ExecResult) -> str:
-    """Pick the most useful error text from an :class:`ExecResult`.
+    """Return stderr, or stdout when the backend combines both streams.
 
-    Daytona's ``process.exec`` collapses stdout and stderr into one
-    ``result`` field (per SDK; the ExecutionArtifacts ``stdout`` mirrors
-    ``result``), so ``ExecResult.stderr`` comes back empty even when the
-    command actually failed. Falling back to ``stdout`` on those backends
-    gives the LLM a real error message instead of the empty string the
-    formatters used to emit. Local / Docker backends still split the
-    streams correctly, so the stderr branch wins when it's populated.
+    Daytona puts command output in stdout even when execution fails.
     """
     return _decode(result.stderr) or _decode(result.stdout)
 
 
 class SandboxClient:
-    """Process-wide entry point for the sandbox library.
+    """Process-wide entry point for sandbox operations.
 
-    Construction is cheap; the underlying providers / store / locks are built
-    once via :func:`build_sandbox_container`. Multiple clients in a single
-    process should share a container — use :meth:`from_container` for that.
+    Use :meth:`from_container` to share providers, stores, and locks across clients.
     """
 
     def __init__(self, container: SandboxContainer) -> None:
@@ -97,20 +84,12 @@ class SandboxClient:
         return self._container
 
     async def ensure_snapshot_ready(self) -> None:
-        """Ensure the backend's runtime image is registered and active.
+        """Register the runtime image and wait for it to become active.
 
-        For the Daytona workspace provider this triggers
-        ``_ensure_snapshot``: looks up the configured snapshot, builds it
-        from the bundled Dockerfile if missing, or waits for it to reach
-        ``active`` if a concurrent build is in-flight. Returns without
-        side effects for the local provider (nothing to register).
-
-        Intended to be called from backend startup so the snapshot is
-        ready before the first agent tool call instead of paying the
-        build cost on a user-facing request. Raises
-        ``RuntimeUnavailable`` if the snapshot can't be made ready
-        (e.g. build failure, snapshot stuck in error state) — callers
-        decide whether to soft-fail or block startup.
+        Daytona looks up the configured snapshot and builds it from the bundled
+        Dockerfile if missing. A local provider has no snapshot and returns immediately.
+        Call during startup to finish any image build before serving tool requests.
+        Raises ``RuntimeUnavailable`` if the snapshot fails or cannot become ready.
         """
         provider = self._container.workspace_provider
         ensure = getattr(provider, "_ensure_snapshot", None)
@@ -132,17 +111,11 @@ class SandboxClient:
         repo_url: str | None = None,
         auth_token: str | None = None,
     ) -> RepoCache:
-        """Materialize the bare repo for ``repo`` and persist a `RepoCache`.
+        """Fetch ``base_ref`` into the repository's bare clone and save its metadata.
 
-        Idempotent on `(provider_host, repo)` — repeat calls fetch the
-        requested ref into the existing bare. Use this from parsing's
-        READY hook (Phase 5 in the roadmap) so the cache row is in the
-        store before the first agent call; subsequent
-        :meth:`get_workspace` calls reuse the same on-disk bare without
-        re-cloning.
-
-        Raises ``RuntimeError`` if the underlying service was built
-        without a `RepoCacheProvider` (e.g. Daytona-only mode today).
+        Calls with the same provider host and repository reuse the clone. Prepare the
+        cache before the first agent call so :meth:`get_workspace` can reuse it.
+        Raises ``RuntimeError`` if the service has no ``RepoCacheProvider``.
         """
         request = RepoCacheRequest(
             repo=RepoIdentity(repo_name=repo, repo_url=repo_url),
@@ -167,13 +140,11 @@ class SandboxClient:
         task_id: str | None = None,
         repo_url: str | None = None,
     ) -> WorkspaceHandle:
-        """Materialise a worktree on `branch` and return a stable handle.
+        """Create or reuse a worktree on ``branch`` and return its handle.
 
-        `repo` is the canonical `owner/name` string; `repo_url` is a hint for
-        adapters that don't already know how to derive the URL (the local-fs
-        adapter falls back to `https://github.com/<repo>.git` when omitted).
-        Idempotent on `(user, project, repo, branch, mode, scope)` — repeated
-        calls return the same workspace until it's released.
+        ``repo`` is the canonical ``owner/name``. Local adapters default ``repo_url``
+        to ``https://github.com/<repo>.git``. Calls with the same user, project,
+        repository, branch, mode, and scope reuse the workspace until release.
         """
         request = WorkspaceRequest(
             user_id=user_id,
@@ -205,12 +176,10 @@ class SandboxClient:
         task_id: str | None = None,
         repo_url: str | None = None,
     ) -> WorkspaceHandle:
-        """High-level session entry point: cache + workspace in one call.
+        """Prepare the repository cache and acquire a workspace.
 
-        Wraps :meth:`SandboxService.acquire_session` — ensures the
-        parent `RepoCache` exists, then forks the workspace. Idempotent
-        on the same `(user, project, repo, branch, mode, scope)` tuple,
-        same as :meth:`get_workspace`.
+        Uses :meth:`SandboxService.acquire_session`. The workspace has the same
+        identity and reuse rules as :meth:`get_workspace`.
         """
         request = WorkspaceRequest(
             user_id=user_id,
@@ -230,12 +199,10 @@ class SandboxClient:
     async def release_session(
         self, handle: WorkspaceHandle, *, destroy_runtime: bool = False
     ) -> None:
-        """Hibernate the runtime; keep the worktree.
+        """Hibernate the runtime and keep the worktree.
 
-        Same semantics as :meth:`release_workspace` but symmetric with
-        :meth:`acquire_session`. Pass ``destroy_runtime=True`` to free
-        the runtime fully — the workspace still survives until
-        :meth:`destroy_workspace`.
+        Pass ``destroy_runtime=True`` to remove the runtime. The workspace survives
+        until :meth:`destroy_workspace`.
         """
         await self._service.release_session(
             handle.workspace_id, destroy_runtime=destroy_runtime
@@ -263,18 +230,11 @@ class SandboxClient:
         await self._service.destroy_workspace(handle.workspace_id)
 
     async def is_alive(self, handle: WorkspaceHandle) -> bool:
-        """Cheap liveness probe — does the backing workspace still exist?
+        """Check whether the backing workspace still exists.
 
-        ``False`` ⇒ the underlying storage is gone (Daytona sandbox
-        archived/deleted, local worktree removed by hand, store record
-        purged). The intended caller (``ProjectSandbox.health_check``)
-        runs this on every conversation message and re-creates via
-        ``ensure()`` when it returns ``False``.
-
-        Suppresses transient backend errors and reports them as ``False``
-        so the caller's recovery path takes over instead of having to
-        handle exceptions inline. See provider docstrings for details
-        on what "alive" means per backend.
+        Returns ``False`` for missing storage or transient backend errors.
+        ``ProjectSandbox.health_check`` uses this result to recreate the workspace.
+        Providers define the storage checks for each backend.
         """
         return await self._service.is_workspace_alive(handle.workspace_id)
 
@@ -362,16 +322,11 @@ class SandboxClient:
         path: str,
         content: bytes | str,
     ) -> None:
-        """Write a file relative to the workspace root.
+        """Write a file relative to the workspace root and create parent directories.
 
-        Creates parent directories. Uses direct fs access on local-fs backends.
-
-        Mutations re-resolve the workspace through the service so a stale
-        handle whose workspace was destroyed raises ``WorkspaceNotFound``
-        instead of silently recreating the directory. Reads keep the
-        zero-roundtrip fast path because a stale read just fails on the
-        underlying ``_read_bytes`` (file gone) — only writes can do
-        damage by recreating a destroyed worktree on disk.
+        Local writes reload the workspace from the service. A destroyed workspace
+        raises ``WorkspaceNotFound`` rather than recreating its directory from a stale
+        handle. Local reads use the handle directly and fail if the file is gone.
         """
         if isinstance(content, str):
             content = content.encode("utf-8")
@@ -524,27 +479,15 @@ class SandboxClient:
         timeout_s: int = 600,
         max_output_bytes: int | None = None,
     ) -> "ParseArtifacts":
-        """Run the in-sandbox parser and return the reconstructed graph payload.
+        """Run ``potpie-parse`` and decode its NDJSON output with ``sandbox.api.parser_wire``.
 
-        Invokes ``potpie-parse`` (installed by the agent-sandbox image)
-        inside the workspace; the runner streams NDJSON to stdout which
-        we decode via :mod:`app.modules.intelligence.tools.sandbox.parser_wire`.
-
-        ``repo_subdir`` lets a caller parse a subtree (rare — most parses
-        operate on the whole worktree); ``None`` means parse the
-        workspace root.
-
-        ``max_output_bytes`` caps the parser's output size; the default
-        of ``None`` means "no truncation," which is what parsing wants
-        — a truncated stream would yield a corrupt graph. Adapters that
-        cannot stream unbounded output should bump it explicitly.
-
-        Raises :class:`SandboxOpError` if the parser exits non-zero or
-        the runner's wire format is malformed.
+        ``repo_subdir`` selects a subtree. ``None`` parses the workspace root.
+        ``max_output_bytes=None`` allows the complete stream. Backends with an output
+        limit must set a large enough value because truncation corrupts the graph.
+        Raises :class:`SandboxOpError` on timeout, truncation, a nonzero exit code,
+        or malformed parser output.
         """
-        # Imported lazily so the parser_wire module (stdlib-only by design)
-        # doesn't need to be loaded for every SandboxClient — only callers
-        # that actually parse pay the cost.
+        # Load parser support only when a caller requests parsing.
         from sandbox.api.parser_wire import (
             WireFormatError,
             parse_stream,
@@ -634,21 +577,14 @@ class SandboxClient:
         paths: list[str] | None = None,
         author: tuple[str, str] | None = None,
     ) -> str:
-        """Stage and commit. Returns the new commit's full SHA.
+        """Stage files and commit, returning the new commit's full SHA.
 
-        Without `paths`, stages everything (`git add -A`). With `paths`, only
-        the listed files.
-
-        ``author`` is ``(name, email)`` if you want to override; when
-        omitted, the configured :class:`BotIdentityProvider` (if any)
-        supplies the default so every agent commit lands under the bot
-        identity. Without a provider AND without an explicit ``author``,
-        the commit falls through to git's own ``user.name``/``user.email``
-        config (the runtime spec already injected the bot env vars at
-        ``get_or_create_runtime`` time, so this only matters for tests
-        and embedded usage that bypass the service).
-
-        Raises :class:`SandboxOpError` if there's nothing to commit.
+        With ``paths``, stage only those files. Otherwise, use ``git add -A``.
+        An explicit ``author`` supplies the name and email. Otherwise, use the service's
+        ``BotIdentityProvider`` if configured, then fall back to Git's configuration.
+        Resolve the provider here as well as during runtime setup so callers that
+        bypass setup still use the bot identity.
+        Raises :class:`SandboxOpError` if Git cannot add or commit files.
         """
         if paths:
             for raw in paths:
@@ -693,10 +629,8 @@ class SandboxClient:
             command_kind=CommandKind.WRITE,
         )
         if commit.exit_code != 0:
-            stderr = _decode(commit.stderr)
-            stdout = _decode(commit.stdout)
             raise SandboxOpError(
-                f"git commit failed: {stderr or stdout}", result=commit
+                f"git commit failed: {_err_payload(commit)}", result=commit
             )
         sha = await self.exec(
             handle,
@@ -719,16 +653,9 @@ class SandboxClient:
     ) -> None:
         """Push the worktree branch to ``remote``.
 
-        Auth is injected per-call from the configured
-        :class:`RemoteAuthProvider`: a freshly resolved token (App
-        installation token in production) is passed via
-        ``-c http.<host>.extraheader='AUTHORIZATION: basic …'`` (Basic
-        with ``x-access-token`` as username, matching the clone URL
-        scheme) so it never lands in ``.git/config`` and never persists
-        past this invocation. The bare clone's ``origin`` URL was
-        scrubbed at clone time on purpose (caches are shared across
-        users), so without this re-injection, push to a private remote
-        would fail.
+        Resolve a fresh ``RemoteAuthProvider`` token for each call and pass its HTTP
+        Basic header through Git's ``-c`` option. The username is ``x-access-token``.
+        The token stays out of the shared bare clone's ``.git/config``.
         """
         # `-c http.<host>.extraheader=...` has to come BEFORE the `push`
         # subcommand for git to honour it. Keep the option list separate
@@ -754,48 +681,23 @@ class SandboxClient:
         handle: WorkspaceHandle,
         explicit: tuple[str, str] | None,
     ) -> tuple[str, str] | None:
-        """Pick the commit identity for `commit()`.
-
-        Priority: explicit caller arg > BotIdentityProvider > None.
-        Returning None lets git fall back to its configured user.name /
-        user.email (which the service already populated into the runtime
-        env from the same provider). The double-pass is intentional —
-        callers that hold a SandboxClient but bypass the runtime spec
-        (rare, but tests do it) still get the bot identity stamped.
-        """
+        """Use the explicit author, then the bot identity, then Git's configuration."""
         if explicit is not None:
             return explicit
-        identity = await self._service_bot_identity(handle)
+        workspace = await self._service.get_workspace(handle.workspace_id)
+        identity = await self._service.bot_identity_for(
+            workspace.request.repo, user_id=workspace.request.user_id
+        )
         if identity is None:
             return None
         return (identity.name, identity.email)
 
-    async def _service_bot_identity(self, handle: WorkspaceHandle):
-        workspace = await self._service.get_workspace(handle.workspace_id)
-        return await self._service.bot_identity_for(
-            workspace.request.repo, user_id=workspace.request.user_id
-        )
-
     async def _auth_pre_args(self, handle: WorkspaceHandle) -> list[str]:
-        """Build the ``-c http.<host>.extraheader=…`` flags for `git push/fetch`.
+        """Build a host-scoped HTTP Basic header for this Git invocation.
 
-        Returns an empty list when no :class:`RemoteAuthProvider` is
-        wired or the provider declines (returns ``None``); the caller's
-        git command then runs unauthenticated, which is the right
-        behaviour for public repos and dev fixtures.
-
-        The token is freshly resolved on every call — installation
-        tokens expire in 1h, so caching at acquire-session time would
-        silently break long-running conversations.
-
-        Header form is HTTP Basic with ``x-access-token`` as the
-        username and the token as the password — the same convention
-        the clone-time URL uses (``https://x-access-token:<TOKEN>@host``)
-        and the same shape ``actions/checkout`` injects. GitHub's
-        smart-HTTP backend has always accepted this for installation
-        tokens; the ``Bearer`` scheme works for the REST API but is
-        not reliably accepted for git-over-HTTPS push, which surfaces
-        as ``remote: invalid credentials`` even with a valid token.
+        Resolve the token on each call because installation tokens expire. The header
+        uses ``x-access-token`` as its username, matching GitHub's HTTPS clone scheme.
+        Return no flags when the auth provider is absent or declines the request.
         """
         workspace = await self._service.get_workspace(handle.workspace_id)
         auth = await self._service.remote_auth_for(
@@ -808,10 +710,8 @@ class SandboxClient:
             "ascii"
         )
         header = f"AUTHORIZATION: basic {basic}"
-        # `-c` overrides config for this invocation only; the token
-        # never lands on disk. The host scope is important — a global
-        # extraheader would match every HTTPS git operation in the
-        # process, including unrelated remotes.
+        # Scope the header to this host and invocation so unrelated remotes
+        # do not receive the token and Git does not save it to disk.
         return ["-c", f"http.https://{host}/.extraheader={header}"]
 
     # ------------------------------------------------------------------
@@ -831,13 +731,10 @@ class SandboxClient:
         labels: list[str] | None = None,
         auth_token: str | None = None,
     ) -> PullRequest:
-        """Open a PR from ``head_branch`` (defaults to ``handle.branch``)
-        into ``base_branch`` via the configured `GitPlatformProvider`.
+        """Open a pull request through the configured ``GitPlatformProvider``.
 
-        Refuses to run if the workspace is not writable — opening a PR
-        on an analysis workspace makes no sense and would surface a
-        confusing platform error. Push the branch (`SandboxClient.push`)
-        before calling this.
+        ``head_branch`` defaults to the workspace branch. Requires a writable handle.
+        Call :meth:`push` first to publish the branch.
         """
         if not handle.capabilities.writable:
             raise SandboxOpError(
@@ -868,21 +765,12 @@ class SandboxClient:
         repo_url: str | None = None,
         auth_token: str | None = None,
     ) -> PullRequestCommentResult:
-        """Post a comment on an existing PR via the configured `GitPlatformProvider`.
+        """Post a conversation or inline comment through ``GitPlatformProvider``.
 
-        Two shapes:
-
-        * **Top-level** — only ``body`` and ``pr_number``. Posts a
-          conversation comment on the PR.
-        * **Inline** — set ``path`` and ``line`` (and optionally
-          ``commit_id`` to pin the anchor). Posts a review comment at
-          that file/line.
-
-        Unlike :meth:`create_pull_request`, this does NOT require a
-        writable workspace handle — review comments are commonly issued
-        from analysis flows (the ``review-pr`` agent that has no
-        worktree at all). The platform provider's auth chain is what
-        determines attribution.
+        Set both ``path`` and ``line`` for an inline review comment. ``commit_id`` can
+        pin it to a commit. Omit both to post a conversation comment.
+        No workspace handle is required. The provider's authentication determines
+        the comment's author.
         """
         if (path is None) != (line is None):
             raise SandboxOpError(
@@ -917,11 +805,9 @@ def _handle_from_workspace(ws: Workspace) -> WorkspaceHandle:
 
 
 def _validate_relpath(path: str, *, allow_dot: bool = False) -> str:
-    """Reject absolute paths and `..` traversal; normalize separators.
+    """Normalize separators and reject absolute paths or ``..`` traversal.
 
-    Returns the cleaned relative path. The runtime side does its own
-    sandboxing — this is a defence-in-depth check at the client surface so
-    callers can't accidentally read `/etc/passwd` even on an exec backend.
+    This client check also applies to backends that execute commands remotely.
     """
     if path is None:
         raise InvalidWorkspacePath("path is required")
@@ -945,27 +831,19 @@ def _validate_relpath(path: str, *, allow_dot: bool = False) -> str:
 
 def _posix_join(base: str | None, rel: str) -> str:
     if base is None:
-        # exec-based backend without a remote root means the runtime workdir
-        # is already the worktree — fall through with the relative path.
-        return rel if rel != "." else "."
+        # Without a remote root, the runtime already runs in the worktree.
+        return rel
     if rel == ".":
         return base
     return f"{base.rstrip('/')}/{rel}"
 
 
 def _safe_local_path(root: str, rel: str) -> Path:
-    """Resolve `rel` under `root`, rejecting symlink escapes.
+    """Resolve ``rel`` under ``root`` and reject symlinks that escape it.
 
-    `_validate_relpath` already rejects `..` and absolute paths at the
-    string level. This is the second line of defence for local-fs
-    backends: a symlink inside the worktree could still resolve outside it
-    (e.g. `link -> /etc`), and a direct `Path(root) / rel` read would
-    happily follow it. Resolving both root and target and checking that
-    the target stays underneath blocks that escape vector.
-
-    `Path.resolve()` tolerates non-existent leaf components, so this works
-    for writes that create new files — only the existing portion of the
-    path is followed for symlinks.
+    ``_validate_relpath`` rejects absolute paths and ``..`` first. Resolving both
+    paths catches symlinks that point outside the worktree. ``Path.resolve`` also
+    accepts nonexistent leaf components so writes can create new files.
     """
     root_path = Path(root).resolve()
     target = (root_path / rel).resolve()

@@ -1,10 +1,9 @@
-"""Where each agent harness reads Potpie's files — the one layout table.
+"""Define where each agent reads Potpie's skills and instructions.
 
 A harness reads skills from one directory and, for some harnesses, a routing
-block from one instruction file. Both locations differ by scope: global paths
-hang off :func:`~potpie.skills.harness_home.harness_home`, project paths off the
-repository root. Every install, uninstall, drift check and target reads them
-from here.
+block from one instruction file. Global paths are relative to
+:func:`~potpie.skills.harness_home.harness_home`. Project paths are relative
+to the repository root. Install, uninstall and drift checks use this table.
 """
 
 from __future__ import annotations

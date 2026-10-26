@@ -1,21 +1,14 @@
-"""Turn a stored document manifest into semantic mutations (resources P4).
+"""Convert stored document manifests to semantic mutations.
 
-The resource store holds a document's *bytes*; this module produces the
-mutation that puts its *structure* in the graph — a ``Document`` entity owning
-one ``DocumentSection`` per division, joined by ``SECTION_OF``.
+The resource store holds document bytes. This module describes their structure
+with a ``Document`` entity and ``DocumentSection`` entities linked by
+``SECTION_OF``. Callers submit these operations through ``GraphService.mutate``
+for the same validation, risk classification, and embedding as other writes.
 
-Like ``record_to_semantic``, this deliberately stops at the public semantic
-write vocabulary. Import does not touch the backend or lower to a
-``MutationBatch`` itself: it emits ops and hands them to ``GraphService.mutate``
-so ``apply`` stays the single write door, and an imported document is validated,
-risk-classified, and embedded by exactly the code path an agent's own write
-uses.
-
-**R1 lives here.** Nothing in this module reads chunk text — the manifest it
-consumes carries slugs, titles, summaries, hashes, and chunk *ids*, so there is
-no payload available to leak into a node property even by accident. Chunk ids
-travel as claim evidence, which is what makes a section's search hit already
-carry everything ``resource get`` needs (R13).
+The manifest contains slugs, titles, summaries, hashes, and chunk IDs. This
+module never reads chunk text, so it cannot copy that text into node properties.
+Chunk IDs become claim evidence and let a section search result identify the
+chunks to fetch with ``resource get``, as required by R1 and R13.
 """
 
 from __future__ import annotations

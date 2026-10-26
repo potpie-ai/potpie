@@ -1,4 +1,4 @@
-"""FalkorDB :class:`ClaimQueryPort` — read surface for the P9 readers.
+"""FalkorDB implementation of :class:`ClaimQueryPort`.
 
 Parity with :class:`Neo4jClaimQueryStore`: same canonical ``:RELATES_TO``
 claim shape, filters and ``ClaimRow`` output. The adapter shares its scan query,
@@ -22,7 +22,7 @@ from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, Claim
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     FIND_CLAIMS_CYPHER,
     claim_matches_post_filter,
-    iso,
+    claim_query_params,
     row_from_record,
     stamp_scored_rows,
     stamp_similarity,
@@ -114,37 +114,13 @@ class FalkorDBClaimQueryStore:
         if filter_.limit == 0:
             return []
         query_time = filter_.as_of or datetime.now(timezone.utc)
-        params = {
-            "gid": filter_.pot_id,
-            "preds": list(filter_.predicate_in) or None,
-            "subjects": list(filter_.subject_key_in) or None,
-            "objects": list(filter_.object_key_in) or None,
-            "claim_keys": list(filter_.claim_key_in) or None,
-            "record_ids": list(filter_.record_id_in) or None,
-            "subgraphs": list(filter_.subgraph_in) or None,
-            "excluded_subgraphs": list(filter_.subgraph_not_in) or None,
-            "mutation_ids": list(filter_.mutation_id_in) or None,
-            "source_refs": list(filter_.source_ref_in) or None,
-            "sources": list(filter_.source_system_in) or None,
-            # FalkorDBLite 4.18.3 corrupts memory when concatenating the claim
-            # identity fields inside ANY. Match hydrated rows before limiting.
-            "exact_text": None,
-            "exact_pattern": filter_.exact_text_pattern,
-            "environments": [value.lower() for value in filter_.environment_in] or None,
-            "truths": [value.lower() for value in filter_.truth_in] or None,
-            "endpoint_label": filter_.endpoint_label,
-            # Stored source-authored timestamps retain their timezone offsets.
-            # Cypher string comparisons cannot order those instants reliably;
-            # apply validity after hydration, before ranking and limiting.
-            "include_invalid": True,
-            "include_retired": bool(filter_.include_retired),
-            "as_of": iso(filter_.as_of),
-            "query_time": iso(query_time),
-            "va_after": None,
-            "va_before": None,
-            "subject_label": filter_.subject_label,
-            "object_label": filter_.object_label,
-        }
+        params = claim_query_params(filter_, query_time=query_time)
+        # FalkorDBLite 4.18.3 corrupts memory when concatenating claim identity
+        # fields inside ANY. Check text after hydration instead.
+        params["exact_text"] = None
+        # Stored ISO offsets do not sort by instant. Apply temporal filters
+        # after hydration, before ranking and limiting.
+        params.update(include_invalid=True, va_after=None, va_before=None)
         if filter_.fact_query and self._embedder is not None:
             rows = self._find_claims_vector(filter_, params, query_time=query_time)
             if rows:

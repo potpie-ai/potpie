@@ -396,7 +396,7 @@ async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
 class LinearInitiateRequest(OAuthInitiateRequest):
     """Body for ``POST /linear/initiate``.
 
-    The optional ``state`` field on the parent is ignored — identity comes
+    The optional ``state`` field on the parent is ignored. Identity comes
     from ``AuthService.check_auth``, not the request body.
     """
 
@@ -846,7 +846,7 @@ async def jira_oauth_callback(
                 return RedirectResponse(url=redirect_url)
 
         else:
-            # No code provided — redirect to frontend with error
+            # Redirect to the frontend with an error when no code was provided.
             config = Config()
             frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
 
@@ -1165,7 +1165,7 @@ async def confluence_oauth_callback(
                 # Always close the database session to prevent connection leaks
                 db.close()
         else:
-            # No code provided — redirect to frontend with error
+            # Redirect to the frontend with an error when no code was provided.
             config = Config()
             frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
             if frontend_url and not frontend_url.startswith(("http://", "https://")):

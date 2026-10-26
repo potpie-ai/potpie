@@ -5,15 +5,15 @@ description: "Durable project memory for AI agents: claims, pots, and the graph 
 
 ## Overview
 
-The Context Graph is Potpie's durable, shared **project memory for AI agents** — a
-compact store of sourced **claims** (decisions, ownership, infra topology, prior
-bugs/fixes, conventions, features) so an agent doesn't rebuild context from raw
-code, PRs, tickets, and chat on every task. Humans and agents talk to the **same
-`potpie` CLI**. The `potpie graph …` workbench is **shipped today**
-(data-plane contract `v1.5`, ontology `2026-06-graph`) alongside the legacy
-`resolve`/`search`/`record` compatibility wrappers — there is no separate "future
-V2." The same Pot Management, Graph, and Skill Manager service modules run inside
-either a local daemon or a managed backend API; **state stays local by default**.
+The Context Graph stores sourced project facts for AI agents, including decisions,
+ownership, infrastructure topology, bugs, fixes, conventions, and features. Agents
+can reuse those facts across tasks instead of reading the same code, PRs, tickets,
+and chats each time. Humans and agents use the same `potpie` CLI.
+
+The `potpie graph …` workbench ships with data-plane contract `v1.5` and ontology
+`2026-06-graph`. The legacy `resolve`, `search`, and `record` commands wrap the
+same services. Pot Management, Graph, and Skill Manager service modules run in a
+local daemon or a managed backend API. State stays local by default.
 
 ```mermaid
 flowchart TB
@@ -24,7 +24,7 @@ flowchart TB
   cg_human --> cg_cli
   cg_agent --> cg_cli
 
-  subgraph cg_local["Local profile — shipped, default"]
+  subgraph cg_local["Local profile, shipped default"]
     direction TB
     cg_daemon["local daemon<br/>(detached by default)"]
     cg_services["services:<br/>Pot Mgmt · Graph · Skill Manager"]
@@ -32,7 +32,7 @@ flowchart TB
     cg_daemon --> cg_services --> cg_backend
   end
 
-  subgraph cg_managed["Managed backend — roadmap"]
+  subgraph cg_managed["Managed host, configured with URL and API key"]
     direction TB
     cg_api["managed API<br/>(same service modules)"]
     cg_hosted[("hosted stores")]
@@ -42,13 +42,13 @@ flowchart TB
   cg_ledger["Event Ledger<br/>(source-event service: webhooks · polling · cursors)"]
 
   cg_cli --> cg_daemon
-  cg_cli -. "managed routing<br/>(CapabilityNotImplemented)" .-> cg_api
+  cg_cli -->|"managed routing"| cg_api
   cg_services -. "pull events (external clients are stubs)" .-> cg_ledger
 ```
 
 ## Target OSS default
 
-**Published package** (PyPI):
+Install the published package from PyPI:
 
 ```bash
 uv tool install potpie   # recommended
@@ -62,7 +62,7 @@ backend). Semantic search with sentence-transformers is the optional
 `embeddings` extra (`uv tool install 'potpie[embeddings]'`); without it, setup
 falls back to the bundled hashing embedder.
 
-**Repo-local development** (this checkout): use `make cli-install` — it builds the
+For development in this checkout, use `make cli-install`. It builds the
 graph-explorer UI, stops any old daemon, and installs the editable CLI. Do not use
 raw `uv tool install --editable ./potpie/context-engine` for day-to-day reinstalls.
 
@@ -73,48 +73,49 @@ potpie setup
 potpie status
 ```
 
-`setup` also registers your repo as a source. It does not scan the working tree
-— harness-led ingestion writes the graph. The OSS/CLI default backend is **`falkordb_lite`** —
-an embedded FalkorDB over a local file, with **no Docker, server, Neo4j, or cloud
-key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
+`setup` also registers your repo as a source. The agent ingests working-tree
+context into the graph when needed. The OSS/CLI default backend is `falkordb_lite`,
+an embedded FalkorDB over a local file. It requires no Docker, server, Neo4j, or cloud
+key; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
 (precedence: `CONTEXT_ENGINE_BACKEND` > legacy `GRAPH_DB_BACKEND` >
 `falkordb_lite`). Full flags live in [`cli-flow.md`](./cli-flow.md).
 
-> **Roadmap (not yet wired):** Managed-backend routing is designed but not
-> functional — `pot use --managed`, `pot list --managed`, and the whole `cloud`
-> group raise `CapabilityNotImplemented`. The **external** Event Ledger clients
-> (`ledger pull/query` against real providers) are TODO stubs. The live "ledger"
-> today is the internal Postgres event store described in
-> [`ingestion-nudge.md`](./ingestion-nudge.md).
+Configure a managed host with `potpie host set`, then use `potpie host use managed`
+or pass `--host managed` to a command. Managed hosts support graph operations, pot
+and source management, grants, and status. See the [CLI reference](../reference/cli.md#managed-hosts).
+
+> Cloud login, status, push, pull, and skill sync commands remain stubs. External
+> Event Ledger rebinding is also unimplemented. `ledger use` saves a binding but
+> does not activate it. See [`ingestion-nudge.md`](./ingestion-nudge.md) for the
+> internal Postgres event store.
 
 ## Start here
 
 | Doc | What it answers |
 |---|---|
-| [`vision.md`](./vision.md) | What the Context Graph is and why; claims-not-payloads; harness-owned intelligence; the three product boundaries (local OSS / managed [roadmap] / Event Ledger [roadmap]); pots-as-tenancy; anti-goals. |
-| [`architecture.md`](./architecture.md) | Hexagonal layers; the two composition roots (local agent spine vs ingestion server); the daemon model; the `GraphBackend` port + 6 capabilities + the backend coverage table; per-pot scoping, the resource store for document payloads, and backend selection. |
-| [`ontology.md`](./ontology.md) | The three declarative catalogs (25 entity types / 27 predicates + `RELATED_TO` / record types); contract constants (versions, 7 truth classes, 10 mutation ops, 6 source authorities); 8 subgraphs / 10 views; identity keys and the environment qualifier. |
-| [`querying.md`](./querying.md) | Reading: the CLI Graph Surface Lite and compatibility commands; the single read trunk and 10 readers; the `AgentEnvelope` (ranked evidence, no server-side answers); ranking; the 3-axis model (Retrieve / Filter / Traverse — all shipped). |
-| [`writing.md`](./writing.md) | Writing: the flat semantic-mutation DSL (10 ops); validation + runtime risk; the canonical write door `graph propose` → `graph commit --verify` (with `graph mutate` and `record` as the legacy wrappers); revision-based concurrency and receipts; inbox; quality. |
-| [`ingestion-nudge.md`](./ingestion-nudge.md) | How raw episodes/events enter; the internal Postgres event store vs the external Event Ledger seam; connectors (github/notion only); windowed reconciliation (off by default); the zero-token nudge trigger model. |
-| [`skills.md`](./skills.md) | Harness-owned intelligence; the bundled CLI skills (potpie-graph teaches propose/commit); how an agent acts on nudges; the separate server-side reconciliation skill surface (not the same thing). |
-| [`cli-flow.md`](./cli-flow.md) | The full `potpie` command reference, grouped, with flags, exit-code contract, snapshots, and the canonical journey. |
-| [`observability.md`](./observability.md) | What logs, traces, metrics, and readiness report; span names. |
-| [`bench-plan.md`](./bench-plan.md) | How graph quality is validated across backends (invariant judge, `run-light`). |
+| [`vision.md`](./vision.md) | Product goals, sourced claims, agent-owned reasoning, pots, and local, managed, and Event Ledger boundaries. |
+| [`architecture.md`](./architecture.md) | Layers, runtime composition, daemon, backend capabilities, pot scoping, resource storage, and backend selection. |
+| [`ontology.md`](./ontology.md) | Entity types, predicates, record types, contract versions, truth classes, mutation operations, source authorities, subgraphs, views, and identity keys. |
+| [`querying.md`](./querying.md) | Graph reads, compatibility commands, the read orchestrator and readers, ranked evidence, filtering, and traversal. |
+| [`writing.md`](./writing.md) | Semantic mutations, validation, runtime risk, proposals, commits, concurrency, receipts, inbox, and quality. |
+| [`ingestion-nudge.md`](./ingestion-nudge.md) | Event admission, internal event storage, external Event Ledger clients, connectors, batching, and ingestion nudges. |
+| [`skills.md`](./skills.md) | Bundled CLI skills, agent responses to nudges, and separate server-side reconciliation skills. |
+| [`cli-flow.md`](./cli-flow.md) | Commands, flags, exit codes, snapshots, and the CLI workflow. |
+| [`observability.md`](./observability.md) | Logs, traces, metrics, readiness, and span names. |
+| [`bench-plan.md`](./bench-plan.md) | Graph quality validation across backends, the invariant judge, and `run-light`. |
 
 ## Vocabulary
 
 | Term | Meaning |
 |---|---|
-| **Pot** | Unit of isolation/tenancy. Every query, source, inbox item, claim, semantic mutation, and graph operation is scoped to one pot; the pot id **is** the storage `group_id`. A pot is local or managed; the active pot determines routing. Cross-pot federation is an anti-goal. |
-| **Daemon** | Local background process (`potpie/daemon/lifecycle.py`) for lifecycle, IPC, health, and logs — **not** the business layer. Default host mode is detached (`daemon`); it also serves the read-only `potpie ui` explorer. |
-| **Services** | Root capability services own pots, sources, setup, skills, and local identity; Graph Service owns graph reads, semantic mutations, and the workbench. Runtime composition assembles them for the local daemon. |
-| **GraphBackend** | Swappable capability bundle of 6 ports — canonical `mutation` + `claim_query`, plus rebuildable projections `semantic`, `inspection`, `analytics`, `snapshot` — with `capabilities()`/`provision()`. Default profile `falkordb_lite`. |
-| **Skill Manager** | CLI-managed skill catalog/installer for agent harnesses. Skills teach agents how to use the CLI; they are not graph facts or new tools. |
-| **Event Ledger** | Separate managed-or-self-hostable source-event service (webhooks, polling, replay cursors). Graph consumers *pull* and track their own cursor/apply state; the ledger is **not** the graph source of truth. (External clients are stubs — roadmap.) |
-| **Claim** | A compact, sourced fact — the graph stores claims + source refs, **never** full payloads (diffs, doc bodies, transcripts). Each claim carries a truth class that feeds the ranker. |
-| **Retrieval card** | The single text a claim is embedded and searched as (agent-authored `description` leads). One builder is shared by the embed-on-write and read paths, so retrieval quality tracks the description the agent writes. |
+| Pot | Isolation boundary for queries, sources, inbox items, claims, mutations, and graph operations. The pot ID is the storage `group_id`. The active pot determines local or managed routing. Cross-pot federation is out of scope. |
+| Daemon | Local background process in `potpie/daemon/lifecycle.py` that handles lifecycle, IPC, health, and logs. It runs detached by default and serves the read-only `potpie ui` explorer. |
+| Services | Root capability services own pots, sources, setup, skills, and local identity. Graph Service owns graph reads, semantic mutations, and the workbench. Runtime composition assembles them for the local daemon. |
+| GraphBackend | Backend with six ports. `mutation` and `claim_query` hold authoritative state. `semantic`, `inspection`, `analytics`, and `snapshot` provide rebuildable projections. `capabilities()` and `provision()` describe and prepare the backend. The default profile is `falkordb_lite`. |
+| Skill Manager | CLI skill catalog and installer for agent harnesses. Skills teach agents to use the CLI. |
+| Event Ledger | Separate source-event service for webhooks, polling, and replay cursors. Graph consumers pull events and track their own cursors and apply state. External clients are planned stubs. |
+| Claim | Sourced fact with a truth class used by the ranker. The graph stores claims and source references. Full payloads such as diffs, document bodies, and transcripts live elsewhere. |
+| Retrieval card | Text used to embed and search a claim, led by the agent-authored `description`. Write and read paths share one builder. |
 
 The active package lives under
-[`potpie/context-engine/`](https://github.com/potpie-ai/potpie/tree/main/potpie/context-engine). Where any older
-note disagrees with these docs, these docs (code-verified on `main`) win.
+[`potpie/context-engine/`](https://github.com/potpie-ai/potpie/tree/main/potpie/context-engine). Use these docs in preference to older notes about the package.

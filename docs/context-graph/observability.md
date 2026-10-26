@@ -5,18 +5,16 @@ description: "Logs, traces, metrics, and the backend-neutral observability port.
 
 ## Overview
 
-Observability is a thin, backend-neutral **port** (`domain/ports/observability.py
-ObservabilityPort`) that the domain and application layers emit spans and metrics
-through. They never import `opentelemetry` directly — that import lives only inside
-the OTel adapter, which is what keeps the backend swappable (OTLP → Tempo/Prometheus
-today, anything else tomorrow). The default sink is `NoOpObservability`: every call
-site is safe to invoke unconditionally, and a local CLI/daemon stays completely dark
-unless an operator opts in. Observability never raises into a caller — it can never
-fail a request.
+The domain and application layers emit spans and metrics through
+`ObservabilityPort` in `domain/ports/observability.py`. Only the OTel adapter imports
+`opentelemetry`, so core code does not depend on a telemetry backend. The default
+`NoOpObservability` sends no spans or metrics. Callers can emit telemetry without
+checking whether an operator enabled it. Observability failures cannot fail a
+request.
 
 Both composition roots wire the same port: the root-owned local runtime
 (`potpie/runtime/composition.py`) and the standalone ingestion HTTP server
-(`bootstrap/ingestion_server.py`) — see [architecture.md](./architecture.md).
+(`bootstrap/ingestion_server.py`). See [architecture.md](./architecture.md).
 
 ## Shape
 
@@ -24,8 +22,8 @@ Both composition roots wire the same port: the root-owned local runtime
 flowchart LR
   obs_core["shared services<br/>Pot Mgmt · Graph Service<br/>Graph Workbench · Skill Manager"]
   obs_ingest["ingestion pipeline<br/>(HTTP server · batch worker)"]
-  obs_port["ObservabilityPort<br/>(domain seam)"]
-  obs_noop["NoOpObservability<br/>(default — dark)"]
+  obs_port["ObservabilityPort<br/>(domain port)"]
+  obs_noop["NoOpObservability<br/>(disabled by default)"]
   obs_console["ConsoleObservability"]
   obs_otel["OtelObservability → OTLP"]
 
@@ -38,7 +36,7 @@ flowchart LR
 
 Default behavior:
 
-- Local OSS is **dark by default** (`NoOpObservability`); no spans, metrics, or remote
+- Local OSS uses `NoOpObservability` by default. No spans, metrics, or remote
   telemetry leave the process unless explicitly configured.
 - Logs always work (stdlib logging), but structured/JSON output and trace correlation
   are opt-in.
@@ -62,7 +60,7 @@ CONTEXT_ENGINE_LOG_LEVEL=INFO            # default: INFO
 ```
 
 `bootstrap/observability_wiring.py default_observability()` resolves the sink:
-`console` builds `ConsoleObservability` (dependency-free trace skeleton); any other
+`console` builds `ConsoleObservability` with dependency-free trace output; any other
 truthy value builds `OtelObservability` **only if** an OTLP endpoint is set, otherwise
 it stays NoOp. A missing OTel extra or any setup failure also degrades silently to
 NoOp. OTLP export therefore lives behind optional dependencies and explicit config.
@@ -91,11 +89,10 @@ chunk, source`**. Anything outside this set is dropped so log/trace cardinality 
 bounded. Keys are bound at ingress and re-bound inside the batch worker, and injected
 into every log record (see Logging) so any line or span ties back to its event.
 
-## Trace Map
+## Trace map
 
-The `Code boundary` column names the module each span instruments, so spans attach to
-the same seams the Code Map in [architecture.md](./architecture.md) defines. These are
-the spans actually emitted today.
+The `Code boundary` column names the module each span instruments. These modules
+also appear in the code map in [architecture.md](./architecture.md).
 
 | Span | Kind | Meaning | Code boundary |
 |---|---|---|---|
@@ -112,14 +109,14 @@ commits. See [writing.md](./writing.md).
 
 Notes:
 
-- **Reads do not emit per-reader spans.** The `subgraph`/`view`/`match_mode` ride as
-  attributes on `graph.read`; the read trunk (`ReadOrchestrator` → 10 readers →
+- Reads attach `subgraph`, `view`, and `match_mode` attributes to `graph.read`
+  instead of emitting per-reader spans. The read path (`ReadOrchestrator` → 10 readers →
   `EnvelopeBuilder`) is described in [querying.md](./querying.md).
 - The per-event **`reconciliation_run`** is a durable ledger row
   (`context_reconciliation_runs`), *not* a span. It is linked to `batch.process` by
   `run_id` and surfaced through `graph status` / the explorer UI.
-- Batch ingestion uses **span links**, not a single synchronous parent, so delayed
-  fan-in is represented honestly rather than as one long request. See
+- Batch ingestion links event spans to the batch span to represent delayed fan-in
+  without treating the batch as one long request. See
   [ingestion-nudge.md](./ingestion-nudge.md).
 
 > **Roadmap (not yet wired):** external Event Ledger spans (`ledger.pull`,
@@ -133,7 +130,7 @@ Notes:
 All metric names are `ce.*`. Graph-workbench and batch metrics are mirrored to both the
 `ObservabilityPort` and a Sentry metrics runtime.
 
-Workbench commands (`potpie/cli/commands/graph.py`) — one counter +
+Workbench commands in `potpie/cli/commands/graph.py` emit one counter and
 histogram per command root:
 
 - `ce.graph.<root>_total` and `ce.graph.<root>_ms` for each root (`read`, `propose`,
@@ -150,8 +147,8 @@ Ingestion pipeline (the live internal event store + batch worker):
 
 - `ce.ingest.events_total`, `ce.ingest.dedup_total` (admission);
 - `ce.batch.started_total`, `ce.batch.finished_total`, `ce.batch.reaped_total`;
-- `ce.batch.time_in_pending_ms` — the windowed-5min canary: if the flusher wedges,
-  this screams first;
+- `ce.batch.time_in_pending_ms` measures time waiting for the five-minute windowed
+  flusher and helps detect a stalled flusher;
 - `ce.events.reconciled_total`, `ce.events.failed_total`.
 
 Reconciliation agent + cost telemetry (only when the planner is enabled):
@@ -176,7 +173,7 @@ Readiness:
 - gauge `ce.dependency_up{dependency}`.
 
 > **Roadmap (not yet wired):** external Event Ledger metric families (`ce.ledger.*`,
-> `ce.event_ledger.*`) are not emitted — the ledger clients are stubs.
+> `ce.event_ledger.*`) are not emitted because the ledger clients are stubs.
 
 ## Logging
 
@@ -189,7 +186,7 @@ batch / run. Two formats:
   `… [trace=… event=… pot=…] message`.
 - **`json`** — one JSON object per line: `ts/level/logger/msg` + the present
   correlation keys + any structured `extra=` fields (including the `audit` channel,
-  which was previously dropped on the floor).
+  which earlier versions discarded).
 
 Every request, daemon action, or pipeline step should therefore carry: the active
 `trace_id`/`request id`, `pot_id`, the `event/batch/run` ids when in the async pipeline,
@@ -203,20 +200,18 @@ potpie daemon logs
 potpie doctor
 ```
 
-> **Roadmap (not yet wired):** managed-profile log fields (`origin`/`profile`
-> `managed`, managed backend URL host, `ledger binding` `managed`/`self_hosted`) apply
-> only once managed routing and the external ledger ship — both currently raise
-> `CapabilityNotImplemented` / are stubs.
+> Managed-host routing is available. The external Event Ledger binding remains
+> inactive, so do not interpret saved binding fields as evidence of live ledger
+> traffic.
 
 ## Readiness
 
-Liveness and readiness are separate: a daemon can be **live** while graph storage or
-semantic search is **not ready**. Readiness is composed, not flattened — `potpie
-doctor` assembles `backend.capabilities()` + `backend.mutation.readiness()`
+A running daemon can have unavailable graph storage or semantic search.
+`potpie doctor` reports readiness from `backend.capabilities()` + `backend.mutation.readiness()`
 (`BackendReadiness`) + `daemon.status()` + `ledger.status()`, and `potpie graph status`
-returns `data_plane_status`. Deeper `doctor` diagnostics should preserve these owner
-boundaries rather than collapsing every dependency into one status bit. (Full command
-flags in [cli-flow.md](./cli-flow.md).)
+returns `data_plane_status`. Keep each dependency status in diagnostics so
+operators can identify which component is unavailable. See [cli-flow.md](./cli-flow.md)
+for command flags.
 
 Local readiness checks:
 
@@ -228,12 +223,9 @@ Local readiness checks:
 - semantic index and embedder (bundled local embedder by default);
 - Skill Manager catalog and installed-vs-recommended skills.
 
-> **Roadmap (not yet wired):** managed-backend readiness (hosted Pot Management / Graph
-> Service / Skill Manager, auth/policy, hosted graph/search profile, queue/worker
-> dependencies, cloud skill-sync) and external Event Ledger readiness (ledger API,
-> store, connector/webhook health, per-source cursor/lag, third-party provider auth).
-> `ledger.status()` exists, but its managed/self-hosted clients are stubs, so the
-> ledger surface reports unavailable rather than real provider state.
+Managed pot and host status commands use the configured managed host. Cloud skill
+sync and external Event Ledger rebinding remain unimplemented. A saved ledger
+binding does not establish provider health, cursor progress, or delivery lag.
 
 ## See also
 

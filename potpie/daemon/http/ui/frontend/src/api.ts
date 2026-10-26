@@ -35,12 +35,10 @@ function errorDetail(detail: unknown, fallback: string): string {
 }
 
 /**
- * Every call to the daemon goes through here.
+ * Send a request with the explorer's session cookie.
  *
- * `credentials: "same-origin"` sends the HttpOnly session cookie `potpie ui`
- * handed this browser (and nothing to any other origin). A 401 means that
- * session is gone; it is reported once to the session store, which switches
- * the page to its "run `potpie ui` again" state.
+ * `credentials: "same-origin"` sends the HttpOnly cookie only to this origin.
+ * On a 401, notify the session store so the page asks for a new session.
  */
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const res = await fetch(`${BASE}${path}`, {
@@ -92,10 +90,9 @@ async function jpost<T>(path: string, payload: object): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Build a query string from defined params only.
+/** Build a query string from defined parameters.
  *
- * Every read is scoped by `host` as well as `pot`: a pot id means nothing
- * without the host it was listed from, so the two always travel together.
+ * Send `host` with `pot`, because pot ids are unique only within a host.
  */
 function qs(params: Record<string, string | number | undefined>): string {
   const parts = Object.entries(params)
