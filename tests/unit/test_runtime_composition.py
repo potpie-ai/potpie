@@ -348,6 +348,11 @@ def test_local_runtime_rejects_runtime_only_backend() -> None:
 def test_local_runtime_accepts_backend_env(
     profile: str, tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from potpie_context_engine.adapters.outbound.graph import falkordb_writer
+
+    # Composition constructs the journal eagerly. Test profile routing without
+    # opening a native store or requiring a running FalkorDB service.
+    monkeypatch.setattr(falkordb_writer, "build_falkordb_graph", MagicMock())
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path))
     monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", profile)
     monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "in_process")
@@ -356,7 +361,10 @@ def test_local_runtime_accepts_backend_env(
 
     runtime = build_local_runtime()
 
-    assert runtime.root.backend.profile == profile
+    try:
+        assert runtime.root.backend.profile == profile
+    finally:
+        runtime.close()
 
 
 @pytest.mark.parametrize(

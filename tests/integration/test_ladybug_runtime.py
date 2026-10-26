@@ -39,7 +39,7 @@ def test_ladybug_setup_daemon_record_and_retry_survive_restart(
     monkeypatch.setenv("CONTEXT_ENGINE_BACKEND", "ladybug")
     monkeypatch.setenv("CONTEXT_ENGINE_HOST_MODE", "daemon")
     monkeypatch.setenv("CONTEXT_ENGINE_EMBEDDER", "hashing")
-    monkeypatch.setenv("CONTEXT_ENGINE_RESOURCE_INDEX", "lexical")
+    monkeypatch.setenv("CONTEXT_ENGINE_RESOURCE_INDEX", "sqlite_fts")
     monkeypatch.setenv("POTPIE_TELEMETRY_DISABLED", "1")
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "production")
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.null.Keyring")

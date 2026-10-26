@@ -63,7 +63,15 @@ def _copy_verified(content: bytes, target: Path) -> None:
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
-        os.replace(temporary, target)
+        try:
+            os.replace(temporary, target)
+        except OSError:
+            # Another process may publish and load the same DLL after our
+            # initial check. Windows then prevents replacing the loaded file.
+            # Accept only a byte-identical winner; stale or unreadable aliases
+            # must still fail instead of being used as native dependencies.
+            if not target.is_file() or target.read_bytes() != content:
+                raise
     finally:
         temporary.unlink(missing_ok=True)
 

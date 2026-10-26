@@ -442,8 +442,16 @@ class SqliteFtsResourceIndex:
             except sqlite3.OperationalError:
                 conn.close()
                 raise
+            try:
+                self._reconcile_embedder(conn)
+            except BaseException:
+                # Hybrid adapters also initialize their projection schema here.
+                # A transient failure must leave the next open free to retry
+                # initialization, rather than reuse a partially initialized DB.
+                conn.close()
+                raise
             self._conn = conn
-            self._reconcile_embedder(conn)
+            self._open_error = None
             return conn
 
     def _try_connect(self) -> sqlite3.Connection | None:

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import sqlite3
 import threading
+
+import pytest
 
 from potpie_context_engine.adapters.outbound.resources.index.qdrant_hybrid import (
     QdrantHybridResourceIndex,
@@ -412,3 +415,32 @@ def test_fresh_index_without_embedder_needs_no_service_or_worker(tmp_path):
     assert index.drain().remaining == 0
     assert index.drain().detail is None
     assert not remote.collections
+
+
+def test_failed_projection_initialization_is_retried_on_next_open(
+    tmp_path, monkeypatch
+):
+    from potpie_context_engine.adapters.outbound.resources.index import qdrant_sync
+
+    index = make_index(tmp_path)
+    initialize = qdrant_sync.initialize
+    attempted = []
+
+    def fail_once(conn):
+        attempted.append(conn)
+        if len(attempted) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return initialize(conn)
+
+    monkeypatch.setattr(qdrant_sync, "initialize", fail_once)
+    assert index._try_connect() is None
+    assert index._conn is None
+    # The failed handle must also be released, so retries do not leak handles
+    # or retain a transaction that blocks the next connection's initialization.
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        attempted[0].execute("SELECT 1")
+    import_doc(index)
+    assert len(attempted) == 2 and index._namespace
+    assert index._open_error is None
+    assert index.drain().remaining == 0
+    assert index.search(pot_id="p", query="quota").semantic_candidates == 3

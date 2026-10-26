@@ -108,8 +108,8 @@ def test_mixed_package_fails_before_starting_or_creating_store(
 
     assert "ARM64" in str(error.value)
     assert "x86-64" in str(error.value)
-    assert server in str(error.value)
-    assert module in str(error.value)
+    assert repr(server) in str(error.value)
+    assert repr(module) in str(error.value)
     assert "corrected FalkorDBLite wheel" in error.value.recommended_next_action
     assert not store.parent.exists()
     assert Path(server).read_bytes()[18:20] == b"\xb7\x00"

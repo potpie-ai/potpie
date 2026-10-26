@@ -62,7 +62,9 @@ def test_other_platforms_install_the_embedded_store(
 
 
 @pytest.mark.parametrize("machine", ["aarch64", "arm64", "ARM64"])
-def test_linux_arm_installs_only_the_corrected_native_distribution(machine: str) -> None:
+def test_linux_arm_installs_only_the_corrected_native_distribution(
+    machine: str,
+) -> None:
     installed = _local_extra_installs(_environment("linux", "Linux", machine))
 
     assert {"potpie-falkordblite", "falkordb", "redis", "hiredis"} <= installed

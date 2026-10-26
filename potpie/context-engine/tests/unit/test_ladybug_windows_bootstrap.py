@@ -74,6 +74,29 @@ def test_non_windows_does_not_touch_dlls(monkeypatch):
     native.ensure_ladybug_openssl()
 
 
+@pytest.mark.parametrize("winner", [b"expected DLL", b"different DLL", None])
+def test_concurrent_dll_publication_accepts_only_identical_loaded_winner(
+    tmp_path, monkeypatch, winner
+):
+    target = tmp_path / "alias.dll"
+
+    def publish_then_lock(source, destination):
+        # A second process wins publication and loads the DLL between the
+        # existence check and replacement, which locks the file on Windows.
+        if winner is not None:
+            destination.write_bytes(winner)
+        raise PermissionError("DLL loaded by another process")
+
+    monkeypatch.setattr(native.os, "replace", publish_then_lock)
+    if winner == b"expected DLL":
+        native._copy_verified(b"expected DLL", target)
+        assert target.read_bytes() == winner
+    else:
+        with pytest.raises(PermissionError, match="DLL loaded"):
+            native._copy_verified(b"expected DLL", target)
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_working_native_binding_skips_bootstrap(monkeypatch):
     package = SimpleNamespace()
     monkeypatch.setattr(native.sys, "platform", "win32")

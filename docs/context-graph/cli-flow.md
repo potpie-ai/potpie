@@ -916,7 +916,7 @@ potpie graph repair --legacy --apply --repair-id <id> [--yes/-y] [--pot <ref>]
     snapshot is held in memory. Graph and documents don't share a transaction,
     so pause writers for a consistent backup.
 
-Snapshots (`graph export`/`import`) are supported on `in_memory`, `embedded`,
+Snapshots (`graph export`/`import`) are supported on `in_memory`, `embedded`, `ladybug`,
 `falkordb_lite`, `falkordb`, and `neo4j`. `graph inspect`/`neighborhood` remains
 unavailable on `neo4j`.
 

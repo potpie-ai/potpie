@@ -75,7 +75,7 @@ that alias also uses Qdrant.
 
 The Linux ARM64 default graph backend requires
 `potpie-falkordblite==0.10.0.post1`, which repairs the native module packaging.
-The prebuilt wheel supports glibc 2.35 or newer and has been validated on Debian
+The prebuilt wheel supports glibc 2.36 or newer and has been validated on Debian
 12 (glibc 2.36). This corrected distribution must be published
 alongside the Potpie release before a normal PyPI installation of that release
 can succeed. Until then, use wheels built from this checkout; the native build
