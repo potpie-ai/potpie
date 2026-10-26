@@ -55,7 +55,11 @@ jobs:
 
   linux:
     runs-on: ubuntu-24.04-arm
-    container: python:${{ matrix.python }}-bookworm
+    container:
+      image: python:${{ matrix.python }}-bookworm
+      # Redis daemonizes; reap its orphaned process after shutdown so the
+      # lifecycle tests can require its PID to disappear, as on a normal host.
+      options: --init
     services:
       qdrant:
         image: qdrant/qdrant:v1.19.2

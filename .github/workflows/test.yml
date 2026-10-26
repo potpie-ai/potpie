@@ -387,6 +387,7 @@ jobs:
           tests/unit/test_cli_install_status_path.py
           tests/unit/test_local_extra_windows_markers.py
           tests/unit/test_local_extra_next_action.py
+          tests/unit/test_arm_wheels.py
 
       - name: Require native Ladybug persistence and semantic contracts
         working-directory: potpie/context-engine

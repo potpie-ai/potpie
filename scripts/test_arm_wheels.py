@@ -8,6 +8,7 @@ come from this interpreter's site-packages. A selected test may not skip.
 from __future__ import annotations
 
 import argparse
+from contextlib import chdir
 import importlib
 import importlib.metadata
 import importlib.util
@@ -126,9 +127,11 @@ def main() -> None:
             "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         }
     )
-    with tempfile.TemporaryDirectory(prefix="potpie-arm-") as temporary:
+    with (
+        tempfile.TemporaryDirectory(prefix="potpie-arm-") as temporary,
+        chdir(temporary),
+    ):
         work = Path(temporary)
-        os.chdir(work)
         os.environ["CONTEXT_ENGINE_HOME"] = str(work / "home")
         os.environ["POTPIE_HARNESS_HOME"] = str(work / "harness")
         verify_installation(args.target)

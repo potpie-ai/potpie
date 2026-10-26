@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 from urllib.parse import quote
 
-import httpx
+if TYPE_CHECKING:
+    import httpx
 
 
 class QdrantError(RuntimeError):
@@ -28,6 +29,10 @@ class QdrantHttp:
         *,
         client: httpx.Client | None = None,
     ) -> None:
+        # Resource profiles are imported even by hosts with indexing disabled.
+        # Load the HTTP client only when a transport is actually constructed.
+        import httpx
+
         try:
             parsed = httpx.URL(url)
         except (httpx.InvalidURL, ValueError, TypeError):
@@ -76,6 +81,8 @@ class QdrantHttp:
         params: dict[str, Any] | None = None,
         allow_status: tuple[int, ...] = (),
     ) -> Any:
+        import httpx
+
         if self._client.is_closed:
             raise QdrantError("Qdrant HTTP client is closed")
         try:
