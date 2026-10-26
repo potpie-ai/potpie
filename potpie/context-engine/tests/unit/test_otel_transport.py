@@ -114,6 +114,23 @@ def test_explicit_grpc_failure_is_not_silently_changed_to_http(
     assert "http/protobuf" in caplog.text
 
 
+def test_signal_grpc_failure_guidance_overrides_global_http(
+    monkeypatch, signal, caplog
+):
+    windows_arm(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+    monkeypatch.setenv(f"OTEL_EXPORTER_OTLP_{signal}_PROTOCOL", "grpc")
+    missing_grpc(monkeypatch, signal)
+
+    with pytest.raises(RuntimeError) as error:
+        exporter(signal)
+
+    guidance = str(error.value)
+    assert f"OTEL_EXPORTER_OTLP_{signal}_PROTOCOL=http/protobuf" in guidance
+    assert "remove that signal-specific setting" in guidance
+    assert guidance in caplog.text
+
+
 def test_existing_implicit_grpc_failure_still_falls_back(monkeypatch, signal):
     pytest.importorskip("opentelemetry.exporter.otlp.proto.http")
     monkeypatch.setattr(otel, "sys", SimpleNamespace(platform="linux"))

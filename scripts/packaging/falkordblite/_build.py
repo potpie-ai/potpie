@@ -24,10 +24,13 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from packaging.tags import sys_tags
+
 ROOT = Path(__file__).resolve().parent
 DIST = "potpie_falkordblite"
 VERSION = "0.10.0.post1"
 DIST_INFO = f"{DIST}-{VERSION}.dist-info"
+WHEEL_PLATFORM = "manylinux_2_36_aarch64"
 SDIST = "falkordblite-0.10.0.tar.gz"
 MODULE = "falkordb-arm64v8-v4.18.3.so"
 SOURCES = {
@@ -68,6 +71,17 @@ def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
     target = Path(metadata_directory) / DIST_INFO
     target.mkdir(parents=True, exist_ok=True)
     (target / "METADATA").write_bytes(_metadata())
+    # Upstream declares an extension, so retain this interpreter's ABI while
+    # describing the native Linux ARM64 target even when resolving on Windows.
+    tag = next(sys_tags())
+    (target / "WHEEL").write_text(
+        "Wheel-Version: 1.0\n"
+        "Generator: potpie-falkordblite\n"
+        "Root-Is-Purelib: false\n"
+        f"Tag: {tag.interpreter}-{tag.abi}-{WHEEL_PLATFORM}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     return DIST_INFO
 
 
@@ -164,7 +178,7 @@ def _verify_wheel(path: Path) -> None:
             require_arm64_elf(wheel.read(name), name)
 
 
-def _write_metadata(wheel_path: Path) -> None:
+def _write_metadata(wheel_path: Path, metadata_directory=None) -> None:
     """Make the built metadata identical to the portable PEP517 metadata hook."""
     # wheel unpack/pack updates every RECORD digest, including METADATA.
     with tempfile.TemporaryDirectory() as directory:
@@ -173,7 +187,14 @@ def _write_metadata(wheel_path: Path) -> None:
             check=True,
         )
         unpacked = Path(directory) / f"{DIST}-{VERSION}"
-        (unpacked / DIST_INFO / "METADATA").write_bytes(_metadata())
+        if metadata_directory is None:
+            prepare_metadata_for_build_wheel(unpacked)
+        else:
+            # PEP 517 requires preserving prepared metadata, including any
+            # additional files, when a frontend supplies its dist-info path.
+            shutil.copytree(
+                metadata_directory, unpacked / DIST_INFO, dirs_exist_ok=True
+            )
         provenance = {
             "sources": {
                 name: {"url": url, "sha256": sha}
@@ -226,7 +247,6 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
         if len(wheels) != 1:
             raise RuntimeError(f"expected one raw native wheel, found {len(wheels)}")
         _verify_wheel(wheels[0])
-        _write_metadata(wheels[0])
         repaired = work / "repaired"
         # auditwheel validates symbol versions and bundles allowed non-system
         # libraries. It must fail rather than relabel an incompatible binary.
@@ -237,7 +257,9 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
                 "auditwheel",
                 "repair",
                 "--plat",
-                "manylinux_2_36_aarch64",
+                WHEEL_PLATFORM,
+                # Keep the final tag identical to portable prepared metadata.
+                "--only-plat",
                 "--wheel-dir",
                 str(repaired),
                 str(wheels[0]),
@@ -250,6 +272,7 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
                 f"expected one repaired native wheel, found {len(wheels)}"
             )
         _verify_wheel(wheels[0])
+        _write_metadata(wheels[0], metadata_directory)
         destination = output / wheels[0].name
         shutil.copyfile(wheels[0], destination)
     return destination.name

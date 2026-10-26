@@ -127,7 +127,14 @@ def import_doc(index, *, pot="p", doc="guide", text=None):
             dataclasses.replace(c, text=text, chars=len(text), revision=2)
             for c in chunks
         )
-        manifest = dataclasses.replace(manifest, revision=2)
+        manifest = dataclasses.replace(
+            manifest,
+            revision=2,
+            sections=tuple(
+                dataclasses.replace(section, summary=text)
+                for section in manifest.sections
+            ),
+        )
     return index.index_document(pot_id=pot, manifest=manifest, chunks=chunks)
 
 
@@ -366,7 +373,271 @@ def test_zero_and_invalid_vectors_do_not_publish_bad_cosine_points(tmp_path):
     conn.execute("UPDATE windows SET embedding=?", (pack_vector([float("nan"), 0, 0]),))
     conn.commit()
     report = index.drain()
-    assert report.remaining and "invalid dimensions or values" in report.detail
+    assert report.remaining == 0 and report.detail is None
+    assert not index.transport.collections[index.collection]
+    assert (
+        conn.execute("SELECT COUNT(*) FROM qdrant_points WHERE synced=2").fetchone()[0]
+        == 5
+    )
+
+
+def test_search_keeps_a_read_snapshot_while_another_connection_replaces_document(
+    tmp_path, monkeypatch
+):
+    index = make_index(tmp_path)
+    import_doc(index)
+    index.drain()
+    writer = make_index(tmp_path, index.transport)
+    writer._connect().execute("PRAGMA busy_timeout=50")
+    query = index.transport.query
+
+    def replace_during_query(*args):
+        hits = query(*args)
+        import_doc(writer, text="new unrelated replacement")
+        return hits
+
+    monkeypatch.setattr(index.transport, "query", replace_during_query)
+    result = index.search(pot_id="p", query="quota")
+    assert result.semantic_candidates == 3
+    assert {hit.revision for hit in result.hits} == {1}
+    assert not index._connect().in_transaction
+    assert (
+        writer._connect().execute("SELECT MIN(revision) FROM chunks").fetchone()[0] == 2
+    )
+
+
+def test_search_reads_while_another_connection_holds_writer_transaction(tmp_path):
+    index = make_index(tmp_path)
+    import_doc(index)
+    index.drain()
+    index._connect().execute("PRAGMA busy_timeout=50")
+    writer = make_index(tmp_path, index.transport)
+    conn = writer._connect()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        result = index.search(pot_id="p", query="quota")
+    finally:
+        conn.rollback()
+    assert result.hits and result.semantic_candidates == 3
+    assert result.detail is None
+
+
+def test_busy_stale_cleanup_preserves_search_and_retries_after_snapshot(tmp_path):
+    index = make_index(tmp_path)
+    import_doc(index, doc="old")
+    index.drain()
+    delayed = dict(index.transport.collections[index.collection])
+    index.drop_document(pot_id="p", slug="old")
+    index.drain()
+    import_doc(index, doc="current")
+    index.drain()
+    index.transport.collections[index.collection].update(delayed)
+    writer = make_index(tmp_path, index.transport)
+    conn = writer._connect()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        result = index.search(pot_id="p", query="quota")
+        assert result.semantic_candidates == 3
+        assert {hit.doc for hit in result.hits} == {"current"}
+        assert index.pending_count() == 0
+        assert index._stale_point_ids == set(delayed)
+    finally:
+        conn.rollback()
+    assert index._connect().execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+    assert index.search(pot_id="p", query="quota").semantic_candidates == 3
+    assert index.pending_count() == 5
+    assert not index._stale_point_ids
+    assert index.drain().remaining == 0
+
+
+@pytest.mark.parametrize("failure", ["raises", "short", "long", "malformed"])
+def test_bad_batch_falls_back_to_individual_embeddings(tmp_path, failure):
+    class BrokenBatch(Embedder):
+        def embed_many(self, texts):
+            self.calls += 1
+            vectors = [self.embed(text) for text in texts]
+            if failure == "raises":
+                raise RuntimeError("batch unavailable")
+            if failure == "short":
+                return vectors[:-1]
+            if failure == "long":
+                return vectors + [vectors[0]]
+            return [None, *vectors[1:]]
+
+    index = make_index(tmp_path, embedder=BrokenBatch())
+    import_doc(index)
+    report = index.drain()
+    assert report.embedded == 5 and report.remaining == 0 and report.detail is None
+    assert len(index.transport.collections[index.collection]) == 5
+
+
+@pytest.mark.parametrize(
+    "invalid", [None, [1], [float("nan"), 0, 0], [float("inf"), 0, 0], [0, 0, 0]]
+)
+def test_invalid_individual_vectors_are_skipped_durably_without_blocking_good_rows(
+    tmp_path, invalid
+):
+    class InvalidInput(Embedder):
+        def embed(self, text):
+            return invalid if "unembeddable" in text else super().embed(text)
+
+    embedder = InvalidInput()
+    index = make_index(tmp_path, embedder=embedder)
+    import_doc(index, doc="bad", text="unembeddable")
+    import_doc(index, doc="good")
+    report = index.drain()
+    assert report.embedded == 5 and report.remaining == 0 and report.detail is None
+    assert len(index.transport.collections[index.collection]) == 5
+    assert (
+        index._connect()
+        .execute(
+            "SELECT COUNT(*) FROM qdrant_windows WHERE skipped_collection=?",
+            (index.collection,),
+        )
+        .fetchone()[0]
+        == 5
+    )
+    remote = index.transport
+    index.close()
+    resumed = make_index(tmp_path, remote, embedder)
+    assert resumed.drain().remaining == 0
+    assert embedder.calls == 1
+    assert resumed.search(pot_id="p", query="unembeddable", doc="bad").hits
+    import_doc(resumed, doc="bad", text="valid replacement")
+    report = resumed.drain()
+    assert report.embedded == 5 and report.remaining == 0
+    assert len(remote.collections[resumed.collection]) == 10
+
+
+def test_skipped_inputs_retry_after_model_change_even_when_switching_back(tmp_path):
+    class InvalidEmbedder(Embedder):
+        def embed(self, text):
+            return [float("nan"), 0, 0]
+
+    index = make_index(tmp_path, embedder=InvalidEmbedder())
+    import_doc(index)
+    assert index.drain().remaining == 0
+    remote = index.transport
+    index.close()
+    different = Embedder()
+    different.name = "model-b"
+    switched = make_index(tmp_path, remote, different)
+    assert switched.pending_count() == 5
+    switched.close()
+    original = make_index(tmp_path, remote)
+    assert original.pending_count() == 5
+    report = original.drain()
+    assert report.embedded == 5 and report.remaining == 0
+
+
+def test_retryable_failures_do_not_hide_later_batches_or_discard_successes(tmp_path):
+    class TransientFailure(Embedder):
+        failing = True
+
+        def embed(self, text):
+            if self.failing and "unembeddable" in text:
+                raise RuntimeError("model temporarily unavailable for this input")
+            return super().embed(text)
+
+    embedder = TransientFailure()
+    index = make_index(tmp_path, embedder=embedder)
+    # A whole leading batch fails, followed by another bad row and valid rows.
+    for number in range(13):
+        import_doc(index, doc=f"bad-{number}", text="unembeddable")
+    import_doc(index, doc="good")
+    report = index.drain(budget=70)
+    assert report.embedded == 5 and report.remaining == 65
+    assert report.batches == 2 and "embedding failed" in report.detail
+    assert len(index.transport.collections[index.collection]) == 5
+    remote = index.transport
+    index.close()
+    embedder.failing = False
+    resumed = make_index(tmp_path, remote, embedder)
+    report = resumed.drain(budget=70)
+    assert report.embedded == 65 and report.remaining == 0 and report.detail is None
+    assert len(remote.collections[resumed.collection]) == 70
+
+
+def test_skipped_embeddings_consume_the_drain_attempt_budget(tmp_path):
+    class InvalidEmbedder(Embedder):
+        def embed(self, text):
+            return [float("nan"), 0, 0]
+
+    index = make_index(tmp_path, embedder=InvalidEmbedder())
+    import_doc(index)
+    report = index.drain(budget=2)
+    assert report.embedded == 0 and report.remaining == 3 and report.batches == 1
+    assert index.drain(budget=3).remaining == 0
+
+
+@pytest.mark.parametrize(
+    "blob",
+    [b"x", pack_vector([1]), pack_vector([float("nan"), 0, 0]), pack_vector([0, 0, 0])],
+)
+def test_corrupt_cached_vector_does_not_block_publication_and_can_be_repaired(
+    tmp_path, blob
+):
+    index = make_index(tmp_path)
+    import_doc(index)
+    conn = index._connect()
+    conn.execute(
+        "UPDATE windows SET embedding=?,embedder=?,dimensions=?",
+        (pack_vector([1, 0, 0]), "test-v1", 3),
+    )
+    window_id = conn.execute("SELECT MIN(id) FROM windows").fetchone()[0]
+    conn.execute("UPDATE windows SET embedding=? WHERE id=?", (blob, window_id))
+    conn.commit()
+    report = index.drain()
+    assert report.embedded == 0 and report.remaining == 0 and report.detail is None
+    assert len(index.transport.collections[index.collection]) == 4
+    assert (
+        conn.execute(
+            "SELECT synced FROM qdrant_points WHERE window_id=?", (window_id,)
+        ).fetchone()[0]
+        == 2
+    )
+    # Recreating the collection must keep terminal skipped points out of work.
+    del index.transport.collections[index.collection]
+    assert index.drain().remaining == 0
+    assert len(index.transport.collections[index.collection]) == 4
+    assert (
+        conn.execute(
+            "SELECT synced FROM qdrant_points WHERE window_id=?", (window_id,)
+        ).fetchone()[0]
+        == 2
+    )
+    conn.execute(
+        "UPDATE windows SET embedding=? WHERE id=?",
+        (pack_vector([1, 0, 0]), window_id),
+    )
+    conn.commit()
+    assert index.drain().remaining == 0
+    assert len(index.transport.collections[index.collection]) == 5
+    assert index.embedder.calls == 0
+
+
+def test_existing_projection_schema_migrates_skip_state_and_keeps_triggers(tmp_path):
+    index = make_index(tmp_path)
+    import_doc(index)
+    index.drain()
+    conn = index._connect()
+    # Model the schema shipped before durable per-window skip state existed.
+    conn.execute("DROP TRIGGER qdrant_skipped_vector_change")
+    conn.execute("ALTER TABLE qdrant_windows DROP COLUMN skipped_collection")
+    conn.commit()
+    remote = index.transport
+    index.close()
+    resumed = make_index(tmp_path, remote)
+    assert resumed.pending_count() == 0
+    assert "skipped_collection" in {
+        row[1]
+        for row in resumed._connect().execute("PRAGMA table_info(qdrant_windows)")
+    }
+    import_doc(resumed, text="replacement")
+    assert resumed.drain().remaining == 0
+    resumed.drop_document(pot_id="p", slug="guide")
+    assert resumed.drain().remaining == 0
+    assert not remote.collections[resumed.collection]
 
 
 def test_late_upsert_after_successful_delete_cannot_hide_live_results(tmp_path):

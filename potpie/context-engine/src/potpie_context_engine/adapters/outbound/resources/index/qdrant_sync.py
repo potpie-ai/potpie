@@ -24,7 +24,7 @@ from .qdrant_http import QdrantError
 _SCHEMA = (
     """CREATE TABLE IF NOT EXISTS qdrant_windows(
         window_id INTEGER PRIMARY KEY REFERENCES windows(id) ON DELETE CASCADE,
-        token TEXT NOT NULL)""",
+        token TEXT NOT NULL, skipped_collection TEXT)""",
     """CREATE TABLE IF NOT EXISTS qdrant_points(
         window_id INTEGER NOT NULL REFERENCES windows(id) ON DELETE CASCADE,
         collection TEXT NOT NULL, point_id TEXT NOT NULL UNIQUE,
@@ -46,6 +46,12 @@ _SCHEMA = (
         WHEN OLD.embedding IS NOT NEW.embedding OR OLD.embedder IS NOT NEW.embedder
             OR OLD.dimensions IS NOT NEW.dimensions
         BEGIN DELETE FROM qdrant_points WHERE window_id=OLD.id; END""",
+    """CREATE TRIGGER IF NOT EXISTS qdrant_skipped_vector_change
+        AFTER UPDATE OF embedding,embedder,dimensions ON windows
+        WHEN OLD.embedding IS NOT NEW.embedding OR OLD.embedder IS NOT NEW.embedder
+            OR OLD.dimensions IS NOT NEW.dimensions
+        BEGIN UPDATE qdrant_windows SET skipped_collection=NULL
+            WHERE window_id=NEW.id; END""",
 )
 
 
@@ -60,11 +66,27 @@ def write_transaction(conn: sqlite3.Connection) -> Iterator[None]:
         raise
 
 
+@contextmanager
+def read_transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """Keep hydration consistent without reserving SQLite's single writer."""
+    conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        conn.rollback()
+
+
 def initialize(conn: sqlite3.Connection) -> str:
     """Install triggers before model reconciliation can invalidate old vectors."""
     with write_transaction(conn):
         for sql in _SCHEMA:
             conn.execute(sql)
+        if "skipped_collection" not in {
+            row[1] for row in conn.execute("PRAGMA table_info(qdrant_windows)")
+        }:
+            conn.execute(
+                "ALTER TABLE qdrant_windows ADD COLUMN skipped_collection TEXT"
+            )
         if "completed" not in {
             row[1] for row in conn.execute("PRAGMA table_info(qdrant_deletes)")
         }:
@@ -126,7 +148,7 @@ def prepare_points(
 ) -> None:
     """Commit stable retry identities before a remote operation can start."""
     scope = " AND w.pot_id=?" if pot_id else ""
-    params: list[Any] = [collection, model, dimensions]
+    params: list[Any] = [collection, model, dimensions, collection]
     if pot_id:
         params.append(pot_id)
     params.append(size)
@@ -135,9 +157,12 @@ def prepare_points(
             raise QdrantError("resource embedder changed; reopen the index")
         rows = conn.execute(
             "SELECT w.id,w.pot_id,w.embedding FROM windows w "
+            "JOIN qdrant_windows i ON i.window_id=w.id "
             "LEFT JOIN qdrant_points p ON p.window_id=w.id AND p.collection=? "
             "WHERE p.point_id IS NULL AND w.embedding IS NOT NULL "
-            "AND w.embedder=? AND w.dimensions=?" + scope + " ORDER BY w.id LIMIT ?",
+            "AND w.embedder=? AND w.dimensions=? AND i.skipped_collection IS NOT ?"
+            + scope
+            + " ORDER BY w.id LIMIT ?",
             params,
         ).fetchall()
         conn.executemany(
@@ -170,32 +195,47 @@ def publish(
         if not model_matches(conn, model, dimensions):
             raise QdrantError("resource embedder changed; reopen the index")
         rows = conn.execute(
-            "SELECT p.point_id,p.embedding,w.pot_id,w.doc FROM qdrant_points p "
+            "SELECT p.point_id,p.window_id,p.embedding,w.pot_id,w.doc FROM qdrant_points p "
             "JOIN windows w ON w.id=p.window_id "
             "WHERE p.collection=? AND p.synced=0" + scope + " ORDER BY w.id LIMIT ?",
             params,
         ).fetchall()
         points = []
+        skipped = []
         for row in rows:
-            vector = unpack_vector(row["embedding"], dimensions)
-            # Cosine is undefined for a zero vector. Its durable synced state
-            # records that it was intentionally omitted, avoiding endless work.
-            if any(vector):
-                points.append(
-                    {
-                        "id": row["point_id"],
-                        "vector": vector,
-                        "payload": {
-                            "namespace": namespace,
-                            "pot_id": row["pot_id"],
-                            "doc": row["doc"],
-                        },
-                    }
-                )
-        transport.upsert(collection, points)
+            try:
+                vector = unpack_vector(row["embedding"], dimensions)
+            except QdrantError:
+                vector = []
+            # A corrupt cache entry or undefined cosine must not block valid
+            # rows. State 2 is terminal and cannot hydrate a semantic hit.
+            if not any(vector):
+                skipped.append(row)
+                continue
+            points.append(
+                {
+                    "id": row["point_id"],
+                    "vector": vector,
+                    "payload": {
+                        "namespace": namespace,
+                        "pot_id": row["pot_id"],
+                        "doc": row["doc"],
+                    },
+                }
+            )
+        if points:
+            transport.upsert(collection, points)
         conn.executemany(
             "UPDATE qdrant_points SET synced=1 WHERE point_id=?",
-            [(r["point_id"],) for r in rows],
+            [(point["id"],) for point in points],
+        )
+        conn.executemany(
+            "UPDATE qdrant_points SET synced=2 WHERE point_id=?",
+            [(row["point_id"],) for row in skipped],
+        )
+        conn.executemany(
+            "UPDATE qdrant_windows SET skipped_collection=? WHERE window_id=?",
+            [(collection, row["window_id"]) for row in skipped],
         )
     return len(rows)
 
@@ -229,13 +269,15 @@ def pending_count(
     conn: sqlite3.Connection, *, collection: str, pot_id: str | None
 ) -> int:
     scope = " AND w.pot_id=?" if pot_id else ""
-    params: list[Any] = [collection]
+    params: list[Any] = [collection, collection]
     if pot_id:
         params.append(pot_id)
     windows = conn.execute(
-        "SELECT COUNT(*) FROM windows w LEFT JOIN qdrant_points p "
+        "SELECT COUNT(*) FROM windows w JOIN qdrant_windows i ON i.window_id=w.id "
+        "LEFT JOIN qdrant_points p "
         "ON p.window_id=w.id AND p.collection=? "
-        "WHERE (w.embedding IS NULL OR p.point_id IS NULL OR p.synced=0)" + scope,
+        "WHERE i.skipped_collection IS NOT ? "
+        "AND (w.embedding IS NULL OR p.point_id IS NULL OR p.synced=0)" + scope,
         params,
     ).fetchone()[0]
     deletes = conn.execute(

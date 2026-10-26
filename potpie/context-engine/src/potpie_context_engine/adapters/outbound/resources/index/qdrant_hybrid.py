@@ -8,6 +8,7 @@ lexical retrieval usable and publication resumes without re-embedding.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 import os
 import sqlite3
@@ -33,6 +34,16 @@ from .sqlite_fts import (
 
 EMBED_BATCH = 64
 pack_vector = sync.pack_vector
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _EmbeddingBatch:
+    embedded: int = 0
+    skipped: int = 0
+    attempted: int = 0
+    last_window_id: int = 0
+    failed: bool = False
 
 
 @dataclass(slots=True)
@@ -53,6 +64,7 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
     )
     _health_checked: float = field(default=float("-inf"), init=False, repr=False)
     _owns_transport: bool = field(default=False, init=False, repr=False)
+    _stale_point_ids: set[str] = field(default_factory=set, init=False, repr=False)
 
     def _reconcile_embedder(self, conn: sqlite3.Connection) -> None:
         self._namespace = sync.initialize(conn)
@@ -61,6 +73,9 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
             # processes cannot make decisions from different metadata snapshots.
             conn.execute("BEGIN IMMEDIATE")
             try:
+                name, dimensions = self._embedder_identity()
+                if name is not None and not sync.model_matches(conn, name, dimensions):
+                    conn.execute("UPDATE qdrant_windows SET skipped_collection=NULL")
                 SqliteFtsResourceIndex._reconcile_embedder(self, conn)
                 conn.commit()
             except BaseException:
@@ -127,7 +142,8 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
                     # crash must leave a durable republish obligation.
                     with sync.write_transaction(conn):
                         conn.execute(
-                            "UPDATE qdrant_points SET synced=0 WHERE collection=?",
+                            "UPDATE qdrant_points SET synced=0 "
+                            "WHERE collection=? AND synced=1",
                             (self.collection,),
                         )
 
@@ -136,8 +152,8 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
                 )
                 self._health_error = None
                 self._health_checked = time.monotonic()
-            except QdrantError as exc:
-                return self._failed(exc)
+            except (QdrantError, sqlite3.Error) as exc:
+                return self._failed(QdrantError(str(exc)))
             return self._health_error
 
     def capabilities(self) -> IndexCapabilities:
@@ -152,19 +168,40 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
         )
 
     def search(self, **kwargs: Any) -> Any:
-        # Serialize projection writers while paging, keeping their remote result
-        # ordering and our SQLite hydration in one consistent document snapshot.
+        # A deferred read snapshot keeps lexical results and hydration consistent
+        # while allowing other connections to publish or import during paging.
         self._vector_error()
         conn = self._try_connect()
         if conn is None:
             return SqliteFtsResourceIndex.search(self, **kwargs)
-        with self._lock, sync.write_transaction(conn):
-            result = SqliteFtsResourceIndex.search(self, **kwargs)
+        with self._lock:
+            with sync.read_transaction(conn):
+                result = SqliteFtsResourceIndex.search(self, **kwargs)
+            self._rearm_stale_points(conn)
             if self._health_error:
                 result = dataclasses.replace(
                     result, detail=self._health_error, match_mode="lexical"
                 )
             return result
+
+    def _rearm_stale_points(self, conn: sqlite3.Connection) -> None:
+        if not self._stale_point_ids:
+            return
+        timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        try:
+            # Cleanup must not make a read wait behind a remote publication.
+            # Keep the ids for another search if a writer currently owns SQLite.
+            conn.execute("PRAGMA busy_timeout=0")
+            with sync.write_transaction(conn):
+                conn.executemany(
+                    "UPDATE qdrant_deletes SET completed=0 WHERE point_id=?",
+                    [(point_id,) for point_id in self._stale_point_ids],
+                )
+            self._stale_point_ids.clear()
+        except sqlite3.Error as exc:
+            logger.debug("resource stale-point cleanup deferred: %s", exc)
+        finally:
+            conn.execute(f"PRAGMA busy_timeout={int(timeout)}")
 
     def _semantic_arm(
         self,
@@ -231,10 +268,7 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
                         # A timed-out upsert may complete after a deletion ACK.
                         # Retained identities keep paging complete and let a
                         # later sighting durably request another delete.
-                        conn.execute(
-                            "UPDATE qdrant_deletes SET completed=0 WHERE point_id=?",
-                            (str(hit["id"]),),
-                        )
+                        self._stale_point_ids.add(str(hit["id"]))
                         continue
                     if doc and row["doc"] != doc:
                         continue
@@ -263,45 +297,94 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
         return best
 
     def _drain_batch(
-        self, conn: sqlite3.Connection, *, pot_id: str | None, size: int
-    ) -> int:
+        self,
+        conn: sqlite3.Connection,
+        *,
+        pot_id: str | None,
+        size: int,
+        after_id: int = 0,
+    ) -> _EmbeddingBatch:
         scope = " AND w.pot_id=?" if pot_id else ""
-        params: list[Any] = [pot_id] if pot_id else []
+        params: list[Any] = [self.collection, after_id]
+        if pot_id:
+            params.append(pot_id)
         params.append(size)
         with self._lock:
             rows = conn.execute(
                 "SELECT w.*,i.token,c.text AS body FROM windows w "
                 "JOIN qdrant_windows i ON i.window_id=w.id JOIN chunks c ON c.id=w.chunk_id "
-                "WHERE w.embedding IS NULL" + scope + " ORDER BY w.id LIMIT ?",
+                "WHERE w.embedding IS NULL AND i.skipped_collection IS NOT ? AND w.id>?"
+                + scope
+                + " ORDER BY w.id LIMIT ?",
                 params,
             ).fetchall()
         if not rows:
-            return 0
-        texts = iter_window_texts(
-            rows, bodies={int(r["chunk_id"]): str(r["body"]) for r in rows}
+            return _EmbeddingBatch()
+        texts = list(
+            iter_window_texts(
+                rows, bodies={int(r["chunk_id"]): str(r["body"]) for r in rows}
+            )
         )
         name, dimensions = self._embedder_identity()
+
+        def validate(vector: Any) -> bytes:
+            blob = pack_vector(vector)
+            if not any(sync.unpack_vector(blob, dimensions)):
+                raise ValueError("zero embedding has no cosine similarity")
+            return blob
+
         try:
             vectors = list(self.embedder.embed_many(texts))
             if len(vectors) != len(rows):
                 raise ValueError("incomplete embedding batch")
-            blobs = [pack_vector(v) for v in vectors]
-            for blob in blobs:
-                sync.unpack_vector(blob, dimensions)
         except Exception:
-            raise QdrantError("resource batch embedding failed") from None
-        updated = 0
+            vectors = [None] * len(rows)
+        completed: list[tuple[sqlite3.Row, bytes | None]] = []
+        failed = False
+        for row, text, vector in zip(rows, texts, vectors, strict=True):
+            try:
+                blob = validate(vector)
+            except (TypeError, ValueError, OverflowError, QdrantError):
+                # A partial/malformed batch can be a batching defect. Retry that
+                # input alone before deciding that its vector is unusable.
+                try:
+                    vector = self.embedder.embed(text)
+                except Exception:
+                    # Raised model errors may be transient: leave this row
+                    # pending, but retain successful siblings from this batch.
+                    failed = True
+                    continue
+                try:
+                    blob = validate(vector)
+                except (TypeError, ValueError, OverflowError, QdrantError):
+                    blob = None
+            completed.append((row, blob))
+        updated = skipped = 0
         with self._lock, sync.write_transaction(conn):
             if not sync.model_matches(conn, name, dimensions):
                 raise QdrantError("resource embedder changed; reopen the index")
-            for row, blob in zip(rows, blobs, strict=True):
+            for row, blob in completed:
+                if blob is None:
+                    skipped += conn.execute(
+                        "UPDATE qdrant_windows SET skipped_collection=? "
+                        "WHERE window_id=? AND token=? AND EXISTS(SELECT 1 FROM windows "
+                        "WHERE id=qdrant_windows.window_id AND embedding IS NULL)",
+                        (self.collection, row["id"], row["token"]),
+                    ).rowcount
+                    continue
                 updated += conn.execute(
                     "UPDATE windows SET embedding=?,embedder=?,dimensions=? WHERE id=? "
                     "AND embedding IS NULL AND EXISTS(SELECT 1 FROM qdrant_windows "
                     "WHERE window_id=windows.id AND token=?)",
                     (blob, name, dimensions, row["id"], row["token"]),
                 ).rowcount
-        return updated
+        return _EmbeddingBatch(
+            embedded=updated,
+            skipped=skipped,
+            attempted=len(rows),
+            last_window_id=int(rows[-1]["id"]),
+            failed=failed,
+        )
 
     def drain(
         self, *, pot_id: str | None = None, budget: int = DEFAULT_DRAIN_BUDGET
@@ -338,14 +421,28 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
                     sync.delete_pending(
                         conn, self._client(), pot_id=pot_id, size=budget
                     )
-                while embedded < budget:
-                    filled = self._drain_batch(
-                        conn, pot_id=pot_id, size=min(EMBED_BATCH, budget - embedded)
+                processed = after_id = 0
+                while processed < budget:
+                    batch = self._drain_batch(
+                        conn,
+                        pot_id=pot_id,
+                        size=min(EMBED_BATCH, budget - processed),
+                        after_id=after_id,
                     )
-                    if not filled:
+                    # Visit each row at most once in this pass. Retryable model
+                    # failures must not hide later rows or consume an unbounded
+                    # number of attempts within a finite drain budget.
+                    processed += batch.attempted
+                    after_id = batch.last_window_id
+                    embedded += batch.embedded
+                    if batch.attempted:
+                        batches += 1
+                    if batch.failed:
+                        error = self._failed(
+                            QdrantError("resource batch embedding failed")
+                        )
+                    if not batch.attempted:
                         break
-                    embedded += filled
-                    batches += 1
                 published = 0
                 while published < budget:
                     size = min(EMBED_BATCH, budget - published)

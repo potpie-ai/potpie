@@ -10,7 +10,7 @@ installing the repair:
 
 ```sh
 python -m pip uninstall falkordblite
-python -m pip install --force-reinstall --no-deps /path/to/potpie_falkordblite-0.10.0.post1-<platform>.whl
+python -m pip install --force-reinstall --no-deps "/path/to/potpie_falkordblite-0.10.0.post1-<platform>.whl"
 ```
 
 Use the wheel's actual filename. Package removal does not remove Potpie's data

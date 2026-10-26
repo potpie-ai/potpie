@@ -8,7 +8,11 @@ import io
 import struct
 import tarfile
 import zipfile
+from email.parser import Parser
 from pathlib import Path
+from types import SimpleNamespace
+
+from packaging.tags import Tag, parse_tag
 
 import pytest
 
@@ -39,6 +43,103 @@ def test_metadata_is_portable_and_needs_no_network(tmp_path, monkeypatch):
     assert "Version: 0.10.0.post1" in metadata
     assert "Requires-Dist: redis>=7.1,<8" in metadata
     assert "Requires-Dist: falkordb>=1.6.1,<1.8" in metadata
+    wheel_bytes = (tmp_path / name / "WHEEL").read_bytes()
+    assert b"\r" not in wheel_bytes
+    wheel = Parser().parsestr(wheel_bytes.decode())
+    assert wheel["Wheel-Version"] == "1.0"
+    assert wheel["Root-Is-Purelib"] == "false"
+    tag = next(backend.sys_tags())
+    assert parse_tag(wheel["Tag"]) == {
+        Tag(tag.interpreter, tag.abi, "manylinux_2_36_aarch64")
+    }
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_repaired_wheel_uses_portable_metadata(tmp_path, monkeypatch, prepared):
+    """Repacking after auditwheel must preserve the frontend's metadata contract."""
+    metadata_parent = tmp_path / "metadata"
+    name = backend.prepare_metadata_for_build_wheel(metadata_parent)
+    metadata = metadata_parent / name
+    if prepared:
+        (metadata / "build-decision.json").write_text('{"preserved": true}')
+    expected = {path.name: path.read_bytes() for path in metadata.iterdir()}
+    tag = Parser().parsestr(expected["WHEEL"].decode())["Tag"]
+    wheel_path = tmp_path / f"{backend.DIST}-{backend.VERSION}-{tag}.whl"
+    wheel_path.touch()
+    packed = {}
+
+    def run(command, *, check):
+        assert check
+        if command[3] == "unpack":
+            unpacked = Path(command[-1]) / f"{backend.DIST}-{backend.VERSION}"
+            (unpacked / name).mkdir(parents=True)
+            (unpacked / "redislite").mkdir()
+            (unpacked / name / "METADATA").write_text("old upstream metadata")
+            (unpacked / name / "WHEEL").write_text("old auditwheel metadata")
+            (unpacked / name / "licenses").mkdir()
+            (unpacked / name / "licenses/LICENSE").write_text("upstream license")
+        else:
+            assert command[3] == "pack"
+            unpacked = Path(command[4])
+            for path in (unpacked / name).iterdir():
+                if path.is_file():
+                    packed[path.name] = path.read_bytes()
+            assert (
+                unpacked / name / "licenses/LICENSE"
+            ).read_text() == "upstream license"
+            assert (unpacked / "redislite/potpie_build.json").is_file()
+
+    monkeypatch.setattr(backend.subprocess, "run", run)
+    backend._write_metadata(wheel_path, metadata if prepared else None)
+    assert packed == expected
+
+
+def test_build_normalizes_metadata_after_native_repair(tmp_path, monkeypatch):
+    metadata_parent = tmp_path / "metadata"
+    metadata = metadata_parent / backend.prepare_metadata_for_build_wheel(
+        metadata_parent
+    )
+    tag = Parser().parsestr((metadata / "WHEEL").read_text())["Tag"]
+    name = f"{backend.DIST}-{backend.VERSION}-{tag}.whl"
+    monkeypatch.setattr(
+        backend,
+        "sys",
+        SimpleNamespace(platform="linux", executable=backend.sys.executable),
+    )
+    monkeypatch.setattr(backend, "platform", SimpleNamespace(machine=lambda: "aarch64"))
+    monkeypatch.setattr(
+        backend,
+        "fetch_sources",
+        lambda cache: {backend.SDIST: None, backend.MODULE: None},
+    )
+    monkeypatch.setattr(backend, "_prepare_source", lambda *args: tmp_path)
+
+    def run(command, **kwargs):
+        if "bdist_wheel" in command:
+            output = Path(command[-1])
+        else:
+            assert command[2:4] == ["auditwheel", "repair"]
+            assert command[command.index("--plat") + 1] == "manylinux_2_36_aarch64"
+            assert "--only-plat" in command
+            output = Path(command[command.index("--wheel-dir") + 1])
+            output.mkdir()
+        with zipfile.ZipFile(output / name, "w") as archive:
+            archive.writestr("redislite/bin/redis-server", elf())
+            archive.writestr("redislite/bin/falkordb.so", elf())
+
+    normalized = []
+
+    def write_metadata(wheel, prepared_metadata):
+        assert wheel.parent.name == "repaired"
+        assert prepared_metadata == metadata
+        normalized.append(wheel.name)
+
+    monkeypatch.setattr(backend.subprocess, "run", run)
+    monkeypatch.setattr(backend, "_write_metadata", write_metadata)
+    output = tmp_path / "output"
+    assert backend.build_wheel(output, metadata_directory=metadata) == name
+    assert normalized == [name]
+    assert (output / name).is_file()
 
 
 def test_source_distribution_contains_only_recipe(tmp_path):

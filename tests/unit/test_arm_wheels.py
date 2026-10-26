@@ -1,12 +1,62 @@
-"""The native-wheel runner must release its working directory before cleanup."""
+"""Keep native-wheel acceptance bounded and clean up its working directory."""
+
+# ruff: noqa: S101 - pytest assertions are the test oracle.
 
 from pathlib import Path
 import os
+import subprocess
 import sys
 
 import pytest
 
 from scripts import test_arm_wheels
+
+
+def test_suite_reports_timeout_with_selection_and_report(tmp_path, monkeypatch):
+    report = tmp_path / "reliability.xml"
+    selections = ["tests/integration/test_falkordb_reliability.py", "-k", "not server"]
+
+    def run(command, *, cwd, check, timeout):
+        assert command[:3] == [sys.executable, "-m", "pytest"]
+        assert command[-len(selections) :] == selections
+        assert cwd == tmp_path
+        assert check
+        assert 0 < timeout <= 10 * 60
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(test_arm_wheels.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="reliability.*timed out") as error:
+        test_arm_wheels.run_suite(tmp_path, report, selections)
+
+    assert str(report) in str(error.value)
+    assert selections[0] in str(error.value)
+    assert "backend shutdown" in str(error.value)
+    assert isinstance(error.value.__cause__, subprocess.TimeoutExpired)
+    assert not report.exists()
+
+
+@pytest.mark.parametrize(
+    ("testcase", "failure"),
+    [
+        ('<testcase name="accepted"/>', None),
+        ('<testcase name="required"><skipped/></testcase>', "Required acceptance"),
+        ("", "No acceptance tests ran"),
+    ],
+)
+def test_suite_validates_completed_report(tmp_path, monkeypatch, testcase, failure):
+    report = tmp_path / "resources.xml"
+
+    def run(command, **kwargs):
+        report.write_text(f"<testsuite>{testcase}</testsuite>")
+
+    monkeypatch.setattr(test_arm_wheels.subprocess, "run", run)
+    if failure:
+        with pytest.raises(RuntimeError, match=failure):
+            test_arm_wheels.run_suite(
+                tmp_path, report, ["tests/unit/test_resources.py"]
+            )
+    else:
+        test_arm_wheels.run_suite(tmp_path, report, ["tests/unit/test_resources.py"])
 
 
 @pytest.mark.parametrize("suite_fails", [False, True])

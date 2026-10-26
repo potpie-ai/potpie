@@ -107,7 +107,9 @@ def _otlp_protocol(signal: str) -> tuple[str, bool]:
 def _explicit_transport_failure(signal: str, exc: Exception) -> None:
     message = (
         f"configured OTLP {signal.lower()} gRPC exporter could not start; "
-        "on Windows ARM use OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf and "
+        f"on Windows ARM set OTEL_EXPORTER_OTLP_{signal}_PROTOCOL=http/protobuf "
+        "or remove that signal-specific setting and set "
+        "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf; use "
         "the collector's HTTP endpoint (usually port 4318)"
     )
     logger.warning("observability: %s", message)

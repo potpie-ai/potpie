@@ -24,6 +24,11 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 
+# Leave time for failure reporting and artifact upload before the 30/45-minute
+# native CI job limits, including when a backend hangs during shutdown.
+SUITE_TIMEOUT_SECONDS = 10 * 60
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
@@ -82,22 +87,31 @@ def verify_installation(target: str) -> None:
 
 
 def run_suite(directory: Path, report: Path, selections: list[str]) -> None:
-    subprocess.run(  # noqa: S603 - fixed pytest executable and curated test selections.
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            "--tb=short",
-            "--import-mode=importlib",
-            "-p",
-            "no:cacheprovider",
-            f"--junitxml={report}",
-            *selections,
-        ],
-        cwd=directory,
-        check=True,
-    )
+    try:
+        subprocess.run(  # noqa: S603 - fixed pytest executable and curated test selections.
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "--tb=short",
+                "--import-mode=importlib",
+                "-p",
+                "no:cacheprovider",
+                f"--junitxml={report}",
+                *selections,
+            ],
+            cwd=directory,
+            check=True,
+            timeout=SUITE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"Acceptance suite {report.stem!r} timed out after "
+            f"{SUITE_TIMEOUT_SECONDS}s in {directory}. "
+            f"Selections: {selections!r}. Check the pytest output above for "
+            f"a hung test or backend shutdown; JUnit report may be incomplete: {report}"
+        ) from error
     # This report was just produced by the local pytest subprocess above.
     cases = ET.parse(report).getroot().findall(".//testcase")  # noqa: S314
     require(bool(cases), f"No acceptance tests ran: {report}")
