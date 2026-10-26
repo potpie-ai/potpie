@@ -35,7 +35,7 @@ than claiming false compatibility. The native module is FalkorDB v4.18.3 and
 the Redis sources come from the pinned FalkorDBLite 0.10.0 source archive.
 
 ```sh
-python -m build --wheel potpie/falkordblite
+python -m build --wheel scripts/packaging/falkordblite
 ```
 
 To build with network access disabled, first populate a source cache:
@@ -43,7 +43,7 @@ To build with network access disabled, first populate a source cache:
 ```sh
 python scripts/build_falkordblite_wheel.py --download-only --cache-dir /tmp/native-inputs
 POTPIE_NATIVE_SOURCE_CACHE=/tmp/native-inputs POTPIE_NATIVE_OFFLINE=1 \
-    python -m build --wheel potpie/falkordblite
+    python -m build --wheel scripts/packaging/falkordblite
 ```
 
 Build requirements must also be preinstalled when building offline; pass

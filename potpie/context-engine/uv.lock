@@ -2052,7 +2052,7 @@ requires-dist = [
     { name = "opentelemetry-instrumentation-openai", marker = "extra == 'observability'", specifier = ">=0.40b0" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.27.0" },
     { name = "potpie-context-engine", extras = ["http", "local", "neo4j", "postgres", "hatchet", "observability", "embeddings", "github", "reconciliation-agent"], marker = "extra == 'all'" },
-    { name = "potpie-falkordblite", marker = "(platform_machine == 'ARM64' and sys_platform == 'linux' and extra == 'local') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'local') or (platform_machine == 'arm64' and sys_platform == 'linux' and extra == 'local')", directory = "../falkordblite" },
+    { name = "potpie-falkordblite", marker = "(platform_machine == 'ARM64' and sys_platform == 'linux' and extra == 'local') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'local') or (platform_machine == 'arm64' and sys_platform == 'linux' and extra == 'local')", directory = "../../scripts/packaging/falkordblite" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-ai-slim", marker = "extra == 'reconciliation-agent'", specifier = ">=2.53.0" },
@@ -2077,7 +2077,7 @@ dev = [{ name = "pytest-cov", specifier = ">=7.1.0" }]
 [[package]]
 name = "potpie-falkordblite"
 version = "0.10.0.post1"
-source = { directory = "../falkordblite" }
+source = { directory = "../../scripts/packaging/falkordblite" }
 dependencies = [
     { name = "falkordb", marker = "sys_platform != 'win32'" },
     { name = "psutil", marker = "sys_platform != 'win32'" },

@@ -79,8 +79,8 @@ The prebuilt wheel supports glibc 2.36 or newer and has been validated on Debian
 12 (glibc 2.36). This corrected distribution must be published
 alongside the Potpie release before a normal PyPI installation of that release
 can succeed. Until then, use wheels built from this checkout; the native build
-recipe is in `potpie/falkordblite/README.md`. macOS and other Linux architectures
-continue using the upstream `falkordblite` distribution.
+recipe is in `scripts/packaging/falkordblite/README.md`. macOS and other Linux
+architectures continue using the upstream `falkordblite` distribution.
 
 Fresh isolated environments install only the corrected distribution. For an
 existing environment, follow the [migration steps below](#upgrading-an-existing-linux-arm64-environment)

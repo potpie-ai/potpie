@@ -103,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install build
-          python -m build --sdist --outdir dist/source potpie/falkordblite
+          python -m build --sdist --outdir dist/source scripts/packaging/falkordblite
           # pip creates a fresh source tree from the sdist: builder-host
           # binaries cannot accidentally make this test pass.
           python -m pip wheel --no-deps --wheel-dir dist/vendor dist/source/*.tar.gz

@@ -15,7 +15,7 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=Path("dist/falkordblite"))
     parser.add_argument("--download-only", action="store_true")
     args = parser.parse_args()
-    project = Path(__file__).resolve().parents[1] / "potpie" / "falkordblite"
+    project = Path(__file__).resolve().parent / "packaging" / "falkordblite"
     spec = importlib.util.spec_from_file_location(
         "potpie_falkordblite_build", project / "_build.py"
     )

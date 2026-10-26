@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-PROJECT = Path(__file__).resolve().parents[2] / "potpie" / "falkordblite"
+PROJECT = Path(__file__).resolve().parents[2] / "scripts" / "packaging" / "falkordblite"
 spec = importlib.util.spec_from_file_location(
     "falkordblite_build", PROJECT / "_build.py"
 )

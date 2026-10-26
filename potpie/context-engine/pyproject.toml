@@ -142,4 +142,4 @@ constraint-dependencies = [
 ]
 
 [tool.uv.sources]
-potpie-falkordblite = { path = "../falkordblite" }
+potpie-falkordblite = { path = "../../scripts/packaging/falkordblite" }

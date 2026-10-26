@@ -81,7 +81,6 @@ include = [
 exclude = [
     "**/tests/**",
     "/potpie/context-engine",
-    "/potpie/falkordblite",
     "/potpie/daemon/http/ui/frontend/*",
     "!/potpie/daemon/http/ui/frontend/dist",
     "/potpie/integrations",
@@ -150,11 +149,11 @@ members = [
     "potpie/parsing",
     "potpie/sandbox",
 ]
-exclude = ["potpie/falkordblite"]
+exclude = ["scripts/packaging/falkordblite"]
 
 [tool.uv.sources]
 potpie-context-engine = { workspace = true, editable = true }
-potpie-falkordblite = { path = "potpie/falkordblite" }
+potpie-falkordblite = { path = "scripts/packaging/falkordblite" }
 
 [dependency-groups]
 dev = [
