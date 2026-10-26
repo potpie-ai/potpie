@@ -21,6 +21,7 @@ from potpie_context_engine.adapters.outbound.resources.index.sqlite_fts import (
 from potpie_context_engine.adapters.outbound.resources.index.qdrant_sync import (
     pack_vector,
 )
+from potpie_context_engine.application.services.resource_facade import ResourceFacade
 from potpie_context_engine.testing.conformance import build_conformance_document
 
 
@@ -182,6 +183,73 @@ def test_collection_recreation_and_lost_create_ack_republish_without_embedding(
     assert resumed.drain().remaining == 0
     assert set(resumed.transport.collections[resumed.collection]) == old_ids
     assert resumed.embedder.calls == 1
+
+
+def test_wait_republishes_all_cached_vectors_after_collection_loss(tmp_path):
+    index = make_index(tmp_path)
+    import_doc(index)
+    index.drain()
+    del index.transport.collections[index.collection]
+    facade = ResourceFacade(store=None, index=index)
+
+    report = facade.index_build(pot_id="p", budget=2, wait=True)
+
+    assert report.remaining == 0
+    assert report.embedded == 0
+    assert len(index.transport.collections[index.collection]) == 5
+    assert index.embedder.calls == 1
+
+
+@pytest.mark.parametrize("embeddings_enabled", [False, True])
+def test_wait_deletes_all_tombstones_across_multiple_budgets(
+    tmp_path, embeddings_enabled
+):
+    index = make_index(tmp_path)
+    import_doc(index)
+    index.drain()
+    collection = index.collection
+    index.drop_document(pot_id="p", slug="guide")
+    if not embeddings_enabled:
+        index.embedder = None
+    facade = ResourceFacade(store=None, index=index)
+
+    report = facade.index_build(pot_id="p", budget=2, wait=True)
+
+    assert report.remaining == 0
+    assert report.embedded == 0
+    assert not index.transport.collections[collection]
+
+
+def test_wait_returns_when_qdrant_cannot_make_progress(tmp_path):
+    index = make_index(tmp_path)
+    import_doc(index)
+    index.transport.offline = True
+    facade = ResourceFacade(store=None, index=index)
+
+    report = facade.index_build(pot_id="p", budget=2, wait=True)
+
+    assert report.remaining == 5
+    assert report.detail
+    assert report.processed == 0
+    assert not index.transport.upserts
+
+
+def test_wait_finishes_terminal_skips_across_multiple_budgets(tmp_path):
+    class InvalidEmbedder(Embedder):
+        def embed(self, text):
+            return [0, 0, 0]
+
+    index = make_index(tmp_path, embedder=InvalidEmbedder())
+    import_doc(index)
+    facade = ResourceFacade(store=None, index=index)
+
+    report = facade.index_build(pot_id="p", budget=2, wait=True)
+
+    assert report.remaining == 0
+    assert report.embedded == 0
+    assert index.embedder.calls == 3
+    assert not index.transport.upserts
+    assert index.search(pot_id="p", query="ERR_QUOTA_EXCEEDED").hits
 
 
 def test_replacement_reused_row_ids_cannot_match_old_vectors(tmp_path):

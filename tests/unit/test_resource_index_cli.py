@@ -213,6 +213,26 @@ def test_build_wait_stops_when_a_batch_embeds_nothing():
     assert _json(result)["detail"] == "embedder down"
 
 
+def test_build_wait_continues_after_non_embedding_progress():
+    class Publishing(FakeResources):
+        def index_build(self, *, pot_id=None, budget=256, wait=False):
+            self.builds.append({"pot_id": pot_id, "wait": wait})
+            return DrainReport(
+                profile="qdrant_hybrid",
+                processed=2,
+                remaining=self.backlog.pop(0),
+            )
+
+    resources = Publishing(backlog=(3, 1, 0))
+
+    result = runner.invoke(_app(resources), ["index", "build", "--wait"])
+
+    assert result.exit_code == 0, result.stdout
+    assert len(resources.builds) == 3
+    assert _json(result)["remaining"] == 0
+    assert _json(result)["embedded"] == 0
+
+
 def test_build_for_one_doc_re_derives_that_document_first():
     """``--doc`` has to mean something on a document the index never saw."""
     resources = FakeResources()

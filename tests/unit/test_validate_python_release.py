@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
+import urllib.error
 
 import pytest
 
@@ -42,6 +44,7 @@ def test_all_release_accepts_matching_dependency_chain(
         "package_version_exists",
         lambda name, _version: name == release.NATIVE_FALKORDBLITE_NAME,
     )
+    _pypi_native_files(monkeypatch, _native_wheels())
     monkeypatch.setattr(
         release.subprocess,
         "run",
@@ -113,6 +116,37 @@ def _native_dependency(monkeypatch: pytest.MonkeyPatch, requirement: str) -> Non
     )
 
 
+def _native_wheel(
+    interpreter: str,
+    abi: str | None = None,
+    platform: str = "manylinux_2_36_aarch64",
+) -> dict:
+    return {
+        "filename": (
+            f"potpie_falkordblite-0.10.0.post1-{interpreter}-{abi or interpreter}-"
+            f"{platform}.whl"
+        ),
+        "packagetype": "bdist_wheel",
+        "requires_python": ">=3.12,<3.15",
+        "yanked": False,
+    }
+
+
+def _native_wheels() -> list[dict]:
+    return [_native_wheel(interpreter) for interpreter in ("cp312", "cp313", "cp314")]
+
+
+def _pypi_native_files(monkeypatch: pytest.MonkeyPatch, files: list[dict]) -> list:
+    checked = []
+
+    def urlopen(request, timeout):
+        checked.append((request.full_url, timeout))
+        return io.BytesIO(json.dumps({"urls": files}).encode())
+
+    monkeypatch.setattr(release.urllib.request, "urlopen", urlopen)
+    return checked
+
+
 @pytest.mark.parametrize("selected", [{"context-engine"}, {"context-engine", "potpie"}])
 def test_engine_publish_requires_native_pin_even_on_other_platforms(
     monkeypatch: pytest.MonkeyPatch,
@@ -124,37 +158,33 @@ def test_engine_publish_requires_native_pin_even_on_other_platforms(
         'potpie-falkordblite==0.10.0.post1; sys_platform == "linux" '
         'and platform_machine == "aarch64"',
     )
-    checked = []
-
-    def version_exists(name: str, version: str) -> bool:
-        checked.append((name, version))
-        return False
-
-    monkeypatch.setattr(release, "package_version_exists", version_exists)
+    checked = _pypi_native_files(monkeypatch, [])
     with pytest.raises(SystemExit):
         release.validate_native_dependency_availability(selected, set())
 
-    assert checked == [("potpie-falkordblite", "0.10.0.post1")]
+    assert checked == [
+        ("https://pypi.org/pypi/potpie-falkordblite/0.10.0.post1/json", 20)
+    ]
     assert "publish the corrected native dependency first" in capsys.readouterr().err
 
 
-def test_engine_publish_accepts_published_native_pin(monkeypatch) -> None:
+def test_engine_publish_accepts_complete_published_native_wheels(monkeypatch) -> None:
     _native_dependency(monkeypatch, "potpie-falkordblite==0.10.0.post1")
-    checked = []
-
-    def version_exists(name: str, version: str) -> bool:
-        checked.append((name, version))
-        return True
-
-    monkeypatch.setattr(release, "package_version_exists", version_exists)
+    checked = _pypi_native_files(monkeypatch, _native_wheels())
     release.validate_native_dependency_availability({"context-engine"}, set())
-    assert checked == [("potpie-falkordblite", "0.10.0.post1")]
+    assert checked == [
+        ("https://pypi.org/pypi/potpie-falkordblite/0.10.0.post1/json", 20)
+    ]
 
 
-def test_missing_native_release_stops_preflight_before_emitting_metadata(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize(
+    "files", [[], [_native_wheel("cp312")]], ids=["empty", "partial"]
+)
+def test_incomplete_native_release_stops_preflight_before_emitting_metadata(
+    monkeypatch, tmp_path, files, capsys
 ) -> None:
     _native_dependency(monkeypatch, "potpie-falkordblite==0.10.0.post1")
+    _pypi_native_files(monkeypatch, files)
     monkeypatch.setattr(
         release,
         "pyproject_package",
@@ -176,6 +206,115 @@ def test_missing_native_release_stops_preflight_before_emitting_metadata(
     with pytest.raises(SystemExit):
         release.main()
     assert not (tmp_path / "release-metadata.json").exists()
+    assert "3.13, 3.14" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        [
+            {
+                "filename": "potpie_falkordblite-0.10.0.post1.tar.gz",
+                "packagetype": "sdist",
+            }
+        ],
+        [_native_wheel("cp312", platform="manylinux_2_36_x86_64")],
+        [_native_wheel("cp312", platform="manylinux_2_37_aarch64")],
+        [_native_wheel("cp312", platform="linux_aarch64")],
+        [_native_wheel("cp312", abi="cp313")],
+        [_native_wheel("cp313", abi="cp313t")],
+        [_native_wheel("py3", abi="none", platform="any")],
+        [dict(wheel, yanked=True) for wheel in _native_wheels()],
+        [dict(wheel, requires_python=">=3.15") for wheel in _native_wheels()],
+        [dict(_native_wheel("cp312"), filename="invalid.whl")],
+        [dict(_native_wheel("cp312"), requires_python="invalid")],
+        [
+            dict(
+                wheel,
+                filename=wheel["filename"].replace("0.10.0.post1", "0.10.0"),
+            )
+            for wheel in _native_wheels()
+        ],
+    ],
+    ids=[
+        "sdist-only",
+        "wrong-architecture",
+        "newer-glibc",
+        "unverified-glibc",
+        "wrong-abi",
+        "free-threaded-abi",
+        "platform-independent",
+        "yanked",
+        "requires-newer-python",
+        "malformed-filename",
+        "malformed-requires-python",
+        "wrong-version",
+    ],
+)
+def test_native_release_rejects_unusable_wheels(monkeypatch, capsys, files):
+    _pypi_native_files(monkeypatch, files)
+    with pytest.raises(SystemExit):
+        release.validate_native_wheel_availability("0.10.0.post1")
+    assert "missing CPython 3.12, 3.13, 3.14" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("missing", ["cp312", "cp313", "cp314"])
+def test_native_release_requires_every_supported_python(monkeypatch, capsys, missing):
+    _pypi_native_files(
+        monkeypatch,
+        [
+            wheel
+            for wheel in _native_wheels()
+            if f"-{missing}-" not in wheel["filename"]
+        ],
+    )
+    with pytest.raises(SystemExit):
+        release.validate_native_wheel_availability("0.10.0.post1")
+    expected = f"3.{missing[3:]}"
+    assert f"missing CPython {expected} before" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "platform",
+    ["manylinux_2_36_aarch64", "manylinux_2_17_aarch64", "manylinux2014_aarch64"],
+)
+def test_native_release_accepts_compatible_abi3_wheel(monkeypatch, platform):
+    _pypi_native_files(
+        monkeypatch, [_native_wheel("cp312", abi="abi3", platform=platform)]
+    )
+    release.validate_native_wheel_availability("0.10.0.post1")
+
+
+def test_native_release_checks_python_requirement_even_when_tags_match(
+    monkeypatch, capsys
+):
+    wheel = dict(_native_wheel("cp312", abi="abi3"), requires_python=">=3.13")
+    _pypi_native_files(monkeypatch, [wheel])
+    with pytest.raises(SystemExit):
+        release.validate_native_wheel_availability("0.10.0.post1")
+    assert "missing CPython 3.12 before" in capsys.readouterr().err
+
+
+def test_missing_native_pypi_release_fails_validation(monkeypatch, capsys):
+    def urlopen(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 404, "Not Found", None, None)
+
+    monkeypatch.setattr(release.urllib.request, "urlopen", urlopen)
+    with pytest.raises(SystemExit):
+        release.validate_native_wheel_availability("0.10.0.post1")
+    assert "missing CPython 3.12, 3.13, 3.14" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("payload", [b"not json", b"{}", b'{"urls": null}'])
+def test_native_release_fails_closed_on_invalid_pypi_metadata(
+    monkeypatch, capsys, payload
+):
+    monkeypatch.setattr(
+        release.urllib.request, "urlopen", lambda *_args, **_kwargs: io.BytesIO(payload)
+    )
+    with pytest.raises(SystemExit):
+        release.validate_native_wheel_availability("0.10.0.post1")
+    assert "invalid pypi file metadata" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -195,7 +334,7 @@ def test_existing_engine_release_does_not_read_checkout_native_dependencies(
     )
     monkeypatch.setattr(
         release,
-        "package_version_exists",
+        "package_release_files",
         lambda *_args: pytest.fail("no native dependency lookup is needed"),
     )
     release.validate_native_dependency_availability(selected, preexisting)
@@ -217,7 +356,7 @@ def test_native_release_dependency_requires_concrete_index_pin(
     _native_dependency(monkeypatch, requirement)
     monkeypatch.setattr(
         release,
-        "package_version_exists",
+        "package_release_files",
         lambda *_args: pytest.fail("invalid requirement must fail before index lookup"),
     )
     with pytest.raises(SystemExit):
@@ -229,7 +368,7 @@ def test_engine_without_native_fork_has_no_fork_release_prerequisite(monkeypatch
     _native_dependency(monkeypatch, "falkordblite>=0.10.0")
     monkeypatch.setattr(
         release,
-        "package_version_exists",
+        "package_release_files",
         lambda *_args: pytest.fail("removed native fork has no release prerequisite"),
     )
     release.validate_native_dependency_availability({"context-engine"}, set())

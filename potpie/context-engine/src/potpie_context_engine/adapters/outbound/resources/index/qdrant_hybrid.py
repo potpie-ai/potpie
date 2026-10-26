@@ -390,7 +390,7 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
         self, *, pot_id: str | None = None, budget: int = DEFAULT_DRAIN_BUDGET
     ) -> DrainReport:
         started = time.monotonic()
-        embedded = batches = 0
+        embedded = batches = processed = 0
         conn = self._try_connect()
         if self.embedder is None:
             # Removing a document must remove its remote projection even after
@@ -400,7 +400,7 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
             if conn is not None and budget > 0:
                 try:
                     with self._lock:
-                        sync.delete_pending(
+                        processed += sync.delete_pending(
                             conn, self._client(), pot_id=pot_id, size=budget
                         )
                 except QdrantError as exc:
@@ -410,6 +410,7 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
                 remaining=self.pending_count(pot_id=pot_id),
                 elapsed_ms=int((time.monotonic() - started) * 1000),
                 detail=error,
+                processed=processed,
             )
         error = self._vector_error(refresh=True)
         if error is None and conn is not None and budget > 0:
@@ -418,23 +419,24 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
                 # Each category has a finite budget, so deletion/migration cannot
                 # starve embedding or make a pass run indefinitely.
                 with self._lock:
-                    sync.delete_pending(
+                    processed += sync.delete_pending(
                         conn, self._client(), pot_id=pot_id, size=budget
                     )
-                processed = after_id = 0
-                while processed < budget:
+                attempted = after_id = 0
+                while attempted < budget:
                     batch = self._drain_batch(
                         conn,
                         pot_id=pot_id,
-                        size=min(EMBED_BATCH, budget - processed),
+                        size=min(EMBED_BATCH, budget - attempted),
                         after_id=after_id,
                     )
                     # Visit each row at most once in this pass. Retryable model
                     # failures must not hide later rows or consume an unbounded
                     # number of attempts within a finite drain budget.
-                    processed += batch.attempted
+                    attempted += batch.attempted
                     after_id = batch.last_window_id
                     embedded += batch.embedded
+                    processed += batch.embedded + batch.skipped
                     if batch.attempted:
                         batches += 1
                     if batch.failed:
@@ -468,6 +470,7 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
                     if not count:
                         break
                     published += count
+                    processed += count
             except QdrantError as exc:
                 error = self._failed(exc)
         return DrainReport(
@@ -477,6 +480,7 @@ class QdrantHybridResourceIndex(SqliteFtsResourceIndex):
             batches=batches,
             elapsed_ms=int((time.monotonic() - started) * 1000),
             detail=error,
+            processed=processed,
         )
 
     def index_document(self, **kwargs: Any) -> Any:
