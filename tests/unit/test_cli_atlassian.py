@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from __future__ import annotations
+import base64
+from collections.abc import Callable
 from unittest.mock import MagicMock, patch
+
+import httpx
+
+from tests._auth_fakes import FakeAuthHttpClient
 
 from potpie.auth.adapters.http import AuthHttpError
 import pytest
@@ -178,30 +183,71 @@ def test_verify_gateway_product_success() -> None:
     assert result.succeeded_scheme == "basic"
 
 
-def test_verify_gateway_product_bearer_after_basic_401() -> None:
-    basic = MagicMock()
-    basic.status_code = 401
-    bearer = MagicMock()
-    bearer.status_code = 200
-    bearer.content = b'{"displayName":"Bearer User"}'
-    bearer.json.return_value = {"displayName": "Bearer User"}
-    with patch(
-        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
-        client = MagicMock()
-        mock_client_cls.return_value = client
-        client.get.side_effect = [basic, bearer]
+@pytest.fixture
+def atlassian_fallback_http() -> Callable[[str, object], FakeAuthHttpClient]:
+    basic_auth = "Basic " + base64.b64encode(b"user@example.com:secret-token").decode(
+        "ascii"
+    )
+    expected_auth = [basic_auth, "Bearer secret-token"]
 
-        result = verify_gateway_product(
-            "user@example.com",
-            "secret-token",
-            "cloud-id-1",
+    def make_client(expected_url: str, payload: object) -> FakeAuthHttpClient:
+        def respond(method: str, url: str, **kwargs: object) -> httpx.Response:
+            assert method == "GET", f"Unexpected Atlassian method: {method}"
+            assert url == expected_url, f"Unexpected Atlassian URL: {url}"
+            headers = kwargs.get("headers", {})
+            assert isinstance(headers, dict)
+            assert headers.get("Accept") == "application/json"
+            authorization = headers.get("Authorization")
+            assert authorization in expected_auth, (
+                f"Unexpected Atlassian Authorization header: {authorization}"
+            )
+            if authorization == basic_auth:
+                return httpx.Response(401)
+            return httpx.Response(200, json=payload)
+
+        return FakeAuthHttpClient(handler=respond)
+
+    return make_client
+
+
+@pytest.mark.parametrize(
+    ("product", "gateway_url", "payload"),
+    [
+        (
             "jira",
-        )
+            "https://api.atlassian.com/ex/jira/cloud-id-1/rest/api/3/project/search?maxResults=1",
+            {"values": [{"name": "Bearer User"}]},
+        ),
+        (
+            "confluence",
+            "https://api.atlassian.com/ex/confluence/cloud-id-1/wiki/rest/api/space?limit=1",
+            {"results": [{"name": "Bearer User"}]},
+        ),
+    ],
+    ids=["jira", "confluence"],
+)
+def test_verify_gateway_product_bearer_after_basic_401(
+    atlassian_fallback_http: Callable[[str, object], FakeAuthHttpClient],
+    product: str,
+    gateway_url: str,
+    payload: dict,
+) -> None:
+    client = atlassian_fallback_http(gateway_url, payload)
+
+    result = verify_gateway_product(
+        "user@example.com",
+        "secret-token",
+        "cloud-id-1",
+        product,
+        http=client,
+    )
 
     assert result.ok is True
     assert result.succeeded_scheme == "bearer"
     assert result.display_name == "Bearer User"
+    assert [
+        kwargs["headers"]["Authorization"].split()[0] for _, _, kwargs in client.calls
+    ] == ["Basic", "Bearer"]
 
 
 def test_fetch_cloud_id_for_site_success() -> None:
@@ -844,21 +890,21 @@ def test_parse_accessible_resources() -> None:
     assert sites[0]["site_url"] == "https://team.atlassian.net"
 
 
-def test_fetch_accessible_resources_bearer_fallback() -> None:
-    basic = MagicMock()
-    basic.status_code = 401
-    bearer = MagicMock()
-    bearer.status_code = 200
-    bearer.json.return_value = [
-        {"id": "c2", "url": "https://other.atlassian.net", "name": "Other"},
-    ]
-    with patch("potpie.auth.adapters.atlassian_client.AuthHttpClient") as mock_cls:
-        client = MagicMock()
-        mock_cls.return_value = client
-        client.get.side_effect = [basic, bearer]
-        sites = _fetch_accessible_resources("user@example.com", "token")
+def test_fetch_accessible_resources_bearer_fallback(
+    atlassian_fallback_http: Callable[[str, object], FakeAuthHttpClient],
+) -> None:
+    client = atlassian_fallback_http(
+        "https://api.atlassian.com/oauth/token/accessible-resources",
+        [{"id": "c2", "url": "https://other.atlassian.net", "name": "Other"}],
+    )
+
+    sites = _fetch_accessible_resources("user@example.com", "secret-token", http=client)
+
     assert len(sites) == 1
     assert sites[0]["cloud_id"] == "c2"
+    assert [
+        kwargs["headers"]["Authorization"].split()[0] for _, _, kwargs in client.calls
+    ] == ["Basic", "Bearer"]
 
 
 def test_fetch_accessible_resources_basic_success() -> None:

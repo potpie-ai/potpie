@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import socket
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack
+from urllib.parse import parse_qs
+
+import httpx
 import threading
 import time
 import urllib.error
@@ -22,6 +27,7 @@ import hashlib
 from potpie.auth.adapters.pkce import generate_pkce_pair
 from unittest.mock import MagicMock, patch
 from potpie.auth.adapters import token_exchange as tx
+from potpie.auth.adapters.http import AuthHttpClient
 from potpie.auth.adapters import (
     integration_session as session,
 )
@@ -191,29 +197,86 @@ def _linear_client_id_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LINEAR_CLIENT_ID", "test-linear-client-id")
 
 
-def test_exchange_authorization_code_success() -> None:
-    response = MagicMock()
-    response.status_code = 200
-    response.json.return_value = {
-        "access_token": "access",
-        "refresh_token": "refresh",
-        "token_type": "Bearer",
-        "scope": "read",
-        "expires_in": 3600,
-    }
-    client = MagicMock()
-    client.__enter__.return_value = client
-    client.__exit__.return_value = None
-    client.post.return_value = response
+OAuthHttpClientFactory = Callable[
+    [dict[str, str], httpx.Response], tuple[AuthHttpClient, list[httpx.Request]]
+]
+
+
+@pytest.fixture()
+def oauth_http_client() -> Iterator[OAuthHttpClientFactory]:
+    """Record real HTTPX requests and reject anything outside the token contract."""
+    with ExitStack() as stack:
+
+        def make_client(
+            expected_form: dict[str, str], response: httpx.Response
+        ) -> tuple[AuthHttpClient, list[httpx.Request]]:
+            requests: list[httpx.Request] = []
+
+            def handle(request: httpx.Request) -> httpx.Response:
+                requests.append(request)
+                assert len(requests) == 1, "Unexpected additional OAuth request"
+                assert request.method == "POST", "Unexpected OAuth request method"
+                assert str(request.url) == "https://api.linear.app/oauth/token"
+                assert (
+                    request.headers.get("content-type")
+                    == "application/x-www-form-urlencoded"
+                ), "OAuth token requests must use form encoding"
+                assert parse_qs(
+                    request.content.decode(),
+                    keep_blank_values=True,
+                    strict_parsing=True,
+                ) == {key: [value] for key, value in expected_form.items()}
+                return response
+
+            client = stack.enter_context(
+                httpx.Client(transport=httpx.MockTransport(handle))
+            )
+            return AuthHttpClient(client=client), requests
+
+        yield make_client
+
+
+@pytest.mark.parametrize("use_explicit_redirect", [True, False])
+def test_exchange_authorization_code_success(
+    oauth_http_client: OAuthHttpClientFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    use_explicit_redirect: bool,
+) -> None:
+    configured_redirect = "http://localhost:28757/callback?source=cli&mode=oauth"
+    explicit_redirect = "http://localhost:8080/callback?source=cli&mode=oauth"
+    monkeypatch.setenv("POTPIE_CLI_OAUTH_REDIRECT_URI", configured_redirect)
+    redirect_uri = explicit_redirect if use_explicit_redirect else None
+    client, requests = oauth_http_client(
+        {
+            "grant_type": "authorization_code",
+            "client_id": "test-linear-client-id",
+            "code": "auth-code+with spaces&symbols=",
+            "code_verifier": "pkce-verifier_123",
+            "redirect_uri": explicit_redirect
+            if use_explicit_redirect
+            else configured_redirect,
+        },
+        httpx.Response(
+            200,
+            json={
+                "access_token": "access",
+                "refresh_token": "refresh",
+                "token_type": "Bearer",
+                "scope": "read",
+                "expires_in": 3600,
+            },
+        ),
+    )
 
     tokens = tx.exchange_authorization_code(
         "linear",
-        code="auth-code",
-        code_verifier="verifier",
-        redirect_uri="http://localhost:8080/callback",
+        code="auth-code+with spaces&symbols=",
+        code_verifier="pkce-verifier_123",
+        redirect_uri=redirect_uri,
         http=client,
     )
 
+    assert len(requests) == 1
     assert tokens["access_token"] == "access"
     assert tokens["refresh_token"] == "refresh"
     assert tokens["expires_at"] is not None
@@ -233,41 +296,57 @@ def test_exchange_authorization_code_requires_verifier() -> None:
         tx.exchange_authorization_code("linear", code="c", code_verifier="")
 
 
-def test_exchange_authorization_code_http_error() -> None:
-    response = MagicMock()
-    response.status_code = 400
-    response.text = "bad request"
-    client = MagicMock()
-    client.__enter__.return_value = client
-    client.__exit__.return_value = None
-    client.post.return_value = response
+def test_exchange_authorization_code_http_error(
+    oauth_http_client: OAuthHttpClientFactory,
+) -> None:
+    client, requests = oauth_http_client(
+        {
+            "grant_type": "authorization_code",
+            "client_id": "test-linear-client-id",
+            "code": "rejected-code",
+            "code_verifier": "verifier",
+            "redirect_uri": "http://localhost:8080/callback",
+        },
+        httpx.Response(400, text="bad request"),
+    )
 
     with pytest.raises(RuntimeError, match="Token exchange failed"):
         tx.exchange_authorization_code(
             "linear",
-            code="c",
-            code_verifier="v",
+            code="rejected-code",
+            code_verifier="verifier",
+            redirect_uri="http://localhost:8080/callback",
             http=client,
         )
+    assert len(requests) == 1
 
 
-def test_refresh_access_token_success() -> None:
-    response = MagicMock()
-    response.status_code = 200
-    response.json.return_value = {
-        "access_token": "new-access",
-        "token_type": "Bearer",
-        "expires_in": 1800,
-    }
-    client = MagicMock()
-    client.__enter__.return_value = client
-    client.__exit__.return_value = None
-    client.post.return_value = response
+def test_refresh_access_token_success(
+    oauth_http_client: OAuthHttpClientFactory,
+) -> None:
+    client, requests = oauth_http_client(
+        {
+            "grant_type": "refresh_token",
+            "client_id": "test-linear-client-id",
+            "refresh_token": "refresh+token&value=",
+        },
+        httpx.Response(
+            200,
+            json={
+                "access_token": "new-access",
+                "token_type": "Bearer",
+                "expires_in": 1800,
+            },
+        ),
+    )
 
-    tokens = tx.refresh_access_token("linear", refresh_token="rt", http=client)
+    tokens = tx.refresh_access_token(
+        "linear", refresh_token="  refresh+token&value=  ", http=client
+    )
 
+    assert len(requests) == 1
     assert tokens["access_token"] == "new-access"
-    assert tokens["refresh_token"] == "rt"
+    assert tokens["refresh_token"] == "refresh+token&value="
 
 
 def test_refresh_access_token_requires_token() -> None:
@@ -292,17 +371,21 @@ def test_refresh_rejects_non_linear() -> None:
         tx.refresh_access_token("github", refresh_token="rt")  # type: ignore[arg-type]
 
 
-def test_refresh_http_error() -> None:
-    response = MagicMock()
-    response.status_code = 401
-    response.text = "unauthorized"
-    client = MagicMock()
-    client.__enter__.return_value = client
-    client.__exit__.return_value = None
-    client.post.return_value = response
+def test_refresh_http_error(oauth_http_client: OAuthHttpClientFactory) -> None:
+    client, requests = oauth_http_client(
+        {
+            "grant_type": "refresh_token",
+            "client_id": "test-linear-client-id",
+            "refresh_token": "rejected-refresh-token",
+        },
+        httpx.Response(401, text="unauthorized"),
+    )
 
     with pytest.raises(RuntimeError, match="Token refresh failed"):
-        tx.refresh_access_token("linear", refresh_token="rt", http=client)
+        tx.refresh_access_token(
+            "linear", refresh_token="rejected-refresh-token", http=client
+        )
+    assert len(requests) == 1
 
 
 # --- test_integration_session.py ---
