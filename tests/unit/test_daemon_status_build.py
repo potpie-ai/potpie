@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +26,7 @@ from potpie.runtime import (
     SuccessResponse,
 )
 from potpie.runtime.codec import decode_response, encode_response
+from potpie.runtime.protocol import ProtocolTransportError
 from potpie_context_engine import Failure, Success
 
 FIXTURE_REV = "a" * 40
@@ -60,8 +62,11 @@ class _Observer:
 
 
 class _Controller:
+    def __init__(self, *, ready: bool = True) -> None:
+        self.ready = ready
+
     async def status(self) -> SimpleNamespace:
-        return SimpleNamespace(ready=True)
+        return SimpleNamespace(ready=self.ready)
 
 
 def _attached_daemon(
@@ -70,6 +75,7 @@ def _attached_daemon(
     served: DaemonStatusResult,
     *,
     catalog_compatible: bool = True,
+    probe_ready: bool = True,
 ) -> Daemon:
     """A detached daemon whose live status answer is ``served``.
 
@@ -85,9 +91,60 @@ def _attached_daemon(
         daemon, "_connection_for_pid", lambda _pid: (discovery, observer)
     )
     monkeypatch.setattr(
-        daemon, "_controller_for_existing", lambda _pid, *, observer: _Controller()
+        daemon,
+        "_controller_for_existing",
+        lambda _pid, *, observer: _Controller(ready=probe_ready),
     )
     return daemon
+
+
+@pytest.mark.parametrize(
+    ("probe_ready", "lifecycle_state", "compatible", "expected_ready"),
+    [
+        (False, "ready", True, True),
+        (True, "starting", True, False),
+        (True, "draining", True, False),
+        (True, "ready", False, False),
+    ],
+)
+def test_readiness_uses_authenticated_status_not_an_earlier_probe(
+    monkeypatch, tmp_path, probe_ready, lifecycle_state, compatible, expected_ready
+):
+    daemon = _attached_daemon(
+        monkeypatch,
+        tmp_path,
+        replace(_status_result(None), lifecycle_state=lifecycle_state),
+        catalog_compatible=compatible,
+        probe_ready=probe_ready,
+    )
+    monkeypatch.setattr(daemon_commands, "_detached_daemon", lambda: daemon)
+
+    result = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
+
+    assert result.exit_code == (0 if expected_ready else 2), result.output
+    payload = json.loads(result.stdout)
+    assert payload["ready"] is expected_ready
+    assert payload["compatible"] is compatible
+    assert payload["backend"] == "falkordb_lite"
+
+
+def test_a_failed_status_response_does_not_reuse_successful_probe(
+    monkeypatch, tmp_path
+):
+    daemon = _attached_daemon(monkeypatch, tmp_path, _status_result(None))
+
+    async def unavailable(_self):
+        return Failure(
+            ProtocolTransportError(code="daemon_unavailable", message="no answer")
+        )
+
+    monkeypatch.setattr(_Observer, "status", unavailable)
+
+    status = daemon.status()
+
+    assert status["up"] is True
+    assert status["ready"] is False
+    assert "backend" not in status
 
 
 def test_status_reports_the_served_build_and_that_it_is_stale(

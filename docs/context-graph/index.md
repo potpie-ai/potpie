@@ -82,7 +82,9 @@ the platform default). Full flags live in [`cli-flow.md`](./cli-flow.md).
 
 Windows installs Ladybug through the normal `pip install potpie` dependency set.
 Use x64 Python 3.12–3.14 and the Microsoft Visual C++ Redistributable. Potpie
-loads CPython's OpenSSL 3 libraries when the Ladybug wheel needs them. The daemon
+loads CPython's OpenSSL 3 libraries when the Ladybug wheel needs them, including
+when native loading fails during the initial package import. A missing package
+and a native DLL load failure report different installation guidance. The daemon
 host mode remains the default; `CONTEXT_ENGINE_HOST_MODE=in_process` is also
 supported. See [Ladybug storage and scope](./architecture.md#ladybug-storage-and-scope).
 

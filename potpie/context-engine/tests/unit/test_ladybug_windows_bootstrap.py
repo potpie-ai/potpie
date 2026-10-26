@@ -107,13 +107,14 @@ def test_working_native_binding_skips_bootstrap(monkeypatch):
     assert native._require_ladybug() is package
 
 
-def test_failed_native_import_retries_after_bootstrap(monkeypatch):
+@pytest.mark.parametrize("failing_import", ["ladybug", "ladybug._lbug"])
+def test_failed_native_import_retries_after_bootstrap(monkeypatch, failing_import):
     calls = []
     package = SimpleNamespace()
 
     def load(name):
         calls.append(name)
-        if name == "ladybug._lbug" and "bootstrap" not in calls:
+        if name == failing_import and "bootstrap" not in calls:
             raise ImportError("DLL missing")
         return package
 
@@ -123,13 +124,91 @@ def test_failed_native_import_retries_after_bootstrap(monkeypatch):
         native, "ensure_ladybug_openssl", lambda: calls.append("bootstrap")
     )
     assert native._require_ladybug() is package
-    assert calls == ["ladybug", "ladybug._lbug", "bootstrap", "ladybug._lbug"]
+    first_attempt = (
+        ["ladybug"] if failing_import == "ladybug" else ["ladybug", "ladybug._lbug"]
+    )
+    assert calls == [*first_attempt, "bootstrap", "ladybug", "ladybug._lbug"]
+
+
+def test_package_importing_native_binding_can_recover(tmp_path, monkeypatch):
+    package = tmp_path / "ladybug"
+    package.mkdir()
+    (package / "__init__.py").write_text("from . import _lbug\n", encoding="utf-8")
+    (package / "_lbug.py").write_text(
+        "import os\n"
+        "if os.environ.get('LADYBUG_TEST_DLL_READY') != '1':\n"
+        "    raise ImportError('DLL load failed while importing _lbug')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(native.sys, "platform", "win32")
+    monkeypatch.delenv("LADYBUG_TEST_DLL_READY", raising=False)
+    for name in ("ladybug", "ladybug._lbug"):
+        # Restore any real imports after exercising fresh package initialization.
+        monkeypatch.setitem(native.sys.modules, name, None)
+        del native.sys.modules[name]
+    attempts = []
+
+    def bootstrap():
+        attempts.append("bootstrap")
+        assert "ladybug" not in native.sys.modules
+        monkeypatch.setenv("LADYBUG_TEST_DLL_READY", "1")
+
+    monkeypatch.setattr(native, "ensure_ladybug_openssl", bootstrap)
+    module = native._require_ladybug()
+    assert Path(module.__file__) == package / "__init__.py"
+    assert module._lbug is native.sys.modules["ladybug._lbug"]
+    assert attempts == ["bootstrap"]
+
+
+@pytest.mark.parametrize("failing_import", ["ladybug", "ladybug._lbug"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ImportError("DLL missing"),
+        ModuleNotFoundError("native missing", name="ladybug._lbug"),
+    ],
+)
+def test_failed_retry_reports_native_binding_failure(
+    monkeypatch, failing_import, failure
+):
+    def load(name):
+        if name == failing_import:
+            raise failure
+        return SimpleNamespace()
+
+    monkeypatch.setattr(native.sys, "platform", "win32")
+    monkeypatch.setattr(native.importlib, "import_module", load)
+    monkeypatch.setattr(native, "ensure_ladybug_openssl", lambda: None)
+    with pytest.raises(ImportError, match="native Windows binding") as caught:
+        native._require_ladybug()
+    assert caught.value.__cause__ is failure
+
+
+def test_non_windows_package_import_failure_keeps_original_diagnostic(monkeypatch):
+    failure = ImportError("native library missing")
+
+    def load(name):
+        raise failure
+
+    monkeypatch.setattr(native.sys, "platform", "linux")
+    monkeypatch.setattr(native.importlib, "import_module", load)
+    monkeypatch.setattr(
+        native, "ensure_ladybug_openssl", lambda: pytest.fail("unexpected bootstrap")
+    )
+    with pytest.raises(ImportError) as caught:
+        native._require_ladybug()
+    assert caught.value is failure
 
 
 def test_missing_package_is_actionable(monkeypatch):
     def missing(name):
-        raise ModuleNotFoundError(name)
+        raise ModuleNotFoundError(f"No module named {name!r}", name=name)
 
+    monkeypatch.setattr(native.sys, "platform", "win32")
     monkeypatch.setattr(native.importlib, "import_module", missing)
+    monkeypatch.setattr(
+        native, "ensure_ladybug_openssl", lambda: pytest.fail("unexpected bootstrap")
+    )
     with pytest.raises(ImportError, match=r"potpie-context-engine\[ladybug\]"):
         native._require_ladybug()

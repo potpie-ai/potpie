@@ -370,7 +370,9 @@ potpie daemon start | status | logs [--tail N] [--since 15m|ISO-8601] [--follow]
   CLI's (`null` when either side has no rev). A daemon outlives the install that
   started it, so after an upgrade `stale: true` means `potpie daemon restart`.
   A daemon from before build reporting has neither key.
-  It exits `0` only when the daemon answers its authenticated handshake. A
+  It exits `0` only when an authenticated status response reports the daemon
+  ready and compatible with this client. Readiness and build details come from
+  that same response, so an earlier short probe cannot contradict a live daemon. A
   daemon that is down, or whose process exists but does not answer, is
   `daemon_unavailable` (exit 2); the JSON payload keeps the status fields
   alongside the error keys. A daemon whose operation catalog differs from this

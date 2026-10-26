@@ -168,10 +168,6 @@ class Daemon:
             result["detail"] = "detached daemon running without canonical discovery"
             return result
         discovery, observer = connection
-        existing_controller = self._controller
-        controller = self._controller_for_existing(pid, observer=observer)
-        controller_status = self._run(controller.status())
-        result["ready"] = controller_status.ready
         result["transport"] = discovery.endpoint.kind
         result["socket"] = discovery.endpoint.display
         try:
@@ -181,6 +177,12 @@ class Daemon:
                 result["url"] = daemon_status.value.ui_url
                 compatible = observer.catalog_compatible is not False
                 result["compatible"] = compatible
+                # Use this authenticated response for readiness too. A separate
+                # short handshake probe can time out while this status request
+                # succeeds, or succeed before the daemon begins draining.
+                result["ready"] = (
+                    compatible and daemon_status.value.lifecycle_state == "ready"
+                )
                 result.update(_served_build(daemon_status.value, compatible))
                 if not compatible:
                     result["detail"] = (
@@ -189,8 +191,6 @@ class Daemon:
                     )
         finally:
             self._run(observer.close())
-            if existing_controller is None:
-                self._controller = None
         return result
 
     def health(self) -> dict[str, Any]:

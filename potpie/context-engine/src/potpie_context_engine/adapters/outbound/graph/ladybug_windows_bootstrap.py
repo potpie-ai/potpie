@@ -102,18 +102,20 @@ def _require_ladybug() -> Any:
     with _LOAD_LOCK:
         try:
             module = importlib.import_module("ladybug")
-        except ImportError as exc:
-            raise ImportError(
-                "Ladybug requires its optional native package. Install "
-                "'potpie-context-engine[ladybug]' (included by potpie on Windows)."
-            ) from exc
-        try:
             importlib.import_module("ladybug._lbug")
-        except ImportError:
+        except ImportError as exc:
+            if isinstance(exc, ModuleNotFoundError) and exc.name == "ladybug":
+                raise ImportError(
+                    "Ladybug requires its optional native package. Install "
+                    "'potpie-context-engine[ladybug]' (included by potpie on Windows)."
+                ) from exc
             if sys.platform != "win32":
                 raise
             ensure_ladybug_openssl()
             try:
+                # Some wheels load _lbug during package initialization, so the
+                # top-level import must also be retried after registering DLLs.
+                module = importlib.import_module("ladybug")
                 importlib.import_module("ladybug._lbug")
             except ImportError as exc:
                 raise ImportError(
