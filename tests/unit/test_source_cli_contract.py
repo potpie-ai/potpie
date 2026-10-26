@@ -17,13 +17,6 @@ from potpie.pots.contracts import (
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture(autouse=True)
-def _reset_cli_state():
-    yield
-    _common.set_json(False)
-    _common.set_runtime(None)
-
-
 @dataclass
 class _Pots:
     calls: list[dict[str, str | None]] = field(default_factory=list)
