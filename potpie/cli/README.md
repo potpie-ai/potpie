@@ -4,16 +4,16 @@ The command-line entrypoint for the context graph. Context operations route
 through the typed engine client; product operations use explicit Potpie-owned
 services from one local runtime composition.
 
-- The entrypoint is `potpie/cli/main.py` (registered as the `potpie`
+- **Entrypoint:** `potpie/cli/main.py` (registered as the `potpie`
   console script in `pyproject.toml` → `[project.scripts]`).
-- Command groups live in `potpie/cli/commands/`, with one module per
+- **Command groups:** `potpie/cli/commands/` — one module per
   `cli-flow.md` section (`bootstrap`, `query`, `pots`/`source`, `host`,
   `daemon`, `ledger`, `graph`, `timeline`, `backend`, `skills`, `cloud`).
-- `commands/_common.py` owns `--json` output, the
+- **Cross-cutting contract:** `commands/_common.py` owns `--json` output, the
   exit-code map (0 ok / 1 validation / 2 unavailable / 3 degraded / 4 auth), the
   structured error shape (`code`/`message`/`detail`/`recommended_next_action`),
-  origin routing (local or managed host) and active-pot resolution. An unavailable
-  capability returns the structured not-implemented contract
+  origin routing (local or managed host) and active-pot resolution. An unbuilt
+  capability surfaces as the structured not-implemented contract
   (`CapabilityNotImplemented`), never a traceback.
 
 ## Agent compatibility commands
@@ -29,12 +29,13 @@ The CLI exposes four compatibility commands with distinct response contracts:
 
 | Command | Use |
 |------------|-----|
-| `potpie resolve` | Get bounded context for a task. |
+| `potpie resolve` | Primary bounded-context wrap for a task. |
 | `potpie search` | Narrow follow-up lookup. |
-| `potpie record` | Save a project decision, fix, or preference. |
-| `potpie status` | Show pot and scope readiness and a recommended recipe. |
+| `potpie record` | Record a durable learning (decision, fix, preference, …). |
+| `potpie status` | Cheap pot/scope readiness + recommended recipe. |
 
-Check integration credentials with `potpie auth status [--verify]` for local provider auth state.
+Integration credential status is intentionally outside this four-tool surface:
+use `potpie auth status [--verify]` for local provider auth state.
 
 ## Managed hosts
 
@@ -98,17 +99,17 @@ editable package. Published-package users should use `uv tool install potpie` or
 
 ## Agent harness install
 
-`potpie skills install [<id>] --agent claude` installs the packaged skill
-bundle into an agent harness through the root skill service. The
+`potpie skills install [<id>] --agent claude` materializes the packaged skill
+bundle into an agent harness through the explicit root skill service. The
 default scope is global, so skills are installed once into the selected
 harness's user-level skills directory.
 
 The shipped templates live under `potpie/cli/templates/`, with one source for
 each kind of file:
 
-- `agent_bundle/.agents/skills/` contains every skill. All harnesses install their
+- `agent_bundle/.agents/skills/` — every skill. All harnesses install their
   skills from here, remapped to the harness's own skills directory.
-- `routing/POTPIE.md` contains the instruction block merged into a harness's
+- `routing/POTPIE.md` — the compact instruction block merged into a harness's
   `AGENTS.md` or `CLAUDE.md`, globally and per repository.
 
 | Harness | Global path |
@@ -136,13 +137,13 @@ repo-local cleanup. A skill removed by id is remembered as disabled, so a later
 bundle install skips it until it is installed again by id.
 
 `potpie --json skills status --agent <harness>` lists `installed`, `missing`,
-`outdated`, `drifted` (installed, but its files no longer match the bundle. It is a
+`outdated`, `drifted` (installed, but its files no longer match the bundle — a
 subset of `outdated` with the same repair) and `disabled`. `--path` is resolved
 against the caller's working directory and must already exist.
 
 Use `--scope project --path .` for repo-local installs. The bundle teaches
-feature / debugging / review / operations / docs / onboarding workflows through
-the graph CLI. Agents see an advisory `skills` block in `potpie status` with missing/outdated
+feature / debugging / review / operations / docs / onboarding workflows over
+the CLI graph surface. Agents see an advisory `skills` block in `potpie status` with missing/outdated
 skills and the exact install command. Repo-local `AGENTS.md` and `CLAUDE.md`
 files are merged the same way as global instruction files, so setup does not
 replace existing agent instructions.

@@ -12,14 +12,12 @@
   <a href="https://github.com/potpie-ai/potpie/blob/main/LICENSE"><img src="https://img.shields.io/github/license/potpie-ai/potpie?style=for-the-badge&label=License&color=64748b&labelColor=111827" alt="Apache 2.0"></a>
 </p>
 
-[Potpie](https://potpie.ai) stores codebase and software development context in a graph for AI agents.
+[Potpie](https://potpie.ai) turns your codebase and software development lifecycle into a living context graph for AI agents.
 It indexes code, structure, decisions, source history, team knowledge and engineering workflows, so agents can answer questions, plan changes, debug failures, and write code with project-specific context.
 
 ![Potpie context graph demo](https://raw.githubusercontent.com/potpie-ai/potpie/main/assets/context_graph.gif)
 
-<a id="install-and-setup-potpie"></a>
-
-## Install and set up Potpie
+## Install and setup Potpie
 
 ### Step 1: install the CLI through [PyPI](https://pypi.org/project/potpie/) with `uv` or `pip`:
 
@@ -34,23 +32,27 @@ python3 -m pip install --user potpie
 ```
 
 > [!NOTE]
-> Use `uv tool install potpie` to isolate the CLI from other Python packages.
+> `uv tool install potpie` is recommended for CLI installs because global
+> mutation of Python packages is generally not recommended.
 
-### Step 2: run the Potpie setup wizard
+### Step 2: Run the Potpie setup wizard
 
 ```bash
 potpie setup
 ```
 
-The setup wizard creates local config and storage, starts the daemon, and sets
-up a default pot and agent skills. Choose the integrations and coding harness
-Potpie should configure.
+The setup wizard provisions local config, storage, the daemon, a default pot, and
+agent skills. It also lets you choose integrations and the coding harness Potpie
+should configure.
 
 ![Potpie setup wizard](https://raw.githubusercontent.com/potpie-ai/potpie/main/assets/wiz_screen.png)
 
-### Step 3: open your configured harness
+### Step 3: Open your configured harness
 
-Open the harness you selected during setup and ask it to use Potpie for your repo.
+Potpie is already integrated into your selected harness.
+You can start using Potpie with the repo of your choice.
+
+Open your previously selected harness and ask it to use Potpie for the repo.
 ![Potpie in OpenAI Codex](https://raw.githubusercontent.com/potpie-ai/potpie/main/assets/codex_potpie.png)
 
 
@@ -65,12 +67,10 @@ You can view your context graph in the web UI:
 potpie ui
 ```
 
-The command opens a graph explorer in your browser.
+This will open a graph explorer in your browser.
 ![Potpie web UI](https://raw.githubusercontent.com/potpie-ai/potpie/main/assets/web_ui.png)
 
-<a id="basic-cli-user-checklist"></a>
-
-## Basic CLI commands
+## Basic CLI user checklist
 
 The main CLI commands are:
 
@@ -85,9 +85,9 @@ The main CLI commands are:
 | `potpie doctor` | Run local diagnostics for daemon, backend capabilities, and skill drift. |
 | `potpie source add repo .` | Register the current repo as a source for the resolved pot. |
 | `potpie pot list` / `potpie pot use <id-or-name>` | List pots and choose the active workspace. |
-| `potpie resolve "<task>"` | Get the context an agent should read before starting a task. |
+| `potpie resolve "<task>"` | Pull the context an agent should read before doing a task. |
 | `potpie search "<query>"` | Look up a specific file, workflow, bug, decision, or convention. |
-| `potpie record --type <type> --summary "<summary>"` | Save a project decision, fix, or preference. |
+| `potpie record --type <type> --summary "<summary>"` | Write a durable project learning. |
 | `potpie graph ...` | Use lower-level graph reads, quality checks, proposals, and commits. |
 | `potpie ui` | Open the local graph explorer served by the daemon. |
 | `potpie skills install --agent <agent>` | Install or refresh Potpie guidance for an agent harness. |
@@ -105,12 +105,13 @@ potpie search "authentication flow"
 potpie record --type decision --summary "Prefer the Potpie CLI for graph work"
 ```
 
-See the [docs](https://docs.potpie.ai) for the full command reference and more examples.
+You can find an exhaustive list with more examples in our [docs](https://docs.potpie.ai).
 
-## Integrations and coding harnesses
+## Integrations and Coding Harnesses
 
-Potpie supports the integrations and harnesses below. To request another,
-[open an issue](https://github.com/potpie-ai/potpie/issues/new/choose).
+Potpie supports a variety of integrations and coding harnesses, with more coming.
+If your team needs a new integration or harness, please
+[raise a ticket](https://github.com/potpie-ai/potpie/issues/new/choose).
 
 ### Integrations
 
@@ -141,22 +142,20 @@ Potpie supports the integrations and harnesses below. To request another,
 
 ## Architecture
 
-Humans and agents use the same Potpie CLI. Read about the services, storage, and runtime in [`docs/context-graph/architecture.md`](https://github.com/potpie-ai/potpie/blob/main/docs/context-graph/architecture.md).
+Potpie's current architecture is CLI-first. CLI is designed to be used by both humans and agents. Read the deeper architecture notes in [`docs/context-graph/architecture.md`](https://github.com/potpie-ai/potpie/blob/main/docs/context-graph/architecture.md).
 
 ## License
 
 This project is licensed under the Apache 2.0 License. See [LICENSE](https://github.com/potpie-ai/potpie/blob/main/LICENSE).
 
 
-<a id="community--support"></a>
-
-## Community and support
+## Community & Support
 
 - [GitHub Issues](https://github.com/potpie-ai/potpie/issues): bugs and repository-scoped requests
 - [Discord](https://discord.gg/ryk5CMD5v6): community discussion and support
 - [Docs](https://docs.potpie.ai): setup, product guides, and integration details
 
-Read the [contributing guide](https://github.com/potpie-ai/potpie/blob/main/.github/CONTRIBUTING.md)
+New contributions are always welcome. Read the [Contributing Guide](https://github.com/potpie-ai/potpie/blob/main/.github/CONTRIBUTING.md)
 to set up your environment, understand the workflow, and open a pull request.
 
 <a href="https://github.com/potpie-ai/potpie/graphs/contributors">
