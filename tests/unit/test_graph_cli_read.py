@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 
 import pytest
+from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
+    InMemoryGraphBackend,
+)
+from potpie_context_engine.application.services.graph_service import DefaultGraphService
+from potpie_context_engine.core.ports.agent_context import RecordRequest
 from potpie_context_engine.core.ports.graph_service import (
     GraphReadResult,
 )
 from typer.testing import CliRunner
 
+from potpie.cli import repo_location
 from potpie.cli.commands import _common, graph
 from tests.graph_cli_support import (
     _assert_graph_envelope,
+    _Backend,
     _Graph,
     _Host,
     _non_timeline_env,
@@ -244,6 +253,97 @@ def test_graph_read_threads_source_ref_filter() -> None:
 
     assert result.exit_code == 0
     assert graph_service.read_request.source_refs == ("github:pr:2",)
+
+
+def _clone_with_origin(path: Path, remote: str) -> Path:
+    path.mkdir()
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "remote", "add", "origin", remote], check=True
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    ("remote", "repo_key"),
+    [
+        ("git@github.com:acme/shop.git", "github.com/acme/shop"),
+        ("ssh://git@github.com/acme/shop.git", "github.com/acme/shop"),
+        (
+            "ssh://git@git.example.com:2222/acme/shop.git",
+            "git.example.com:2222/acme/shop",
+        ),
+        ("https://jane@bitbucket.org/acme/shop.git", "bitbucket.org/acme/shop"),
+        (
+            "https://x-access-token:ghp_secret@github.com/acme/shop.git",
+            "github.com/acme/shop",
+        ),
+    ],
+)
+def test_graph_read_repo_current_sends_the_registered_repo_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: str, repo_key: str
+) -> None:
+    monkeypatch.chdir(_clone_with_origin(tmp_path / "shop", remote))
+    _common.set_json(True)
+    service = DefaultGraphService(backend=InMemoryGraphBackend())
+    _common.set_runtime(_Host(service, backend=_Backend()))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "decisions",
+            "--view",
+            "preferences_for_scope",
+            "--repo",
+            "current",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    # The key ``source add repo .`` registers for the same working tree.
+    assert repo_location.current_git_remote(Path.cwd()) == repo_key
+    effective = json.loads(result.output)["result"]["effective_request"]
+    assert effective["scope"]["repo"] == repo_key
+    assert "ghp_secret" not in result.output
+
+
+def test_graph_read_repo_current_finds_a_preference_recorded_for_the_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = DefaultGraphService(backend=InMemoryGraphBackend())
+    receipt = service.record(
+        RecordRequest(
+            pot_id="p",
+            record_type="preference",
+            summary="Use pytest fixtures, not unittest.TestCase",
+            details={"policy_kind": "testing"},
+            scope={"repo": "github.com/acme/shop"},
+        )
+    )
+    assert receipt.accepted
+    monkeypatch.chdir(
+        _clone_with_origin(tmp_path / "shop", "ssh://git@github.com/acme/shop.git")
+    )
+    _common.set_json(True)
+    _common.set_runtime(_Host(service, backend=_Backend()))
+
+    result = CliRunner().invoke(
+        graph.graph_app,
+        [
+            "read",
+            "--subgraph",
+            "decisions",
+            "--view",
+            "preferences_for_scope",
+            "--repo",
+            "current",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Use pytest fixtures" in result.output
 
 
 def test_graph_read_raw_json_defaults_to_compact_relations() -> None:

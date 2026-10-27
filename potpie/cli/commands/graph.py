@@ -93,6 +93,7 @@ from potpie_context_engine.core.graph_contract import (
 from potpie_context_engine.core.graph_contract import ONTOLOGY_VERSION
 from potpie_context_engine.core.graph_workbench_ontology import ontology_contract
 from potpie_context_engine.core.ports.graph_service import bound_graph_read_result
+from potpie_context_engine.core.repository_identity import normalize_repo_ref
 from potpie_context_engine.core.resource_projection import project_public_metadata
 from potpie_context_engine.core.vocabulary import (
     local_claim_subgraphs,
@@ -4690,7 +4691,7 @@ def _resolve_repo_scope(repo: str) -> str:
         if remote:
             return remote
         raise ValueError("--repo current requires a git remote.origin.url")
-    return _normalize_repo_for_scope(value)
+    return normalize_repo_ref(value) or ""
 
 
 def _current_repo_remote_for_scope() -> str | None:
@@ -4699,23 +4700,9 @@ def _current_repo_remote_for_scope() -> str | None:
     remote = run_git_probe(["config", "--get", "remote.origin.url"], timeout=1)
     if not remote:
         return None
-    return _normalize_repo_for_scope(remote)
-
-
-def _normalize_repo_for_scope(value: str) -> str:
-    text = value.strip()
-    if text.endswith(".git"):
-        text = text[:-4]
-    if text.startswith("git@"):
-        text = text[4:].replace(":", "/", 1)
-    elif "://" in text:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(text)
-        path = parsed.path.strip("/")
-        if parsed.netloc and path:
-            text = f"{parsed.netloc}/{path}"
-    return text.strip("/").lower()
+    # Key the repo the way ``record`` stores it: the URL's user and any token
+    # are not part of the identity.
+    return normalize_repo_ref(remote)
 
 
 def _str(value: Any) -> str:
