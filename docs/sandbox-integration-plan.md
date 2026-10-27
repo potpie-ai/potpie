@@ -3,6 +3,10 @@ title: Sandbox integration plan
 description: Plan to make sandbox the single library for repo materialization and command execution.
 ---
 
+> This document is retained for historical context. The sandbox package it
+> describes has been removed. Its setup and integration instructions no longer
+> apply to the current checkout.
+
 ## Overview
 
 This document plans the next phase of `app/src/sandbox`: turning it into the

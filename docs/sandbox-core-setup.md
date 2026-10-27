@@ -3,6 +3,10 @@ title: Sandbox core setup
 description: "Repo cache, workspace, and runtime model for isolated agent work."
 ---
 
+> This document is retained for historical context. The sandbox package it
+> describes has been removed. Its setup and integration instructions no longer
+> apply to the current checkout.
+
 ## Context
 
 Potpie agents need an isolated place to inspect and change user repositories:

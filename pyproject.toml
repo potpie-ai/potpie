@@ -104,7 +104,6 @@ exclude = [
     "!/potpie/daemon/http/ui/frontend/dist",
     "/potpie/integrations",
     "/potpie/parsing",
-    "/potpie/sandbox",
 ]
 # Prune excluded directories instead of walking them. Otherwise the `!` lines
 # in the root .gitignore re-include files under them, which is how
@@ -138,7 +137,6 @@ exclude = [
     "/potpie/daemon/http/ui/frontend/node_modules",
     "/potpie/integrations",
     "/potpie/parsing",
-    "/potpie/sandbox",
 ]
 
 [tool.uv]
@@ -179,7 +177,6 @@ members = [
     "potpie/context-engine",
     "potpie/integrations",
     "potpie/parsing",
-    "potpie/sandbox",
 ]
 
 [tool.uv.sources]
