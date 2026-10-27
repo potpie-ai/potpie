@@ -1468,6 +1468,86 @@ def test_fetch_jira_issues_in_project(
     assert "browse/ENG-9" in (issues[0].get("url") or "")
 
 
+def test_fetch_jira_issues_keeps_words_apart_across_adf_blocks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    def text(value: str) -> dict:
+        return {"type": "text", "text": value}
+
+    def paragraph(*content: dict) -> dict:
+        return {"type": "paragraph", "content": list(content)}
+
+    _save_creds(monkeypatch, tmp_path)
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {
+        "issues": [
+            {
+                "key": "ENG-10",
+                "fields": {
+                    "summary": "Checkout fails",
+                    "description": {
+                        "type": "doc",
+                        "version": 1,
+                        "content": [
+                            {
+                                "type": "heading",
+                                "attrs": {"level": 3},
+                                "content": [text("Steps to reproduce")],
+                            },
+                            paragraph(
+                                text("Click checkout"),
+                                {"type": "hardBreak"},
+                                text("then refresh"),
+                            ),
+                            {
+                                "type": "bulletList",
+                                "content": [
+                                    {
+                                        "type": "listItem",
+                                        "content": [paragraph(text("Chrome"))],
+                                    },
+                                    {
+                                        "type": "listItem",
+                                        "content": [paragraph(text("Safari"))],
+                                    },
+                                ],
+                            },
+                            paragraph(
+                                text("Assigned to "),
+                                {
+                                    "type": "mention",
+                                    "attrs": {"id": "acc-1", "text": "@Ada"},
+                                },
+                                text(", see "),
+                                {
+                                    "type": "inlineCard",
+                                    "attrs": {"url": "https://example.com/run/7"},
+                                },
+                            ),
+                        ],
+                    },
+                },
+            }
+        ]
+    }
+    client = MagicMock()
+    client.__enter__.return_value = client
+    client.__exit__.return_value = None
+    client.get.return_value = response
+
+    with patch(
+        "potpie.auth.adapters.atlassian_read_client.AuthHttpClient",
+        return_value=client,
+    ):
+        issues = fetch_jira_issues_in_project("ENG", limit=5)
+
+    assert issues[0]["description"] == (
+        "Steps to reproduce Click checkout then refresh Chrome Safari "
+        "Assigned to @Ada, see https://example.com/run/7"
+    )
+
+
 def test_save_workspace_prefs(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     _save_creds(monkeypatch, tmp_path)
     cs.save_confluence_credentials(
