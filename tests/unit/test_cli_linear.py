@@ -10,10 +10,6 @@ import urllib.request
 import pytest
 from potpie.cli.commands._common import set_store
 from tests._auth_fakes import InMemoryCredentialStore
-from tests._auth_cli_fixtures import (
-    auth_cli as auth_cli,
-    auth_json_cli as auth_json_cli,
-)
 from potpie.auth.adapters.callback_server import (
     OAuthCallbackResult,
     _first,

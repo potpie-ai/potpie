@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 import pytest
-from tests._auth_cli_fixtures import (
-    auth_cli as auth_cli,
-    auth_json_cli as auth_json_cli,
-)
 from typer.testing import CliRunner
 from potpie.cli.auth import auth_commands
 from potpie.cli.commands._common import set_store

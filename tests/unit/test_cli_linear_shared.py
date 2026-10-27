@@ -4,10 +4,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from tests._auth_cli_fixtures import (
-    auth_cli as auth_cli,
-    auth_json_cli as auth_json_cli,
-)
 from typer.testing import CliRunner
 from potpie.cli.auth import auth_commands
 from potpie.cli import main as cli_main
@@ -72,7 +68,6 @@ def test_auth_status_json_keeps_provider_errors_per_row(
     auth_json_cli: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-
     def _status(provider: str) -> dict[str, object]:
         if provider == "linear":
             raise cs.ProviderCredentialError("keychain locked")

@@ -10,10 +10,6 @@ from potpie.auth.adapters.integration_verify import verify_integration_access
 from potpie.cli import main as cli_main
 from potpie.cli.auth import auth_commands
 from potpie.cli.commands._common import set_store
-from tests._auth_cli_fixtures import (
-    auth_cli as auth_cli,
-    auth_json_cli as auth_json_cli,
-)
 from tests._auth_fakes import InMemoryCredentialStore
 
 
