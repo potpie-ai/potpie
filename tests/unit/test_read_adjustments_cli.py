@@ -22,7 +22,7 @@ from potpie_context_engine.core.cli_commands import selector_tokens
 from potpie_context_engine.core.graph_views import views_for_catalog
 from potpie_context_engine.core.graph_workbench_ontology import ontology_contract
 from potpie_context_engine.core.ports.graph_service import GraphCatalogResult
-from test_graph_cli_contract import (
+from tests.graph_cli_support import (
     _assert_graph_envelope,
     _Backend,
     _Graph,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from test_graph_cli_contract import _Backend, _Host
+from tests.graph_cli_support import _Backend, _Host
 from typer.testing import CliRunner
 
 from potpie.cli.commands import _common, graph

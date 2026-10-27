@@ -11,7 +11,7 @@ from potpie.cli import legacy_repair
 from potpie_context_engine import Success
 from potpie_context_engine.results import RepairResult
 from potpie_context_engine.core.ports.graph.analytics import RepairFinding
-from tests.unit.test_graph_cli_contract import _Host, _Graph, _plain_cli_output
+from tests.graph_cli_support import _Host, _Graph, _plain_cli_output
 
 
 @pytest.fixture
