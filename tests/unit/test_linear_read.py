@@ -27,15 +27,18 @@ class LinearReadStub:
     saved: list[dict[str, Any]] = field(default_factory=list)
 
     def load_credentials(self, organization_id: str | None = None) -> dict[str, Any]:
+        """Return credentials only for an explicitly configured organization."""
         assert organization_id in self.credentials_by_org, (
             f"Unexpected credentials request for organization {organization_id!r}"
         )
         return self.credentials_by_org[organization_id]
 
     def fetch_workspaces(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Return the configured workspaces within the requested limit."""
         return self.workspaces[:limit]
 
     def activate_organization(self, org_id: str) -> None:
+        """Record activation only for a configured organization."""
         assert org_id in self.credentials_by_org, (
             f"Unexpected organization activation: {org_id!r}"
         )
@@ -44,6 +47,7 @@ class LinearReadStub:
     def fetch_teams(
         self, *, organization_id: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
+        """Record the organization and reject unconfigured team requests."""
         self.team_requests.append(organization_id)
         assert organization_id in self.teams_by_org, (
             f"Unexpected teams request for organization {organization_id!r}"
@@ -57,6 +61,7 @@ class LinearReadStub:
         organization_id: str | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
+        """Require an exact team, organization, and limit match for issue requests."""
         request = (team_id, organization_id, limit)
         self.issue_requests.append(request)
         assert request in self.issues_by_request, (
@@ -72,6 +77,7 @@ class LinearReadStub:
         team_key: str,
         team_id: str,
     ) -> None:
+        """Record the complete workspace and team preferences chosen by the flow."""
         self.saved.append(
             {
                 "organization_id": organization_id,
@@ -116,6 +122,7 @@ def assert_selection(
     team_key: str = "ENG",
     limit: int = 10,
 ) -> None:
+    """Check consistent organization and team selection across reads and saved prefs."""
     assert reads.activated == [organization_id]
     assert reads.team_requests == [organization_id]
     assert reads.issue_requests == [(team_id, organization_id, limit)]
@@ -132,6 +139,7 @@ def assert_selection(
 def test_run_linear_use_flow_requires_tty_without_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Require an interactive terminal when workspace keys are omitted."""
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     with pytest.raises(LinearReadError, match="Interactive workspace selection"):
         lr.run_linear_use_flow()
@@ -140,6 +148,7 @@ def test_run_linear_use_flow_requires_tty_without_keys(
 def test_run_linear_use_flow_no_workspaces(
     monkeypatch: pytest.MonkeyPatch, linear_reads: LinearReadStub
 ) -> None:
+    """Stop before requesting teams or issues when no workspaces are connected."""
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     linear_reads.workspaces = []
     with pytest.raises(LinearReadError, match="No Linear workspaces connected"):
@@ -151,6 +160,7 @@ def test_run_linear_use_flow_no_workspaces(
 def test_run_linear_use_flow_single_workspace_auto_pick(
     monkeypatch: pytest.MonkeyPatch, linear_reads: LinearReadStub
 ) -> None:
+    """Use the sole workspace and pass the requested issue limit to its team."""
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     teams = linear_reads.teams_by_org["org-1"]
     prompt = MagicMock(return_value=teams[0])
@@ -171,6 +181,7 @@ def test_run_linear_use_flow_single_workspace_auto_pick(
 def test_run_linear_use_flow_non_interactive_org_and_team(
     monkeypatch: pytest.MonkeyPatch, linear_reads: LinearReadStub
 ) -> None:
+    """Honor explicit organization and team keys over competing saved selections."""
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     # Neither requested selection is the first item or the saved preference.
     linear_reads.workspaces.insert(
@@ -225,6 +236,7 @@ def test_run_linear_use_flow_non_interactive_org_only(
 def test_run_linear_use_flow_missing_org_id(
     monkeypatch: pytest.MonkeyPatch, linear_reads: LinearReadStub
 ) -> None:
+    """Reject an unknown workspace key before activation, reads, or preference writes."""
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     with pytest.raises(LinearReadError, match="Could not resolve Linear workspace"):
         lr.run_linear_use_flow(org_key="bad", team_key="ENG")
@@ -237,6 +249,7 @@ def test_run_linear_use_flow_missing_org_id(
 def test_run_linear_use_flow_no_teams(
     monkeypatch: pytest.MonkeyPatch, linear_reads: LinearReadStub
 ) -> None:
+    """Stop after the selected organization returns no teams, without saving prefs."""
     monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     linear_reads.teams_by_org["org-1"] = []
     with pytest.raises(LinearReadError, match="No Linear teams found"):
@@ -249,6 +262,7 @@ def test_run_linear_use_flow_no_teams(
 def test_run_linear_use_flow_multi_workspace_prompts(
     monkeypatch: pytest.MonkeyPatch, linear_reads: LinearReadStub
 ) -> None:
+    """Use both prompted selections consistently for issue reads and saved prefs."""
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     organization = {"id": "org-2", "key": "b", "name": "B"}
     team = {"id": "t2", "key": "OPS", "name": "Operations"}

@@ -160,6 +160,7 @@ def test_verify_gateway_product_insufficient_scopes_on_403() -> None:
 
 
 def test_verify_gateway_product_success() -> None:
+    """Return the display name and Basic scheme when product verification succeeds."""
     response = MagicMock()
     response.status_code = 200
     response.content = b'{"displayName":"Ada"}'
@@ -185,13 +186,17 @@ def test_verify_gateway_product_success() -> None:
 
 @pytest.fixture
 def atlassian_fallback_http() -> Callable[[str, object], FakeAuthHttpClient]:
+    """Provide clients that require valid Basic credentials before Bearer fallback."""
     basic_auth = "Basic " + base64.b64encode(b"user@example.com:secret-token").decode(
         "ascii"
     )
     expected_auth = [basic_auth, "Bearer secret-token"]
 
     def make_client(expected_url: str, payload: object) -> FakeAuthHttpClient:
+        """Bind the fallback responses to the expected Atlassian endpoint."""
+
         def respond(method: str, url: str, **kwargs: object) -> httpx.Response:
+            """Reject unexpected requests and simulate Basic rejection then Bearer success."""
             assert method == "GET", f"Unexpected Atlassian method: {method}"
             assert url == expected_url, f"Unexpected Atlassian URL: {url}"
             headers = kwargs.get("headers", {})
@@ -232,6 +237,7 @@ def test_verify_gateway_product_bearer_after_basic_401(
     gateway_url: str,
     payload: dict,
 ) -> None:
+    """Retry the selected product endpoint with Bearer after Basic is rejected."""
     client = atlassian_fallback_http(gateway_url, payload)
 
     result = verify_gateway_product(
@@ -251,6 +257,7 @@ def test_verify_gateway_product_bearer_after_basic_401(
 
 
 def test_fetch_cloud_id_for_site_success() -> None:
+    """Read the cloud ID returned by the selected Atlassian site."""
     response = MagicMock()
     response.status_code = 200
     response.json.return_value = {"cloudId": "cloud-xyz"}
@@ -880,6 +887,7 @@ def test_run_atlassian_auth_skips_browser_when_confirm_declined(
 
 
 def test_parse_accessible_resources() -> None:
+    """Normalize valid resource entries while skipping malformed entries."""
     data = [
         {"id": "cloud-1", "url": "https://team.atlassian.net", "name": "Team"},
         {"invalid": True},
@@ -893,6 +901,7 @@ def test_parse_accessible_resources() -> None:
 def test_fetch_accessible_resources_bearer_fallback(
     atlassian_fallback_http: Callable[[str, object], FakeAuthHttpClient],
 ) -> None:
+    """Retry resource discovery with Bearer while preserving the endpoint contract."""
     client = atlassian_fallback_http(
         "https://api.atlassian.com/oauth/token/accessible-resources",
         [{"id": "c2", "url": "https://other.atlassian.net", "name": "Other"}],
@@ -908,6 +917,7 @@ def test_fetch_accessible_resources_bearer_fallback(
 
 
 def test_fetch_accessible_resources_basic_success() -> None:
+    """Return accessible sites when the initial Basic request succeeds."""
     response = MagicMock()
     response.status_code = 200
     response.json.return_value = [

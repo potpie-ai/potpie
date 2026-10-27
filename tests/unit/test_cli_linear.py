@@ -194,6 +194,7 @@ def test_generate_pkce_pair_produces_unique_values() -> None:
 
 @pytest.fixture(autouse=True)
 def _linear_client_id_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep token requests deterministic with a configured Linear client ID."""
     monkeypatch.setenv("LINEAR_CLIENT_ID", "test-linear-client-id")
 
 
@@ -210,9 +211,11 @@ def oauth_http_client() -> Iterator[OAuthHttpClientFactory]:
         def make_client(
             expected_form: dict[str, str], response: httpx.Response
         ) -> tuple[AuthHttpClient, list[httpx.Request]]:
+            """Create a managed client that accepts one expected token request."""
             requests: list[httpx.Request] = []
 
             def handle(request: httpx.Request) -> httpx.Response:
+                """Validate the token endpoint and complete form before returning a response."""
                 requests.append(request)
                 assert len(requests) == 1, "Unexpected additional OAuth request"
                 assert request.method == "POST", "Unexpected OAuth request method"
@@ -242,6 +245,7 @@ def test_exchange_authorization_code_success(
     monkeypatch: pytest.MonkeyPatch,
     use_explicit_redirect: bool,
 ) -> None:
+    """Send the PKCE code and selected redirect URI in one form-encoded request."""
     configured_redirect = "http://localhost:28757/callback?source=cli&mode=oauth"
     explicit_redirect = "http://localhost:8080/callback?source=cli&mode=oauth"
     monkeypatch.setenv("POTPIE_CLI_OAUTH_REDIRECT_URI", configured_redirect)
@@ -292,6 +296,7 @@ def test_exchange_authorization_code_rejects_non_linear() -> None:
 
 
 def test_exchange_authorization_code_requires_verifier() -> None:
+    """Reject code exchanges without the required PKCE verifier."""
     with pytest.raises(ValueError, match="code_verifier is required"):
         tx.exchange_authorization_code("linear", code="c", code_verifier="")
 
@@ -299,6 +304,7 @@ def test_exchange_authorization_code_requires_verifier() -> None:
 def test_exchange_authorization_code_http_error(
     oauth_http_client: OAuthHttpClientFactory,
 ) -> None:
+    """Surface a rejected code exchange after validating its outbound form."""
     client, requests = oauth_http_client(
         {
             "grant_type": "authorization_code",
@@ -324,6 +330,7 @@ def test_exchange_authorization_code_http_error(
 def test_refresh_access_token_success(
     oauth_http_client: OAuthHttpClientFactory,
 ) -> None:
+    """Form-encode the trimmed refresh token and retain it in the result."""
     client, requests = oauth_http_client(
         {
             "grant_type": "refresh_token",
@@ -350,6 +357,7 @@ def test_refresh_access_token_success(
 
 
 def test_refresh_access_token_requires_token() -> None:
+    """Reject refresh requests whose token is empty after trimming."""
     with pytest.raises(ValueError, match="refresh_token is required"):
         tx.refresh_access_token("linear", refresh_token="  ")
 
@@ -367,11 +375,13 @@ def test_refresh_missing_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_refresh_rejects_non_linear() -> None:
+    """Reject refresh requests for providers without Linear refresh support."""
     with pytest.raises(ValueError, match="only supported for Linear"):
         tx.refresh_access_token("github", refresh_token="rt")  # type: ignore[arg-type]
 
 
 def test_refresh_http_error(oauth_http_client: OAuthHttpClientFactory) -> None:
+    """Surface an unauthorized refresh after validating its outbound form."""
     client, requests = oauth_http_client(
         {
             "grant_type": "refresh_token",
