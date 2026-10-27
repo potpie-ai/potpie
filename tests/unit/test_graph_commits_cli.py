@@ -35,7 +35,7 @@ from potpie_context_engine.adapters.outbound.graph.plan_stores.local_json import
 from potpie_context_engine.core.graph_mutations import EntityUpsert, ProvenanceContext
 from potpie_context_engine.core.reconciliation import MutationBatch
 from potpie_context_engine.core.runtime import build_graph_runtime
-from tests.unit.test_graph_cli_contract import _Graph, _Host
+from tests.graph_cli_support import _Graph, _Host
 
 pytestmark = pytest.mark.unit
 

@@ -36,7 +36,8 @@ from potpie.runtime.protocol import (
 )
 from potpie_context_engine import DomainError, Failure, Success
 from potpie_context_engine.core.graph_plans import GraphIngestionVerificationResult
-from tests.unit.test_graph_cli_contract import _commit_result, _Graph, _Host
+from tests.graph_cli_results import _commit_result
+from tests.graph_cli_support import _Graph, _Host
 
 pytestmark = pytest.mark.unit
 
