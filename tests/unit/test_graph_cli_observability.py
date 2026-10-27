@@ -9,7 +9,13 @@ from potpie_context_engine.bootstrap import observability_runtime
 from typer.testing import CliRunner
 
 from potpie.cli.commands import _common, graph
-from tests.graph_cli_support import _Graph, _Host, _timeline_env
+from tests.graph_cli_support import (
+    _Graph,
+    _Host,
+    _timeline_env,
+    _valid_mutation_payload,
+)
+from tests.graph_cli_support import graph_cli_state as graph_cli_state
 from tests.graph_cli_telemetry import (
     _bind_graph_product_analytics,
     _RecordingObservability,
@@ -176,7 +182,3 @@ def test_graph_validation_error_does_not_record_usage_analytics(
     assert [
         event for event in sink.events if event.name == "cli_usage_command_succeeded"
     ] == []
-
-
-from tests.graph_cli_support import _valid_mutation_payload
-from tests.graph_cli_support import graph_cli_state as graph_cli_state

@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from potpie.cli.commands import _common, graph
 from tests.graph_cli_support import _assert_graph_envelope, _Graph, _Host
+from tests.graph_cli_support import graph_cli_state as graph_cli_state
 
 pytestmark = pytest.mark.unit
 
@@ -106,6 +107,3 @@ def test_graph_search_entities_threads_source_facets() -> None:
     assert result.exit_code == 0
     assert graph_service.search_request.source_system == "github"
     assert graph_service.search_request.source_family == "github"
-
-
-from tests.graph_cli_support import graph_cli_state as graph_cli_state

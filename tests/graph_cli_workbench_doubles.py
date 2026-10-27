@@ -129,7 +129,6 @@ class ProposalRecorder:
         self.proposal = proposal
         self.propose_calls = []
         self.propose_approvals = []
-        self.commit_calls = []
 
     def propose(self, payload, *, pot_id, ttl_seconds=None, approved_by=None):
         self.propose_calls.append((payload, pot_id, ttl_seconds))

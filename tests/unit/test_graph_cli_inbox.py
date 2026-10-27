@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from potpie.cli.commands import _common, graph
 from tests.graph_cli_support import _assert_graph_envelope, _Graph, _Host
+from tests.graph_cli_support import graph_cli_state as graph_cli_state
 from tests.graph_cli_workbench_doubles import InboxRecorder, _inbox_result
 
 pytestmark = pytest.mark.unit
@@ -225,6 +226,3 @@ def test_graph_inbox_mark_rejected_and_close_record_reasons() -> None:
     emitted = json.loads(closed.output)
     _assert_graph_envelope(emitted, "graph.inbox.close")
     assert workbench.inbox_calls[0][1]["rejection_reason"] == "superseded"
-
-
-from tests.graph_cli_support import graph_cli_state as graph_cli_state

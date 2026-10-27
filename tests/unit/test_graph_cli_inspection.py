@@ -20,6 +20,7 @@ from tests.graph_cli_support import (
     _Host,
     _Inspection,
 )
+from tests.graph_cli_support import graph_cli_state as graph_cli_state
 
 pytestmark = pytest.mark.unit
 
@@ -313,6 +314,3 @@ def test_neighborhood_cli_byte_budget_includes_workbench_envelope(monkeypatch) -
     body = _assert_graph_envelope(json.loads(result.output), "graph.neighborhood")
     assert body["nodes"][0]["properties"]["root_cause"] == "Shared cookie name"
     assert body["omitted_relation_count"] > 0
-
-
-from tests.graph_cli_support import graph_cli_state as graph_cli_state

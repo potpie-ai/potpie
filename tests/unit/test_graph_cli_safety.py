@@ -19,6 +19,7 @@ from tests.graph_cli_support import (
     _plain_cli_output,
     _UnsupportedBackend,
 )
+from tests.graph_cli_support import graph_cli_state as graph_cli_state
 
 pytestmark = pytest.mark.unit
 
@@ -334,6 +335,3 @@ def test_graph_capability_failures_come_from_the_executing_backend(
     assert f"graph.neo4j.{capability}.{method}" in emitted["error"]["message"]
     assert emitted["recommended_next_action"]
     assert backend.accessed_ports == []
-
-
-from tests.graph_cli_support import graph_cli_state as graph_cli_state

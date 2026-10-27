@@ -15,6 +15,7 @@ from tests.graph_cli_support import (
     _NoSelectedPots,
     _plain_cli_output,
 )
+from tests.graph_cli_support import graph_cli_state as graph_cli_state
 
 pytestmark = pytest.mark.unit
 
@@ -293,6 +294,3 @@ def test_read_catalog_stays_compact_and_points_writers_to_full_catalog() -> None
     output = " ".join(_plain_cli_output(result.output).split())
     assert "graph catalog --profile full" in output
     assert "allowed subject -> object" not in output
-
-
-from tests.graph_cli_support import graph_cli_state as graph_cli_state

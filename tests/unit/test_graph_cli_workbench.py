@@ -20,10 +20,13 @@ from potpie.cli.commands import _common, graph
 from tests.graph_cli_results import _commit_result
 from tests.graph_cli_support import (
     _assert_graph_envelope,
+    _bulk_mutation_payload,
     _Graph,
     _Host,
     _plain_cli_output,
+    _valid_mutation_payload,
 )
+from tests.graph_cli_support import graph_cli_state as graph_cli_state
 from tests.graph_cli_workbench_doubles import (
     CommitRecorder,
     ProposalRecorder,
@@ -47,7 +50,7 @@ def test_graph_mutate_rejection_emits_result_and_exits_nonzero(tmp_path) -> None
             },
         ),
     )
-    workbench = ProposalRecorder(proposal=proposal)
+    workbench = BulkRecorder(proposal=proposal, commit_result=_commit_result())
     _common.set_runtime(_Host(_Graph(), graph_workbench=workbench))
     payload_file = tmp_path / "mutation.json"
     payload_file.write_text(json.dumps(_valid_mutation_payload()), encoding="utf-8")
@@ -505,7 +508,3 @@ def test_graph_history_plan_returns_envelope() -> None:
             "include_claims": True,
         }
     ]
-
-
-from tests.graph_cli_support import _bulk_mutation_payload, _valid_mutation_payload
-from tests.graph_cli_support import graph_cli_state as graph_cli_state

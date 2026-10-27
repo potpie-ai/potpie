@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from potpie.cli.commands import _common, graph
 from tests.graph_cli_support import _assert_graph_envelope, _Graph, _Host
+from tests.graph_cli_support import graph_cli_state as graph_cli_state
 from tests.graph_cli_workbench_doubles import QualityRecorder, _quality_result
 
 pytestmark = pytest.mark.unit
@@ -73,6 +74,3 @@ def test_graph_quality_low_confidence_passes_filters() -> None:
             "confidence_threshold": 0.75,
         }
     ]
-
-
-from tests.graph_cli_support import graph_cli_state as graph_cli_state

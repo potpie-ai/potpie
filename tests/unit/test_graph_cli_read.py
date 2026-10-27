@@ -21,6 +21,7 @@ from tests.graph_cli_support import (
     _timeline_env,
     _unsupported_query_read_result,
 )
+from tests.graph_cli_support import graph_cli_state as graph_cli_state
 
 pytestmark = pytest.mark.unit
 
@@ -538,6 +539,3 @@ def test_graph_nudge_accepts_dash_event_alias() -> None:
     assert body["event"] == "pre_edit"
     # Harnesses call this command directly; it does not steer them elsewhere.
     assert not any("legacy" in warning for warning in emitted["warnings"])
-
-
-from tests.graph_cli_support import graph_cli_state as graph_cli_state
