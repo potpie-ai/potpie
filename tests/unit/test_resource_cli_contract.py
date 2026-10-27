@@ -1306,7 +1306,9 @@ _CHUNK = Chunk(
         (
             EngineOperation.RESOURCE_INDEX_BUILD,
             ResourceIndexBuildRequest(wait=True),
-            DrainReport(profile="sqlite_hybrid", embedded=3, remaining=1, batches=1),
+            DrainReport(
+                profile="sqlite_hybrid", embedded=3, remaining=1, batches=1, processed=5
+            ),
         ),
         (
             EngineOperation.RESOURCE_INDEX_REBUILD,

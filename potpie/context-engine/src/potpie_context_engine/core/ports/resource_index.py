@@ -341,7 +341,12 @@ class IndexReport:
 
 @dataclass(frozen=True, slots=True)
 class DrainReport:
-    """One pass of the drain loop over rows whose embedding is still ``NULL``."""
+    """One bounded pass over pending resource index work.
+
+    ``processed`` counts completed embedding, publication, deletion and terminal
+    skip operations. A window can complete more than one operation per pass.
+    Older adapters may report progress through ``embedded`` alone.
+    """
 
     profile: str
     embedded: int = 0
@@ -349,6 +354,7 @@ class DrainReport:
     batches: int = 0
     elapsed_ms: int = 0
     detail: str | None = None
+    processed: int = 0
 
 
 @dataclass(frozen=True, slots=True)

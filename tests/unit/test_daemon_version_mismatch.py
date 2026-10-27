@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from potpie.cli.commands import _common, graph
 from potpie.runtime import DaemonEngineClient, ProtocolError, RuntimeEndpoint
 from potpie_context_engine import Failure
-from tests.unit.test_graph_cli_contract import _Graph, _Host
+from tests.graph_cli_support import _Graph, _Host
 
 pytestmark = pytest.mark.unit
 

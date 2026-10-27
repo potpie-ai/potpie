@@ -405,8 +405,8 @@ def resource_index_build(
     human who wants search working before the next command.
 
     ``--wait`` drains one bounded batch per call until nothing is pending (or a
-    batch embeds nothing, which means the embedder is failing), so no single
-    call outlives the client's request deadline however large the backlog is.
+    batch makes no progress), so no single call outlives the client's request
+    deadline however large the backlog is.
     """
     with _resource_contract():
         pot_id = _target_pot(pot)
@@ -422,7 +422,7 @@ def resource_index_build(
             report.batches,
             report.elapsed_ms,
         )
-        while wait and report.remaining and report.embedded:
+        while wait and report.remaining and (report.embedded or report.processed):
             report = run_engine_operation(
                 client.resource_index_build(ResourceIndexBuildRequest())
             )

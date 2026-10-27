@@ -55,6 +55,17 @@ def _wait_until_gone(pid: int, timeout_s: float = 5.0) -> bool:
     return not psutil.pid_exists(pid)
 
 
+def _remaining_process(pid: int) -> str:
+    """Distinguish an unreaped zombie from a server that is still running."""
+    try:
+        process = psutil.Process(pid)
+        return f"PID {pid} remains: status={process.status()}, parent={process.ppid()}"
+    except psutil.NoSuchProcess:
+        return f"PID {pid} disappeared after the shutdown deadline"
+    except psutil.AccessDenied:
+        return f"PID {pid} remains; process status is inaccessible"
+
+
 @pytest.fixture()
 def lite_db(tmp_path):
     """A db path, plus the server pids a test started, stopped afterwards."""
@@ -85,7 +96,7 @@ def test_stopping_the_server_does_not_wait_out_connection_retries(lite_db) -> No
     elapsed = time.monotonic() - began
 
     assert elapsed < 2.0, f"stopping the embedded server took {elapsed:.1f}s"
-    assert _wait_until_gone(pid)
+    assert _wait_until_gone(pid), _remaining_process(pid)
 
 
 # The process that starts the server: it opens the graph, reports the server,
@@ -135,7 +146,7 @@ def test_a_server_is_handed_over_to_the_process_still_using_it(lite_db) -> None:
     attached.query("RETURN 1")
 
     assert falkordb_writer.shutdown_embedded_servers() == 1
-    assert _wait_until_gone(pid)
+    assert _wait_until_gone(pid), _remaining_process(pid)
 
 
 def test_a_clean_stop_is_not_mistaken_for_a_crash(lite_db) -> None:
@@ -148,7 +159,7 @@ def test_a_clean_stop_is_not_mistaken_for_a_crash(lite_db) -> None:
     started.append(pid)
 
     assert falkordb_writer.shutdown_embedded_servers() == 1
-    assert _wait_until_gone(pid)
+    assert _wait_until_gone(pid), _remaining_process(pid)
 
     assert falkordb_writer._died_without_saving(path) is False
     shutil.rmtree(falkordb_writer._aof_dir(path))  # an AOF that never completed

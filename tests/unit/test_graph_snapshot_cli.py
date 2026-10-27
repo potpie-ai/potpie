@@ -51,7 +51,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _reset_cli_state():
+def _json_cli_output():
     _common.set_json(True)
     yield
     _common.set_json(False)

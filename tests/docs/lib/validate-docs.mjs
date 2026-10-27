@@ -141,7 +141,9 @@ export function splitFrontmatter(content) {
   if (!content.startsWith('---')) {
     return { error: 'Missing YAML frontmatter' };
   }
-  const match = /\n---[ \t]*(?:\r?\n|$)/.exec(content);
+  // Consume the complete preceding line ending so CRLF does not leave a bare
+  // carriage return after the final YAML value (invalid after quoted scalars).
+  const match = /\r?\n---[ \t]*(?:\r?\n|$)/.exec(content);
   if (!match) {
     return { error: 'Missing YAML frontmatter closing delimiter' };
   }

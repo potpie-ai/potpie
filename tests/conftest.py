@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import shutil
 import socket
@@ -149,46 +148,9 @@ def _no_real_telemetry_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 def _reset_cli_state():
     """Reset process-wide injected CLI state after each test."""
     yield
-    try:
-        from potpie.cli.commands import _common
+    from tests.support.cli_state import reset_cli_state
 
-        runner = _common._state.get("engine_runner")
-        manager = _common._state.get("engine_manager")
-        if runner is not None and manager is not None:
-            runner.run(manager.shutdown())
-        if runner is not None:
-            runner.close()
-        # A real runtime owns the resource-index drain thread and its sqlite
-        # connection; leave neither behind for the next test.
-        close_runtime = getattr(_common._state.get("runtime"), "close", None)
-        if callable(close_runtime):
-            close_runtime()
-        _common._state["store"] = None
-        _common._state["runtime"] = None
-        _common._state["json"] = False
-        _common._state["verbose"] = False
-        _common._state["engine_runner"] = None
-        _common._state["engine_manager"] = None
-        _common._state["engine_runtime"] = None
-        _common._state["engine_remote_host"] = None
-        _common._state["engine_remote_home"] = None
-        _common._state["pot_service"] = None
-        _common._state["pot_service_runtime"] = None
-        _common._state["root_product_services"] = {}
-        _common._state["root_product_services_runtime"] = None
-        _common._state["root_runtime"] = None
-        _common._state["root_runtime_source"] = None
-        _common._state["pot_directory_factory"] = None
-        _common._state["managed_pots"] = None
-        from potpie.config import host_registry
-
-        # `--host`, a qualified ref and the insecure-transport warning memo
-        # are per process; one test's origin must not route the next.
-        host_registry.reset_for_tests()
-    except Exception:
-        logging.getLogger(__name__).debug(
-            "failed to reset CLI test state", exc_info=True
-        )
+    reset_cli_state()
 
 
 @pytest.fixture(autouse=True)

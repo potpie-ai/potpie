@@ -7,6 +7,7 @@ property somebody could reasonably "improve away".
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -82,8 +83,11 @@ def test_the_thread_drains_on_start_without_waiting_for_the_idle_tick():
     assert drain.running is False
 
 
-def test_a_failing_pass_does_not_kill_the_loop():
+def test_a_failing_pass_does_not_kill_the_loop(monkeypatch):
     """The loop outlives any one failure; a broken embedder must not need a restart."""
+    from potpie_context_engine.adapters.outbound.resources.index import drain as module
+
+    monkeypatch.setattr(module, "ERROR_BACKOFF_SECONDS", 0.05)
     index = FakeIndex(fail=True)
     drain = ResourceIndexDrain(index=index, idle_interval=0.05)
     assert drain.start() is True
@@ -113,7 +117,9 @@ def test_a_crash_leaves_the_work_pending_and_the_next_drain_resumes(tmp_path):
     manifest, chunks = build_conformance_document()
     first = build_resource_index("sqlite_hybrid", home=tmp_path)
     if not first.capabilities().semantic:
-        pytest.skip("sqlite-vec is unavailable in this interpreter")
+        if os.getenv("POTPIE_REQUIRE_QDRANT") == "1":
+            pytest.fail("Qdrant semantic capability is required for this test")
+        pytest.skip("Qdrant service is unavailable")
     first.index_document(pot_id="p", manifest=manifest, chunks=chunks)
     assert first.status(pot_id="p").pending_embeddings > 0
     # Simulate the process dying mid-backlog: drop the handle entirely.
@@ -146,7 +152,9 @@ def test_changing_the_embedder_marks_every_vector_pending(tmp_path):
     manifest, chunks = build_conformance_document()
     index = SqliteHybridResourceIndex(home=tmp_path, embedder=Embedder("model-a", 8))
     if not index.capabilities().semantic:
-        pytest.skip("sqlite-vec is unavailable in this interpreter")
+        if os.getenv("POTPIE_REQUIRE_QDRANT") == "1":
+            pytest.fail("Qdrant semantic capability is required for this test")
+        pytest.skip("Qdrant service is unavailable")
     index.index_document(pot_id="p", manifest=manifest, chunks=chunks)
     index.drain(pot_id="p")
     assert index.status(pot_id="p").pending_embeddings == 0
@@ -275,3 +283,35 @@ def test_rrf_rewards_agreement_between_the_arms():
     assert fused[20][0] > fused[10][0]
     assert fused[20][1] == {0: 2, 1: 1}
     assert fused[40][1] == {1: 2}
+
+
+def test_offline_remote_index_still_starts_retry_worker():
+    index = FakeIndex(semantic=False, pending=0)
+    index.drain_when_unavailable = True
+    drain = ResourceIndexDrain(index=index)
+    try:
+        assert drain.start()
+        assert index.seen.wait(timeout=2)
+    finally:
+        drain.stop()
+
+
+def test_reported_failure_with_backlog_waits_instead_of_spinning(monkeypatch):
+    from potpie_context_engine.adapters.outbound.resources.index import drain as module
+
+    class OfflineIndex(FakeIndex):
+        def drain(self, **kwargs):
+            self.passes += 1
+            self.seen.set()
+            return DrainReport(profile="fake", remaining=5, detail="offline")
+
+    monkeypatch.setattr(module, "ERROR_BACKOFF_SECONDS", 0.2)
+    index = OfflineIndex()
+    worker = ResourceIndexDrain(index=index)
+    try:
+        assert worker.start()
+        assert index.seen.wait(timeout=2)
+        time.sleep(0.05)
+        assert index.passes == 1
+    finally:
+        worker.stop()
