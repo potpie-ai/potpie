@@ -78,12 +78,14 @@ from potpie.auth.adapters.token_exchange import (
     exchange_authorization_code,
 )
 
-auth_app = typer.Typer(
-    help=(
-        "Integration auth status (`auth status`). "
-        "Prefer `potpie <provider>` for login — aliases under this group are legacy."
-    ),
-)
+auth_app = typer.Typer(help="Integration auth status (`auth status`).")
+
+
+@auth_app.callback()
+def auth_group() -> None:
+    """Inspect integration authentication with ``auth status``."""
+
+
 linear_app = typer.Typer(help="Linear integration.")
 jira_app = typer.Typer(help="Jira integration and read.")
 confluence_app = typer.Typer(help="Confluence integration and read.")
@@ -105,17 +107,7 @@ IntegrationAuthProvider = Literal[
 def _canonical_provider_for_json(product: str) -> str:
     """Map CLI product aliases to provider keys used in JSON output."""
     key = product.strip().lower()
-    if key in {"wiki", "conf", "confluence"}:
-        return "confluence"
     return key
-
-
-def register_provider_app(name: str, provider_app: typer.Typer) -> None:
-    """Register a provider app under the deprecated ``auth`` namespace."""
-    key = str(name or "").strip().lower()
-    if not key:
-        raise ValueError("provider app name must be non-empty")
-    auth_app.add_typer(provider_app, name=key)
 
 
 def _print_standard_logout(
@@ -642,8 +634,6 @@ def auth_logout(provider: str) -> None:
     ensure_runtime_environment_loaded()
     j, v = _flags()
     key = provider.strip().lower()
-    if key in {"wiki", "conf"}:
-        key = "confluence"
     if key not in _ALL_PROVIDERS:
         emit_error(
             "Unknown provider",
@@ -680,44 +670,6 @@ def auth_logout(provider: str) -> None:
         was_authenticated=was_authenticated,
         provider=key,
         j=j,
-    )
-
-
-@auth_app.command("logout")
-def auth_logout_cmd(
-    provider: str = typer.Argument(
-        ...,
-        help="Deprecated. Provider to log out: github, linear, jira, confluence, gitlab, or gitbucket.",
-    ),
-) -> None:
-    """Deprecated: use ``potpie <provider> logout``."""
-    auth_logout(provider)
-
-
-@auth_app.command("revoke", hidden=True)
-def auth_revoke(
-    provider: str = typer.Argument(
-        ...,
-        help="Deprecated. Use `potpie <provider> logout`.",
-    ),
-) -> None:
-    """Deprecated alias for provider logout."""
-    auth_logout(provider)
-
-
-@auth_app.command("linear-login", hidden=True)
-def auth_linear(
-    force: bool = typer.Option(
-        False,
-        "--force",
-        help="Re-authenticate even if Linear is already connected.",
-    ),
-) -> None:
-    """Authenticate with Linear via OAuth (PKCE)."""
-    _run_tracked_integration_login(
-        "linear",
-        entrypoint="direct_integration_auth",
-        runner=lambda: _run_linear_oauth_flow(force=force),
     )
 
 
@@ -840,72 +792,19 @@ def _print_linear_issue_row(row: dict[str, Any]) -> None:
         _print_remote_line(f"  URL: {_esc(row.get('url'))}")
 
 
-def _build_auth_compat_linear() -> typer.Typer:
-    app = typer.Typer(help="[Deprecated] use `potpie linear`.")
-    app.command("login")(linear_login)
-    app.command("logout")(linear_logout)
-    app.command("ls")(linear_ls)
-    app.command("select")(linear_select)
-    return app
-
-
-def _build_auth_compat_jira() -> typer.Typer:
-    app = typer.Typer(help="[Deprecated] use `potpie jira`.")
-    app.command("login")(jira_login)
-    app.command("logout")(jira_logout)
-    app.command("ls")(jira_ls)
-    app.command("select")(jira_select)
-    return app
-
-
-def _build_auth_compat_confluence() -> typer.Typer:
-    app = typer.Typer(help="[Deprecated] use `potpie confluence`.")
-    app.command("login")(confluence_login)
-    app.command("logout")(confluence_logout)
-    app.command("ls")(confluence_ls)
-    app.command("select")(confluence_select)
-    return app
-
-
-def _register_auth_compat_providers() -> None:
-    """Mount deprecated ``potpie auth <provider>`` mirrors on ``auth_app``."""
-    from potpie.cli.auth.github_commands import (
-        _build_auth_compat_github,
-    )
-    from potpie.cli.auth.gitbucket_commands import (
-        _build_auth_compat_gitbucket,
-    )
-
-    register_provider_app("github", _build_auth_compat_github())
-    register_provider_app("linear", _build_auth_compat_linear())
-    register_provider_app("jira", _build_auth_compat_jira())
-    register_provider_app("confluence", _build_auth_compat_confluence())
-    register_provider_app("gitbucket", _build_auth_compat_gitbucket())
-
-
 def register_integration_commands(root: typer.Typer) -> None:
-    """Mount provider commands at the CLI root and the deprecated ``auth`` group."""
-    from potpie.cli.auth.github_commands import (
-        git_app,
-        github_app,
-    )
+    """Mount provider commands and integration status at the CLI root."""
+    from potpie.cli.auth.github_commands import github_app
     from potpie.cli.auth.gitbucket_commands import gitbucket_app
     from potpie.cli.auth.gitlab_commands import gitlab_app
 
     root.add_typer(github_app, name="github")
-    root.add_typer(git_app, name="git")
     root.add_typer(gitlab_app, name="gitlab")
     root.add_typer(linear_app, name="linear")
     root.add_typer(jira_app, name="jira")
     root.add_typer(confluence_app, name="confluence")
     root.add_typer(gitbucket_app, name="gitbucket")
-    # Keep `auth status` discoverable, but park the group below the happy path.
-    # Provider mirrors under this group are legacy; prefer `potpie <provider>`.
-    root.add_typer(
-        auth_app,
-        name="auth",
-        rich_help_panel="Legacy",
-    )
+    root.add_typer(auth_app, name="auth")
 
 
 def _print_jira_issue_row(row: dict[str, Any]) -> None:
@@ -1203,6 +1102,3 @@ def confluence_select(
         emit_error("Confluence fetch failed", str(exc), verbose=v)
         raise typer.Exit(code=EXIT_UNAVAILABLE) from exc
     _run_product_use_result(result, product_label="Confluence")
-
-
-_register_auth_compat_providers()

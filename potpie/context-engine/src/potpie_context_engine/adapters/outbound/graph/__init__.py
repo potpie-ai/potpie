@@ -1,14 +1,5 @@
-"""The graph adapter layer.
+"""Canonical graph backends, queries, mutation and journal adapters."""
 
-Backends expose ``ClaimQueryPort`` for reads and ``GraphMutationPort`` /
-``GraphWriterPort`` for writes. ``DefaultGraphService`` is the canonical
-application data plane; ``ContextGraphService`` is only a legacy DTO shim over
-that service for managed callers that have not migrated yet.
-"""
-
-from potpie_context_engine.adapters.outbound.graph.context_graph_service import (
-    ContextGraphService,
-)
 from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
 )
@@ -19,7 +10,6 @@ from potpie_context_engine.adapters.outbound.graph.neo4j_writer import Neo4jGrap
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 
 __all__ = [
-    "ContextGraphService",
     "GraphWriterPort",
     "InMemoryClaimQueryStore",
     "Neo4jClaimQueryStore",

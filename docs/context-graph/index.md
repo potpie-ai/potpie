@@ -10,16 +10,15 @@ compact store of sourced **claims** (decisions, ownership, infra topology, prior
 bugs/fixes, conventions, features) so an agent doesn't rebuild context from raw
 code, PRs, tickets, and chat on every task. Humans and agents talk to the **same
 `potpie` CLI**. The `potpie graph …` workbench is **shipped today**
-(data-plane contract `v1.5`, ontology `2026-06-graph`) alongside the legacy
-`resolve`/`search`/`record` compatibility wrappers — there is no separate "future
-V2." The same Pot Management, Graph, and Skill Manager service modules run inside
+(data-plane contract `v1.5`, ontology `2026-06-graph`) alongside the
+`resolve`, `search`, and `record` commands. The same Pot Management, Graph, and Skill Manager service modules run inside
 either a local daemon or a managed backend API; **state stays local by default**.
 
 ```mermaid
 flowchart TB
   cg_human["Humans"]
   cg_agent["Agents<br/>(Claude Code, Codex, Cursor…)"]
-  cg_cli["potpie CLI<br/>(graph workbench + V1 wrappers)"]
+  cg_cli["potpie CLI<br/>(graph workbench + record/resolve/search)"]
 
   cg_human --> cg_cli
   cg_agent --> cg_cli
@@ -77,7 +76,7 @@ potpie status
 — harness-led ingestion writes the graph. The OSS/CLI default backend is **`ladybug`
 on Windows** and **`falkordb_lite` on macOS/Linux**. Both use a local file, with **no Docker, server, Neo4j, or cloud
 key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
-(precedence: `CONTEXT_ENGINE_BACKEND` > legacy `GRAPH_DB_BACKEND` >
+(precedence: `CONTEXT_ENGINE_BACKEND` >
 the platform default). Full flags live in [`cli-flow.md`](./cli-flow.md).
 
 Windows installs Ladybug through the normal `pip install potpie` dependency set.
@@ -102,8 +101,8 @@ supported. See [Ladybug storage and scope](./architecture.md#ladybug-storage-and
 | [`vision.md`](./vision.md) | What the Context Graph is and why; claims-not-payloads; harness-owned intelligence; the three product boundaries (local OSS / managed [roadmap] / Event Ledger [roadmap]); pots-as-tenancy; anti-goals. |
 | [`architecture.md`](./architecture.md) | Hexagonal layers; the two composition roots (local agent spine vs ingestion server); the daemon model; the `GraphBackend` port + 6 capabilities + the backend coverage table; per-pot scoping, the resource store for document payloads, and backend selection. |
 | [`ontology.md`](./ontology.md) | The three declarative catalogs (25 entity types / 27 predicates + `RELATED_TO` / record types); contract constants (versions, 7 truth classes, 10 mutation ops, 6 source authorities); 8 subgraphs / 10 views; identity keys and the environment qualifier. |
-| [`querying.md`](./querying.md) | Reading: the CLI Graph Surface Lite and compatibility commands; the single read trunk and 10 readers; the `AgentEnvelope` (ranked evidence, no server-side answers); ranking; the 3-axis model (Retrieve / Filter / Traverse — all shipped). |
-| [`writing.md`](./writing.md) | Writing: the flat semantic-mutation DSL (10 ops); validation + runtime risk; the canonical write door `graph propose` → `graph commit --verify` (with `graph mutate` and `record` as the legacy wrappers); revision-based concurrency and receipts; inbox; quality. |
+| [`querying.md`](./querying.md) | Reading: the CLI Graph Surface Lite and record/resolve/search commands; the single read trunk and 10 readers; the `AgentEnvelope` (ranked evidence, no server-side answers); ranking; the 3-axis model (Retrieve / Filter / Traverse — all shipped). |
+| [`writing.md`](./writing.md) | Writing: the flat semantic-mutation DSL (10 ops); validation + runtime risk; the canonical write door `graph propose` → `graph commit --verify` and the `record` write path; revision-based concurrency and receipts; inbox; quality. |
 | [`ingestion-nudge.md`](./ingestion-nudge.md) | How raw episodes/events enter; the internal Postgres event store vs the external Event Ledger seam; connectors (github/notion only); windowed reconciliation (off by default); the zero-token nudge trigger model. |
 | [`skills.md`](./skills.md) | Harness-owned intelligence; the bundled CLI skills (potpie-graph teaches propose/commit); how an agent acts on nudges; the separate server-side reconciliation skill surface (not the same thing). |
 | [`cli-flow.md`](./cli-flow.md) | The full `potpie` command reference, grouped, with flags, exit-code contract, snapshots, and the canonical journey. |

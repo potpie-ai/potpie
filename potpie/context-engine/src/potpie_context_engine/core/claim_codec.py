@@ -59,8 +59,8 @@ RESERVED_EDGE_KEYS = CONTRACT_EDGE_KEYS
 
 
 def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("timestamp requires an explicit UTC offset")
     return value.astimezone(timezone.utc)
 
 
@@ -86,7 +86,11 @@ def parse_dt(value: Any) -> datetime | None:
 
 
 def iso(value: datetime | None) -> str | None:
-    return _as_utc(value).isoformat() if value is not None else None
+    return (
+        (value.isoformat() if value.tzinfo is None else _as_utc(value).isoformat())
+        if value is not None
+        else None
+    )
 
 
 def normalize_timestamp(value: Any, *, field: str) -> str:

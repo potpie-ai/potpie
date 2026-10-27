@@ -336,9 +336,8 @@ def _build_operation(
             )
         return ops
 
-    # Free-form record (no structured schema): a generic association from a
-    # Document/Observation anchor to the scope target. RELATED_TO accepts any
-    # endpoints, so it always lands and surfaces via raw_graph.
+    # Free-form records use their declared predicate when available; notes
+    # without a dedicated reader use a generic association to the scope.
     anchor_label = anchor or "Document"
     entity_spec = definition.entity_types.get(anchor_label)
     prefix = (

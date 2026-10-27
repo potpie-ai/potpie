@@ -59,14 +59,9 @@ def _edge(**overrides) -> SimpleNamespace:
 class _Payload:
     """Stand-in for :class:`parsing_rs.GraphPayload`."""
 
-    def __init__(
-        self, nodes: Iterable, edges: Iterable, *, edges_attr: str = "relationships"
-    ) -> None:
+    def __init__(self, nodes: Iterable, edges: Iterable) -> None:
         self.nodes = list(nodes)
-        # Some older payloads name the attr `edges` instead of
-        # `relationships`; the runner tolerates both, so we exercise
-        # both via this kwarg.
-        setattr(self, edges_attr, list(edges))
+        self.relationships = list(edges)
 
 
 def _emit(payload: _Payload, repo: str = "/repo") -> str:
@@ -136,15 +131,6 @@ def test_runner_includes_optional_fields_when_set():
     assert edge_record["ident"] == "bar"
     assert edge_record["ref_line"] == 12
     assert edge_record["end_ref_line"] == 15
-
-
-def test_runner_tolerates_edges_attr_named_differently():
-    """The PyO3 type names the collection ``relationships`` but older
-    snapshots used ``edges``; the runner reads either."""
-    payload = _Payload(nodes=[_node()], edges=[_edge()], edges_attr="edges")
-    output = _emit(payload).splitlines()
-    kinds = [json.loads(line)["kind"] for line in output]
-    assert kinds == ["header", "node", "edge", "footer"]
 
 
 def test_runner_returns_failure_when_extract_raises():

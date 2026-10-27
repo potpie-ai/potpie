@@ -1,7 +1,6 @@
 """Potpie sandbox core.
 
-This package is intentionally independent from the legacy app modules. It uses
-ports for workspace persistence and runtime execution so local `.repos`,
+Ports for workspace persistence and runtime execution let local `.repos`,
 Docker-backed execution, and Daytona-managed sandboxes can share one service
 contract.
 

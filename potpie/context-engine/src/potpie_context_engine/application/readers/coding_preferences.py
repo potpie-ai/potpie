@@ -142,11 +142,7 @@ class CodingPreferencesReader:
                 )
             )
 
-        # Legacy rows without claim keys cannot be constrained in the query
-        # port. Keep them eligible for lexical matching without reopening the
-        # semantic search to unrelated scopes.
-        legacy_rows = [row for row in scoped_rows if not row.claim_key]
-        return dedupe_claim_rows([*semantic_rows, *legacy_rows])
+        return dedupe_claim_rows(semantic_rows)
 
 
 # ---------------------------------------------------------------------------

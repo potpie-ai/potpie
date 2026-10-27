@@ -67,9 +67,7 @@ potpie daemon restart
 ```
 
 `CONTEXT_ENGINE_RESOURCE_INDEX=sqlite_fts` is the equivalent environment
-override and takes precedence over the config key. Existing `sqlite_hybrid`
-settings remain accepted as an alias for `qdrant_hybrid`; semantic search with
-that alias also uses Qdrant.
+override and takes precedence over the config key.
 
 ## Linux ARM64
 

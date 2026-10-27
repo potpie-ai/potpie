@@ -72,14 +72,15 @@ history. Does **not** cover GitHub Discussions (no connector tool yet).
   fetch.
 - `apply_graph_mutations(plan, event_id, summary)` — context-graph write. The
   `plan` argument MUST be an object with this shape:
-  - `summary`: string.
-  - `entity_upserts`: list of `{entity_key, labels, properties}`.
-  - `edge_upserts`: list of `{edge_type, from_entity_key, to_entity_key, properties}`.
-  - `edge_deletes`: usually `[]`.
-  - `invalidations`: usually `[]`.
-  - `evidence`: list of `{kind, ref, metadata}`.
-  - `confidence`: optional number.
-  - `warnings`: list of strings.
+  - `operations`: semantic operations using the canonical mutation catalog.
+    Use `upsert_entity` with a `subject` reference `{key, type}` to establish
+    an entity. Use `link_entities` or `assert_claim` with `subject`,
+    `predicate`, `object`, `subgraph`, `truth`, `description`, and `evidence`
+    to record a relationship; attach `confidence` and validity bounds to the
+    operation when the source supports them. Put entity annotations in the subject reference's
+    `properties`; read the operation catalog for the supported fields.
+    Retractions name exact existing claim keys or record identifiers.
+    The tool supplies the event idempotency key, ingestion actor and batch pot.
 - Planner / todo tools (`read_todos`, `write_todos`, `update_todo_status`) —
   REQUIRED. The todo list rides in the agent's message history and is
   checkpointed; a resumed run continues the existing list instead of
@@ -181,7 +182,7 @@ For each batch of issue todos, in parallel for `K` issues at a time:
    - **Decision** — only when the body explicitly documents rationale +
      alternatives (rare on issues).
 
-Build one `LlmReconciliationPlan`-shaped object for the batch (see Mutations
+Build one semantic `operations` request for the batch (see Mutations
 section). Call `apply_graph_mutations(plan, event_id, summary)` once per
 batch. Use `update_todo_status` or `write_todos` to mark each batch todo
 done.
@@ -339,7 +340,7 @@ service. Do NOT invent Services that don't already exist in the graph.
 
 When a PR you ingested references `Fixes #n` or `Closes #n` in its body,
 prefer recording the linkage in the PR Activity's `properties` (e.g. a
-`closes_issues` list) or the plan's `evidence` array, rather than
+`closes_issues` list) or the operation's `evidence` array, rather than
 duplicating an issue Activity inside the PR pass — the issue pass will emit
 its own Activity with the stable `activity:github:issue:...` key, and the
 two converge on the entity_keys.

@@ -134,7 +134,6 @@ class MutationBatchValidationError(ContextEngineError):
 
 
 # Back-compat alias (Step 5a rename).
-ReconciliationPlanValidationError = MutationBatchValidationError
 
 
 class ReconciliationApplyError(ContextEngineError):

@@ -277,7 +277,33 @@ class FalkorJournal:
         from .falkordb_atomic import _rows
         from .falkordb_revision import read_revision
 
-        read_revision(self.graph, params["pot"], pipe)
+        revision = read_revision(self.graph, params["pot"], pipe)
+        if "mid" in params and "expected" not in params:
+            from potpie_context_engine.core.mutation_execution import ExecutionMetadata
+            from potpie_context_engine.core.reconciliation import (
+                MutationResult,
+                MutationSummary,
+            )
+            from ._mutation_execution import _mutation_result_to_dict
+
+            before_version = revision.version or 0
+            execution = ExecutionMetadata(
+                params["pot"],
+                datetime.now(timezone.utc),
+                before_version,
+                before_version + params["advance"],
+                params["fingerprint"],
+            )
+            params["payload"] = json.dumps(
+                _mutation_result_to_dict(
+                    MutationResult(
+                        ok=True,
+                        mutation_id=params["mid"],
+                        mutation_summary=MutationSummary(),
+                        execution=execution,
+                    )
+                )
+            )
         pipe.multi()
         pipe.execute_command(
             "GRAPH.QUERY",
@@ -313,11 +339,13 @@ class FalkorJournal:
                 rollback_enabled=rollback_enabled,
                 limits=limits or JournalLimits(),
             )
-            from .falkordb_legacy import raw_inventory
-            from potpie_context_engine.core.legacy_records import (
+            from .falkordb_inventory import raw_inventory
+            from potpie_context_engine.core.record_identity import (
                 validate_alias_ownership,
             )
-            from potpie_context_engine.core.legacy_repair_policy import record_patch
+            from potpie_context_engine.core.record_identity import (
+                validate_current_record,
+            )
 
             records, _ = raw_inventory(self.graph, pot_id, pipe)
             try:
@@ -330,11 +358,9 @@ class FalkorJournal:
                         record.value("record_id"), str
                     ) or not record.value("record_id"):
                         raise ValueError("missing persistent record_id")
-                    record_patch(record, new_record_id=record.value("record_id"))
+                    validate_current_record(record)
             except ValueError as exc:
-                raise JournalError(
-                    f"migration_required: ambiguous or unsupported native inventory: {exc}"
-                ) from exc
+                raise JournalError(f"invalid current native inventory: {exc}") from exc
             query = (
                 f"MATCH (v:{_STATE} {{pot_id:$pot}}) WHERE v.journal IS NULL "
                 "SET v.journal=$journal RETURN v.version"
@@ -424,39 +450,6 @@ class FalkorJournal:
             context.resource_owner,
         ) != (state.resource_guard.operation_id, state.resource_guard.owner):
             raise JournalError("resource operation owns the pot write guard")
-
-    def compile_record_repairs(
-        self, *, state, plan, clauses, params, payload, result, provenance_context
-    ):
-        """Storage-only repair audit; exact legacy representation is not reversible."""
-        self._require_write_guard(state)
-        receipt = self._receipt(
-            state,
-            {},
-            {},
-            commit_id=result.mutation_id,
-            fingerprint=result.execution.batch_fingerprint,
-            actor=provenance_context.actor_user_id or "system",
-            message=plan.summary,
-            origin="repair",
-            required_access="admin",
-            unsupported_reason="legacy storage normalization cannot restore exact raw representation",
-        )
-        query, values = _publish_query(
-            {},
-            {},
-            state=state,
-            receipt=receipt,
-            result=result.mutation_summary,
-            execution=result,
-            repair_clauses=clauses,
-            repair_params=params,
-            repair_payload=payload,
-        )
-        from .falkordb_legacy import check_query_size
-
-        check_query_size(self.graph, query, values, state)
-        return query, values, result
 
     def apply(
         self,

@@ -3,7 +3,7 @@
 The HTTP/data layer (fetchers, parsers, credential loaders) lives in
 ``potpie.auth.adapters.atlassian_read_client``; this inbound module owns the
 interactive workspace-selection flow (prompts, output, terminal guards) and
-re-exports the client symbols for callers that historically imported them here.
+uses the canonical adapter APIs for credential and HTTP operations.
 """
 
 from __future__ import annotations
@@ -13,20 +13,12 @@ from typing import Any
 
 import typer
 
-from potpie.auth.adapters.atlassian_read_client import (  # noqa: F401  (re-export)
+from potpie.auth.adapters.atlassian_read_client import (
     AtlassianReadError,
-    _auth_header_variants,
-    _cloud_id_from_credentials,
-    _get_json,
-    _post_json,
-    _site_url_from_credentials,
-    fetch_confluence_content_sample,
     fetch_confluence_pages_in_space,
     fetch_confluence_spaces_sample,
     fetch_jira_issues_in_project,
-    fetch_jira_issues_sample,
     fetch_jira_projects,
-    load_atlassian_read_credentials,
     load_confluence_read_credentials,
     load_jira_read_credentials,
 )
@@ -123,7 +115,7 @@ def run_confluence_use_flow(
     rows = fetch_confluence_pages_in_space(space_key, limit=limit)
     save_confluence_workspace_prefs(space_key=space_key)
     return {
-        "product": "wiki",
+        "product": "confluence",
         "workspace_key": space_key,
         "workspace_name": picked.get("name"),
         "items": rows,

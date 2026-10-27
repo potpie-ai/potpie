@@ -26,12 +26,6 @@ from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
     ENTITY_LABEL_TARGET,
     wants_entity_label_repair,
 )
-from potpie_context_engine.adapters.outbound.graph.document_key_repair import (
-    SCANNED_CLAIM_ENDPOINTS,
-    SCANNED_CLAIM_ENDPOINTS_TRUNCATED,
-    document_key_finding,
-    wants_document_key_repair,
-)
 from potpie_context_engine.core.ports.claim_query import (
     ClaimQueryFilter,
     ClaimQueryPort,
@@ -105,16 +99,6 @@ class ClaimQueryAnalytics:
             repaired[ENTITY_SUMMARY_TARGET] = self.entity_summary_repair(pot_id)
         if self.entity_label_repair is not None and wants_entity_label_repair(targets):
             repaired[ENTITY_LABEL_TARGET] = self.entity_label_repair(pot_id)
-        if wants_document_key_repair(targets):
-            rows = self._rows(pot_id)
-            findings.append(
-                document_key_finding(
-                    {key for row in rows for key in (row.subject_key, row.object_key)},
-                    scanned=SCANNED_CLAIM_ENDPOINTS_TRUNCATED
-                    if len(rows) >= _SCAN_LIMIT
-                    else SCANNED_CLAIM_ENDPOINTS,
-                )
-            )
         parts = [
             f"repaired {count} {target.replace('_', ' ')}"
             for target, count in repaired.items()

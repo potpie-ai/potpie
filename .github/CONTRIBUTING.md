@@ -89,11 +89,46 @@ To ensure consistency and quality in the codebase, please adhere to the followin
 
 ## Testing
 
-Testing is essential for maintaining the stability of Potpie. We encourage you to:
+Tests have two owners: the root product and the context engine. The root suite
+includes CLI, authentication, daemon, UI, documentation, parsing, sandbox, and
+integration-package checks. The engine suite owns graph semantics, ingestion,
+retrieval, persistence, and recovery.
 
-- Write unit tests for new features.
-- Update existing tests when modifying functionality.
-- Ensure all tests pass before submitting a pull request.
+```bash
+make test-root
+make test-context-engine
+```
+
+Each Python package runs in a separate process so its `tests` package cannot
+shadow another suite. Parsing also runs its Rust tests; docs and UI use their
+Node test runners. Focused package commands remain available:
+
+```bash
+make test-product TEST_CHECKS=python
+make test-parsing
+make test-sandbox
+make test-integrations
+make test-context-engine TEST_TIER=graph
+make test-context-engine TEST_TIER=restart
+```
+
+Use shared fixtures for stable interfaces and named parameter rows for input,
+provider, platform, or backend variations. Keep recovery scenarios explicit when
+they require ordered actions and intermediate assertions. Source-layout and
+packaging assertions use the `source_contract` marker; runtime behavior belongs
+in tests that can run against installed distributions.
+
+CI builds every distribution before test jobs begin: product and workspace
+wheels and source archives, native parsing wheels, and the repaired Linux ARM64
+FalkorDB Lite wheel. A manifest records the commit, package version, wheel tags,
+and checksum. Smoke jobs install those exact artifacts in clean environments
+outside the checkout. Root and engine wheels are installed together when testing
+the product, and the engine is also installed independently.
+
+Deeper suites run on selected targets, with separate graph-acceptance and serial
+restart profiles. Required native acceptance cases fail if skipped. Source
+contracts run separately from installed runtime tests so source imports cannot
+mask missing files or dependency errors in a wheel.
 
 ## Submitting Pull Requests
 

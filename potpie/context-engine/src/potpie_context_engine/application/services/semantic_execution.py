@@ -29,6 +29,7 @@ def mutate_prepared(
         },
         pot_id=request.pot_id,
         approved_by=request.approved_by,
+        provenance_context=request.provenance_context,
         resolve_operations=resolve_operations,
     )
     record = workbench.plan_store.get(pot_id=request.pot_id, plan_id=proposal.plan_id)

@@ -49,7 +49,7 @@ def local_path(raw: str) -> Path:
 
 
 def read_snapshot(raw_path: str) -> tuple[dict[str, Any], Path]:
-    """Read and validate a folder or legacy/single-file snapshot."""
+    """Read and validate a folder or single-file snapshot."""
 
     path = local_path(raw_path)
     if path.is_dir():

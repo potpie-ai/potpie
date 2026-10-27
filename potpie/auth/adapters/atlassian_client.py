@@ -532,8 +532,3 @@ def _finalize_selected_site(
         "token_style": token_style_from_succeeded_scheme(result.succeeded_scheme),
     }
     return site, None
-
-
-def fetch_accessible_resources(email: str, api_token: str) -> list[dict[str, Any]]:
-    """Backwards-compatible alias for tests."""
-    return discover_sites_with_api_token(email, api_token, "jira")

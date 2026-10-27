@@ -321,7 +321,7 @@ export default function CommitView({ pot, host, onApplied }: Props) {
       />
     );
   }
-  if (page?.coverage.legacy_only && page.headers.length === 0) {
+  if (page?.coverage.saved_plans_only && page.headers.length === 0) {
     return <PlanHistory key={`${host}:${pot}`} pot={pot} host={host} />;
   }
   return (
@@ -347,7 +347,7 @@ export default function CommitView({ pot, host, onApplied }: Props) {
               {notice}
             </p>
           )}
-          {page && !page.coverage.complete && !page.coverage.legacy_only && (
+          {page && !page.coverage.complete && !page.coverage.saved_plans_only && (
             <p className="commit-notice warning" role="status">
               History is incomplete. {page.coverage.indexing_lag} commits await
               indexing.

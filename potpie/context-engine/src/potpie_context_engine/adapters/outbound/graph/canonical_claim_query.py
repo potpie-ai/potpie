@@ -22,6 +22,13 @@ from potpie_context_engine.core.claim_codec import (
 
 def claim_is_applicable(row: ClaimRow, *, as_of: datetime | None = None) -> bool:
     """Return whether a claim applies in the half-open valid-time interval."""
+    # Malformed persisted times cannot establish applicability. Diagnostic
+    # reads with include_invalidated retain the row for explicit inspection.
+    if any(
+        value is not None and (value.tzinfo is None or value.utcoffset() is None)
+        for value in (row.valid_at, row.valid_until, row.invalid_at)
+    ):
+        return False
     point = _as_utc(as_of or datetime.now(timezone.utc))
     start = _as_utc(row.valid_at) if row.valid_at is not None else None
     valid_until = _as_utc(row.valid_until) if row.valid_until is not None else None

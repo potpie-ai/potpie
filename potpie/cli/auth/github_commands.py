@@ -53,15 +53,6 @@ _GITHUB_OPEN_PROMPT_PREFIX = (
 )
 
 github_app = typer.Typer(help="GitHub integration.")
-github_test_app = typer.Typer(
-    help="Deprecated: use `potpie github repos`.",
-    hidden=True,
-)
-git_app = typer.Typer(
-    help="Deprecated: use `potpie github` instead.",
-    hidden=True,
-)
-git_test_app = typer.Typer(help="Deprecated: use `potpie github repos`.", hidden=True)
 
 
 def _flags() -> tuple[bool, bool]:
@@ -336,18 +327,6 @@ def github_logout_cmd() -> None:
     github_logout_impl()
 
 
-@git_app.command("login", hidden=True)
-def git_login_cmd() -> None:
-    """Deprecated alias for `potpie github login`."""
-    github_login_impl()
-
-
-@git_app.command("logout", hidden=True)
-def git_logout_cmd() -> None:
-    """Deprecated alias for `potpie github logout`."""
-    github_logout_impl()
-
-
 def github_repos_impl() -> None:
     """List GitHub repositories owned by the authenticated user."""
     j, v = _flags()
@@ -441,28 +420,3 @@ def _capture_unexpected_auth_error(
 def github_repos_cmd() -> None:
     """List GitHub repositories you can access."""
     github_repos_impl()
-
-
-@github_test_app.command("repos", hidden=True)
-@git_test_app.command("repos", hidden=True)
-def github_test_repos_cmd() -> None:
-    """Deprecated alias for ``potpie github repos``."""
-    github_repos_impl()
-
-
-def _build_auth_compat_github() -> typer.Typer:
-    app = typer.Typer(help="[Deprecated] use `potpie github`.")
-    app.command("login")(github_login_cmd)
-    app.command("logout")(github_logout_cmd)
-    app.command("repos")(github_repos_cmd)
-    return app
-
-
-github_app.add_typer(github_test_app, name="test")
-git_app.add_typer(git_test_app, name="test")
-
-
-def register_github_commands(root_app: typer.Typer) -> None:
-    """Deprecated: use ``register_integration_commands``."""
-    root_app.add_typer(github_app, name="github")
-    root_app.add_typer(git_app, name="git")

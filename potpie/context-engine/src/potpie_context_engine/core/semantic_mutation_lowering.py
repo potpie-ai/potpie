@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextvars import ContextVar
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 
 from potpie_context_engine.core.definition import (
@@ -37,6 +37,7 @@ from potpie_context_engine.core.graph_mutations import (
     EntityUpsert,
     InvalidationOp,
     ProvenanceContext,
+    ProvenanceRef,
 )
 from potpie_context_engine.core.ontology import EdgeTypeSpec, EntityTypeSpec
 from potpie_context_engine.core.reconciliation import MutationBatch
@@ -92,7 +93,9 @@ def _lower_semantic_request(
 ) -> SemanticMutationPlan:
     batch = MutationBatch()
     provenance = _provenance_from_request(request)
-    anchor = (plan.prepared_at or datetime.now(timezone.utc)).isoformat()
+    anchor = (
+        provenance.event_occurred_at or plan.prepared_at or datetime.now(timezone.utc)
+    ).isoformat()
 
     # Dedup entity upserts by key (a later op may re-reference the same entity).
     entity_by_key: dict[str, EntityUpsert] = {}
@@ -131,6 +134,8 @@ def _lower_semantic_request(
         )
 
     batch.entity_upserts = list(entity_by_key.values())
+    for entity in batch.entity_upserts:
+        entity.properties = _stamp_trusted_provenance(entity.properties, request)
     plan.batch = batch
     plan.provenance = provenance
     plan.accepted_ops = tuple(new_accepted)
@@ -774,7 +779,17 @@ def _claim_properties(
     truth = truth_override or op.truth or DEFAULT_TRUTH_CLASS
     evidence_strength = evidence_strength_for_truth(truth)
     fact = op.description or _synthesize_fact(subject_key, predicate, object_key)
+    trusted = request.provenance_context
     source_refs = [ev.source_ref for ev in op.evidence]
+    if not source_refs and trusted and trusted.source_ref:
+        source_refs = [trusted.source_ref]
+    observed_at = (
+        _utc_iso(op.observed_at)
+        if op.observed_at
+        else trusted.event_received_at.isoformat()
+        if trusted and trusted.event_received_at is not None
+        else anchor
+    )
     evidence_dicts = [
         {**dict(ev.metadata), "source_ref": ev.source_ref, "authority": ev.authority}
         for ev in op.evidence
@@ -791,13 +806,17 @@ def _claim_properties(
         "source_identity_stable": bool(source_refs),
         "source_refs": source_refs,
         "evidence": evidence_dicts,
-        "source_system": request.created_by.surface or "agent",
+        "source_system": (
+            trusted.source_system
+            if trusted and trusted.source_system
+            else request.created_by.surface or "agent"
+        ),
         "source_ref": (
             source_refs[0] if source_refs else (request.idempotency_key or claim_key)
         ),
         "valid_at": valid_at,
         "valid_from": valid_at,
-        "observed_at": _utc_iso(op.observed_at) if op.observed_at else anchor,
+        "observed_at": observed_at,
         "created_by": _actor_dict(request),
         "graph_contract_version": request.graph_contract_version
         or GRAPH_CONTRACT_VERSION,
@@ -840,7 +859,7 @@ def _claim_properties(
     code_scope = _code_scope_for(op)
     if code_scope:
         props["code_scope"] = code_scope
-    return props
+    return _stamp_trusted_provenance(props, request)
 
 
 def _valid_at_for_claim(op: SemanticMutation, *, truth: str, anchor: str) -> str:
@@ -918,7 +937,31 @@ def _code_scope_for(op: SemanticMutation) -> dict[str, str]:
     return out
 
 
+def _stamp_trusted_provenance(
+    properties: Mapping[str, object], request: SemanticMutationRequest
+) -> dict[str, object]:
+    context = request.provenance_context
+    if context is None:
+        return dict(properties)
+    # The graph reference backend persists lowered properties directly. Native
+    # writers also stamp provenance, so bind these static trusted fields once
+    # before preparation rather than relying on backend-specific decoration.
+    stamped = {
+        key: value
+        for key, value in properties.items()
+        if not key.startswith(("prov_", "actor_"))
+    }
+    source = asdict(context)
+    source.pop("prepared")
+    source.pop("mutation_id")
+    source["source_event_id"] = context.source_event_id or request.idempotency_key or ""
+    stamped.update(ProvenanceRef(pot_id=request.pot_id, **source).to_properties())
+    return stamped
+
+
 def _provenance_from_request(request: SemanticMutationRequest) -> ProvenanceContext:
+    if request.provenance_context is not None:
+        return request.provenance_context
     return ProvenanceContext(
         source_ref=request.idempotency_key,
         created_by_agent=request.created_by.harness,

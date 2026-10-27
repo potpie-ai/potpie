@@ -5,9 +5,7 @@ Skills are CLI-managed recipes; agents only ever see the advisory nudge in
 
 Every skill command is filesystem-only and runs in this process: a skill install
 writes files into *this* machine's harness directory (``~/.claude/skills`` and
-friends), so it never contacts the daemon. ``--no-daemon`` on ``install`` is
-accepted and does nothing; it stays, hidden, because installers that predate
-that still pass it.
+friends), so it never contacts the daemon.
 """
 
 from __future__ import annotations
@@ -69,14 +67,7 @@ def skills_install(
     agent: str = typer.Option("claude", "--agent"),
     path: str | None = typer.Option(None, "--path"),
     scope: str = typer.Option("global", "--scope"),
-    no_daemon: bool = typer.Option(
-        False,
-        "--no-daemon",
-        hidden=True,
-        help="Accepted for compatibility; installs never contact the daemon.",
-    ),
 ) -> None:
-    del no_daemon  # every install is daemon-free; see the module docstring
     with contract():
         effective_scope = _effective_scope(scope=scope, path=path)
         path = _resolve_path(path)

@@ -24,7 +24,6 @@ def _isolate_env_and_resolver(monkeypatch: pytest.MonkeyPatch):
         "GH_TOKEN",
         "GITHUB_TOKEN",
         "GH_TOKEN_LIST",
-        "CODE_PROVIDER_TOKEN",
     ):
         monkeypatch.delenv(var, raising=False)
     set_token_resolver(env_token_resolver)
@@ -50,11 +49,6 @@ def test_github_token_alias(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_token_list_first_non_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GH_TOKEN_LIST", " , a-token,\nb-token")
     assert resolve_token() == "a-token"
-
-
-def test_legacy_var_last(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CODE_PROVIDER_TOKEN", "legacy-token")
-    assert resolve_token() == "legacy-token"
 
 
 def test_set_resolver_overrides() -> None:

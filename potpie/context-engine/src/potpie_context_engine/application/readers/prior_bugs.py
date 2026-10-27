@@ -232,28 +232,13 @@ class PriorBugsReader:
             fix_keys.update(_fix_keys(fix_rows))
 
         if fix_keys:
-            # Canonical VERIFIED is actor/activity -> Fix. Some legacy/test rows
-            # used Fix -> actor; read both so old memory still contributes.
+            # VERIFIED points from the actor/activity to the Fix.
             expanded.extend(
                 self.claim_query.find_claims(
                     ClaimQueryFilter(
                         pot_id=req.pot_id,
                         predicate_in=("VERIFIED",),
                         object_key_in=tuple(sorted(fix_keys)),
-                        include_invalidated=req.include_invalidated,
-                        as_of=req.as_of,
-                        source_ref_in=req.source_refs,
-                        subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
-                        limit=max(len(fix_keys) * 8, 32),
-                    )
-                )
-            )
-            expanded.extend(
-                self.claim_query.find_claims(
-                    ClaimQueryFilter(
-                        pot_id=req.pot_id,
-                        predicate_in=("VERIFIED",),
-                        subject_key_in=tuple(sorted(fix_keys)),
                         include_invalidated=req.include_invalidated,
                         as_of=req.as_of,
                         source_ref_in=req.source_refs,
@@ -315,12 +300,10 @@ def _verification_succeeded(
     row: ClaimRow, *, entity_details: Mapping[str, Mapping[str, Any]]
 ) -> bool:
     raw_outcome = _verification_outcome_value(row, entity_details=entity_details)
-    # Legacy VERIFIED edges carried no outcome; their predicate is the positive
-    # assertion. Once an outcome is present, only explicit positive states can
-    # improve rank. Failed, partial, unknown and malformed values stay visible
-    # in details but add no corroboration.
+    # Only explicit positive outcomes improve rank. Missing, failed, partial,
+    # unknown and malformed values remain visible without adding corroboration.
     if raw_outcome is None:
-        return True
+        return False
     if isinstance(raw_outcome, bool):
         return raw_outcome
     if isinstance(raw_outcome, (int, float)):
@@ -367,7 +350,7 @@ def _verification_outcomes(
         refs = list(row.source_refs or ((row.source_ref,) if row.source_ref else ()))
         item: dict[str, Any] = {
             "succeeded": succeeded,
-            "outcome": raw_outcome if raw_outcome is not None else "legacy_verified",
+            "outcome": raw_outcome,
             "fact": fact[:2_000] or None,
             "source_refs": refs[:12],
         }
@@ -432,8 +415,6 @@ def _fix_key_for_row(row: ClaimRow) -> str | None:
     if row.predicate == "VERIFIED":
         if row.object_key.startswith("fix:"):
             return row.object_key
-        if row.subject_key.startswith("fix:"):
-            return row.subject_key
     return None
 
 

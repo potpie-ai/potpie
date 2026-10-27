@@ -87,6 +87,15 @@ def verify_installation(target: str) -> None:
 
 
 def run_suite(directory: Path, report: Path, selections: list[str]) -> None:
+    resolved = []
+    for selection in selections:
+        if not selection.startswith("tests/"):
+            resolved.append(selection)
+            continue
+        path, separator, scenario = selection.partition("::")
+        matches = list((directory / "tests").rglob(Path(path).name))
+        require(len(matches) == 1, f"Expected one owned native test: {selection}")
+        resolved.append(str(matches[0]) + separator + scenario)
     try:
         subprocess.run(  # noqa: S603 - fixed pytest executable and curated test selections.
             [
@@ -99,7 +108,7 @@ def run_suite(directory: Path, report: Path, selections: list[str]) -> None:
                 "-p",
                 "no:cacheprovider",
                 f"--junitxml={report}",
-                *selections,
+                *resolved,
             ],
             cwd=directory,
             check=True,

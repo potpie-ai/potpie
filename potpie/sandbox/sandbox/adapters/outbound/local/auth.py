@@ -1,22 +1,4 @@
-"""Auth-token resolution for the local-fs workspace provider.
-
-The sandbox library treats auth as a strict input — callers pass an
-``auth_token`` to :meth:`SandboxClient.get_workspace` if they have one and the
-local adapter embeds it in the clone URL. That contract works for explicit
-tokens but doesn't capture the *chain* potpie needs in production:
-
-    GitHub App installation token  →  User OAuth token  →  ``GH_TOKEN`` env
-
-This module provides a small pluggable resolver. The default
-:func:`env_token_resolver` walks the env-var portion of the chain (the cheap
-case that doesn't need a DB session). Production code that wants the full
-chain can register a richer resolver via :func:`set_token_resolver` — the
-plan calls for moving the existing ``app/modules/repo_manager/sync_helper.py``
-implementation here once we're ready to delete the legacy module.
-
-Until then this gives the local adapter a self-sufficient default so unit and
-e2e tests on public repos work without dragging in the legacy auth chain.
-"""
+"""Environment-token resolution and caller-provided resolvers for local clones."""
 
 from __future__ import annotations
 
@@ -46,7 +28,6 @@ def env_token_resolver(
       1. ``GH_TOKEN`` (single token)
       2. ``GITHUB_TOKEN`` (CI-style alias)
       3. ``GH_TOKEN_LIST`` (comma- or newline-separated; first non-empty wins)
-      4. ``CODE_PROVIDER_TOKEN`` (legacy potpie variable)
     """
     del repo_name, user_id  # default resolver doesn't use them
     for var in ("GH_TOKEN", "GITHUB_TOKEN"):
@@ -59,9 +40,6 @@ def env_token_resolver(
             part = part.strip()
             if part:
                 return part
-    val = os.getenv("CODE_PROVIDER_TOKEN")
-    if val:
-        return val
     return None
 
 

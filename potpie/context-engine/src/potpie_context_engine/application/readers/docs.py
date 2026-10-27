@@ -1,15 +1,11 @@
 """DocsReader.
 
 Returns reference-material claims: an ingested ``Document`` or one of its
-``DocumentSection``s pointed at a scope through ``DOCUMENTS``, plus the older
-``Document RELATED_TO scope`` fallback claims that ``doc_reference`` records
-still land on. Sections that match are expanded one hop over ``SECTION_OF`` so
-a result carries the document it came from.
+``DocumentSection``s pointed at a scope through ``DOCUMENTS``. Matching sections
+are expanded one hop over ``SECTION_OF`` to carry their parent document.
 
-``ClaimQueryFilter.subject_label`` takes a single label, so the two subject
-labels are two queries merged by :func:`dedupe_claim_rows`. Where a document
-carries both spellings for one scope, the typed one wins and the fallback is
-dropped, so the document takes one result slot rather than two.
+``ClaimQueryFilter.subject_label`` takes one label, so document and section
+queries are merged by :func:`dedupe_claim_rows`.
 
 An unscoped read also returns the ``SECTION_OF`` claims themselves — the rows
 ``resource import`` writes, whose fact is the section's summary and whose source
@@ -61,11 +57,7 @@ from potpie_context_engine.domain.ranking import Candidate, RankingService
 _DOCUMENT_LABEL = "Document"
 _SECTION_LABEL = "DocumentSection"
 _DOC_SUBJECT_LABELS: tuple[str, ...] = (_DOCUMENT_LABEL, _SECTION_LABEL)
-# ``DOCUMENTS`` is the typed reference-material predicate; ``RELATED_TO`` stays
-# so doc claims written before the predicate existed keep reading.
-_DOCUMENTS_PREDICATE = "DOCUMENTS"
-_LEGACY_PREDICATE = "RELATED_TO"
-_DOC_PREDICATES: tuple[str, ...] = (_DOCUMENTS_PREDICATE, _LEGACY_PREDICATE)
+_DOC_PREDICATES: tuple[str, ...] = ("DOCUMENTS",)
 _STRUCTURE_PREDICATE = "SECTION_OF"
 
 
@@ -200,7 +192,7 @@ class DocsReader:
                     )
                 )
             )
-        return _collapse_legacy_duplicates(dedupe_claim_rows(rows))
+        return dedupe_claim_rows(rows)
 
 
 def _rows_clearing_relevance_floor(
@@ -289,30 +281,6 @@ def _with_similarity(row: ClaimRow, similarity: float) -> ClaimRow:
     return dataclasses.replace(
         row, properties={**dict(row.properties), "semantic_similarity": similarity}
     )
-
-
-def _collapse_legacy_duplicates(rows: list[ClaimRow]) -> list[ClaimRow]:
-    """Drop a ``RELATED_TO`` row a ``DOCUMENTS`` row already says.
-
-    Nothing migrates the fallback: ``doc_reference`` records still emit
-    ``RELATED_TO`` while an agent can write ``DOCUMENTS`` for the same pair, and
-    ``dedupe_claim_rows`` keys on the predicate, so both survive. Left alone
-    they are two ranked candidates for one document — two of the agent's
-    ``max_items`` spent saying the same thing.
-    """
-    typed = {
-        (row.subject_key, row.object_key)
-        for row in rows
-        if row.predicate.upper() == _DOCUMENTS_PREDICATE
-    }
-    if not typed:
-        return rows
-    return [
-        row
-        for row in rows
-        if row.predicate.upper() != _LEGACY_PREDICATE
-        or (row.subject_key, row.object_key) not in typed
-    ]
 
 
 def _scope_overlap(row: ClaimRow, *, anchor_keys: Iterable[str]) -> float:

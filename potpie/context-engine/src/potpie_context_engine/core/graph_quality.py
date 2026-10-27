@@ -462,7 +462,7 @@ def detect_family_conflicts(
     rows = list(edges)
     buckets: dict[tuple[str, str], list[EpisodicEdgeConflictInput]] = defaultdict(list)
     for e in rows:
-        fam = predicate_family_for_episodic_supersede(e.name, e.target_labels)
+        fam = predicate_family_for_episodic_supersede(e.name)
         if fam is None:
             continue
         sk = temporal_subject_key_for_edge(

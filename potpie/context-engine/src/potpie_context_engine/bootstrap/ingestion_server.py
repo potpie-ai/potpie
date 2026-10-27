@@ -22,7 +22,6 @@ from potpie_context_engine.adapters.outbound.connectors._bench_stubs import (
     register_bench_stubs,
 )
 from potpie_context_engine.adapters.outbound.connectors.notion import NotionConnector
-from potpie_context_engine.adapters.outbound.graph import GraphWriterPort
 from potpie_context_engine.adapters.outbound.graph import (
     Neo4jGraphWriter as _Neo4jGraphWriter,
 )
@@ -35,9 +34,6 @@ from potpie_context_engine.adapters.outbound.graph.inbox_stores import (
 )
 from potpie_context_engine.adapters.outbound.graph.plan_stores import (
     LocalJsonGraphPlanStore,
-)
-from potpie_context_engine.adapters.outbound.graph.context_graph_service import (
-    ContextGraphService,
 )
 from potpie_context_engine.adapters.outbound.reconciliation.context_graph_tools import (
     ContextGraphReconciliationTools,
@@ -81,7 +77,6 @@ from potpie_context_engine.domain.ports.event_stream import (
     NoOpEventStreamPublisher,
 )
 from potpie_context_engine.domain.ports.ingestion_config import IngestionConfigPort
-from potpie_context_engine.domain.ports.context_graph import ContextGraphPort
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 from potpie_context_engine.core.reconciliation_flags import (
@@ -132,13 +127,11 @@ class IngestionServerContainer:
 
     settings: ContextEngineSettingsPort
     pots: PotResolutionPort
-    graph_writer: GraphWriterPort | None = None
     backend: GraphBackend | None = None
     graph: GraphService | None = None
     connectors: SourceConnectorRegistry = field(default_factory=SourceConnectorRegistry)
     reconciliation_agent: ReconciliationAgentPort | None = None
     jobs: ContextGraphJobQueuePort | None = None
-    context_graph: ContextGraphPort | None = None
     pot_source_listing: PotSourceListingPort | None = None
     """Host-side per-pot source rows (last_sync_at, sync_mode, …). Distinct
     from ``connectors``, which advertises engine-side connector capabilities.
@@ -176,7 +169,7 @@ class IngestionServerContainer:
             settings=self.settings,
             pots=self.pots,
             reconciliation_agent_available=self.reconciliation_agent is not None,
-            context_graph_available=self.context_graph is not None,
+            context_graph_available=self.graph is not None,
             episodic_available=self._graph_available(),
             reconciliation_config=self.reconciliation_config,
         )
@@ -184,9 +177,7 @@ class IngestionServerContainer:
     def _graph_available(self) -> bool:
         if self.backend is not None:
             return bool(getattr(self.backend, "enabled", True))
-        if self.graph_writer is not None:
-            return bool(getattr(self.graph_writer, "enabled", True))
-        return self.context_graph is not None
+        return self.graph is not None
 
     def ledger(self, session: Session) -> SqlAlchemyIngestionLedger:
         return SqlAlchemyIngestionLedger(session)
@@ -240,16 +231,15 @@ class IngestionServerContainer:
 def _attach_reconciliation_context(
     agent: ReconciliationAgentPort | None,
     graph: GraphService | None,
-    context_graph: ContextGraphPort | None,
 ) -> None:
     if agent is None:
         return
     ctx_setter = getattr(agent, "set_context_tools", None)
     if ctx_setter is not None and graph is not None:
         ctx_setter(ContextGraphReconciliationTools(graph))
-    graph_setter = getattr(agent, "set_context_graph", None)
-    if graph_setter is not None and context_graph is not None:
-        graph_setter(context_graph)
+    graph_setter = getattr(agent, "set_graph_service", None)
+    if graph_setter is not None and graph is not None:
+        graph_setter(graph)
 
 
 def build_ingestion_server(
@@ -288,11 +278,7 @@ def build_ingestion_server(
     stream_publisher = event_stream_publisher or _default_event_stream_publisher()
     backend_kind = (s.graph_db_backend() or "neo4j").strip().lower().replace("-", "_")
     registry = connectors or SourceConnectorRegistry()
-    # One graph substrate selected through the GraphBackend registry. Backends
-    # that still support old direct seeding expose ``graph_writer`` as a
-    # compatibility alias; application paths use ``backend.mutation``.
     backend = build_backend(backend_kind, settings=s)
-    graph_writer = getattr(backend, "graph_writer", None)
     graph_runtime = build_graph_runtime(
         backend,
         LocalJsonGraphPlanStore(),
@@ -300,22 +286,19 @@ def build_ingestion_server(
         reconciliation_config=reconciliation,
     )
     graph = graph_runtime.graph
-    context_graph = _build_context_graph_service(graph=graph, backend=backend)
     # Fail fast if the read trunk's reader set has drifted from the advertised
     # ``READER_BACKED_INCLUDES`` (see potpie_context_engine.core.coherence).
     from potpie_context_engine.core.coherence import assert_runtime_coherence
 
-    assert_runtime_coherence(reader_backed_includes=context_graph.backed_includes)
-    _attach_reconciliation_context(reconciliation_agent, graph, context_graph)
+    assert_runtime_coherence(reader_backed_includes=graph.backed_includes)
+    _attach_reconciliation_context(reconciliation_agent, graph)
     _attach_reconciliation_telemetry(reconciliation_agent, telemetry_sink)
     _attach_reconciliation_observability(reconciliation_agent, observability_sink)
     _attach_reconciliation_event_stream(reconciliation_agent, stream_publisher)
     return IngestionServerContainer(
         settings=s,
-        graph_writer=graph_writer,
         backend=backend,
         graph=graph,
-        context_graph=context_graph,
         pots=pots,
         connectors=registry,
         reconciliation_agent=reconciliation_agent,
@@ -325,17 +308,6 @@ def build_ingestion_server(
         event_stream_publisher=stream_publisher,
         reconciliation_config=reconciliation,
     )
-
-
-def _build_context_graph_service(
-    *,
-    graph: GraphService,
-    backend: GraphBackend,
-) -> ContextGraphPort:
-    try:
-        return ContextGraphService(graph=graph)
-    except TypeError:
-        return ContextGraphService(backend)
 
 
 def _default_telemetry() -> TelemetryPort:

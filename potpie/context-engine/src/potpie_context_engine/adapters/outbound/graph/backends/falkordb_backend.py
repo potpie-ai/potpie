@@ -209,17 +209,6 @@ class _FalkorDBMutation:
     async def current_version_async(self, pot_id: str) -> int:
         return await asyncio.to_thread(self.current_version, pot_id)
 
-    def legacy_inventory(self, pot_id: str):
-        self._require_native()
-        from potpie_context_engine.adapters.outbound.graph.falkordb_legacy import (
-            legacy_inventory,
-        )
-
-        return legacy_inventory(self.writer._get_graph(), pot_id)
-
-    async def legacy_inventory_async(self, pot_id: str):
-        return await asyncio.to_thread(self.legacy_inventory, pot_id)
-
     async def compare_and_apply_async(
         self,
         plan: MutationBatch,
@@ -493,12 +482,6 @@ class FalkorDBGraphBackend:
         return self.profile_name
 
     @property
-    def graph_writer(self) -> GraphWriterPort:
-        """Compatibility alias for old ingestion paths that seed via writer."""
-        assert self.writer is not None
-        return self.writer
-
-    @property
     def journal(self):
         from potpie_context_engine.adapters.outbound.graph.falkordb_journal import (
             FalkorJournal,
@@ -576,7 +559,7 @@ class FalkorDBGraphBackend:
                 metadata={"profile": self.profile_name},
             )
         try:
-            ok = bool(_run_sync(self.graph_writer.ensure_indexes()))
+            ok = bool(_run_sync(self.writer.ensure_indexes()))
         except Exception as exc:  # noqa: BLE001
             return BackendProvisionResult(
                 ok=False,

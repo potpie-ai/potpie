@@ -16,11 +16,10 @@ from potpie_context_engine.core.mutation_execution import (
 )
 from potpie_context_engine.core.ports.graph.analytics import RepairReport
 from potpie_context_engine.core.reconciliation_validation import (
-    validate_reconciliation_plan,
+    validate_mutation_batch,
 )
 
 from .backends.claim_query_analytics import ClaimQueryAnalytics
-from .document_key_repair import DOCUMENT_KEY_TARGET, wants_document_key_repair
 from .entity_label_repair import wants_entity_label_repair
 from .entity_summary_repair import wants_entity_summary_repair
 from .entity_repair import prepare_entity_repairs
@@ -45,8 +44,6 @@ class Neo4jAnalytics(ClaimQueryAnalytics):
 
         repaired = _run_sync(self._repair_async(pot_id, targets))
         findings = ()
-        if wants_document_key_repair(targets):
-            findings = super().repair(pot_id, targets=(DOCUMENT_KEY_TARGET,)).findings
         parts = [
             f"repaired {count} {target.replace('_', ' ')}"
             for target, count in repaired.items()
@@ -84,7 +81,7 @@ class Neo4jAnalytics(ClaimQueryAnalytics):
             )
             if not plan.entity_upserts:
                 return repaired
-            validate_reconciliation_plan(plan, pot_id, definition=self._definition)
+            validate_mutation_batch(plan, pot_id, definition=self._definition)
             mutation_id = uuid.uuid4().hex
             fingerprint = batch_fingerprint(plan)
             provenance = ProvenanceContext(

@@ -62,30 +62,8 @@ def _resolve_repo_alias() -> str:
     return os.environ.get("POTPIE_BENCH_REPO", "acme/sandbox")
 
 
-def _inprocess_enabled() -> bool:
-    return os.environ.get("POTPIE_BENCH_INPROCESS", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
-def make_client():
-    """Return the engine client.
-
-    With ``POTPIE_BENCH_INPROCESS=1`` (or ``run --local``) this returns the
-    in-process driver — no HTTP server on :8001, no Celery worker; the bench
-    builds the engine container and reconciles inline against the shared
-    Postgres/Neo4j. Otherwise it returns the HTTP client.
-    """
-    if _inprocess_enabled():
-        from potpie_context_engine.benchmarks.core.local_engine import (
-            InProcessEngineClient,
-        )
-
-        return InProcessEngineClient()
-
+def make_client() -> PotpieContextApiClient:
+    """Create an authenticated client for ingestion probes."""
     base_url = os.environ.get("POTPIE_BENCH_API_URL") or os.environ.get(
         "POTPIE_API_URL"
     )
@@ -93,7 +71,7 @@ def make_client():
     if not base_url or not api_key:
         raise RuntimeError(
             "Set POTPIE_BENCH_API_URL and POTPIE_BENCH_API_KEY (or POTPIE_API_URL / POTPIE_API_KEY) "
-            "before running benchmarks, or set POTPIE_BENCH_INPROCESS=1 to run in-process."
+            "before running ingestion probes."
         )
     return PotpieContextApiClient(
         base_url,
@@ -128,17 +106,6 @@ def create_ephemeral_pot(
     pot_id = created.get("id") or created.get("pot_id")
     if not pot_id:
         raise RuntimeError(f"create_context_pot returned no id: {created!r}")
-    # The in-process driver reconciles batches explicitly (it doesn't wait on
-    # a worker / flush timer), so the windowed default is fine and there's no
-    # HTTP surface to PUT against — skip the ingestion-config call.
-    if getattr(client, "inprocess", False):
-        logger.info(
-            "created ephemeral pot %s slug=%s repo=%s (in-process)",
-            pot_id,
-            slug,
-            primary_repo,
-        )
-        return EphemeralPot(pot_id=str(pot_id), slug=slug, repo_name=primary_repo)
     # The server-side default is ``windowed/5min`` (waits for the 60s
     # periodic flush). Bench scenarios complete in seconds, so flip the
     # ephemeral pot to ``immediate`` so each submitted event is picked up

@@ -160,7 +160,7 @@ local `default` pot. **Cross-pot federation is an explicit anti-goal.**
 
 The single biggest historical drift in these docs framed the `potpie graph …`
 workbench as a future "Graph V2." **That is wrong: the workbench is shipped today
-as V1.5.** Both the legacy V1 wrappers (`resolve` / `search` / `record`) *and* the
+as V1.5.** The `resolve`, `search`, and `record` commands and the
 full workbench are registered in `main.py` right now.
 
 Concretely, the live contract constants are:
@@ -178,8 +178,7 @@ So "v2" survives solely as the envelope version on workbench responses. What shi
   (an `AgentEnvelope`) — **there is no server-side answer synthesis**, the agent
   reasons over the evidence ([querying.md](./querying.md)).
 - **Writes:** the canonical write door is **`graph propose` → `graph commit
-  --verify`**. `graph mutate` is a **legacy wrapper** that internally calls
-  propose+commit; `potpie record` remains the compatibility write path
+  --verify`**. `potpie record` writes a single authored record
   ([writing.md](./writing.md)).
 - **Defaults:** `ladybug` on Windows and `falkordb_lite` on macOS/Linux, a detached `daemon` host mode, the
   bundled local embedder, installed skills, and the zero-token `graph nudge` a
@@ -219,7 +218,7 @@ learnings (`graph propose` → `graph commit --verify`). See
 - [architecture.md](./architecture.md) — hexagonal layers, composition roots, the daemon, backends.
 - [ontology.md](./ontology.md) — the 24 entities / 26 predicate keys / truth classes / contract constants.
 - [querying.md](./querying.md) — the two read altitudes, the read trunk, ranking, retrieval cards.
-- [writing.md](./writing.md) — the semantic DSL, propose→commit, the legacy `mutate` wrapper, inbox.
+- [writing.md](./writing.md) — the semantic DSL, propose→commit, record, and inbox.
 - [ingestion-nudge.md](./ingestion-nudge.md) — how raw events arrive, the two ledgers, the nudge model.
 - [skills.md](./skills.md) — harness-owned intelligence and the skill read/write loop.
 - [cli-flow.md](./cli-flow.md) — the full `potpie` command reference.

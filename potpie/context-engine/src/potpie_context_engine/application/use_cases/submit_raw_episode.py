@@ -21,7 +21,7 @@ from potpie_context_engine.domain.ingestion_event_models import (
     IngestionSubmissionRequest,
 )
 from potpie_context_engine.domain.ingestion_kinds import INGESTION_KIND_RAW_EPISODE
-from potpie_context_engine.core.reconciliation import ReconciliationResult
+from potpie_context_engine.core.reconciliation import MutationResult
 
 
 @dataclass(slots=True)
@@ -47,7 +47,7 @@ class RawEpisodeSubmissionResult:
 
 def _downgrades_from_reconciliation(receipt: EventReceipt) -> list[dict[str, str]]:
     rec = receipt.reconciliation
-    if isinstance(rec, ReconciliationResult) and rec.downgrades:
+    if isinstance(rec, MutationResult) and rec.downgrades:
         return list(rec.downgrades)
     return []
 
@@ -63,7 +63,7 @@ def _receipt_to_run_result(receipt: EventReceipt) -> RawEpisodeSubmissionResult:
         )
     if r.status == "error" or (r.error and not r.duplicate):
         rec = r.reconciliation
-        if isinstance(rec, ReconciliationResult) and (rec.reconciliation_errors or []):
+        if isinstance(rec, MutationResult) and (rec.reconciliation_errors or []):
             return RawEpisodeSubmissionResult(
                 ok=False,
                 status="reconciliation_rejected",

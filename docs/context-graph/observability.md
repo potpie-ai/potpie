@@ -99,7 +99,7 @@ the spans actually emitted today.
 
 | Span | Kind | Meaning | Code boundary |
 |---|---|---|---|
-| `graph.<command>` | internal | One workbench command: `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.neighborhood`, **`graph.propose`**, **`graph.commit`**, `graph.bulk`, `graph.history`, `graph.inbox` (carries `operation`), `graph.quality` (carries `report`), plus the legacy `graph.mutate` / `graph.mutation_template` / `graph.nudge`. | `potpie/cli/commands/graph.py` (`_graph_command`) |
+| `graph.<command>` | internal | One workbench command: `graph.status`, `graph.catalog`, `graph.describe`, `graph.search_entities`, `graph.read`, `graph.neighborhood`, **`graph.propose`**, **`graph.commit`**, `graph.bulk`, `graph.history`, `graph.inbox` (carries `operation`), `graph.quality` (carries `report`), `graph.mutation_template`, and `graph.nudge`. | `potpie/cli/commands/graph.py` (`_graph_command`) |
 | `ingest.submit` | server | Inbound episode/event/record normalized and submitted. | `application/services/ingestion_submission_service.py` |
 | `HTTP <method> <route>`, `http.ready` | server | Ingestion HTTP server request + readiness. | `adapters/inbound/http/_hardening.py`, `adapters/inbound/http/api/router.py` |
 | `batch.process` | consumer | Windowed batch fan-in (N events → 1 run → M mutations); **links back** to each event's ingress traceparent. | `application/use_cases/context_graph_jobs.py` |
@@ -107,8 +107,7 @@ the spans actually emitted today.
 | `<prefix>.<op>` | client | Public methods of an instrumented infra adapter (e.g. `neo4j.<op>`), wrapped at the composition root. | `bootstrap/observability_proxy.py` (`instrument_adapter`) |
 
 `graph.propose` and `graph.commit` are the canonical write-door spans (propose →
-commit `--verify`); `graph.mutate` is the legacy wrapper that internally proposes then
-commits. See [writing.md](./writing.md).
+commit `--verify`). See [writing.md](./writing.md).
 
 Notes:
 

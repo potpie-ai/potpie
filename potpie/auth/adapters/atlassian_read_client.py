@@ -504,14 +504,6 @@ def load_confluence_read_credentials() -> dict[str, Any]:
     return _load_product_read_credentials("confluence")
 
 
-def load_atlassian_read_credentials() -> dict[str, Any]:
-    """Backwards-compatible alias; prefers Jira credentials."""
-    try:
-        return load_jira_read_credentials()
-    except AtlassianReadError:
-        return load_confluence_read_credentials()
-
-
 def fetch_jira_projects(*, limit: int = 50) -> list[dict[str, Any]]:
     """Return Jira projects (workspaces) for the connected site."""
     ctx = load_jira_read_credentials()

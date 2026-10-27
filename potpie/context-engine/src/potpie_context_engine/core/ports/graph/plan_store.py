@@ -6,27 +6,6 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from potpie_context_engine.core.graph_plans import GraphMutationPlanRecord
-from potpie_context_engine.core.legacy_repair_run import RepairRun
-
-
-@runtime_checkable
-class RepairRunStorePort(Protocol):
-    def reserve_repair_run(
-        self, run: RepairRun, child_records: tuple[GraphMutationPlanRecord, ...]
-    ) -> tuple[RepairRun, bool]: ...
-
-    def get_repair_run(self, *, pot_id: str, repair_id: str) -> RepairRun | None: ...
-
-
-@runtime_checkable
-class AsyncRepairRunStorePort(Protocol):
-    async def reserve_repair_run_async(
-        self, run: RepairRun, child_records: tuple[GraphMutationPlanRecord, ...]
-    ) -> tuple[RepairRun, bool]: ...
-
-    async def get_repair_run_async(
-        self, *, pot_id: str, repair_id: str
-    ) -> RepairRun | None: ...
 
 
 @runtime_checkable

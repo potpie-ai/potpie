@@ -1,191 +1,60 @@
-# Context Engine Benchmarks
+# Context Engine Benchmark Utilities
 
-A live, no-mock benchmark harness for the context engine. Every scenario:
+This package contains scenario loading, fixture validation and redaction,
+synthetic smoke evaluation, evidence scoring, and report comparison utilities.
+The live `run` and `run-light` commands and application-specific in-process
+engine driver have been removed. They depended on retired application wiring
+and an unsupported query endpoint.
 
-1. Creates an **ephemeral pot** on a configured engine.
-2. (If declared) loads the **canonical Acme universe seed** — services, team, ADRs, runbooks — through the same `/events/reconcile` path scenarios use.
-3. Replays a sequence of **real recorded webhook payloads** (GitHub PRs, Linear issues, Slack messages, repo docs, alerts, deploys) plus any **distractor events** declared by the scenario, interleaved on the ingestion timeline.
-4. Snapshots the resulting graph and asserts **ingestion / ontology quality** (right entities, right edges, no soft-downgrades, and — new — that the graph stays *clean* of distractor entities the scenario explicitly forbids).
-5. Issues a `context_resolve` call and asserts **retrieval correctness** (cited the right events, used the right include keys, did not cite distractor events, and — for TIME scenarios — stayed inside the declared window).
-6. Hands the response to an **Opus LLM judge** that scores synthesis quality against a per-scenario rubric, with optional per-dimension attribution for composite scenarios.
-7. Drops the pot.
+Canonical read helpers accept an explicit `GraphService`: `resolve_context`
+uses `ResolveRequest`, and `snapshot_graph` reconstructs a bounded sample from
+returned claim evidence. The sample is limited to 200 ranked items and is not a
+complete graph export. A new live ingestion benchmark must supply its runtime
+and ingestion lifecycle explicitly; this package does not currently provide
+an end-to-end live runner.
 
-The full design lives in `docs/context-graph/bench-plan.md`. This file documents how to *run* the bench; the plan documents what it *measures*.
+## Commands
 
-## Why no mocks
-
-The previous benchmark mocked the reconciliation agent and used canned `MockIntelligenceProvider` responses, which is exactly what the headline 81 % score was measuring. The redesign rejects that: reconciliation is the engine's product, so the bench drives it for real.
-
-## Use-case taxonomy (v3, 2026-05-20)
-
-Four **knowledge dimensions** + a composite modifier:
-
-| Code | What it tests | Default weights (ing / ret / syn) |
-|---|---|---|
-| `PREF`  | Project preferences — conventions, ADRs, framework choices | 20 / 40 / 40 |
-| `INFRA` | Project infra / architecture — topology, owners, environments | 30 / 40 / 30 |
-| `TIME`  | Timeline — recent changes, chronology, change-to-symptom links | 40 / 30 / 30 |
-| `BUG`   | Bug repo — prior incidents, fixes, recurrence detection | 25 / 35 / 40 |
-| `COMBO` | Composite scenarios that exercise ≥ 2 of the above | 30 / 35 / 35 |
-
-`COMBO` scenarios declare `dimensions: [PREF, INFRA]` (etc.); the report breaks their score out per dimension.
-
-## Layout
-
-```
-benchmarks/
-├── README.md                    # this file
-├── cli.py                       # python -m benchmarks {run,list,fixture,report}
-├── core/
-│   ├── lifecycle.py             # ephemeral pot create/reset
-│   ├── ingestion.py             # /events/reconcile + ledger poll
-│   ├── replay.py                # envelope load, distractor expansion, timeline assembly
-│   ├── query.py                 # context_resolve client
-│   ├── graph_inspect.py         # post-ingest graph snapshot
-│   ├── scenario.py              # v3 schema + loader
-│   ├── universe.py              # canonical-universe seed loader
-│   ├── result.py                # AxisScore + sub-axes + by_dimension
-│   └── reporting.py             # by_use_case / by_dimension / by_difficulty / by_source_mix
-├── evaluators/
-│   ├── coverage.py              # recall sub-axis
-│   ├── precision.py             # purity sub-axis
-│   ├── ingestion_quality.py     # primary + sub-axes for ingestion
-│   ├── retrieval.py             # primary + sub-axes for retrieval
-│   └── llm_judge.py             # synthesis judge + per-dimension breakout
-├── tools/
-│   └── gen_distractors.py       # author-time noise generator
-├── fixtures/
-│   ├── raw_events/              # Recorded + redacted webhook envelopes
-│   │   ├── github/  linear/  slack/  notion/  repo_docs/  alerting/  deploy/
-│   │   └── universe/acme/       # canonical seed bundle
-│   └── README.md                # how to capture + redact
-├── use_cases/
-│   ├── PREF/scenarios/*.yaml
-│   ├── INFRA/scenarios/*.yaml
-│   ├── TIME/scenarios/*.yaml
-│   ├── BUG/scenarios/*.yaml
-│   └── COMBO/scenarios/*.yaml
-└── reports/                     # gitignored output
-```
-
-## Multi-source ingestion
-
-The engine ships production-grade readers for **GitHub** and **Linear**, and a minimal **Notion** reader. The four other connector kinds the bench uses — **Slack**, **Repo Docs**, **Alerting**, **Deploy** — are wired up as *passive stub connectors* (see `potpie/context-engine/adapters/outbound/connectors/_bench_stubs.py`). They emit a minimal `ReconciliationPlan` per envelope (one canonical entity, no edges) and let the reconciliation agent do the rest. The contract for swapping in a production reader later is the same `SourceConnectorPort` they implement.
-
-## Two ways to run the engine
-
-The bench can drive the engine two ways:
-
-1. **HTTP (default).** Talks to a running engine over `POTPIE_BENCH_API_URL`
-   — which is the app's own API port (`:8001`). Needs gunicorn on 8001 + a
-   Celery worker on the `context-graph-etl` queue.
-2. **In-process (`--local` / `POTPIE_BENCH_INPROCESS=1`).** Builds the engine
-   container in-process and reconciles **inline** against the shared
-   Postgres/Neo4j — **no HTTP server on :8001 and no Celery worker required**.
-   This keeps the bench non-blocking for the rest of the app (the app keeps
-   8001) and is fully self-contained. Ingestion is single-threaded and
-   batched (submit-all → reconcile-once → read-back), which also sidesteps the
-   threads-pool *"Event loop is closed"* reconciliation race. Implemented in
-   `core/local_engine.py` (`InProcessEngineClient`).
+Run these from an environment with `potpie-context-engine` installed:
 
 ```bash
-# In-process: needs only Postgres + Neo4j up (e.g. `make infra-up`) + OPENAI_API_KEY.
-python -m benchmarks run --local --tier quick --ingest-timeout 600
-python -m benchmarks run --local --scenario infra_topology_basic --skip-judge
+python -m potpie_context_engine.benchmarks list --grid
+python -m potpie_context_engine.benchmarks smoke
+python -m potpie_context_engine.benchmarks fixture validate
+python -m potpie_context_engine.benchmarks fixture redact path/to/event.json
+python -m potpie_context_engine.benchmarks report reports/latest.json --format markdown
+python -m potpie_context_engine.benchmarks report reports/latest.json --baseline reports/main.json
 ```
 
-## Configuration
+`smoke` validates available fixtures and exercises evaluators using synthetic
+empty evidence; it does not validate a running engine. Scenario YAML files are
+shipped, but the complete raw-event corpus must be supplied separately.
+`report` compares existing results and exits nonzero when the configured
+regression threshold is exceeded.
 
-For the **HTTP** path the bench talks to a real engine. Required environment:
+The optional `probe` command checks a configured ingestion server's health,
+connector registration, and event completion. It requires
+`POTPIE_BENCH_API_URL` and `POTPIE_BENCH_API_KEY` (or `POTPIE_API_URL` and
+`POTPIE_API_KEY`) and creates temporary pots for its checks.
 
-| Variable | Purpose |
-|---|---|
-| `POTPIE_BENCH_INPROCESS` | `1` to run the engine in-process (no :8001 server, no worker). Same as `run --local`. |
-| `POTPIE_BENCH_API_URL` | (HTTP path) Engine base URL (e.g. `http://127.0.0.1:8001`). Falls back to `POTPIE_API_URL`. |
-| `POTPIE_BENCH_API_KEY` | (HTTP path) API key for an account that can create pots. Falls back to `POTPIE_API_KEY`. |
-| `OPENAI_API_KEY` | Used by the LLM judge (default model `gpt-5.4`). |
-| `POTPIE_BENCH_JUDGE_MODEL` | Optional. Override the judge model. Default `gpt-5.4`. |
-| `POTPIE_BENCH_REPO` | Optional. `owner/repo` to attach to each ephemeral pot. Default `acme/sandbox`. |
-| `CONTEXT_ENGINE_RECONCILIATION_MODEL` | Optional. Reconciliation-agent model on the engine side. Default `openai-responses:gpt-5.4-mini`. |
+## Evaluation model
 
-## Running
+Scenarios describe project preferences (`PREF`), infrastructure (`INFRA`),
+timelines (`TIME`), prior bugs (`BUG`), or composites (`COMBO`). Composite cases
+name their dimensions. Difficulty and source mix remain independent report
+axes; a `light: true` tag identifies the curated five-scenario subset.
 
-```bash
-# --- Pre-flight (do these before any long run) ---
-python -m benchmarks smoke                                # in-process pipeline check (<1 s, no engine)
-python -m benchmarks probe                                # engine + connector + drain check (~15 s)
-
-# --- The bench ---
-python -m benchmarks run                                  # all quick-tier scenarios
-python -m benchmarks run-light                            # 5 scenarios, 5-way parallel, invariant judge (see below)
-python -m benchmarks run-light --local                    # same, in-process (no :8001 / no worker)
-python -m benchmarks run --use-case BUG                   # filter by knowledge dimension
-python -m benchmarks run --difficulty hard                # only hard scenarios
-python -m benchmarks run --source-mix full                # multi-source scenarios
-python -m benchmarks run --dimension TIME                 # includes composites touching TIME
-python -m benchmarks run --scenario bug_postgres_pool_exhaustion_recurrence
-python -m benchmarks run --invariant                      # schema-independent judge instead of per-rubric (any filter)
-python -m benchmarks run --tier extended                  # nightly; not run by default
-python -m benchmarks run --concurrency 4                  # 4 scenarios in parallel (pots are isolated)
-python -m benchmarks run --local --concurrency 4          # in-process, 4 worker processes
-python -m benchmarks run -v                                # verbose: also show engine/HTTP logs
-
-# --- Inspection + diff ---
-python -m benchmarks list                                 # flat list
-python -m benchmarks list --grid                          # use_case × difficulty coverage matrix
-python -m benchmarks fixture validate                     # lint all raw_events JSON
-python -m benchmarks report reports/latest.json --format markdown
-python -m benchmarks report reports/latest.json --baseline reports/main.json   # diff (non-zero exit on regression)
-
-# --- Authoring ---
-python -m benchmarks.tools.new_scenario --use-case PREF --difficulty medium --id pref_xxx
-python -m benchmarks.tools.gen_distractors --template <fixture> --count 25 --id-prefix noise_x --out fixtures/raw_events/noise/
-```
-
-## Operational commands explained
-
-- **`smoke`** — runs every scenario through the bench-side pipeline (fixture resolution, evaluator math, reporting) against synthetic snapshots. No engine required. Sub-second. The right gate on every PR — catches harness regressions before the long run.
-- **`probe`** — pre-flight against the live engine. Confirms `/context/status` returns the expected connector kinds, then submits one minimal envelope per kind and waits ~15 s for it to leave `queued`. If reconciliation is dead this command finishes in seconds with a clear diagnostic instead of 11 minutes of timeouts mid-run.
-- **`run --concurrency N`** — pots are isolated by construction, so scenarios run in parallel safely. See "Concurrency & progress" below for how the two engine modes parallelize differently.
-- **`run-light`** — curated 5-scenario subset (one per dimension: PREF / INFRA / TIME / BUG / COMBO), 5-way parallel, **invariant** judging on. The fastest end-to-end signal we have. Use it as the smoke test before a full `run`.
-
-## Schema-independent (invariant) grading
-
-The default judge grades the agent's answer against a per-scenario rubric whose criteria name specific fixture ids (OPS-218, ADR-021), and the deterministic axes grade against the engine's graph shape and the include vocabulary it currently happens to expose. Both move when the ontology / read trunk changes, even when the agent's answer is just as good.
-
-`run --invariant` (and the default `run-light`) replaces that with a single judge call that grades the answer against **only the scenario's input signal events** — no rubric, no fixture ids, no include vocab. Four 0..100 sub-scores:
-
-| Score | Question |
-|---|---|
-| `faithfulness` | Every concrete claim in the answer is supported by the events. Hallucinated identifiers / people / fixes collapse this score. |
-| `coverage`     | The answer surfaces the facts a careful reader of the input events would consider essential to the question. |
-| `clarity`      | The answer is structured so a working engineer can understand what happened in seconds. |
-| `usefulness`   | The answer concretely helps the user do whatever the question implies (debug, decide, follow a convention, plan a change). |
-
-Aggregate: weighted mean (default 30/30/20/20 — faithfulness + coverage carry 60 %, so cosmetic gains can't paper over hallucinations or omissions). Pass score: 65.
-
-In invariant mode the ingestion + retrieval axes still run end-to-end (the engine has to actually ingest the events and answer the query) but they don't gate pass/fail and they don't enter the aggregate. They stay in the JSON report as diagnostics so you can still see e.g. "the engine is now ignoring this include key" alongside the answer-level score.
-
-The judge is configurable via `POTPIE_BENCH_INVARIANT_JUDGE_MODEL` (falls back to `POTPIE_BENCH_JUDGE_MODEL`, default `gpt-5.4`).
-
-## Concurrency & progress
-
-**Progress logging.** A run prints a start banner (mode / concurrency / tier / judge), a `[i/N]` line per scenario with phase breadcrumbs (events ingested → reconcile time → graph snapshot size → retrieval → synthesis), a live `passed k/done` tally, and an end summary (total time, per-scenario pass/fail, slowest scenarios). `benchmarks.*` logs show by default; `-v` / `--verbose` additionally surfaces the chatty engine + HTTP loggers.
-
-**Concurrency model** (`--concurrency N`):
-
-| Engine mode | How `--concurrency N` parallelizes | Why |
-|---|---|---|
-| **HTTP** (default) | N **threads** fan scenarios out; each thread submits + polls over HTTP while reconciliation runs in the engine's Celery worker. Within a scenario, seeds + distractors submit via a 6-worker pool; signals stay ordered. | HTTP calls are thread-safe; the worker does the heavy LLM work. Throughput is bounded by the worker's pool (run it `--pool=solo` to dodge the agent's threads race). |
-| **In-process** (`--local`) | N **processes** (one scenario per subprocess). Within a scenario, ingestion is single-threaded (submit-all → reconcile-once → read-back). | The reconciliation agent does a per-batch `asyncio.run`; sharing a process across scenarios (threads) hits an "Event loop is closed" race. Separate processes give each scenario its own loop / agent / DB session and genuinely parallelize the LLM-bound reconciliation. |
-
-**Cost note.** The dominant per-scenario cost is the reconciliation agent — one LLM run over the scenario's events. The 12-event Acme universe is re-reconciled per scenario (e.g. ~4–5 min for a ~19-event scenario), and `hard`/`adversarial` scenarios add heavy distractors. So: prefer `--concurrency` (≈ linear speedup, bounded by CPU/LLM rate limits), keep the judge off (`--skip-judge`) for cheap dry runs, and dial distractor `count:` down if a run is too slow. (A future `--reuse-pot` that seeds the universe once is the biggest remaining win — see bench-plan §10.)
+Deterministic evaluators score structural coverage, retrieval, citations, and
+precision. The invariant LLM evaluator grades an answer against supplied input
+events using faithfulness, coverage, clarity, and usefulness. It is an explicit
+library call and requires a configured model client. Report utilities retain
+per-dimension results and baseline comparisons.
 
 ## Authoring a new scenario
 
 1. Pick a use case (`PREF`, `INFRA`, `TIME`, `BUG`, or `COMBO`).
 2. Capture or reuse the **raw event envelopes** the scenario depends on. See `fixtures/README.md`.
-3. Write a `<id>.yaml` under `use_cases/<USE_CASE>/scenarios/`. Schema (everything past `judge:` is unchanged from v1; everything above is v3):
+3. Write a `<id>.yaml` under `use_cases/<USE_CASE>/scenarios/`. Scenario schema:
 
 ```yaml
 id: <unique-snake-case-id>
@@ -274,7 +143,7 @@ Every scenario is graded on three axes (ingestion / retrieval / synthesis) plus 
 Hand-authoring 25:1 distractor ratios is busywork. Use the generator:
 
 ```bash
-python -m benchmarks.tools.gen_distractors \
+python -m potpie_context_engine.benchmarks.tools.gen_distractors \
     --template fixtures/raw_events/github/pr_merged__998__inventory_unrelated.json \
     --count 25 \
     --id-prefix noise_inventory_pr \
@@ -290,8 +159,8 @@ distractor_events:
 
 ## Tiers
 
-- **quick** — runs on every PR. Target 30 scenarios total. Each scenario should complete in < 90 s (excluding the LLM judge, which is opt-in via `--skip-judge` for cheap dry runs).
-- **extended** — runs nightly or before a release. No hard cap; expect minutes-to-hours. Target 60 scenarios.
+`quick` and `extended` are scenario metadata used to select evaluation inputs.
+They do not imply a scheduled or available live execution mode.
 
 ## Reports
 

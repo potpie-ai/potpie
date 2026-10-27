@@ -25,10 +25,10 @@ store. Both are shipped today (the data plane is
 
 | Altitude | Surface | Who | Commands |
 |---|---|---|---|
-| **Compatibility commands** | `AgentContextService` (`application/services/agent_context.py`) | humans + harnesses over the CLI | `resolve`, `search`, `record`, `status` |
+| **Task commands** | `AgentContextService` (`potpie/agent_context.py`) | humans + harnesses over the CLI | `resolve`, `search`, `record`, `status` |
 | **Graph Surface Lite** | the `potpie graph …` workbench (`potpie/cli/commands/graph.py`) over `DefaultGraphService` | humans + harnesses over the CLI | `graph catalog/read/search-entities/neighborhood/describe/status/history` (+ the write/inbox/quality commands in [`writing.md`](./writing.md)) |
 
-The richer workbench and compatibility commands are both CLI surfaces. `resolve`/`search`/
+The richer workbench and record/resolve/search commands are both CLI surfaces. `resolve`/`search`/
 `record` on `AgentContextService` delegate straight to `GraphService`; only `status`
 is composite (data-plane status + `PotManagementService` + a `SkillManager` install
 nudge). Both altitudes are implemented by `DefaultGraphService`
@@ -126,8 +126,8 @@ per-claim probability. Per-claim trust is carried on each item as the ranker `sc
   characters and lists at 12 entries, with omission metadata and a quoted,
   pot-preserving follow-up command that opens the full entity or source text.
 - **Verification outcomes.** Only explicit successful checks add corroboration;
-  failed, partial, unknown and numeric statuses do not. Older `VERIFIED` claims
-  with no outcome are labelled `legacy_verified`.
+  failed, partial, unknown, missing and numeric outcomes do not. Missing outcomes
+  remain `null` in the returned details.
 - **Identity lookup** distinguishes exact matches, ambiguity across repositories,
   missing identifiers and approximate candidates. Keep repo scope for a bare PR
   or issue number.
@@ -170,7 +170,7 @@ The 10 readers map one-to-one onto the 10 named views (§8):
 | `prior_bugs` | `RESOLVED`, `ATTEMPTED_FIX_FAILED`, `VERIFIED`, `REPRODUCES` | expands the bug/fix neighborhood, folds `VERIFIED` into fix corroboration, labels failed attempts, hides narrower-scope bugs from broader queries |
 | `decisions` | `DECIDED`, `AFFECTS` | active/superseded decisions for a scope |
 | `owners` | `OWNED_BY`, `MEMBER_OF` | ownership by scope/path |
-| `docs` | `Document\|DocumentSection DOCUMENTS scope` (plus legacy `Document RELATED_TO scope`), expanded one hop over `SECTION_OF` | scoped reference material — see the resource store in [architecture.md](./architecture.md) |
+| `docs` | `Document\|DocumentSection DOCUMENTS scope`, expanded one hop over `SECTION_OF` | scoped reference material — see the resource store in [architecture.md](./architecture.md) |
 | `resources` | none — reads the resource index, not the claim store | passages from ingested documents, each with the chunk id `potpie resource get` takes — see the resource store in [architecture.md](./architecture.md) |
 | `raw_graph` | every live `:RELATES_TO` edge (incl. generic `RELATED_TO`) | unscoped, for the explorer UI — **not** an agent retrieval family |
 
@@ -276,8 +276,7 @@ since/until), aggregates claim rows **per entity** (best `semantic_similarity` +
 supporting claims), resolves display labels, and returns ranked `GraphEntityCandidate`s;
 its stated purpose is "narrow entity/claim lookup for identity resolution before a write."
 **Traverse** is `backend.inspection.neighborhood` — a bounded, depth-limited,
-predicate-typed, direction-aware walk; `graph inspect <key>` is a legacy alias that warns
-toward `neighborhood`. The same `depth`/`direction` controls are plumbed through
+predicate-typed, direction-aware walk. The same `depth`/`direction` controls are plumbed through
 `ReadRequest` into `InfraTopologyReader`, so the `infra_topology.service_neighborhood`
 view's in-view traversal and the standalone op share semantics.
 
@@ -434,29 +433,12 @@ Full flag lists live in [`cli-flow.md`](./cli-flow.md); this is the read-side or
 | `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--query-threshold` (no default: omitted, the view's own filtering applies; lower is looser), `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. `--detail` and `--relations` affect **both** `--json` and default human output. `--format table` renders markdown pipe tables in human mode; timeline views default to `--format events` (bullets). Out-of-range `--depth`, exact case/alias spellings of the selector and presentation flags, and an ignored `--time-window` execute once and are disclosed as `adjustments` (see [cli-flow.md](./cli-flow.md), *Adjusted reads*). |
 | `timeline recent` | sugar for `graph read --subgraph recent_changes --view timeline`. |
 | `graph search-entities` | **Filter** axis (§7); structured typed lookup for identity resolution. |
-| `graph neighborhood --entity <key>` | **Traverse** axis (§7); `graph inspect <key>` is a legacy alias. |
+| `graph neighborhood --entity <key>` | **Traverse** axis (§7). |
 | `graph history` | mutation/claim/entity history (audit trail). |
 
-The compatibility `resolve`/`search` commands cover Retrieve, while `status` is
+The `resolve`/`search` commands cover Retrieve, while `status` is
 the composite readiness/nudge command. The workbench adds the Filter and Traverse
 axes through `graph search-entities` and `graph neighborhood`.
-
----
-
-## 10. The legacy `ContextGraphQuery` model
-
-`ContextGraphQuery`/`ContextGraphResult` plus the `ContextGraphGoal`/`ContextGraphStrategy`
-enums and `preset_*` helpers (`domain/graph_query.py`) are a **legacy/compat request
-model**, not the canonical in-process read DTO. The canonical DTOs are `ResolveRequest`/
-`SearchRequest` (`domain/ports/agent_context.py`) and `GraphReadRequest`.
-`adapters/outbound/graph/context_graph_service.py` translates
-`ContextGraphQuery → ResolveRequest → GraphService.resolve()` and carries `goal`/`strategy`
-only in `metadata`. `ContextGraphGoal` now has only `RETRIEVE`/`TIMELINE` (`ANSWER`/
-`INVESTIGATE` were removed); **`ContextGraphStrategy` (AUTO/SEMANTIC/EXACT/HYBRID/
-TRAVERSAL/TEMPORAL) is consumed by nothing in the active read trunk — it is vestigial.**
-This model survives only for the benchmark harness and a legacy port; the HTTP routers
-return "unsupported legacy ContextGraphQuery endpoint." Do not treat the strategy enum as
-a live read knob.
 
 ---
 

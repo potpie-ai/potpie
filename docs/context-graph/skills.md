@@ -118,8 +118,7 @@ Install mechanics (`potpie/skills/installer.py`, one `install_bundle` and one
   the single advisory command
   `potpie skills install --agent <agent>`. That advisory is the *only* skill
   signal agents ever see — it rides on `context_status` (see
-  [querying.md](./querying.md)). Globally-installed skills can stale (an old
-  `potpie-graph` that still teaches the legacy `graph mutate` predates v5);
+  [querying.md](./querying.md)). Globally installed skills can become outdated;
   `potpie skills update --agent <a>` is the fix the drift nudge points at.
 
 ### The correctness gate (this is real, not aspirational)
@@ -127,7 +126,7 @@ Install mechanics (`potpie/skills/installer.py`, one `install_bundle` and one
 `validate_packaged_skill_command_snippets` (`potpie/skills/snippets.py`)
 extracts every `potpie …` command a packaged template teaches — lines in
 ```` ```bash ```` fences and inline `` `potpie …` `` spans — and validates each
-command + option against a command table. `tests/unit/test_agent_skill_templates.py`
+command + option against a command table. `tests/setup/test_agent_skill_templates.py`
 runs it at build time with the **live Typer specs introspected from
 `potpie.cli.main.app`**, so a skill cannot ship a `potpie` command or flag that
 does not exist; installs no longer import the CLI to re-check the bundle the
@@ -161,7 +160,7 @@ run. **There is no top-level `potpie install`** — skills install only via
 | Skill | Ver | Role |
 |---|---|---|
 | `potpie-cli` | v6 | The `potpie` command itself: pot-scope resolution order, harness-led boundaries. |
-| **`potpie-graph`** | **v9** | **THE contract skill** — one shared discovery pass, the read → resolve → record or propose/commit → inbox → quality loop, ontology selection, truth classes, retrieval-grade descriptions, reporting the commands behind an answer, and "Responding To Nudges". Teaches `potpie record` for one fix or note and **propose/commit** for everything else (never the legacy `graph mutate`). |
+| **`potpie-graph`** | **v9** | **THE contract skill** — one shared discovery pass, the read → resolve → record or propose/commit → inbox → quality loop, ontology selection, truth classes, retrieval-grade descriptions, reporting the commands behind an answer, and "Responding To Nudges". Teaches `potpie record` for one fix or note and **propose/commit** for everything else. |
 | `potpie-repo-baseline` | v3 | Deep repo-baseline mode: source priority, evidence matrix, canonical entity families with `PROVIDES` / `IMPLEMENTED_IN`. |
 | `potpie-source-ingestion` | v5 | Todo-driven, phased (0–8) ingestion of a repo/PR/ticket/doc; parallel read-only subagents; GitHub/Linear/Jira hydrated via the agent's **own** integration tools (explicitly *not* Potpie connector queueing) → evidence matrix → identity resolution → propose/commit `--verify` → quality gate. |
 | `potpie-project-preferences` | v3 | Use-case read+record skill (preferences). |
@@ -214,8 +213,6 @@ baking the ontology into prose. The discipline it teaches (full read mechanics i
    `graph mutation-template --kind <…>` gives a schema-only skeleton to fill from
    sources actually read. **Never hard-delete** — use validity / retraction /
    supersession / merge. Pick the truth class honestly (it feeds the ranker).
-   `graph mutate` exists only as a **legacy wrapper** over propose+commit and the
-   skill steers away from it.
 5. **Capture uncertainty** that isn't yet a safe fact: `graph inbox add`. Inbox
    items are pending work, never returned as graph facts until processed.
 6. **Inspect quality (read-only):** `graph quality {summary | duplicate-candidates

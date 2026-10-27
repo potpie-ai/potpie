@@ -36,6 +36,11 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+markers = [
+    "unit: isolated sandbox behavior",
+    "integration: sandbox provider integration",
+    "source_contract: inspect repository sources or build controls",
+]
 
 [tool.uv]
 constraint-dependencies = [

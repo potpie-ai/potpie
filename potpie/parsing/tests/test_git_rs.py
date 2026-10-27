@@ -4,7 +4,7 @@ from shutil import which
 
 import pytest
 
-from parsing_rs import (
+from parsing.parsing_rs import (
     FileEntry,
     GitParseError,
     GitRefNotFoundError,
@@ -90,28 +90,14 @@ def test_bare_clone_bad_ref_cleans_dest(local_git_repo, tmp_path):
     assert not dest.exists()
 
 
-def test_list_files_returns_file_entries(local_git_repo, tmp_path):
+def test_list_files_exposes_native_entries_and_fields(local_git_repo, tmp_path):
     bare_repo = _bare_clone_repo(local_git_repo, tmp_path / "bare")
 
-    entries = list_files(str(bare_repo), "HEAD")
-
-    assert isinstance(entries, list)
-    assert entries
-    assert all(isinstance(entry, FileEntry) for entry in entries)
-
-
-def test_list_files_directory_entries_included(local_git_repo, tmp_path):
-    bare_repo = _bare_clone_repo(local_git_repo, tmp_path / "bare")
-
-    entries = list_files(str(bare_repo), "HEAD")
-
-    assert any(entry.kind == "directory" for entry in entries)
-
-
-def test_list_files_field_correctness(local_git_repo, tmp_path):
-    bare_repo = _bare_clone_repo(local_git_repo, tmp_path / "bare")
-
-    entries = {entry.path: entry for entry in list_files(str(bare_repo), "HEAD")}
+    rows = list_files(str(bare_repo), "HEAD")
+    assert isinstance(rows, list) and rows
+    assert all(isinstance(entry, FileEntry) for entry in rows)
+    assert any(entry.kind == "directory" for entry in rows)
+    entries = {entry.path: entry for entry in rows}
 
     readme = entries["README.md"]
     assert readme.path == "README.md"

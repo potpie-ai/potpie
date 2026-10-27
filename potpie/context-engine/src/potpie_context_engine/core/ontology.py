@@ -105,9 +105,7 @@ DEFAULT_EVIDENCE_STRENGTH = "inferred"
 
 
 BASE_GRAPH_LABELS = frozenset({"Entity"})
-# Legacy code-graph labels still in the data; ``CodeAsset`` is the canonical
-# bridge. The validator treats any of these as a CodeAsset endpoint.
-CODE_GRAPH_LABELS = frozenset({"CodeAsset", "FILE", "FUNCTION", "CLASS", "NODE"})
+CODE_GRAPH_LABELS = frozenset({"CodeAsset"})
 WILDCARD_ENDPOINT = "*"
 SCOPE_ENDPOINT = "@Scope"  # resolves to any entity flagged ``scope=True``
 ACTIVITY_ENDPOINT = (
@@ -220,8 +218,8 @@ class EdgeTypeSpec:
     """When this edge type appears, the classifier may add these labels to source/target."""
 
     def allows(self, from_labels: Iterable[str], to_labels: Iterable[str]) -> bool:
-        from_set = _normalized_label_set(from_labels)
-        to_set = _normalized_label_set(to_labels)
+        from_set = frozenset(from_labels)
+        to_set = frozenset(to_labels)
         return any(
             _endpoint_matches(left, from_set) and _endpoint_matches(right, to_set)
             for left, right in self.allowed_pairs
@@ -992,8 +990,7 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         "DOCUMENTS",
         "A document, or one of its sections, is reference material for an "
         "entity — the structural answer to 'what documentation covers "
-        "service:payments-api'. This is the public, typed version of the "
-        "RELATED_TO fallback that doc_reference records land on today. The "
+        "service:payments-api'. doc_reference records emit this predicate. The "
         "source label is ambiguous between Document and DocumentSection, so "
         "neither is inferred.",
         [("Document", WILDCARD_ENDPOINT), ("DocumentSection", WILDCARD_ENDPOINT)],
@@ -1189,9 +1186,6 @@ def normalize_edge_name(name: str) -> str:
     return name.strip().upper().replace(" ", "_").replace("-", "_")
 
 
-# Back-compat alias — external callers may still import the legacy name.
-
-
 def inferred_labels_for_episodic_edge_endpoint(
     edge_name: str, role: str
 ) -> tuple[str, ...]:
@@ -1222,15 +1216,8 @@ def exclusive_predicate_family_for_edge_name(name: str) -> str | None:
 
 def predicate_family_for_episodic_supersede(
     edge_name: str,
-    target_labels: Iterable[str] | None = None,
 ) -> str | None:
-    """Predicate family for temporal auto-supersede / pairwise conflict bucketing.
-
-    ``target_labels`` is accepted for back-compat with the legacy two-arg
-    callsite but is unused — family is derived from the edge name alone now
-    that all canonical predicates have known endpoint shapes.
-    """
-    del target_labels
+    """Predicate family for temporal auto-supersede / pairwise conflict bucketing."""
     return exclusive_predicate_family_for_edge_name(edge_name)
 
 
@@ -1505,13 +1492,6 @@ def _validate_lifecycle_state(
         )
 
 
-def _normalized_label_set(labels: Iterable[str]) -> frozenset[str]:
-    label_set = set(labels)
-    if label_set & {"FILE", "FUNCTION", "CLASS", "NODE"}:
-        label_set.add("CodeAsset")
-    return frozenset(label_set)
-
-
 def _endpoint_matches(endpoint: str, labels: frozenset[str]) -> bool:
     if endpoint == WILDCARD_ENDPOINT:
         return bool(labels)
@@ -1721,7 +1701,7 @@ RECORD_TYPES: dict[str, RecordTypeSpec] = {
         record_type="doc_reference",
         description="Pointer to canonical project documentation.",
         anchor_label="Document",
-        emits_predicate=None,
+        emits_predicate="DOCUMENTS",
         payload_schema=None,
         reader_include="docs",  # planned reader
     ),

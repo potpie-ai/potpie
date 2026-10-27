@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Literal, Optional
@@ -135,16 +134,6 @@ def _audit_operator_action(
                 continue
             fields[k] = v
     _audit_logger.warning("operator_action %s", action, extra={"audit": fields})
-
-
-def _ingest_rejection_returns_422() -> bool:
-    """When true, sync ingest surfaces structured reconciliation failures as HTTP 422.
-
-    Set ``CONTEXT_ENGINE_INGEST_422=0`` to restore legacy 503 + plain detail string
-    for operators that treat any 2xx as success monitors.
-    """
-    v = os.getenv("CONTEXT_ENGINE_INGEST_422", "1").strip().lower()
-    return v not in ("0", "false", "no", "off")
 
 
 class BatchRetryEventsRequest(BaseModel):
@@ -488,12 +477,7 @@ def create_context_router(
                     "errors": list(result.reconciliation_errors or []),
                     "downgrades": list(result.downgrades or []),
                 }
-                if _ingest_rejection_returns_422():
-                    return JSONResponse(status_code=422, content=payload)
-                raise HTTPException(
-                    status_code=503,
-                    detail=result.error or "reconciliation_rejected",
-                )
+                return JSONResponse(status_code=422, content=payload)
             err = result.error or "ingest_failed"
             if err == "unknown_pot_id":
                 raise HTTPException(status_code=404, detail=UNKNOWN_POT_DETAIL)
@@ -559,9 +543,9 @@ def create_context_router(
         reconciliation_ledger = (
             SqlAlchemyReconciliationLedger(db) if use_ledger else None
         )
-        assert container.context_graph is not None  # policy guarantees this
+        assert container.backend is not None  # policy guarantees this
         out = hard_reset_pot(
-            container.context_graph,
+            container.backend,
             body.pot_id,
             ledger=ledger,
             reconciliation_ledger=reconciliation_ledger,
@@ -1499,40 +1483,6 @@ def create_context_router(
         if report.unknown_pot:
             raise HTTPException(status_code=404, detail=UNKNOWN_POT_DETAIL)
         return report.payload
-
-    @router.post(
-        "/query/context-graph",
-        summary="Unsupported legacy ContextGraphQuery endpoint",
-        description=(
-            "Legacy remote graph-query clients are no longer supported. Use the "
-            "context-bound ContextEngine or GraphService surfaces."
-        ),
-    )
-    async def post_context_graph_query(
-        body: dict[str, Any],
-        actor: Any = Depends(require_auth),
-        container: IngestionServerContainer = Depends(get_container),
-    ) -> dict[str, Any]:
-        del body
-        _enforce(
-            container,
-            actor=actor,
-            resource=RESOURCE_POT,
-            action=ACTION_POT_READ,
-            pot_id=None,
-        )
-        raise HTTPException(
-            status_code=501,
-            detail={
-                "code": "http_context_graph_query_not_supported",
-                "message": (
-                    "Remote ContextGraphQuery is no longer a supported client surface."
-                ),
-                "recommended_next_action": (
-                    "Use local context_resolve/context_search or graph read."
-                ),
-            },
-        )
 
     return router
 

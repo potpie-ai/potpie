@@ -57,7 +57,7 @@ MAX_INVALIDATIONS = 2000
 _OBSERVATION_FALLBACK = "Observation"
 
 
-def validate_reconciliation_plan(
+def validate_mutation_batch(
     plan: MutationBatch,
     expected_pot_id: str,
     *,
@@ -89,15 +89,6 @@ def validate_reconciliation_plan(
                 raise ValueError("snapshot import must be canonical before execution")
     except ValueError as exc:
         raise MutationBatchValidationError(str(exc)) from exc
-    if plan.record_repairs:
-        from .legacy_repair_policy import validate_record_repair
-
-        try:
-            for effect in plan.record_repairs:
-                validate_record_repair(effect, pot_id=expected_pot_id)
-        except ValueError as exc:
-            raise MutationBatchValidationError(str(exc)) from exc
-        return
     if plan.reset_pot or plan.snapshot_import is not None:
         return
     config = (
@@ -177,9 +168,8 @@ def validate_reconciliation_plan(
         )
 
 
-# Canonical name (Step 5a rename); ``validate_reconciliation_plan`` stays as a
+# Canonical name (Step 5a rename); ``validate_mutation_batch`` stays as a
 # back-compat alias for existing importers.
-validate_mutation_batch = validate_reconciliation_plan
 
 
 def _validate_hard(plan: MutationBatch, expected_pot_id: str) -> None:

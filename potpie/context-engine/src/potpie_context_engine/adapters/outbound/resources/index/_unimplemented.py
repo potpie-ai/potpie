@@ -44,7 +44,7 @@ def unimplemented(profile: str, capability: str, method: str) -> Any:
         ),
         recommended_next_action=(
             "Set CONTEXT_ENGINE_RESOURCE_INDEX to a profile that implements it "
-            "(sqlite_hybrid, sqlite_fts), then run 'potpie resource index rebuild "
+            "(qdrant_hybrid, sqlite_fts), then run 'potpie resource index rebuild "
             "--confirm'."
         ),
     )

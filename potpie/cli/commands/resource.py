@@ -510,7 +510,7 @@ def _index_next_action(status: Any) -> str:
     if not status.ready:
         return (
             "Set a working profile with 'potpie config set resource_index "
-            "<sqlite_hybrid|sqlite_fts>' (CONTEXT_ENGINE_RESOURCE_INDEX overrides "
+            "<qdrant_hybrid|sqlite_fts>' (CONTEXT_ENGINE_RESOURCE_INDEX overrides "
             "it), then run 'potpie resource index rebuild --confirm'."
         )
     if status.pending_embeddings:

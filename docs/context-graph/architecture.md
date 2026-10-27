@@ -19,10 +19,9 @@ The single most important framing fact: the `potpie graph …` workbench is
 **shipped today** as the V1.5 surface. The string `v2` survives only as the
 workbench *envelope* version (`GRAPH_WORKBENCH_CONTRACT_VERSION="v2"`); the data
 plane is `GRAPH_CONTRACT_VERSION="v1.5"` / `ONTOLOGY_VERSION="2026-06-graph"`.
-Both the legacy `resolve`/`search`/`record` wrappers and the full workbench ship
-now. The **canonical write door is `graph propose` → `graph commit --verify`**;
-`graph mutate` is a legacy wrapper over it (see [Writing the graph, high
-level](#the-write-door-high-level)).
+The `resolve`, `search`, and `record` commands and the full workbench share
+the graph service. The **canonical write door is `graph propose` →
+`graph commit --verify`** (see [Writing the graph, high level](#the-write-door-high-level)).
 
 ## Hexagonal layers
 
@@ -293,7 +292,7 @@ and raises `CapabilityNotImplemented`.
 
 - Claim-key `mutation.invalidate` runs through the native atomic writer on
   Neo4j and FalkorDB; it raises `CapabilityNotImplemented` only for an injected
-  legacy writer that has no atomic mutation surface.
+  writer that does not implement the required atomic mutation surface.
 - `snapshot` (export/import) is implemented on `in_memory`, `embedded`, `ladybug`,
   `falkordb_lite`, `falkordb`, and `neo4j`; FalkorDB and Neo4j apply an import
   atomically against the pot's revision (see `graph export`/`graph import` in
@@ -339,10 +338,9 @@ ports.
 | `cypher.py` | The **Position-B canonical write engine shared by BOTH the Neo4j and FalkorDB writers.** Claims are stored as `(:Entity {group_id, entity_key})-[:RELATES_TO {group_id, name, subject_key, object_key, source_ref, valid_at, invalid_at, created_at, …}]->(:Entity)`. The MERGE key **includes `source_ref`** so corroborating writes from different sources don't collide; bitemporal stamps (`valid_at`/`invalid_at` = event time, `created_at` = system time); `_supersede_singleton_predecessors` stamps `invalid_at` on prior disagreeing live singleton claims. A Phase-0 spike proved this Cypher runs unchanged on FalkorDB. |
 | `canonical_claim_query.py` | Shared `FIND_CLAIMS_CYPHER`, `ENTITY_LABELS_CYPHER`, `row_from_record`, the lexical `embedding_score` token-overlap scorer, `stamp_similarity`/`stamp_scored_rows`, `CONTRACT_EDGE_KEYS`. Both readers reuse these; the FalkorDB reader only swaps row normalization. |
 | `claim_query_analytics.py` / `claim_query_semantic.py` | Give any claim-backed profile a real analytics projection and a `fact_query`-routed semantic search computed on read. |
-| `apply_plan.py` | `apply_mutation_batch` (alias `apply_reconciliation_plan`) — the **single async write door** (high-level below; full flow in [writing.md](./writing.md)). |
+| `apply_plan.py` | `apply_mutation_batch` — the **single async write door** (high-level below; full flow in [writing.md](./writing.md)). |
 | `writer_port.py` | `GraphWriterPort` — the narrow async mutation surface (`ensure_indexes`, 4 verbs, `reset_pot`), implemented by `Neo4jGraphWriter` and `FalkorDBGraphWriter`. Storage-internal; services depend on `GraphBackend`/`GraphMutationPort`, not this. |
 | `in_memory_reader.py` | `InMemoryClaimQueryStore` — full filter semantics; `match_mode` = `vector` (embedder cosine over `fact_embedding`) or `lexical` (token overlap). |
-| `context_graph_service.py` | Legacy `ContextGraphPort` DTO shim; `apply_plan`/`apply_plan_async` are **disabled** (raise `CapabilityNotImplemented`) — writes must go through `GraphService.mutate`. |
 | `plan_stores/local_json.py`, `inbox_stores/local_json.py` | JSON workbench stores (plans, inbox) under the Potpie home. |
 
 `FalkorDBGraphProvider` memoizes **one** graph handle so the Falkor reader and
@@ -366,15 +364,9 @@ flowchart LR
   cg_propose --> cg_commit --> cg_apply --> cg_writer
 ```
 
-Two corrections to the previous version of this doc:
-
-- **`graph mutate` is a legacy wrapper, not the canonical door.** It internally
-  calls `propose` then `commit` and emits a legacy warning
-  (`commands/graph.py`). The direct-apply `DefaultGraphService.mutate` (Spine B)
-  is now reached **only** through `record` / `context_record`, never via `graph
-  mutate`.
-- There **is** a server-created `plan_id` and a real `propose|commit` contract —
-  the prior claim that none existed was wrong.
+`record` / `context_record` use `DefaultGraphService.mutate` for a single
+authored record. Structured proposals receive a server-created `plan_id` that
+the caller commits after reviewing the plan.
 
 Optimistic concurrency on this path is per pot: a plan records the pot's
 monotonic revision (`{"_global": <revision>}`) and commit compares it while
@@ -446,8 +438,7 @@ limits        import 64 MiB of UTF-8 per call; get at most 128 ids per call
   not rewritten; fixing them is an ordinary propose/commit correction. Retention
   is unbounded until `resource rm`.
 - **Retrieval index.** `qdrant_hybrid` (default) combines SQLite BM25 and Qdrant
-  vectors using reciprocal rank fusion. `sqlite_hybrid` remains a compatibility
-  alias; `sqlite_fts` selects text search alone and `none` disables retrieval.
+  vectors using reciprocal rank fusion. `sqlite_fts` selects text search alone and `none` disables retrieval.
   `CONTEXT_ENGINE_RESOURCE_INDEX` takes precedence over the `resource_index`
   config key. Import writes lexical rows inline. SQLite retains text, cached
   embeddings and a durable queue of Qdrant updates and deletions; vectors drain
@@ -467,8 +458,7 @@ limits        import 64 MiB of UTF-8 per call; get at most 128 ids per call
 
 ## Backend selection precedence
 
-- **Host / CLI:** `CONTEXT_ENGINE_BACKEND` (preferred) > legacy
-  `GRAPH_DB_BACKEND` > `default_backend_profile()` = **`ladybug` on Windows**,
+- **Host / CLI:** `CONTEXT_ENGINE_BACKEND` > `default_backend_profile()` = **`ladybug` on Windows**,
   **`falkordb_lite` on macOS/Linux**.
 - **Ingestion server:** `settings.graph_db_backend()` default **`neo4j`**, but it
   also routes through `build_backend`, so FalkorDB works there too.
@@ -547,7 +537,7 @@ by [ingestion-nudge.md](./ingestion-nudge.md).
 
 | Variable | Effect | Default |
 |---|---|---|
-| `CONTEXT_ENGINE_BACKEND` / `GRAPH_DB_BACKEND` | Backend profile (first wins) | `ladybug` (Windows host), `falkordb_lite` (macOS/Linux host), `neo4j` (ingestion server) |
+| `CONTEXT_ENGINE_BACKEND` | Backend profile | `ladybug` (Windows host), `falkordb_lite` (macOS/Linux host), `neo4j` (ingestion server) |
 | `CONTEXT_ENGINE_HOST_MODE` | `daemon` \| `in_process` | `daemon` |
 | `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder | bundled local embedder |
 | `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL` | Downgrade instead of reject on ontology drift at apply time | off |
@@ -632,8 +622,8 @@ duplicate ontology enums in docs/CLI.
 - The canonical claim store is the only source of truth; semantic/inspection/
   analytics/snapshot are rebuildable projections.
 - Every fact is scoped by `pot_id` = `group_id`; no cross-pot federation.
-- The canonical write door is `propose` → `commit --verify`; `graph mutate` is a
-  legacy wrapper; reads never synthesize answers.
+- The canonical write door is `propose` → `commit --verify`; reads return evidence
+  for the calling agent to interpret.
 - Pot Management owns pot/source lifecycle; Graph Service owns graph operations;
   the daemon hosts services but holds no business logic.
 - Unbuilt capabilities fail-closed with a dotted `CapabilityNotImplemented`

@@ -45,13 +45,6 @@ GRAPH_WORKBENCH_ADMIN_COMMANDS: tuple[str, ...] = (
     "import",
 )
 
-GRAPH_WORKBENCH_LEGACY_COMMANDS: tuple[str, ...] = (
-    "mutate",
-    "inspect",
-    "mutation-template",
-    "nudge",
-)
-
 
 @dataclass(frozen=True, slots=True)
 class GraphCommandError:
@@ -184,7 +177,6 @@ __all__ = [
     "GRAPH_WORKBENCH_ADMIN_COMMANDS",
     "GRAPH_WORKBENCH_COMMANDS",
     "GRAPH_WORKBENCH_CONTRACT_VERSION",
-    "GRAPH_WORKBENCH_LEGACY_COMMANDS",
     "GRAPH_WORKBENCH_ONTOLOGY_VERSION",
     "GraphCommandEnvelope",
     "GraphCommandError",

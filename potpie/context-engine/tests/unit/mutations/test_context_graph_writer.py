@@ -1,0 +1,206 @@
+"""Tests for write methods on the unified context graph adapter."""
+
+from __future__ import annotations
+
+import asyncio
+
+
+from potpie_context_engine.adapters.outbound.graph.apply_plan import (
+    apply_mutation_batch,
+)
+from potpie_context_engine.adapters.outbound.graph.cypher import upsert_entities_async
+from potpie_context_engine.core.graph_mutations import (
+    EdgeUpsert,
+    EntityUpsert,
+    ProvenanceContext,
+    ProvenanceRef,
+)
+from potpie_context_engine.core.reconciliation import (
+    MutationBatch,
+)
+
+
+def test_apply_mutation_batch_uses_provenance_context_without_event_ref() -> None:
+    captured: dict[str, ProvenanceRef] = {}
+    read_scopes = []
+
+    class _Writer:
+        async def claim_rows(self, pot_id, **scope):
+            read_scopes.append((pot_id, scope))
+            return []
+
+        async def upsert_entities(
+            self, pot_id: str, items: list[EntityUpsert], provenance: ProvenanceRef
+        ) -> int:
+            captured["entities"] = provenance
+            return len(items)
+
+        async def upsert_edges(
+            self, pot_id: str, items: list[EdgeUpsert], provenance: ProvenanceRef
+        ) -> int:
+            captured["edges"] = provenance
+            return len(items)
+
+        async def delete_edges(
+            self, pot_id: str, items: list[object], provenance: ProvenanceRef
+        ) -> int:
+            return len(items)
+
+        async def invalidate(
+            self, pot_id: str, items: list[object], provenance: ProvenanceRef
+        ) -> int:
+            return len(items)
+
+    plan = MutationBatch(
+        entity_upserts=[
+            EntityUpsert("service:payments-api", ("Service",), {}),
+            EntityUpsert("service:ledger-api", ("Service",), {}),
+        ],
+        edge_upserts=[
+            EdgeUpsert("DEPENDS_ON", "service:payments-api", "service:ledger-api")
+        ],
+    )
+    result = asyncio.run(
+        apply_mutation_batch(
+            _Writer(),
+            plan,
+            expected_pot_id="p1",
+            provenance_context=ProvenanceContext(
+                mutation_id="mutation:reserved",
+                source_event_id="harness-run-1",
+                source_system="harness",
+                source_kind="graph-mutation",
+                source_ref="repo:acme/api@abc",
+                created_by_agent="codex",
+            ),
+        )
+    )
+
+    assert result.ok is True
+    assert result.mutation_id == "mutation:reserved"
+    assert read_scopes == [
+        (
+            "p1",
+            {
+                "record_ids": (),
+                "history_scopes": (("service:payments-api", "DEPENDS_ON"),),
+                "corrections": (),
+            },
+        )
+    ]
+    prov = captured["edges"]
+    assert prov.mutation_id == "mutation:reserved"
+    assert prov.source_event_id == "harness-run-1"
+    assert prov.source_system == "harness"
+    assert prov.source_kind == "graph-mutation"
+    assert prov.source_ref == "repo:acme/api@abc"
+    assert prov.created_by_agent == "codex"
+
+
+class _FakeResult:
+    async def consume(self) -> None:
+        return None
+
+
+class _FakeSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc):
+        return None
+
+    async def run(self, query: str, **kwargs):
+        self.calls.append((query, kwargs))
+        return _FakeResult()
+
+
+class _FakeDriver:
+    def __init__(self) -> None:
+        self.session_obj = _FakeSession()
+
+    def session(self) -> _FakeSession:
+        return self.session_obj
+
+
+def test_canonical_entity_upsert_sets_non_null_string_defaults() -> None:
+    driver = _FakeDriver()
+    count = asyncio.run(
+        upsert_entities_async(
+            driver,
+            "pot1",
+            [
+                EntityUpsert(
+                    "component:cli",
+                    ("Entity",),
+                    {"name": 123, "summary": None},
+                )
+            ],
+            ProvenanceRef(pot_id="pot1", source_event_id="event1"),
+        )
+    )
+
+    assert count == 1
+    kwargs = driver.session_obj.calls[0][1]
+    assert kwargs["a_name"] == "123"
+    assert kwargs["a_summary"] == "123"
+    assert kwargs["a_description"] == "123"
+
+
+def test_canonical_entity_upsert_derives_compact_summary_from_description() -> None:
+    driver = _FakeDriver()
+    count = asyncio.run(
+        upsert_entities_async(
+            driver,
+            "pot1",
+            [
+                EntityUpsert(
+                    "service:payments-api",
+                    ("Service",),
+                    {
+                        "name": "payments-api",
+                        "description": "  Payments API handles refunds, settlement, and ledger posting.  ",
+                    },
+                )
+            ],
+            ProvenanceRef(pot_id="pot1", source_event_id="event1"),
+        )
+    )
+
+    assert count == 1
+    kwargs = driver.session_obj.calls[0][1]
+    assert (
+        kwargs["a_summary"]
+        == "Payments API handles refunds, settlement, and ledger posting."
+    )
+    assert (
+        kwargs["a_description"]
+        == "Payments API handles refunds, settlement, and ledger posting."
+    )
+
+
+def test_bare_entity_reference_never_carries_key_derived_display_fields() -> None:
+    """A bare re-reference (key + type only) must not overwrite authored
+    summaries: the writer sends empty authored params and lets the CASE
+    expressions keep the stored value (filling the key only on new nodes)."""
+    driver = _FakeDriver()
+    asyncio.run(
+        upsert_entities_async(
+            driver,
+            "pot1",
+            [EntityUpsert("repo:github.com/acme/shop", ("Repository",), {})],
+            ProvenanceRef(pot_id="pot1", source_event_id="event1"),
+        )
+    )
+
+    query, kwargs = driver.session_obj.calls[0]
+    assert kwargs["a_name"] == ""
+    assert kwargs["a_summary"] == ""
+    assert kwargs["a_description"] == ""
+    for field in ("name", "summary", "description"):
+        assert field not in kwargs["props"]
+    # The query must only fill display fields when the node has none.
+    assert "CASE WHEN $a_summary <> ''" in query
+    assert "coalesce(e.summary, '') = ''" in query

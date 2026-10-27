@@ -7,7 +7,7 @@ agent contract — the public, agent-facing tier is
 :mod:`potpie_context_engine.core.semantic_mutations`, which lowers into a ``MutationBatch``.
 
 Naming (Graph V1.5 Step 5a): the batch reconciles nothing — it is a mutation
-batch, so the canonical name is ``MutationBatch`` (``ReconciliationPlan`` is
+batch, so the canonical name is ``MutationBatch`` (``MutationBatch`` is
 kept as a thin back-compat alias for existing importers). "Reconciliation" is
 reserved for genuine source-state convergence (the ledger ``reconcile()`` path
 and V2's ``reconcile_snapshot``).
@@ -25,7 +25,6 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from potpie_context_engine.core.mutation_execution import ExecutionMetadata
-from potpie_context_engine.core.legacy_records import RecordRepair, MAX_REPAIR_RECORDS
 
 from potpie_context_engine.core.context_events import EventRef
 from potpie_context_engine.core.graph_mutations import (
@@ -40,8 +39,7 @@ from potpie_context_engine.core.graph_mutations import (
 # thin back-compat shim for one iteration; ``MutationBatch.evidence`` keeps its
 # ``EvidenceRef`` element type through this import.
 from potpie_context_engine.core.llm_reconciliation import (  # noqa: F401  (re-export shim)
-    EvidenceRef,
-    ReconciliationRequest,
+    EvidenceRef as _EvidenceRef,
 )
 
 
@@ -63,14 +61,13 @@ class MutationBatch:
     edge_upserts: list[EdgeUpsert] = field(default_factory=list)
     edge_deletes: list[EdgeDelete] = field(default_factory=list)
     invalidations: list[InvalidationOp] = field(default_factory=list)
-    evidence: list[EvidenceRef] = field(default_factory=list)
+    evidence: list[_EvidenceRef] = field(default_factory=list)
     confidence: float | None = None
     warnings: list[str] = field(default_factory=list)
     ontology_downgrades: list[dict[str, str]] = field(default_factory=list)
     """Populated when soft ontology downgrade runs (API surface); not persisted on plan slices."""
     reset_pot: bool = False
     snapshot_import: Mapping[str, Any] | None = None
-    record_repairs: tuple[RecordRepair, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.reset_pot) is not bool:
@@ -84,19 +81,12 @@ class MutationBatch:
                 (
                     self.reset_pot,
                     self.snapshot_import is not None,
-                    bool(self.record_repairs),
                 )
             )
             > 1
         ):
             raise ValueError("administrative mutation kinds cannot share a batch")
-        if len(self.record_repairs) > MAX_REPAIR_RECORDS or any(
-            not isinstance(effect, RecordRepair) for effect in self.record_repairs
-        ):
-            raise ValueError("invalid or oversized legacy repair batch")
-        if (
-            self.reset_pot or self.snapshot_import is not None or self.record_repairs
-        ) and (
+        if (self.reset_pot or self.snapshot_import is not None) and (
             self.entity_upserts
             or self.edge_upserts
             or self.edge_deletes
@@ -109,8 +99,7 @@ class MutationBatch:
 
 # Back-compat alias — the public ``SemanticMutationPlan`` keeps its name;
 # ``MutationBatch`` is the internal tier it lowers into. Existing importers of
-# ``ReconciliationPlan`` keep working; new code uses ``MutationBatch``.
-ReconciliationPlan = MutationBatch
+# ``MutationBatch`` keep working; new code uses ``MutationBatch``.
 
 
 @dataclass(slots=True)
@@ -147,15 +136,10 @@ class MutationResult:
 
 
 # Back-compat alias.
-ReconciliationResult = MutationResult
 
 
 __all__ = [
-    "EvidenceRef",
     "MutationBatch",
     "MutationResult",
     "MutationSummary",
-    "ReconciliationPlan",
-    "ReconciliationRequest",
-    "ReconciliationResult",
 ]

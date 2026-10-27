@@ -26,7 +26,7 @@ from potpie_context_engine.outcomes import RetryPosture
 from potpie_context_engine.requests import EngineRequest
 
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 PROTOCOL_MIN_VERSION = PROTOCOL_VERSION
 PROTOCOL_MAX_VERSION = PROTOCOL_VERSION
 

@@ -904,26 +904,11 @@ Closes gap 4.
   post-`analyze_directory` exit). Failures are logged and swallowed —
   cache provisioning is an optimization, not a parsing prerequisite.
 
-### P6 — Tool surface refactor — DONE
+### P6 — Tool surface
 
-Closes gap 9.
-
-* `create_sandbox_tools(client=..., handle=...)` — explicit-handle
-  factory mode. Tools dispatch through pre-bound `(client, handle)`
-  closures with input schemas that omit `project_id`. Capability
-  gating drops write tools when the handle is read-only
-  (`enforce_capabilities=True` default).
-* The legacy zero-arg `create_sandbox_tools()` form keeps working —
-  required for back-compat with the existing harness wiring at
-  `multi_agent/agent_factory.py` and `pydantic_agent.py`.
-* Helper functions extracted in `tool_functions.py`:
-  `_exec_text_editor`, `_exec_shell`, `_exec_search`, `_exec_git`,
-  `_exec_pull_request`. Both factory modes funnel through the same
-  helpers.
-* `WorkspaceHandle.capabilities` carries the gating signal.
-* Contextvar machinery in `tools/sandbox/context.py` is **kept** for
-  the legacy form — full removal happens once harness callers migrate
-  to the explicit form (P6.5 cleanup).
+The application-specific `create_sandbox_tools` factory and its context-variable
+compatibility mode have been retired. Current consumers use the sandbox package's
+explicit workspace handles and service operations.
 
 ### P7 — `GitPlatformProvider` and PR tool — DONE
 

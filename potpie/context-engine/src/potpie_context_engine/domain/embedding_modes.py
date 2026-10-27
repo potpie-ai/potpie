@@ -29,7 +29,6 @@ AUTO_SENTENCE_TRANSFORMER_ALIASES = frozenset({"auto", "best", "semantic"})
 
 EXPLICIT_SENTENCE_TRANSFORMER_ALIASES = frozenset(
     {
-        "legacy",
         "sentence-transformers",
         "sentence_transformers",
         "sbert",

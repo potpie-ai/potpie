@@ -74,17 +74,10 @@ def _emit(out: TextIO, record: dict[str, Any]) -> None:
 
 
 def _iter_payload(payload: Any) -> Iterable[dict[str, Any]]:
-    """Walk a :class:`parsing_rs.GraphPayload` and yield wire records.
-
-    Tolerates older payloads that name the edge collection ``edges``
-    (the host code does the same — see ``_reconstruct_graph_from_payload``).
-    """
+    """Walk the native GraphPayload and yield wire records."""
     for node in payload.nodes:
         yield _node_record(node)
-    edges = getattr(payload, "edges", None)
-    if edges is None:
-        edges = payload.relationships
-    for edge in edges:
+    for edge in payload.relationships:
         yield _edge_record(edge)
 
 
@@ -106,7 +99,7 @@ def run(
     sink: TextIO = out if out is not None else sys.stdout
     if extract is None:
         # Imported lazily so unit tests on the host can stub `extract`.
-        import parsing_rs  # type: ignore[import-not-found]
+        from parsing import parsing_rs  # type: ignore[import-not-found]
 
         extract_fn: Any = parsing_rs.extract_graph
     else:

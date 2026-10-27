@@ -123,12 +123,12 @@ async def apply_atomic(
 
     _require_valid_pot_id(expected_pot_id)
     plan = deepcopy(plan)
-    if plan.reset_pot or plan.snapshot_import is not None or plan.record_repairs:
+    if plan.reset_pot or plan.snapshot_import is not None:
         from potpie_context_engine.core.reconciliation_validation import (
-            validate_reconciliation_plan,
+            validate_mutation_batch,
         )
 
-        validate_reconciliation_plan(
+        validate_mutation_batch(
             plan, expected_pot_id, definition=definition, config=reconciliation_config
         )
     mutation_id = provenance_context.mutation_id
@@ -169,16 +169,7 @@ async def apply_atomic(
                     raise GraphMutationVersionConflict(
                         expected=prepared.expected_version, current=current
                     )
-                if plan.record_repairs:
-                    from .neo4j_legacy import apply_record_repairs
-
-                    applied, record_ids = await apply_record_repairs(
-                        transaction,
-                        plan.record_repairs,
-                        pot_id=expected_pot_id,
-                        mutation_id=mutation_id,
-                    )
-                elif plan.reset_pot or plan.snapshot_import is not None:
+                if plan.reset_pot or plan.snapshot_import is not None:
                     from .neo4j_snapshot_write import merge_snapshot, reset_graph
 
                     if plan.reset_pot:
@@ -219,7 +210,7 @@ async def apply_atomic(
                         raise MutationPersistenceError(
                             "affected Neo4j claim has no record identity"
                         )
-                from .neo4j_legacy import validate_aliases
+                from .neo4j_inventory import validate_aliases
 
                 await validate_aliases(transaction, expected_pot_id)
                 applied = complete_execution(

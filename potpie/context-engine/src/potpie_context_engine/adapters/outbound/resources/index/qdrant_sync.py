@@ -84,15 +84,11 @@ def initialize(conn: sqlite3.Connection) -> str:
         if "skipped_collection" not in {
             row[1] for row in conn.execute("PRAGMA table_info(qdrant_windows)")
         }:
-            conn.execute(
-                "ALTER TABLE qdrant_windows ADD COLUMN skipped_collection TEXT"
-            )
+            raise sqlite3.DatabaseError("unsupported Qdrant window schema")
         if "completed" not in {
             row[1] for row in conn.execute("PRAGMA table_info(qdrant_deletes)")
         }:
-            conn.execute(
-                "ALTER TABLE qdrant_deletes ADD COLUMN completed INTEGER NOT NULL DEFAULT 0"
-            )
+            raise sqlite3.DatabaseError("unsupported Qdrant deletion schema")
         conn.execute(
             "INSERT OR IGNORE INTO qdrant_windows(window_id,token) "
             "SELECT id,lower(hex(randomblob(16))) FROM windows"

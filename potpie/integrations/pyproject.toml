@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = []
 
+[dependency-groups]
+dev = ["pytest>=9.0.3"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["integrations"]
 
@@ -20,7 +23,4 @@ include = ["integrations", "tests"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
-asyncio_mode = "auto"
-markers = [
-    "integration: HTTP/router integration tests (legacy app host)",
-]
+markers = ["source_contract: inspect repository sources or build controls"]

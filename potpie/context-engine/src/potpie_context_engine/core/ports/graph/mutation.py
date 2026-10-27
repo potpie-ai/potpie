@@ -17,17 +17,6 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
 from potpie_context_engine.core.mutation_execution import MutationCapabilities
-from potpie_context_engine.core.legacy_records import LegacyInventory
-
-
-@runtime_checkable
-class LegacyInventoryPort(Protocol):
-    def legacy_inventory(self, pot_id: str) -> LegacyInventory: ...
-
-
-@runtime_checkable
-class AsyncLegacyInventoryPort(Protocol):
-    async def legacy_inventory_async(self, pot_id: str) -> LegacyInventory: ...
 
 
 @dataclass(frozen=True, slots=True)

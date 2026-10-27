@@ -22,7 +22,7 @@ from .claim_reads import candidate_scope
 
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_engine.core.reconciliation_validation import (
-    validate_reconciliation_plan,
+    validate_mutation_batch,
 )
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
@@ -122,7 +122,7 @@ async def apply_mutation_batch(
     or a generated UUID when no reservation was supplied.
     """
     graph_updated_at = datetime.now(timezone.utc)
-    validate_reconciliation_plan(
+    validate_mutation_batch(
         plan,
         expected_pot_id,
         definition=definition,
@@ -229,4 +229,3 @@ async def apply_mutation_batch(
 
 # Back-compat alias (Step 5a rename): callers that still import the old name
 # keep working while new code uses ``apply_mutation_batch``.
-apply_reconciliation_plan = apply_mutation_batch

@@ -44,15 +44,6 @@ class RepairReport:
     findings: tuple[RepairFinding, ...] = ()
     ok: bool = True
     status: str = "completed"
-    repair_id: str | None = None
-    scanned_records: int = 0
-    repairable_records: int = 0
-    completed_batches: int = 0
-    total_batches: int = 0
-    expected_revision: int | None = None
-    expires_at: str | None = None
-    changes: tuple[Mapping[str, Any], ...] = ()
-    executions: tuple[Mapping[str, Any], ...] = ()
 
 
 class GraphAnalyticsPort(Protocol):

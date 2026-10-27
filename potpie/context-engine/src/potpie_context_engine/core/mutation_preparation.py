@@ -18,6 +18,7 @@ from potpie_context_engine.core.graph_plans import (
     GraphMutationPlanRecord,
     GraphMutationPlanStatus,
     GraphMutationProposal,
+    provenance_context_to_dict,
 )
 from potpie_context_engine.core.semantic_mutations import (
     SemanticMutationParseError,
@@ -25,8 +26,9 @@ from potpie_context_engine.core.semantic_mutations import (
     SemanticOperationResolver,
 )
 
+from .graph_mutations import ProvenanceContext
 from .claim_preparation import prepare_claim_assertions
-from .reconciliation_validation import validate_reconciliation_plan
+from .reconciliation_validation import validate_mutation_batch
 from .errors import MutationBatchValidationError
 from .claim_lifecycle import ClaimLifecycleConflict
 from .semantic_mutations import SemanticMutationValidationIssue
@@ -59,6 +61,7 @@ def propose_mutation(
     pot_id: str,
     ttl_seconds: int | None = None,
     approved_by: str | None = None,
+    provenance_context: ProvenanceContext | None = None,
     resolve_operations: SemanticOperationResolver | None = None,
 ) -> GraphMutationProposal:
     """Validate, lower, diff, and persist a mutation plan without writing.
@@ -81,6 +84,13 @@ def propose_mutation(
     )
     payload_with_pot = deepcopy(dict(payload))
     payload_with_pot["pot_id"] = pot_id
+    # This reserved fingerprint input is written only from trusted host context.
+    # A model/JSON caller cannot supply or replace ingestion provenance.
+    payload_with_pot.pop("_trusted_provenance", None)
+    if provenance_context is not None:
+        payload_with_pot["_trusted_provenance"] = provenance_context_to_dict(
+            provenance_context
+        )
 
     idempotency_key = str(payload.get("idempotency_key") or "").strip()
     if idempotency_key:
@@ -140,6 +150,7 @@ def propose_mutation(
             pot_id=pot_id,
             allow_review_required=approver is not None,
             approved_by=approver,
+            provenance_context=provenance_context,
         )
     except SemanticMutationParseError as exc:
         issue = {
@@ -183,7 +194,7 @@ def propose_mutation(
         try:
             semantic_plan.prepared_at = now
             self.lowerer(request, semantic_plan)
-            validate_reconciliation_plan(
+            validate_mutation_batch(
                 semantic_plan.batch,
                 pot_id,
                 definition=self.definition,

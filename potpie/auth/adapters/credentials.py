@@ -120,15 +120,6 @@ class FileCredentialStore(CredentialStore):
     def clear_confluence_credentials(self) -> None:
         _store.clear_confluence_credentials()
 
-    def get_atlassian_credentials(self) -> dict[str, Any]:
-        return _store.get_atlassian_credentials()
-
-    def save_atlassian_credentials(self, credentials: dict[str, Any]) -> None:
-        _store.save_atlassian_credentials(credentials)
-
-    def clear_atlassian_credentials(self) -> None:
-        _store.clear_atlassian_credentials()
-
     def save_jira_workspace_prefs(self, *, project_key: str) -> None:
         _store.save_jira_workspace_prefs(project_key=project_key)
 

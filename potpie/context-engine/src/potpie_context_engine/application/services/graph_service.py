@@ -14,8 +14,7 @@ existing one-read-trunk (:class:`ReadOrchestrator`) over the backend's
 - ``mutate`` validates → risk-classifies → lowers → dry-runs or applies semantic
   mutations through the one write door.
 
-``record`` (the V1 compatibility write) is rewired through the *same* semantic
-mutation path (Step 8): it converts the structured record into a
+``record`` uses the same semantic mutation path: it converts the structured record into a
 ``SemanticMutationRequest`` and calls ``self.mutate`` — there is no private
 direct-lowering path.
 """
@@ -608,10 +607,8 @@ class DefaultGraphService:
             ),
             environment_in=(request.environment,) if request.environment else (),
             truth_in=(request.truth,) if request.truth else (),
-            # Type is also inferred from canonical key prefixes, so a
-            # backend label filter would hide valid legacy entities that
-            # have the right key but no stored label. Exact passes are
-            # uncapped and apply the type after hydration below.
+            # Apply type filtering after entity hydration so query projections
+            # and canonical key prefixes are interpreted consistently.
             endpoint_label=None,
             valid_at_after=request.since,
             valid_at_before=request.until,
@@ -733,7 +730,7 @@ class DefaultGraphService:
                     identity,
                     canonical_key=candidate.key,
                     explicit_identity=(
-                        props := props_by_key.get(candidate.key, {}),
+                        props_by_key.get(candidate.key, {}),
                         tuple(
                             ref
                             for row in agg.get(candidate.key, {}).get("claims", ())
@@ -742,12 +739,6 @@ class DefaultGraphService:
                                 *((row.source_ref,) if row.source_ref else ()),
                             )
                         ),
-                    ),
-                    description=(
-                        candidate.name,
-                        candidate.summary,
-                        candidate.description,
-                        props,
                     ),
                 )
             ]

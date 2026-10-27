@@ -46,13 +46,6 @@ class SetupOrchestrator(Protocol):
         skip reason), unexecuted. Carries no ``StepResult``s."""
         ...
 
-    def plan(self, plan: SetupPlan) -> list[StepResult]:
-        """Deprecated alias for the ordered steps as ``PLANNED`` ``StepResult``s.
-
-        Retained during the ``preview`` migration; prefer :meth:`preview`.
-        """
-        ...
-
     def run(self, plan: SetupPlan) -> SetupReport:
         """Execute each step in dependency order; never crash on a soft gap."""
         ...
