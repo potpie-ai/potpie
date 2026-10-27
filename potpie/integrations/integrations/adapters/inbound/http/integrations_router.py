@@ -8,6 +8,7 @@ import hashlib
 import base64
 import json
 import time
+from datetime import datetime
 from integrations.logging import get_logger
 from integrations import hash_user_id
 
@@ -396,7 +397,7 @@ async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
 class LinearInitiateRequest(OAuthInitiateRequest):
     """Body for ``POST /linear/initiate``.
 
-    The optional ``state`` field on the parent is ignored — identity comes
+    The optional ``state`` field on the parent is ignored. Identity comes
     from ``AuthService.check_auth``, not the request body.
     """
 
@@ -526,9 +527,6 @@ async def linear_oauth_callback(
                 integrations_service = IntegrationsService(db)
 
                 # Create a LinearSaveRequest with the authorization code
-                from integrations.domain.integrations_schema import LinearSaveRequest
-                from datetime import datetime
-
                 save_request = LinearSaveRequest(
                     code=code,
                     redirect_uri=_linear_oauth_callback_redirect_uri(request),
@@ -769,9 +767,6 @@ async def jira_oauth_callback(
                 db = SessionLocal()
                 integrations_service = IntegrationsService(db)
 
-                from integrations.domain.integrations_schema import JiraSaveRequest
-                from datetime import datetime
-
                 # Prefer configured redirect URI so it exactly matches what's registered
                 config = Config()
                 redirect_uri = config("JIRA_REDIRECT_URI", default=None)
@@ -846,7 +841,7 @@ async def jira_oauth_callback(
                 return RedirectResponse(url=redirect_url)
 
         else:
-            # No code provided — redirect to frontend with error
+            # Redirect to the frontend with an error when no code was provided.
             config = Config()
             frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
 
@@ -1106,11 +1101,6 @@ async def confluence_oauth_callback(
             try:
                 integrations_service = IntegrationsService(db)
 
-                from integrations.domain.integrations_schema import (
-                    ConfluenceSaveRequest,
-                )
-                from datetime import datetime
-
                 # Prefer configured redirect URI so it exactly matches what's registered
                 config = Config()
                 redirect_uri = config("CONFLUENCE_REDIRECT_URI", default=None)
@@ -1165,7 +1155,7 @@ async def confluence_oauth_callback(
                 # Always close the database session to prevent connection leaks
                 db.close()
         else:
-            # No code provided — redirect to frontend with error
+            # Redirect to the frontend with an error when no code was provided.
             config = Config()
             frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
             if frontend_url and not frontend_url.startswith(("http://", "https://")):
@@ -1321,8 +1311,6 @@ async def save_confluence_integration(
 @router.post("/sentry/webhook")
 async def sentry_webhook(request: Request) -> Dict[str, Any]:
     """Handle Sentry webhook requests"""
-    import json
-
     try:
         # Log the incoming webhook request details
         logger.info("Sentry webhook received")
@@ -1454,8 +1442,6 @@ async def linear_webhook(
     integrations_service: IntegrationsService = Depends(get_integrations_service),
 ) -> Dict[str, Any]:
     """Handle Linear webhook requests"""
-    import json
-
     try:
         # Log the incoming webhook request details
         logger.info("Linear webhook received")
@@ -1765,8 +1751,6 @@ async def jira_webhook(
     integrations_service: IntegrationsService = Depends(get_integrations_service),
 ) -> Dict[str, Any]:
     """Handle Jira webhook requests and publish to event bus"""
-    import json
-
     try:
         # Log the incoming webhook request details
         logger.info("Jira webhook received")
@@ -2635,8 +2619,6 @@ async def debug_oauth_config(
         validation_result = await integrations_service.validate_oauth_configuration()
 
         # Additional debugging information
-        from starlette.config import Config
-
         config = Config()
 
         client_id = config("SENTRY_CLIENT_ID", default="")

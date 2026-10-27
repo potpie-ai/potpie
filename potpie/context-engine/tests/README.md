@@ -19,11 +19,11 @@ test functions; pytest can collect several named cases from one function.
 | `benchmarks` | 12 | 54 |
 | `durability` | 16 | 135 |
 | `ingestion` | 24 | 165 |
-| `mutations` | 43 | 540 |
+| `mutations` | 43 | 542 |
 | `observability` | 14 | 76 |
 | `ontology` | 17 | 196 |
 | `resources` | 13 | 180 |
-| `retrieval` | 19 | 220 |
+| `retrieval` | 20 | 221 |
 | `runtime` | 15 | 128 |
 
 `graph_reliability.py` owns backend profile construction and isolation shared
@@ -43,7 +43,7 @@ interpreters so their imports come from the installed package.
 
 The migration evidence is [migration_map.json](migration_map.json) for module
 moves and [definition_migration.json](definition_migration.json) for the exact 2,289 original test
-node identities at Git HEAD, with explicit consolidation targets and retirement
+node identities at baseline `baeb7c4e4f24`, with explicit consolidation targets and retirement
 reasons. New tests appear only in the ownership catalog. Historical repair, receipt upgrade, snapshot conversion and
 removed API shim contracts were retired with their production implementation.
 Current corruption rejection, mutation atomicity, recovery, idempotency,

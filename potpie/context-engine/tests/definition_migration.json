@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Every original engine test definition at git HEAD appears exactly once. Current cases are retained, consolidated into broader workflows, or mapped to named value cases; intentional retirement has an explicit reason. New definitions belong to suite_catalog.json, not the historical baseline.",
+  "description": "Every original engine test definition at the immutable baseline revision appears exactly once. Current cases are retained, consolidated into broader workflows, or mapped to named value cases; intentional retirement has an explicit reason. New definitions belong to suite_catalog.json, not the historical baseline.",
   "definitions": [
     {
       "old": "conformance/test_answer_reliability_acceptance.py::test_exact_pr_identity_is_repo_scoped_and_missing_ticket_is_not_found",
@@ -11615,7 +11615,7 @@
     }
   ],
   "baseline": {
-    "revision": "HEAD",
+    "revision": "baeb7c4e4f24575dc3ddda910c8b26c985ab7eeb",
     "definition_count": 2289,
     "scope": "All top-level test functions and test-class methods in the tracked engine tests at git HEAD."
   }

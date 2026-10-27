@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias, cast
 from uuid import uuid4
@@ -145,7 +145,7 @@ class DaemonTransport(Protocol):
 
 
 class EngineClient(ABC):
-    """Named client surface mirroring the public ContextEngine operation catalog."""
+    """Named client methods for the public ContextEngine operation catalog."""
 
     @abstractmethod
     async def _dispatch(
@@ -346,325 +346,123 @@ class EngineClient(ABC):
         return await self._dispatch(EngineOperation.REBUILD_COMMITS, request)
 
 
-EngineHandler: TypeAlias = Callable[
-    [ContextEngine, EngineRequest], Awaitable[Outcome[object]]
-]
-
-
-async def _resolve(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.resolve(cast(ResolveRequest, request))
-
-
-async def _search(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.search(cast(SearchRequest, request))
-
-
-async def _record(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.record(cast(RecordRequest, request))
-
-
-async def _data_plane_status(
-    engine: ContextEngine, request: EngineRequest
+async def _invoke_engine(
+    engine: ContextEngine, operation: EngineOperation, request: EngineRequest
 ) -> Outcome[object]:
-    return await engine.data_plane_status(cast(DataPlaneStatusRequest, request))
-
-
-async def _catalog(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.catalog(cast(CatalogRequest, request))
-
-
-async def _describe(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.describe(cast(DescribeRequest, request))
-
-
-async def _read(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.read(cast(ReadRequest, request))
-
-
-async def _search_entities(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.search_entities(cast(SearchEntitiesRequest, request))
-
-
-async def _mutate(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.mutate(cast(MutateRequest, request))
-
-
-async def _neighborhood(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.neighborhood(cast(NeighborhoodRequest, request))
-
-
-async def _inspect(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.inspect(cast(InspectRequest, request))
-
-
-async def _graph_slice(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.slice(cast(GraphSliceRequest, request))
-
-
-async def _export_snapshot(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.export_snapshot(cast(ExportSnapshotRequest, request))
-
-
-async def _import_snapshot(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.import_snapshot(cast(ImportSnapshotRequest, request))
-
-
-async def _repair(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.repair(cast(RepairRequest, request))
-
-
-async def _reset_context(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.reset_context(cast(ResetContextRequest, request))
-
-
-async def _propose(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.propose(cast(ProposeRequest, request))
-
-
-async def _commit(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.commit(cast(CommitRequest, request))
-
-
-async def _history(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.history(cast(HistoryRequest, request))
-
-
-async def _quality(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.quality(cast(QualityRequest, request))
-
-
-async def _inbox_add(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.inbox_add(cast(InboxAddRequest, request))
-
-
-async def _inbox_list(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.inbox_list(cast(InboxListRequest, request))
-
-
-async def _inbox_show(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.inbox_show(cast(InboxShowRequest, request))
-
-
-async def _inbox_claim(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.inbox_claim(cast(InboxClaimRequest, request))
-
-
-async def _inbox_mark_applied(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.inbox_mark_applied(cast(InboxMarkAppliedRequest, request))
-
-
-async def _inbox_mark_rejected(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.inbox_mark_rejected(cast(InboxMarkRejectedRequest, request))
-
-
-async def _inbox_close(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.inbox_close(cast(InboxCloseRequest, request))
-
-
-async def _submit_event(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.submit_event(cast(SubmitEventRequest, request))
-
-
-async def _submit_artifact(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.submit_artifact(cast(SubmitArtifactRequest, request))
-
-
-async def _processing_status(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.processing_status(cast(ProcessingStatusRequest, request))
-
-
-async def _nudge(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.nudge(cast(NudgeRequest, request))
-
-
-async def _resource_import(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.resource_import(cast(ResourceImportRequest, request))
-
-
-async def _resource_get(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.resource_get(cast(ResourceGetRequest, request))
-
-
-async def _resource_list(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.resource_list(cast(ResourceListRequest, request))
-
-
-async def _resource_rm(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.resource_rm(cast(ResourceRmRequest, request))
-
-
-async def _resource_status(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.resource_status(cast(ResourceStatusRequest, request))
-
-
-async def _resource_index_status(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.resource_index_status(cast(ResourceIndexStatusRequest, request))
-
-
-async def _resource_index_build(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.resource_index_build(cast(ResourceIndexBuildRequest, request))
-
-
-async def _resource_index_rebuild(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.resource_index_rebuild(
-        cast(ResourceIndexRebuildRequest, request)
-    )
-
-
-async def _commit_status(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.commit_status(cast(CommitStatusRequest, request))
-
-
-async def _verify_commit(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.verify_commit(cast(VerifyCommitRequest, request))
-
-
-async def _journal_status(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.journal_status(cast(JournalStatusRequest, request))
-
-
-async def _commits(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.commits(cast(CommitsRequest, request))
-
-
-async def _commit_show(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.commit_show(cast(CommitShowRequest, request))
-
-
-async def _revert_preview(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.revert_preview(cast(RevertPreviewRequest, request))
-
-
-async def _rollback_preview(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.rollback_preview(cast(RollbackPreviewRequest, request))
-
-
-async def _apply_preview(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.apply_preview(cast(ApplyPreviewRequest, request))
-
-
-async def _disable_rollback(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.disable_rollback(cast(DisableRollbackRequest, request))
-
-
-async def _rebuild_commits(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.rebuild_commits(cast(RebuildCommitsRequest, request))
-
-
-_ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
-    EngineOperation.RESOLVE: _resolve,
-    EngineOperation.SEARCH: _search,
-    EngineOperation.RECORD: _record,
-    EngineOperation.DATA_PLANE_STATUS: _data_plane_status,
-    EngineOperation.CATALOG: _catalog,
-    EngineOperation.DESCRIBE: _describe,
-    EngineOperation.READ: _read,
-    EngineOperation.SEARCH_ENTITIES: _search_entities,
-    EngineOperation.MUTATE: _mutate,
-    EngineOperation.NEIGHBORHOOD: _neighborhood,
-    EngineOperation.INSPECT: _inspect,
-    EngineOperation.GRAPH_SLICE: _graph_slice,
-    EngineOperation.EXPORT_SNAPSHOT: _export_snapshot,
-    EngineOperation.IMPORT_SNAPSHOT: _import_snapshot,
-    EngineOperation.REPAIR: _repair,
-    EngineOperation.RESET_CONTEXT: _reset_context,
-    EngineOperation.PROPOSE: _propose,
-    EngineOperation.COMMIT: _commit,
-    EngineOperation.HISTORY: _history,
-    EngineOperation.QUALITY: _quality,
-    EngineOperation.INBOX_ADD: _inbox_add,
-    EngineOperation.INBOX_LIST: _inbox_list,
-    EngineOperation.INBOX_SHOW: _inbox_show,
-    EngineOperation.INBOX_CLAIM: _inbox_claim,
-    EngineOperation.INBOX_MARK_APPLIED: _inbox_mark_applied,
-    EngineOperation.INBOX_MARK_REJECTED: _inbox_mark_rejected,
-    EngineOperation.INBOX_CLOSE: _inbox_close,
-    EngineOperation.SUBMIT_EVENT: _submit_event,
-    EngineOperation.SUBMIT_ARTIFACT: _submit_artifact,
-    EngineOperation.PROCESSING_STATUS: _processing_status,
-    EngineOperation.NUDGE: _nudge,
-    EngineOperation.RESOURCE_IMPORT: _resource_import,
-    EngineOperation.RESOURCE_GET: _resource_get,
-    EngineOperation.RESOURCE_LIST: _resource_list,
-    EngineOperation.RESOURCE_RM: _resource_rm,
-    EngineOperation.RESOURCE_STATUS: _resource_status,
-    EngineOperation.RESOURCE_INDEX_STATUS: _resource_index_status,
-    EngineOperation.RESOURCE_INDEX_BUILD: _resource_index_build,
-    EngineOperation.RESOURCE_INDEX_REBUILD: _resource_index_rebuild,
-    EngineOperation.COMMIT_STATUS: _commit_status,
-    EngineOperation.VERIFY_COMMIT: _verify_commit,
-    EngineOperation.JOURNAL_STATUS: _journal_status,
-    EngineOperation.COMMITS: _commits,
-    EngineOperation.COMMIT_SHOW: _commit_show,
-    EngineOperation.REVERT_PREVIEW: _revert_preview,
-    EngineOperation.ROLLBACK_PREVIEW: _rollback_preview,
-    EngineOperation.APPLY_PREVIEW: _apply_preview,
-    EngineOperation.DISABLE_ROLLBACK: _disable_rollback,
-    EngineOperation.REBUILD_COMMITS: _rebuild_commits,
-}
-
-if set(_ENGINE_HANDLERS) != set(ENGINE_OPERATION_CATALOG):
-    raise RuntimeError("each engine operation must have exactly one local handler")
+    """Dispatch a typed request to its engine operation."""
+
+    match operation:
+        case EngineOperation.RESOLVE:
+            return await engine.resolve(cast(ResolveRequest, request))
+        case EngineOperation.SEARCH:
+            return await engine.search(cast(SearchRequest, request))
+        case EngineOperation.RECORD:
+            return await engine.record(cast(RecordRequest, request))
+        case EngineOperation.DATA_PLANE_STATUS:
+            return await engine.data_plane_status(cast(DataPlaneStatusRequest, request))
+        case EngineOperation.CATALOG:
+            return await engine.catalog(cast(CatalogRequest, request))
+        case EngineOperation.DESCRIBE:
+            return await engine.describe(cast(DescribeRequest, request))
+        case EngineOperation.READ:
+            return await engine.read(cast(ReadRequest, request))
+        case EngineOperation.SEARCH_ENTITIES:
+            return await engine.search_entities(cast(SearchEntitiesRequest, request))
+        case EngineOperation.MUTATE:
+            return await engine.mutate(cast(MutateRequest, request))
+        case EngineOperation.NEIGHBORHOOD:
+            return await engine.neighborhood(cast(NeighborhoodRequest, request))
+        case EngineOperation.INSPECT:
+            return await engine.inspect(cast(InspectRequest, request))
+        case EngineOperation.GRAPH_SLICE:
+            return await engine.slice(cast(GraphSliceRequest, request))
+        case EngineOperation.EXPORT_SNAPSHOT:
+            return await engine.export_snapshot(cast(ExportSnapshotRequest, request))
+        case EngineOperation.IMPORT_SNAPSHOT:
+            return await engine.import_snapshot(cast(ImportSnapshotRequest, request))
+        case EngineOperation.REPAIR:
+            return await engine.repair(cast(RepairRequest, request))
+        case EngineOperation.RESET_CONTEXT:
+            return await engine.reset_context(cast(ResetContextRequest, request))
+        case EngineOperation.PROPOSE:
+            return await engine.propose(cast(ProposeRequest, request))
+        case EngineOperation.COMMIT:
+            return await engine.commit(cast(CommitRequest, request))
+        case EngineOperation.HISTORY:
+            return await engine.history(cast(HistoryRequest, request))
+        case EngineOperation.QUALITY:
+            return await engine.quality(cast(QualityRequest, request))
+        case EngineOperation.INBOX_ADD:
+            return await engine.inbox_add(cast(InboxAddRequest, request))
+        case EngineOperation.INBOX_LIST:
+            return await engine.inbox_list(cast(InboxListRequest, request))
+        case EngineOperation.INBOX_SHOW:
+            return await engine.inbox_show(cast(InboxShowRequest, request))
+        case EngineOperation.INBOX_CLAIM:
+            return await engine.inbox_claim(cast(InboxClaimRequest, request))
+        case EngineOperation.INBOX_MARK_APPLIED:
+            return await engine.inbox_mark_applied(
+                cast(InboxMarkAppliedRequest, request)
+            )
+        case EngineOperation.INBOX_MARK_REJECTED:
+            return await engine.inbox_mark_rejected(
+                cast(InboxMarkRejectedRequest, request)
+            )
+        case EngineOperation.INBOX_CLOSE:
+            return await engine.inbox_close(cast(InboxCloseRequest, request))
+        case EngineOperation.SUBMIT_EVENT:
+            return await engine.submit_event(cast(SubmitEventRequest, request))
+        case EngineOperation.SUBMIT_ARTIFACT:
+            return await engine.submit_artifact(cast(SubmitArtifactRequest, request))
+        case EngineOperation.PROCESSING_STATUS:
+            return await engine.processing_status(
+                cast(ProcessingStatusRequest, request)
+            )
+        case EngineOperation.NUDGE:
+            return await engine.nudge(cast(NudgeRequest, request))
+        case EngineOperation.RESOURCE_IMPORT:
+            return await engine.resource_import(cast(ResourceImportRequest, request))
+        case EngineOperation.RESOURCE_GET:
+            return await engine.resource_get(cast(ResourceGetRequest, request))
+        case EngineOperation.RESOURCE_LIST:
+            return await engine.resource_list(cast(ResourceListRequest, request))
+        case EngineOperation.RESOURCE_RM:
+            return await engine.resource_rm(cast(ResourceRmRequest, request))
+        case EngineOperation.RESOURCE_STATUS:
+            return await engine.resource_status(cast(ResourceStatusRequest, request))
+        case EngineOperation.RESOURCE_INDEX_STATUS:
+            return await engine.resource_index_status(
+                cast(ResourceIndexStatusRequest, request)
+            )
+        case EngineOperation.RESOURCE_INDEX_BUILD:
+            return await engine.resource_index_build(
+                cast(ResourceIndexBuildRequest, request)
+            )
+        case EngineOperation.RESOURCE_INDEX_REBUILD:
+            return await engine.resource_index_rebuild(
+                cast(ResourceIndexRebuildRequest, request)
+            )
+        case EngineOperation.COMMIT_STATUS:
+            return await engine.commit_status(cast(CommitStatusRequest, request))
+        case EngineOperation.VERIFY_COMMIT:
+            return await engine.verify_commit(cast(VerifyCommitRequest, request))
+        case EngineOperation.JOURNAL_STATUS:
+            return await engine.journal_status(cast(JournalStatusRequest, request))
+        case EngineOperation.COMMITS:
+            return await engine.commits(cast(CommitsRequest, request))
+        case EngineOperation.COMMIT_SHOW:
+            return await engine.commit_show(cast(CommitShowRequest, request))
+        case EngineOperation.REVERT_PREVIEW:
+            return await engine.revert_preview(cast(RevertPreviewRequest, request))
+        case EngineOperation.ROLLBACK_PREVIEW:
+            return await engine.rollback_preview(cast(RollbackPreviewRequest, request))
+        case EngineOperation.APPLY_PREVIEW:
+            return await engine.apply_preview(cast(ApplyPreviewRequest, request))
+        case EngineOperation.DISABLE_ROLLBACK:
+            return await engine.disable_rollback(cast(DisableRollbackRequest, request))
+        case EngineOperation.REBUILD_COMMITS:
+            return await engine.rebuild_commits(cast(RebuildCommitsRequest, request))
+    raise RuntimeError(f"engine operation {operation!r} has no local handler")
 
 
 class TypedOperationHandler:
@@ -754,8 +552,8 @@ class TypedOperationHandler:
                     # Commit access and the acting principal derive from the
                     # scope this request was authorized under.
                     with authorization_scope(lease.scope):
-                        return await _ENGINE_HANDLERS[request.operation](
-                            lease.engine, request.payload
+                        return await _invoke_engine(
+                            lease.engine, request.operation, request.payload
                         )
             except Exception:
                 return _handler_failed(request.request_id)

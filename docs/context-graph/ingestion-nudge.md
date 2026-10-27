@@ -92,7 +92,7 @@ For non-record events, `_do_submit` resolves pot/repo/source_id and calls
 `scope + source_id` → `duplicate`), upsert it into the pot's open batch, and
 either enqueue immediately or leave it for the flusher (windowed mode, §5). It
 also persists the ingress W3C `traceparent` onto the row's `correlation_id` so
-the later fan-in span can link back (see [observability.md](./observability.md)).
+the later fan-in span can link back.
 
 ---
 
@@ -179,7 +179,7 @@ When events do flow through the async pipeline, the shape is:
 
 The spans on this path are the fan-in **`batch.process`** and the per-chunk
 **`agent.run_batch`** (the per-event `reconciliation_run` is a durable ledger
-row, not a span); all are catalogued in [observability.md](./observability.md).
+row, not a span).
 
 ---
 
@@ -315,5 +315,3 @@ taught in the `potpie-graph` skill's "Responding To Nudges" — see
   roots that this doc's ingestion server vs local spine split rests on.
 - [querying.md](./querying.md) — the named views a nudge reads.
 - [cli-flow.md](./cli-flow.md) — full flags for `ledger ...` and `graph nudge`.
-- [observability.md](./observability.md) — `batch.process` / `agent.run_batch`
-  spans (and the `reconciliation_run` ledger row) and ingestion metrics.

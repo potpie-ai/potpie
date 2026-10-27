@@ -1175,7 +1175,7 @@
       "new": "integration/mutations/test_falkordb_temporal.py",
       "domain": "mutations",
       "tier": "integration",
-      "test_definitions": 9
+      "test_definitions": 11
     },
     {
       "old": "integration/test_falkordb_revision_integrity.py",
@@ -1505,6 +1505,14 @@
       "domain": "benchmarks",
       "tier": "unit",
       "test_definitions": 4
+    },
+    {
+      "old": "unit/test_native_claim_query_params.py",
+      "new": "unit/retrieval/test_native_claim_query_params.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 1,
+      "introduced_by": "04e35f211dca75fb8e4388531472648e5d0be447"
     }
   ]
 }

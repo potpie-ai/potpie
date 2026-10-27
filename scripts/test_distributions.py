@@ -22,14 +22,12 @@ PROFILES = {
     "engine-full": {"potpie-context-engine": "all"},
     "native": {"potpie": "auth,telemetry", "potpie-context-engine": ""},
     "parsing": {"potpie-parsing": ""},
-    "sandbox": {"potpie-sandbox": "daytona"},
     "integrations": {"potpie-integrations": ""},
 }
 MODULES = {
     "potpie": "potpie",
     "potpie-context-engine": "potpie_context_engine",
     "potpie-parsing": "parsing.parsing_rs",
-    "potpie-sandbox": "sandbox",
     "potpie-integrations": "integrations",
 }
 

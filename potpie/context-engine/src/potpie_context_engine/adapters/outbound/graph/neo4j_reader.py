@@ -1,14 +1,8 @@
-"""Neo4j :class:`ClaimQueryPort` — the production read surface for P9 readers.
+"""Neo4j implementation of :class:`ClaimQueryPort`.
 
-Runs Cypher over the canonical Position-B ``:RELATES_TO`` claim edges (the
-shape ``canonical_writer`` emits) and returns :class:`ClaimRow`s. This is the
-keystone that makes the P9 read trunk (readers → ranking → envelope) live;
-the in-memory store remains the test/offline double with identical filter
-semantics.
-
-The driver is the plain *synchronous* Neo4j driver (``ClaimQueryPort`` is a
-sync surface; the readers call it inline). It is built lazily from settings
-and cached for reuse.
+Queries the canonical ``:RELATES_TO`` claim edges and returns :class:`ClaimRow`s.
+The adapter creates a synchronous Neo4j driver from settings on first use and
+reuses it until ``close``.
 
 ``fact_query`` uses Neo4j's native relationship vector index when an embedder is
 wired. If the vector procedure is unavailable, the adapter falls back to the
@@ -40,6 +34,7 @@ from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import 
 )
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
     claim_matches_post_filter,
+    claim_query_params,
     stamp_scored_rows,
     stamp_similarity,
     vector_candidate_k,
@@ -120,49 +115,11 @@ class Neo4jClaimQueryStore:
 
     # -- ClaimQueryPort ----------------------------------------------------
     def find_claims(self, filter_: ClaimQueryFilter) -> list[ClaimRow]:
-        # An explicit zero-row request must win before the vector path (which
-        # coerces limit=0 → 10) or the lexical slice can return anything.
+        # Return before the vector path substitutes its default candidate limit.
         if filter_.limit == 0:
             return []
-        # Short-circuit the one hopeless filter the port documents.
-        if (
-            not filter_.predicate_in
-            and not filter_.include_invalidated
-            and not (
-                filter_.subject_key_in or filter_.object_key_in or filter_.fact_query
-            )
-        ):
-            # No predicate, no keys, no semantic anchor → unbounded; let it run
-            # only when an explicit anchor exists to avoid full-partition scans.
-            pass
-
         query_time = filter_.as_of or datetime.now(timezone.utc)
-        params = {
-            "gid": filter_.pot_id,
-            "preds": list(filter_.predicate_in) or None,
-            "subjects": list(filter_.subject_key_in) or None,
-            "objects": list(filter_.object_key_in) or None,
-            "claim_keys": list(filter_.claim_key_in) or None,
-            "record_ids": list(filter_.record_id_in) or None,
-            "subgraphs": list(filter_.subgraph_in) or None,
-            "excluded_subgraphs": list(filter_.subgraph_not_in) or None,
-            "mutation_ids": list(filter_.mutation_id_in) or None,
-            "source_refs": list(filter_.source_ref_in) or None,
-            "sources": list(filter_.source_system_in) or None,
-            "exact_text": [value.lower() for value in filter_.exact_text_in] or None,
-            "exact_pattern": filter_.exact_text_pattern,
-            "environments": [value.lower() for value in filter_.environment_in] or None,
-            "truths": [value.lower() for value in filter_.truth_in] or None,
-            "endpoint_label": filter_.endpoint_label,
-            "include_invalid": bool(filter_.include_invalidated),
-            "include_retired": bool(filter_.include_retired),
-            "as_of": _iso(filter_.as_of),
-            "query_time": _iso(query_time),
-            "va_after": _iso(filter_.valid_at_after),
-            "va_before": _iso(filter_.valid_at_before),
-            "subject_label": filter_.subject_label,
-            "object_label": filter_.object_label,
-        }
+        params = claim_query_params(filter_, query_time=query_time)
         if filter_.fact_query and self._embedder is not None:
             rows = self._find_claims_vector(filter_, params, query_time=query_time)
             if rows:

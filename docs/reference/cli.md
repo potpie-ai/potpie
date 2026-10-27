@@ -18,9 +18,9 @@ The main CLI commands are:
 | `potpie doctor` | Run local diagnostics for daemon, backend capabilities, and skill drift. |
 | `potpie source add repo .` | Register the current repo as a source for the resolved pot. |
 | `potpie pot list` / `potpie pot use {id-or-name}` | List pots and choose the active workspace. |
-| `potpie resolve "{task}"` | Pull the context an agent should read before doing a task. |
+| `potpie resolve "{task}"` | Get the context an agent should read before starting a task. |
 | `potpie search "{query}"` | Look up a specific file, workflow, bug, decision, or convention. |
-| `potpie record --type {type} --summary "{summary}"` | Write a durable project learning. |
+| `potpie record --type {type} --summary "{summary}"` | Save a project decision, fix, or preference. |
 | `potpie graph ...` | Use lower-level graph reads, quality checks, proposals, and commits. |
 | `potpie ui` | Open the graph explorer served by the local daemon (`--pot managed:{id}` for a managed host). |
 | `potpie host set {url} --token -` | Point the CLI at a managed context-graph host; the API key is read from stdin. |
@@ -61,4 +61,4 @@ potpie --host local status
 people; the local host is single-user. Setup, skills, the daemon and
 integration logins always stay on your machine.
 
-You can find an exhaustive list with more examples in our [docs](https://docs.potpie.ai).
+See the [docs](https://docs.potpie.ai) for the full command reference and more examples.

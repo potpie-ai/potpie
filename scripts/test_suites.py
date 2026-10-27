@@ -17,7 +17,6 @@ PACKAGES = {
     "root": ROOT,
     "engine": ROOT / "potpie/context-engine",
     "parsing": ROOT / "potpie/parsing",
-    "sandbox": ROOT / "potpie/sandbox",
     "integrations": ROOT / "potpie/integrations",
 }
 WINDOWS_ROOT = (
@@ -203,23 +202,6 @@ def main() -> None:
                     package, python=args.python, profile=args.profile, tier=tier
                 )
             )
-    elif args.suite == "sandbox":
-        unit = tuple(
-            path.name for path in sorted((package / "tests/unit").glob("test_*.py"))
-        )
-        calls.append(
-            pytest_command(
-                package, python=args.python, profile=args.profile, selectors=unit
-            )
-        )
-        calls.append(
-            pytest_command(
-                package,
-                python=args.python,
-                profile=args.profile,
-                selectors=("test_docker_runtime.py", "test_local_subprocess_e2e.py"),
-            )
-        )
     else:
         calls.append(
             pytest_command(
@@ -271,7 +253,6 @@ def main() -> None:
             "root": "potpie",
             "engine": "potpie_context_engine",
             "parsing": "parsing",
-            "sandbox": "sandbox",
             "integrations": "integrations",
         }[args.suite]
         code = """

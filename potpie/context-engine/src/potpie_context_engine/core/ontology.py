@@ -1,48 +1,24 @@
-"""Canonical Potpie context graph ontology — unified topology + memory.
+"""Canonical catalog of context graph entities, predicates, and record types.
 
-Single declarative catalog covering everything an agent can read or write.
-Three sections, all spec-driven:
+Add an entity to :data:`ENTITY_TYPES`, a predicate to :data:`EDGE_TYPES`, or a
+record type to :data:`RECORD_TYPES`. Entity entries define labels, key prefixes,
+identity rules, freshness TTLs, and classifier cues. Edge entries define the
+``:RELATES_TO`` predicates and their categories. Record entries map the
+``context_record`` vocabulary to entities, predicates, payload schemas, and
+reader include keys.
 
-1. :data:`ENTITY_TYPES` — every label that can live in the graph, with the
-   identity class and key prefix that mint it, plus fact family, freshness
-   TTL, classifier cues, and project-map / debugging family mappings.
-2. :data:`EDGE_TYPES` — every predicate that can ride on a ``:RELATES_TO``
-   claim, grouped by ``category`` (``topology`` / ``ownership`` / ``people``
-   / ``timeline`` / ``memory`` / ``knowledge`` / ``generic``).
-3. :data:`RECORD_TYPES` — the agent-facing context_record vocabulary, each
-   row joining a record type to its anchor entity, emitted predicate,
-   payload schema, and reader include key. This is the table that unifies
-   the agent surface (record types + include families) with the graph
-   ontology (entities + predicates).
+Writers, readers, reconciliation validation, graph quality checks, and the
+agent context port use these catalogs. The identity registry derives from
+:data:`ENTITY_TYPES`. Record-type and include vocabularies derive from
+:data:`RECORD_TYPES`. :mod:`potpie_context_engine.core.coherence` checks their
+consistency at import time.
 
-Every other module — canonical writer, structural reader, reconciliation
-validation, graph-quality policy, agent context port — derives its behavior
-from these three catalogs rather than carrying parallel vocabularies.
-
-**Adding an entity:** one row in :data:`ENTITY_TYPES`.
-**Adding a predicate:** one row in :data:`EDGE_TYPES`.
-**Adding a record type:** one row in :data:`RECORD_TYPES`.
-
-The identity registry (:mod:`potpie_context_engine.core.identity`) is a *view* over
-:data:`ENTITY_TYPES` (populated at the bottom of this module). The agent
-context port's record-type and include vocabularies are *views* over
-:data:`RECORD_TYPES`. :mod:`potpie_context_engine.core.coherence` runs import-time invariants
-that fail loud if any two views disagree.
-
-Design pillars:
-
-1. **An entity exists only if an edge needs it as an endpoint.** No
-   aspirational nodes; if nothing connects to it and no query traverses it,
-   it is a property, not a node.
-2. **Identity-only required fields.** A node needs its ``entity_key`` and a
-   label; everything else is optional enrichment. No required-property
-   downgrade traps.
-3. **One name per edge, declared once.** The edge vocabulary *is* the schema;
-   readers and writers traverse the same names.
-4. **A ``Scope`` interface, not a base class.** Entities flagged
-   ``scope=True`` (``Repository``/``Service``/``Environment``/``DataStore``/
-   ``Cluster``) act as scope endpoints for cross-cutting edges (memory
-   claims, ownership) without each edge enumerating them.
+Entities exist as edge endpoints. Their required fields are ``entity_key`` and
+a label. Other fields are optional. Each predicate has one declared name that
+readers and writers share. ``Repository``, ``Service``, ``Environment``,
+``DataStore``, and ``Cluster`` implement the ``Scope`` interface through
+``scope=True``. Cross-cutting edges can name that interface instead of listing
+every scope type.
 """
 
 from __future__ import annotations
@@ -63,6 +39,7 @@ from potpie_context_engine.core.identity import (
     IdentitySpec,
     register_identity,
 )
+from potpie_context_engine.core.singleton_predicates import replace_singletons
 
 # ``ONTOLOGY_VERSION`` is owned by :mod:`potpie_context_engine.core.graph_contract` (the single
 # contract home) and mirrored here so existing importers of
@@ -1048,8 +1025,6 @@ def _sync_singleton_registry() -> None:
     supersession path. Tests that need a custom set should use
     :func:`potpie_context_engine.core.singleton_predicates.replace_singletons` then restore.
     """
-    from potpie_context_engine.core.singleton_predicates import replace_singletons
-
     replace_singletons(SINGLETON_EDGE_TYPES)
 
 

@@ -12,7 +12,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 .DEFAULT_GOAL := help
-.PHONY: help ui-build ui-build-ci cli-install cli-update cli-uninstall cli-status test-root test-product test-context-engine test-parsing test-sandbox test-integrations
+.PHONY: help ui-build ui-build-ci cli-install cli-update cli-uninstall cli-status test-root test-product test-context-engine test-parsing test-integrations
 
 ##@ Help
 
@@ -47,7 +47,7 @@ TEST_PROFILE ?= local
 TEST_CHECKS ?= all
 TEST_TIER ?=
 
-test-root: test-product test-parsing test-sandbox test-integrations ## Test the complete root owner in separate component environments
+test-root: test-product test-parsing test-integrations ## Test the complete root owner in separate component environments
 
 test-product: ## Test root CLI/runtime behavior, artifact controls, docs and graph UI
 	uv run --isolated --frozen --all-extras python scripts/test_suites.py root --profile $(TEST_PROFILE) --checks $(TEST_CHECKS)
@@ -57,9 +57,6 @@ test-context-engine: ## Test the engine independently; TEST_TIER selects a CI ac
 
 test-parsing: ## Test parsing's Python bindings and native Rust contracts
 	uv run --isolated --frozen --package potpie-parsing python scripts/test_suites.py parsing --profile $(TEST_PROFILE) --checks $(TEST_CHECKS)
-
-test-sandbox: ## Test sandbox units and local/Docker scenarios
-	uv run --isolated --frozen --package potpie-sandbox --extra daytona --extra dev python scripts/test_suites.py sandbox --profile $(TEST_PROFILE)
 
 test-integrations: ## Test the independent integrations package
 	uv run --isolated --frozen --package potpie-integrations python scripts/test_suites.py integrations --profile $(TEST_PROFILE)

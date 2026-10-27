@@ -1,1 +1,0 @@
-"""Sandbox domain ports."""

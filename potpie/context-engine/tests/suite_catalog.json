@@ -111,6 +111,12 @@
       "path": "conformance/runtime/test_public_graph_runtime.py"
     },
     {
+      "path": "contracts/test_values.py",
+      "domain": "ontology",
+      "tier": "contracts",
+      "test_definitions": 21
+    },
+    {
       "domain": "agents",
       "tier": "core",
       "test_definitions": 3,
@@ -443,7 +449,7 @@
     {
       "domain": "mutations",
       "tier": "integration",
-      "test_definitions": 9,
+      "test_definitions": 11,
       "path": "integration/mutations/test_falkordb_temporal.py"
     },
     {
@@ -1191,6 +1197,13 @@
       "path": "unit/retrieval/test_falkordb_reader.py"
     },
     {
+      "path": "unit/retrieval/test_native_claim_query_params.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 1,
+      "introduced_by": "04e35f211dca75fb8e4388531472648e5d0be447"
+    },
+    {
       "domain": "retrieval",
       "tier": "unit",
       "test_definitions": 3,
@@ -1291,21 +1304,15 @@
       "tier": "unit",
       "test_definitions": 8,
       "path": "unit/runtime/test_source_resolution.py"
-    },
-    {
-      "path": "contracts/test_values.py",
-      "domain": "ontology",
-      "tier": "contracts",
-      "test_definitions": 21
     }
   ],
   "verified_collection": {
-    "environment": "Local Python 3.14.1; optional dependencies can change collection on another host.",
+    "environment": "Local Python 3.14.1 with default in_memory,embedded reliability profiles; optional dependencies and configured profiles can change collection.",
     "profiles": {
-      "all": 3720,
+      "all": 3730,
       "source": 16,
-      "general": 2856,
-      "graph": 839,
+      "general": 2864,
+      "graph": 841,
       "restart": 9
     },
     "pairwise_disjoint": true,

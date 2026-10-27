@@ -6,6 +6,7 @@ from dataclasses import replace
 from itertools import islice
 from typing import Callable, Sequence
 
+from potpie_context_engine.core.cli_commands import join_command
 from potpie_context_engine.core.ports.resource_store import (
     Chunk,
     DocumentManifest,
@@ -58,8 +59,6 @@ def read_batch(
     sections: Callable[[Chunk], Sequence[SectionManifest]],
     with_neighbors: bool,
 ) -> ResourceBatchResult:
-    from potpie_context_engine.core.cli_commands import join_command
-
     def error_payload(resource_id, error):
         try:
             resource = parse_resource_id(resource_id)

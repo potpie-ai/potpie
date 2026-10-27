@@ -21,6 +21,8 @@ os.environ["_TYPER_FORCE_DISABLE_TERMINAL"] = "1"
 # tests/docs is Node (docs-check.mjs). Do not collect it as pytest.
 collect_ignore = ["docs"]
 
+pytest_plugins = ["tests._auth_cli_fixtures"]
+
 
 @pytest.fixture()
 def anyio_backend() -> str:

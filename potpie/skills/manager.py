@@ -36,13 +36,10 @@ SKILL_MANIFEST = "SKILL.md"
 
 
 def validate_skill_source(source: str) -> None:
-    """Refuse a source no catalog add could ever resolve.
+    """Validate the source before attempting catalog registration.
 
-    ``skills add`` took anything: a path with a typo in it, a bare hostname, an
-    ``ftp://`` URL, the empty string. Every one of them came back at exit 0, so
-    the only way to discover the skill had not been registered was that it never
-    showed up in ``skills list`` — a check nobody runs after a command that said
-    it worked.
+    Reject missing paths, bare hostnames, unsupported URL schemes and empty
+    values. A syntactically valid source may still be unsupported by the catalog.
     """
     text = (source or "").strip()
     if not text:
@@ -82,13 +79,11 @@ def _instructions_metadata(
     retired_removed: tuple[str, ...] = (),
     leftovers: tuple[Mapping[str, str], ...] = (),
 ) -> dict[str, Any]:
-    """The result metadata for a routing-block sweep, naming only what happened.
+    """Describe a routing-block sweep in the result metadata.
 
-    The instruction files it wrote or cleaned go under ``support_files`` (the
-    key the JSON contract has always used). ``retired_files_removed`` and
-    ``leftovers`` describe files an earlier release installed that this one no
-    longer ships: the ones the sweep could prove were untouched and deleted,
-    and the ones left for the user with the step that clears them.
+    ``support_files`` lists instruction files written or cleaned.
+    ``retired_files_removed`` lists deleted files from earlier releases.
+    ``leftovers`` lists preserved files and their removal instructions.
     """
     metadata: dict[str, Any] = {}
     if instruction_files:
@@ -158,12 +153,9 @@ class DefaultSkillManager:
 
     @staticmethod
     def _available(target: AgentTargetPort) -> frozenset[str] | None:
-        """Ids this harness's bundle carries, or ``None`` if it will not say.
+        """Return the skill ids this agent can install, or ``None`` if unspecified.
 
-        "In the catalog" and "installable for this harness" are different
-        questions. Conflating them makes a harness whose bundle lacks an id
-        report it in ``changed`` on every run, because nothing was written and
-        nothing could be read back.
+        Catalog membership alone does not imply that an agent's bundle has the skill.
         """
         lister = getattr(target, "available", None)
         if not callable(lister):
@@ -171,13 +163,10 @@ class DefaultSkillManager:
         return frozenset(cast("Iterable[str]", lister()))
 
     def _agents_carrying(self, sid: str, *, besides: str) -> list[str]:
-        """Registered harnesses whose bundle really does carry this skill.
+        """Return registered agents whose bundles carry this skill.
 
-        The way out used to be spelled ``--agent claude`` whatever harness was
-        asked and whatever skill was named, so the one caller who most needs it
-        — the one already on ``claude`` — was answered with the command that had
-        just been refused. A target that will not say what it carries is taken
-        at its word, the same way :meth:`_matches_bundle` takes it.
+        Treat a target that does not report its contents as available, consistent
+        with :meth:`_matches_bundle`.
         """
         return [
             name
@@ -207,16 +196,10 @@ class DefaultSkillManager:
         agent: str,
         installed: bool = False,
     ) -> ValueError:
-        """Which refusal a *named* id has earned: unknown, or not carried here.
+        """Distinguish an unknown id from a skill absent from this agent's bundle.
 
-        Availability is asked first, because a harness bundle is what can
-        actually install — but that put an id which is in *neither* the bundle
-        nor the catalog on the bundle's refusal, which opens by asserting the
-        skill "is in the catalog" and closes by naming a harness to install it
-        on. Both halves are false for an id that does not exist, and the second
-        sends the caller after a skill no harness has. Only the real targets
-        answer ``available()``, so every test that drove a fake one saw the
-        right message while the product printed the wrong one.
+        Check catalog membership before suggesting another agent. An id absent
+        from both the catalog and the bundle has no valid installation target.
         """
         if sid not in catalog:
             return self._unknown_skill_error(sid, catalog, installed=installed)
@@ -273,14 +256,10 @@ class DefaultSkillManager:
     def _unknown_skill_error(
         sid: str, catalog: dict[str, SkillInfo], *, installed: bool = False
     ) -> ValueError:
-        """The refusal owed to a caller who typed an id by hand.
+        """Refuse a caller-specified id absent from the catalog.
 
-        Every op here iterates either a set the caller named or a set the
-        product chose. Skipping a *named* id reports the operation as done for
-        a skill that does not exist, so the next session runs without the
-        context the harness was told it had. An id that is installed but gone
-        from the bundle gets the only next step that works — there is no
-        version to install over it, so the honest instruction is to remove it.
+        If the skill is installed but no longer bundled, recommend removal.
+        Reinstallation cannot restore an unavailable version.
         """
         if installed:
             return ValueError(
@@ -297,13 +276,10 @@ class DefaultSkillManager:
     def _install_instructions(
         target: AgentTargetPort, *, path: str | None = None
     ) -> dict[str, Any]:
-        """Write the harness's instruction file; say what the sweep touched.
+        """Write the bundle's routing block and report the affected files.
 
-        Returns metadata naming the files it wrote so the caller can report
-        them. They used to be written on every install, including one that
-        named a single skill, and never appeared in the result at all — so a
-        command asked for one skill and silently edited the user's
-        ``CLAUDE.md``.
+        Only bundle-wide installs call this method. Installing a named skill
+        must not change the user's instruction file.
         """
         installer = getattr(target, "install_instructions", None)
         if not callable(installer):
@@ -321,12 +297,10 @@ class DefaultSkillManager:
     def _remove_instructions(
         target: AgentTargetPort, *, path: str | None = None
     ) -> dict[str, Any]:
-        """Take the harness's instruction file back out.
+        """Remove the bundle's routing block and report the affected files.
 
-        Symmetric with :meth:`_install_instructions`, and only reached by the
-        sweep for the same reason: these files belong to the bundle as a whole,
-        not to any one id. Without it ``skills remove --all`` deleted every
-        skill directory and left ``CLAUDE.md`` routing to skills that were gone.
+        Only bundle-wide removals call this method because the block belongs
+        to the bundle, rather than an individual skill.
         """
         remover = getattr(target, "remove_instructions", None)
         if not callable(remover):
@@ -654,15 +628,10 @@ class DefaultSkillManager:
         )
 
     def add(self, *, source: str) -> SkillOperationResult:
-        """Register an external skill into the catalog — not built yet.
+        """Validate an external skill source, then report registration as unsupported.
 
-        Two refusals rather than one line of prose at exit 0. A source that
-        could never work is a typo and gets said so by name; a source that
-        *would* work gets the documented not-implemented contract, because
-        "catalog add not implemented (source=…)" printed as a success — exit 0,
-        no error envelope — is how ``skills add ./typo`` and ``skills add
-        ftp://anything`` both came back looking like they had registered
-        something.
+        Invalid sources receive a validation error. Valid sources receive the
+        structured not-implemented error until catalog registration is implemented.
         """
         validate_skill_source(source)
         raise CapabilityNotImplemented(

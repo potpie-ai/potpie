@@ -84,7 +84,6 @@ jobs:
           python -m pip install --requirement .github/requirements/python-release.txt
           python -m build --outdir dist/root .
           python -m build --outdir dist/engine potpie/context-engine
-          python -m build --outdir dist/sandbox potpie/sandbox
           python -m build --outdir dist/integrations potpie/integrations
           python -m twine check dist/*/*
           python scripts/distribution_manifest.py create dist --commit "$GITHUB_SHA"
@@ -365,27 +364,6 @@ jobs:
             --artifacts artifacts --commit "$GITHUB_SHA" --target linux-x86_64 --profile parsing --install-only
           "$RUNNER_TEMP/parsing-tests/bin/python" -m pip install pytest pytest-asyncio
           "$RUNNER_TEMP/parsing-tests/bin/python" scripts/test_suites.py parsing --profile installed
-
-  test-sandbox:
-    name: Sandbox suite (installed artifact, Python 3.13)
-    needs: [build-distributions, build-parsing, build-falkordblite]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist-distributions
-          path: artifacts/distributions
-      - name: Install and test the sandbox wheel
-        run: |
-          python -m venv "$RUNNER_TEMP/sandbox-tests"
-          "$RUNNER_TEMP/sandbox-tests/bin/python" scripts/test_distributions.py \
-            --artifacts artifacts --commit "$GITHUB_SHA" --target linux-x86_64 --profile sandbox --install-only
-          "$RUNNER_TEMP/sandbox-tests/bin/python" -m pip install pytest pytest-asyncio
-          "$RUNNER_TEMP/sandbox-tests/bin/python" scripts/test_suites.py sandbox --profile installed
 
   test-windows:
     name: Windows product contracts (installed artifacts, Python 3.13)

@@ -640,5 +640,3 @@ duplicate ontology enums in docs/CLI.
   connectors, batching, and the nudge trigger model.
 - [cli-flow.md](./cli-flow.md) — the full command surface and the canonical
   journey.
-- [observability.md](./observability.md) — logs/traces/metrics/readiness (its
-  `graph.propose`/`graph.commit` span names match the corrected write door here).

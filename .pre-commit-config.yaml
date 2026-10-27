@@ -27,7 +27,7 @@ repos:
     hooks:
       - id: ruff
         args:
-          - "--extend-ignore=E402,S101,S105,S106,S110,S311,S324,S603,S607,S608,E722"
+          - "--extend-ignore=S101,S105,S106,S110,S311,S324,S603,S607,S608,E722"
       - id: ruff-format
 
   - repo: https://github.com/astral-sh/uv-pre-commit

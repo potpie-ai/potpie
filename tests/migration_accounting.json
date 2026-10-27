@@ -1,14 +1,14 @@
 {
-  "baseline": "HEAD",
+  "baseline": "original task checkout",
   "before": {
     "modules": 174,
     "test_definitions": 2299
   },
   "after": {
-    "modules": 165,
-    "test_definitions": 2081
+    "modules": 166,
+    "test_definitions": 2082
   },
-  "net_removed_definitions": 218,
+  "net_removed_definitions": 217,
   "accounting": [
     {
       "category": "Auth shared suites into canonical storage/integration scenarios",
@@ -95,6 +95,18 @@
         "tests/cli/test_cli_ergonomics.py::test_mutation_body_cannot_override_context_selection",
         "tests/resources/test_pot_lifecycle_resources.py::test_embedded_graph_clients_close_before_temporary_storage_is_removed"
       ]
+    },
+    {
+      "category": "Upstream current engine dispatch contract",
+      "before": 0,
+      "after": 1,
+      "coverage": "Retain upstream enum-parametrized dispatch checks proving each current operation calls exactly its typed engine method once.",
+      "previous_scenarios": [
+        "origin/main:tests/unit/test_engine_dispatch.py"
+      ],
+      "current_contracts": [
+        "tests/runtime/test_engine_dispatch.py::test_dispatch_reaches_the_named_engine_method"
+      ]
     }
   ],
   "auth_baseline_file_counts": {
@@ -106,5 +118,10 @@
   },
   "limits": "Definition counts include duplicate Python definitions in the baseline; they are not collected case counts. Thin direct helper/delegation assertions are intentionally retired rather than recreated as implementation mirrors. No additional meaningful current-flow behavior gap was identified in the bounded audit.",
   "baseline_commit": "baeb7c4e4f24575dc3ddda910c8b26c985ab7eeb",
-  "ownership_manifest": "ownership.json"
+  "ownership_manifest": "ownership.json",
+  "merge_reconciliation": {
+    "auth": "Preserve upstream auth CLI, OAuth callback/browser, credential-store and HTTP-client fixture improvements in domain-owned provider suites; canonical storage/integration matrices supersede the upstream shared/legacy paths.",
+    "runtime": "Preserve the upstream removal of pass-through engine dispatch functions and its focused catalog dispatch contract.",
+    "baseline": "Counts remain relative to the original baseline_commit, including the additional current dispatch contract."
+  }
 }

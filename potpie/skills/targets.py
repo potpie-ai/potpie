@@ -34,14 +34,10 @@ def _file_digest(path: Path) -> str | None:
 
 
 def _project_manifest_slug(root: Path) -> str:
-    """A per-project manifest suffix: a readable name plus a collision-proof digest.
+    """Return a readable project name and a digest of its resolved path.
 
-    The manifest used to be keyed by agent and scope alone, so every
-    repository on the machine shared one record of "which skills are installed
-    at project scope". Installing in one project reported the others up to date;
-    ``skills remove --all`` in one marked every other project on the machine
-    fully outdated. The digest is what actually separates them — the name is
-    there so a human can tell which file belongs to which checkout.
+    The digest keeps project manifests separate for repositories with the same
+    name. The prefix identifies the checkout when listing manifest files.
     """
     digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
     name = _SLUG_RE.sub("-", root.name).strip("-") or "project"
@@ -50,14 +46,12 @@ def _project_manifest_slug(root: Path) -> str:
 
 @dataclass(slots=True)
 class AgentTarget:
-    """Install packaged Potpie skills for one harness, globally or in one repo.
+    """Install packaged skills for one agent, globally or in one repository.
 
-    Where files land comes from the harness's row in
-    :data:`~potpie.skills.harnesses.HARNESS_LAYOUTS`: under the harness home at
-    ``global`` scope, under the repository containing ``path`` at ``project``
-    scope. What was installed — versions, content hashes, disabled skills — is
-    recorded in one :class:`~potpie.skills.manifest.SkillManifest` under
-    ``home``.
+    :data:`~potpie.skills.harnesses.HARNESS_LAYOUTS` defines paths relative to
+    the agent home or repository root. A
+    :class:`~potpie.skills.manifest.SkillManifest` under ``home`` records
+    versions, content hashes and disabled skills.
     """
 
     agent: str
@@ -77,12 +71,10 @@ class AgentTarget:
 
     @property
     def target_root(self) -> Path:
-        """Where files actually land: the skills root, or the repo root.
+        """Return the skills directory globally, or the repository root locally.
 
-        At project scope this is the repo root, not the path passed in:
-        ``install`` has always resolved to the nearest git root, so reporting
-        the raw ``--path`` named a directory nothing was written to whenever
-        the caller pointed at a subdirectory.
+        Project installs resolve the nearest Git root, including when ``--path``
+        names a subdirectory.
         """
         if self.scope == "global":
             return self.skills_root
@@ -152,13 +144,10 @@ class AgentTarget:
         return bundle_skill_ids()
 
     def matches_bundle(self, *, skill_id: str, path: str | None = None) -> bool:
-        """Is what is on disk byte-identical to what :meth:`install` would write?
+        """Check whether installed files match an install without writing files.
 
-        A version integer cannot answer this. A ``SKILL.md`` truncated by a
-        failed write, or hand-edited, kept its recorded version, so ``install``
-        and ``update --all`` both exited 0 with ``changed: []`` and the harness
-        went on loading a broken skill with no way to repair it short of
-        deleting the directory by hand.
+        Compare content as well as the recorded version to detect truncated
+        or edited files.
         """
         root, skills_dir = self._placement(path)
         result = install_bundle(

@@ -105,13 +105,7 @@ class UninstallResult:
 def _unwritable_target_error(
     target: Path, exc: OSError, *, verb: str = "write"
 ) -> UnwritableSkillsTargetError:
-    """The refusal owed to a caller whose install target cannot be written.
-
-    A read-only repository (or a ``--path`` under someone else's ownership)
-    surfaced as a bare ``PermissionError``, which the CLI reports as an
-    unexpected internal error. The actual repair is one ``chmod`` on a
-    directory that message never named, so the refusal names it.
-    """
+    """Report an unwritable install target and the directory to repair."""
     blocked = _nearest_existing_dir(target)
     return UnwritableSkillsTargetError(
         f"Cannot {verb} {target}: {exc.strerror or exc}. "
@@ -164,13 +158,9 @@ def resolve_install_root(path: str | Path) -> Path:
 
 
 def prune_empty_dirs(directory: Path, *, stop_at: Path) -> None:
-    """Drop directories a removal just emptied, up to but excluding ``stop_at``.
+    """Remove empty parents up to, but excluding, ``stop_at``.
 
-    Stops at the first non-empty parent, so a ``.claude/`` that still holds
-    skills — or anything the user put there — survives. Without it a full
-    uninstall left the shape of the install behind: an empty
-    ``.claude/skills/`` that reads, to anyone who opens the repo, as an install
-    that is still there.
+    Stop at the first non-empty parent to preserve unrelated agent files.
     """
     root = stop_at.resolve()
     current = directory.resolve()
@@ -211,12 +201,10 @@ def _merge_managed_markdown(existing: str, section: str) -> tuple[str, str]:
 
 
 def _strip_managed_section(existing: str) -> str:
-    """Return *existing* with Potpie's managed block taken back out.
+    """Remove Potpie's marked block and preserve the surrounding user text.
 
-    The install side merges the block into a file the user also writes in, so
-    the removal side has to be just as careful: what comes out is the marked
-    section and nothing else. An empty string means the file held only Potpie's
-    block and the caller should delete it rather than leave a husk behind.
+    Return an empty string when the file contained only Potpie's block,
+    so the caller can delete the file.
     """
     if not _MANAGED_MARKER_RE.search(existing):
         return existing
@@ -366,13 +354,10 @@ def uninstall_bundle(
     sweep_retired_claude_files: bool = False,
     dry_run: bool = False,
 ) -> UninstallResult:
-    """Take back what :func:`install_bundle` wrote under ``root``.
+    """Remove selected skills and Potpie's routing block under ``root``.
 
-    The same parameters, so the removal side owns exactly what the install side
-    wrote: ``skill_ids`` (``None`` for every bundled skill) deletes those skill
-    directories whole, and ``instructions`` strips the managed block from that
-    file. Leaving the block behind is why a harness kept routing to Potpie
-    skills after ``skills remove --all`` had removed every one of them.
+    ``skill_ids=None`` removes all bundled skill directories.
+    ``instructions`` names the file whose managed block should be removed.
     """
     install_root = Path(root).expanduser().resolve()
     result = UninstallResult(root=str(install_root))
@@ -431,12 +416,11 @@ def install_agent_bundle(
 def _sweep_retired_claude_files(
     install_root: Path, *, dry_run: bool
 ) -> tuple[list[str], list[dict[str, str]]]:
-    """Clear what earlier releases installed for Claude and this one no longer ships.
+    """Remove unchanged Claude files installed by earlier releases.
 
-    Returns ``(removed, leftovers)``. A retired slash command is deleted only
-    when its bytes are a version Potpie wrote; anything else — an edited command,
-    the plugin directory Claude Code may still have registered — is reported
-    with the step that clears it, never deleted.
+    Return ``(removed, leftovers)``. Delete a retired slash command only when
+    its contents match a known Potpie version. Preserve edited commands and
+    the plugin directory, and report removal instructions for them.
     """
     removed: list[str] = []
     leftovers: list[dict[str, str]] = []

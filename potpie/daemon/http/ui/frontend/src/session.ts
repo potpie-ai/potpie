@@ -1,11 +1,10 @@
 /**
  * Browser-session state for the explorer.
  *
- * The daemon's API answers 401 once the HttpOnly session cookie is missing,
- * expired, or was issued by a daemon that has since restarted. Nothing in the
- * page can mint a new one -- only `potpie ui`, which can read the daemon token,
- * can -- so the first 401 flips the whole app into a "run `potpie ui` again"
- * state instead of surfacing as one error per request.
+ * The daemon returns 401 when the HttpOnly session cookie is missing, expired
+ * or from a previous daemon process. Only `potpie ui` can read the daemon
+ * token and create a new session. On the first 401, the app asks the user to
+ * run that command again.
  */
 
 export const SESSION_REQUIRED_MESSAGE =

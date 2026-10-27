@@ -5,7 +5,7 @@ description: How the Potpie CLI reports unexpected failures to Sentry.
 
 ## Overview
 
-Sentry is used only for unexpected Potpie CLI failures. The CLI-owned
+The CLI uses Sentry only for unexpected failures. The CLI-owned
 integration lives under `potpie/cli`; engine-side metrics wiring remains under
 `potpie/context-engine`.
 
@@ -77,16 +77,16 @@ When telemetry is disabled, by preference or with
 settings again and drops anything already spooled. `potpie telemetry disable`
 deletes the pending spool.
 
-## Identity State
+## Identity state
 
-Reusable non-secret telemetry identity is stored globally:
+Potpie stores non-secret telemetry identity globally:
 
 ```text
 $XDG_CONFIG_HOME/potpie/telemetry/identity.json
 ~/.config/potpie/telemetry/identity.json
 ```
 
-The file is written with `0600` permissions through an atomic temp-file replace.
+Potpie writes the file with `0600` permissions through an atomic temp-file replace.
 It contains:
 
 - `schema_version`
@@ -100,7 +100,7 @@ repo names, prompts, code, paths, headers, or request bodies. The
 run also gets an in-memory `invocation_id`; each process gets an in-memory
 `daemon_session_id`.
 
-## Captured Errors
+## Captured errors
 
 Captured:
 
@@ -140,7 +140,7 @@ Allowed event context:
 - `invocation_id`
 - `daemon_session_id`
 
-## Privacy Scrubbing
+## Privacy scrubbing
 
 Telemetry code avoids attaching sensitive data in the first place. The generic
 scrubber is owned alongside the Context Engine metrics adapter and re-exported
@@ -181,9 +181,9 @@ Sentry events must not contain:
 - raw exception messages or values
 - raw CLI command arguments
 
-## Local Verification
+## Local verification
 
-Default tests use fake or in-memory Sentry surfaces and do not call the network.
+Default tests use fake or in-memory Sentry clients and do not call the network.
 
 ```bash
 UV_CACHE_DIR=/private/tmp/uv-cache uv run pytest tests/telemetry/test_sentry_*.py tests/telemetry/test_telemetry_*.py -q

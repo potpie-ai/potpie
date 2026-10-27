@@ -56,18 +56,14 @@ function endId(v: string | GraphNode): string {
   return typeof v === "string" ? v : v.id;
 }
 
-function edgeId(e: GraphEdge): string {
-  return e.id;
-}
-
 function mergeGraph(a: GraphData, b: GraphData): GraphData {
   const nodes = new Map<string, GraphNode>();
   for (const n of a.nodes) nodes.set(n.id, n);
   for (const n of b.nodes) if (!nodes.has(n.id)) nodes.set(n.id, n);
   const edges = new Map<string, GraphEdge>();
   for (const e of [...a.edges, ...b.edges]) {
-    edges.set(edgeId(e), {
-      id: edgeId(e),
+    edges.set(e.id, {
+      id: e.id,
       source: endId(e.source),
       target: endId(e.target),
       predicate: e.predicate,
