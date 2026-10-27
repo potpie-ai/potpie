@@ -167,7 +167,7 @@ class MemoryJournal:
         return JournalCapability(
             True,
             bool(state and state.rollback_enabled),
-            self.owner.profile == "embedded",
+            self.owner.profile in {"embedded", "ladybug"},
             "volatile" if self.owner.profile == "in_memory" else None,
         )
 

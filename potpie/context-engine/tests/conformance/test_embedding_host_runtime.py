@@ -453,4 +453,7 @@ def test_composition_needs_no_daemon_cli_or_root_product_modules() -> None:
     top_level = {module.split(".")[0] for module in loaded}
 
     assert "potpie" not in top_level
+    # Disabled resources must not initialize the unused Qdrant HTTP transport;
+    # HTTPX can also import its optional CLI dependencies as a side effect.
+    assert "httpx" not in top_level
     assert not top_level & {"fastapi", "typer", "uvicorn", "rich", "keyring"}

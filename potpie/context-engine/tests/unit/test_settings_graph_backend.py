@@ -29,6 +29,8 @@ def _clear(monkeypatch: pytest.MonkeyPatch) -> None:
         "FALKORDB_MODE",
         "CONTEXT_ENGINE_FALKORDB_LITE_PATH",
         "FALKORDB_LITE_PATH",
+        "CONTEXT_ENGINE_LADYBUG_PATH",
+        "LADYBUG_PATH",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -86,12 +88,30 @@ def test_lite_path_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None
     default = EnvContextEngineSettings().falkordb_lite_path()
     assert default == str(Path.home() / ".potpie" / "context_graph" / "falkordb.db")
     monkeypatch.setenv("CONTEXT_ENGINE_HOME", "/srv/potpie-home")
-    assert (
-        EnvContextEngineSettings().falkordb_lite_path()
-        == "/srv/potpie-home/context_graph/falkordb.db"
+    assert EnvContextEngineSettings().falkordb_lite_path() == str(
+        Path("/srv/potpie-home") / "context_graph" / "falkordb.db"
     )
     monkeypatch.setenv("FALKORDB_LITE_PATH", "/tmp/cg.db")
     assert EnvContextEngineSettings().falkordb_lite_path() == "/tmp/cg.db"
+
+
+def test_ladybug_path_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear(monkeypatch)
+    monkeypatch.delenv("CONTEXT_ENGINE_HOME", raising=False)
+    settings = EnvContextEngineSettings()
+    assert settings.ladybug_path() == str(
+        Path.home() / ".potpie" / "context_graph" / "ladybug.db"
+    )
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(Path.home() / "test-potpie"))
+    assert settings.ladybug_path() == str(
+        Path.home() / "test-potpie" / "context_graph" / "ladybug.db"
+    )
+    monkeypatch.setenv("LADYBUG_PATH", "bare.db")
+    assert settings.ladybug_path() == "bare.db"
+    monkeypatch.setenv("CONTEXT_ENGINE_LADYBUG_PATH", "dedicated.db")
+    assert settings.ladybug_path() == "dedicated.db"
+    monkeypatch.setenv("CONTEXT_ENGINE_LADYBUG_PATH", "  ")
+    assert settings.ladybug_path() == "bare.db"
 
 
 def test_suite_never_resolves_the_developers_real_home() -> None:

@@ -37,5 +37,9 @@ class ContextEngineSettingsPort(Protocol):
         """Filesystem path for the embedded FalkorDBLite database (lite mode)."""
         return ".potpie/context_graph/falkordb.db"
 
+    def ladybug_path(self) -> str:
+        """Filesystem path for the local Ladybug database."""
+        return ".potpie/context_graph/ladybug.db"
+
     def backfill_max_prs_per_run(self) -> int:
         """Max merged PRs to ingest per backfill run (deterministic cap)."""

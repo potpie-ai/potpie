@@ -28,7 +28,7 @@ flowchart TB
     direction TB
     cg_daemon["local daemon<br/>(detached by default)"]
     cg_services["services:<br/>Pot Mgmt · Graph · Skill Manager"]
-    cg_backend["GraphBackend<br/>(default falkordb_lite, embedded)"]
+    cg_backend["GraphBackend<br/>(Windows: ladybug; macOS/Linux: falkordb_lite)"]
     cg_daemon --> cg_services --> cg_backend
   end
 
@@ -74,11 +74,19 @@ potpie status
 ```
 
 `setup` also registers your repo as a source. It does not scan the working tree
-— harness-led ingestion writes the graph. The OSS/CLI default backend is **`falkordb_lite`** —
-an embedded FalkorDB over a local file, with **no Docker, server, Neo4j, or cloud
+— harness-led ingestion writes the graph. The OSS/CLI default backend is **`ladybug`
+on Windows** and **`falkordb_lite` on macOS/Linux**. Both use a local file, with **no Docker, server, Neo4j, or cloud
 key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
 (precedence: `CONTEXT_ENGINE_BACKEND` > legacy `GRAPH_DB_BACKEND` >
-`falkordb_lite`). Full flags live in [`cli-flow.md`](./cli-flow.md).
+the platform default). Full flags live in [`cli-flow.md`](./cli-flow.md).
+
+Windows installs Ladybug through the normal `pip install potpie` dependency set.
+Use x64 Python 3.12–3.14 and the Microsoft Visual C++ Redistributable. Potpie
+loads CPython's OpenSSL 3 libraries when the Ladybug wheel needs them, including
+when native loading fails during the initial package import. A missing package
+and a native DLL load failure report different installation guidance. The daemon
+host mode remains the default; `CONTEXT_ENGINE_HOST_MODE=in_process` is also
+supported. See [Ladybug storage and scope](./architecture.md#ladybug-storage-and-scope).
 
 > **Roadmap (not yet wired):** Managed-backend routing is designed but not
 > functional — `pot use --managed`, `pot list --managed`, and the whole `cloud`
@@ -109,7 +117,7 @@ key required**; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
 | **Pot** | Unit of isolation/tenancy. Every query, source, inbox item, claim, semantic mutation, and graph operation is scoped to one pot; the pot id **is** the storage `group_id`. A pot is local or managed; the active pot determines routing. Cross-pot federation is an anti-goal. |
 | **Daemon** | Local background process (`potpie/daemon/lifecycle.py`) for lifecycle, IPC, health, and logs — **not** the business layer. Default host mode is detached (`daemon`); it also serves the read-only `potpie ui` explorer. |
 | **Services** | Root capability services own pots, sources, setup, skills, and local identity; Graph Service owns graph reads, semantic mutations, and the workbench. Runtime composition assembles them for the local daemon. |
-| **GraphBackend** | Swappable capability bundle of 6 ports — canonical `mutation` + `claim_query`, plus rebuildable projections `semantic`, `inspection`, `analytics`, `snapshot` — with `capabilities()`/`provision()`. Default profile `falkordb_lite`. |
+| **GraphBackend** | Swappable capability bundle of 6 ports — canonical `mutation` + `claim_query`, plus rebuildable projections `semantic`, `inspection`, `analytics`, `snapshot` — with `capabilities()`/`provision()`. Default profile `ladybug` on Windows, `falkordb_lite` on macOS/Linux. |
 | **Skill Manager** | CLI-managed skill catalog/installer for agent harnesses. Skills teach agents how to use the CLI; they are not graph facts or new tools. |
 | **Event Ledger** | Separate managed-or-self-hostable source-event service (webhooks, polling, replay cursors). Graph consumers *pull* and track their own cursor/apply state; the ledger is **not** the graph source of truth. (External clients are stubs — roadmap.) |
 | **Claim** | A compact, sourced fact — the graph stores claims + source refs, **never** full payloads (diffs, doc bodies, transcripts). Each claim carries a truth class that feeds the ranker. |

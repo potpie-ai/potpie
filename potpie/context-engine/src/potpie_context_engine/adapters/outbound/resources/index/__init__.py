@@ -5,7 +5,8 @@ One registry maps a profile name to a concrete ``ResourceIndexPort``, the way
 strategy means adding a profile here; it never means changing the reader, the
 facade, or the CLI.
 
-    sqlite_hybrid  BM25 + vectors, fused by reciprocal rank   — the default
+    qdrant_hybrid  SQLite BM25 + Qdrant vectors               — the default
+    sqlite_hybrid compatibility name for qdrant_hybrid
     sqlite_fts     BM25 only, stdlib sqlite3 alone
     none           nothing; search returns match_mode="disabled"
 
@@ -39,13 +40,21 @@ from potpie_context_engine.adapters.outbound.resources.index.drain import (
 from potpie_context_engine.adapters.outbound.resources.index.sqlite_fts import (
     SqliteFtsResourceIndex,
 )
-from potpie_context_engine.adapters.outbound.resources.index.sqlite_hybrid import (
-    SqliteHybridResourceIndex,
+from potpie_context_engine.adapters.outbound.resources.index.qdrant_hybrid import (
+    QdrantHybridResourceIndex,
 )
 
-KNOWN_PROFILES: tuple[str, ...] = ("sqlite_hybrid", "sqlite_fts", "none")
+KNOWN_PROFILES: tuple[str, ...] = (
+    "qdrant_hybrid",
+    "sqlite_hybrid",
+    "sqlite_fts",
+    "none",
+)
 
-DEFAULT_PROFILE = "sqlite_hybrid"
+DEFAULT_PROFILE = "qdrant_hybrid"
+
+# Keep the existing public import and persisted profile spelling compatible.
+SqliteHybridResourceIndex = QdrantHybridResourceIndex
 
 #: Truthy values that turn on the shared-store honesty note in ``status``. The
 #: deployer is the only party that knows whether the resource *files* sit on a
@@ -80,9 +89,9 @@ def build_resource_index(
     """Construct the index for a profile name.
 
     ``embedder`` is an :class:`EmbedderPort`; when omitted the bundled local
-    embedder is built, so semantic retrieval needs no API key and no setup step
-    (``CONTEXT_ENGINE_EMBEDDER=none`` disables it, and the hybrid profile then
-    reports itself lexical rather than pretending).
+    embedder is built. Hybrid retrieval needs a reachable Qdrant service
+    configured through CONTEXT_ENGINE_QDRANT_URL (default localhost:6333).
+    ``CONTEXT_ENGINE_EMBEDDER=none`` disables semantic retrieval explicitly.
     """
     name = (profile or default_resource_index_profile()).strip().lower()
     name = name.replace("-", "_")
@@ -110,7 +119,7 @@ def build_resource_index(
         # No embedder: the lexical profile must not pull a model into memory,
         # and passing one would make ``capabilities()`` read as a lie.
         return SqliteFtsResourceIndex(**kwargs)
-    return SqliteHybridResourceIndex(
+    return QdrantHybridResourceIndex(
         embedder=embedder if embedder is not None else _default_embedder(), **kwargs
     )
 
@@ -140,6 +149,7 @@ __all__ = [
     "DEFAULT_PROFILE",
     "KNOWN_PROFILES",
     "NullResourceIndex",
+    "QdrantHybridResourceIndex",
     "ResourceIndexDrain",
     "SqliteFtsResourceIndex",
     "SqliteHybridResourceIndex",

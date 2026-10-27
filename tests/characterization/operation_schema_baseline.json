@@ -2037,6 +2037,13 @@
        }
       ]
      }
+    },
+    {
+     "default": 0,
+     "name": "processed",
+     "schema": {
+      "kind": "integer"
+     }
     }
    ],
    "kind": "object",

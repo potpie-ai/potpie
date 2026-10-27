@@ -252,6 +252,12 @@ def test_config_set_resource_index_normalizes_and_validates_the_profile(
     ok = runner.invoke(
         cli_main.app, ["--json", "config", "set", "resource_index", "SQLite-FTS"]
     )
+    hybrid = runner.invoke(
+        cli_main.app, ["--json", "config", "set", "resource_index", "Qdrant-Hybrid"]
+    )
+    alias = runner.invoke(
+        cli_main.app, ["--json", "config", "set", "resource_index", "sqlite_hybrid"]
+    )
     off = runner.invoke(
         cli_main.app, ["--json", "config", "set", "resource_index", "off"]
     )
@@ -259,13 +265,16 @@ def test_config_set_resource_index_normalizes_and_validates_the_profile(
         cli_main.app, ["--json", "config", "set", "resource_index", "sqlite_vec"]
     )
 
-    assert ok.exit_code == 0 and off.exit_code == 0
+    assert ok.exit_code == hybrid.exit_code == alias.exit_code == off.exit_code == 0
     assert config.writes == [
         ("resource_index", "sqlite_fts"),
+        ("resource_index", "qdrant_hybrid"),
+        ("resource_index", "sqlite_hybrid"),
         ("resource_index", "none"),
     ]
     assert bad.exit_code == 1
     assert json.loads(bad.stdout)["detail"]["profiles"] == [
+        "qdrant_hybrid",
         "sqlite_hybrid",
         "sqlite_fts",
         "none",
