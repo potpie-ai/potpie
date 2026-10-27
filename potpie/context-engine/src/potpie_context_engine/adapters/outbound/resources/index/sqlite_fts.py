@@ -174,7 +174,10 @@ _SCHEMA = (
     "CREATE INDEX IF NOT EXISTS windows_pending ON windows(pot_id) WHERE embedding IS NULL",
 )
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+# ``\w`` rather than ``[A-Za-z0-9_]``: ``unicode61`` keeps letters and digits of
+# every script inside one token, so an ASCII-only split would turn ``Zürich``
+# into ``Z`` and ``rich`` and search for words the index never stored.
+_TOKEN_RE = re.compile(r"\w+")
 
 # Function words, dropped from the lexical arm's MATCH expression.
 #

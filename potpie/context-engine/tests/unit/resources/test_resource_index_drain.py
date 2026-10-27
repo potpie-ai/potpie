@@ -184,6 +184,32 @@ def test_hostile_query_text_becomes_a_legal_match_expression():
     assert fts_match_expression("") is None
 
 
+def test_non_ascii_words_stay_whole_tokens():
+    """``unicode61`` indexes ``Zürich`` as one word; the query must search for it."""
+    assert fts_match_expression("Zürich office") == '"Zürich"* OR "office"*'
+    assert fts_match_expression("résumé") == '"résumé"*'
+    assert fts_match_expression("日本語") == '"日本語"'
+    assert term_coverage("Moved to the Zürich office.", ("Zürich",)) == 1.0
+
+
+def test_non_ascii_query_finds_the_chunk_that_contains_it(tmp_path):
+    import dataclasses
+
+    manifest, chunks = build_conformance_document(pot_id="p")
+    chunks = (
+        dataclasses.replace(
+            chunks[0], text="Disputes are heard by the courts of Zürich."
+        ),
+        *chunks[1:],
+    )
+    index = build_resource_index("sqlite_fts", home=tmp_path)
+    index.index_document(pot_id="p", manifest=manifest, chunks=chunks)
+    result = index.search(pot_id="p", query="Zürich")
+    assert [hit.seq for hit in result.hits] == [chunks[0].seq]
+    assert [hit.section for hit in result.hits] == [chunks[0].section]
+    index.close()
+
+
 def test_function_words_are_dropped_so_a_question_does_not_match_everything():
     """Measured, not stylistic: OR-ing 'why/did/we' retrieves the whole corpus.
 
