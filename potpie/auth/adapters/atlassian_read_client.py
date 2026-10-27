@@ -43,6 +43,15 @@ _HTTP_TIMEOUT = 30.0
 _DEFAULT_JIRA_LIMIT = 10
 _DEFAULT_CONFLUENCE_LIMIT = 10
 _EXCERPT_LEN = 280
+#: ADF nodes whose children are inline runs of one line of text.
+_ADF_INLINE_CONTAINERS = frozenset({"paragraph", "heading", "codeBlock"})
+#: Inline ADF nodes that keep their text in ``attrs``, by preference order.
+_ADF_ATTR_TEXT: dict[str, tuple[str, ...]] = {
+    "mention": ("text",),
+    "emoji": ("text", "shortName"),
+    "status": ("text",),
+    "inlineCard": ("url",),
+}
 
 
 class AtlassianReadError(CliAuthError):
@@ -387,12 +396,20 @@ def _adf_to_plain(node: Any) -> str:
         return node
     if not isinstance(node, dict):
         return ""
-    if node.get("type") == "text":
+    node_type = node.get("type")
+    if node_type == "text":
         return str(node.get("text") or "")
-    parts: list[str] = []
-    for child in node.get("content") or []:
-        parts.append(_adf_to_plain(child))
-    return "".join(parts)
+    if node_type == "hardBreak":
+        return "\n"
+    if node_type in _ADF_ATTR_TEXT:
+        attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+        return next(
+            (str(attrs[k]) for k in _ADF_ATTR_TEXT[node_type] if attrs.get(k)), ""
+        )
+    parts = [_adf_to_plain(child) for child in node.get("content") or []]
+    # A paragraph's runs join as written; blocks (paragraphs, list items,
+    # table cells) are separate lines, or their last and first words merge.
+    return ("" if node_type in _ADF_INLINE_CONTAINERS else "\n").join(parts)
 
 
 def _html_to_plain(html: str) -> str:
