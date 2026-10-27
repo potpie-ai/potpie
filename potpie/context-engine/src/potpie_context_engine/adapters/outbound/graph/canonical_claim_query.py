@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
@@ -99,8 +100,6 @@ def claim_matches_post_filter(
         if values and (actual or "").lower() not in {value.lower() for value in values}:
             return False
     if filter_.exact_text_in or filter_.exact_text_pattern:
-        import re
-
         haystack = " ".join(
             str(value)
             for value in (

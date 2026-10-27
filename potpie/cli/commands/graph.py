@@ -51,6 +51,7 @@ from potpie.cli.commands._common import (
     run_engine_outcome,
     set_json,
 )
+from potpie.cli.commands.graph_commits import register_commit_commands
 from potpie.cli.catalog_presenter import render_catalog
 from potpie.cli.snapshot_io import local_path, read_snapshot, write_snapshot
 from potpie.cli.read_presenter import (
@@ -4865,7 +4866,5 @@ def _quality_human(result) -> str:
 
 __all__ = ["backend_app", "graph_app", "timeline_app"]
 
-
-from potpie.cli.commands.graph_commits import register_commit_commands  # noqa: E402
 
 register_commit_commands(graph_app)

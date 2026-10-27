@@ -39,6 +39,7 @@ from potpie_context_engine.core.identity import (
     IdentitySpec,
     register_identity,
 )
+from potpie_context_engine.core.singleton_predicates import replace_singletons
 
 # ``ONTOLOGY_VERSION`` is owned by :mod:`potpie_context_engine.core.graph_contract` (the single
 # contract home) and mirrored here so existing importers of
@@ -1027,8 +1028,6 @@ def _sync_singleton_registry() -> None:
     supersession path. Tests that need a custom set should use
     :func:`potpie_context_engine.core.singleton_predicates.replace_singletons` then restore.
     """
-    from potpie_context_engine.core.singleton_predicates import replace_singletons
-
     replace_singletons(SINGLETON_EDGE_TYPES)
 
 

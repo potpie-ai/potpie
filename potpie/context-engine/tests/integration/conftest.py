@@ -11,6 +11,7 @@ reachable the dependent tests skip rather than fail.
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import uuid
 from pathlib import Path
@@ -59,8 +60,6 @@ def _bolt_reachable(uri: str) -> bool:
 @pytest.fixture()
 def live_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     """Set Neo4j env from real env or repo .env; skip if missing/unreachable."""
-    import os
-
     dotenv = _parse_dotenv(_find_dotenv()) if _find_dotenv() else {}
     resolved: dict[str, str] = {}
     for key in _NEO4J_KEYS:
@@ -121,8 +120,6 @@ def container(settings, pot_id, repo_name):
 # ---------------------------------------------------------------------------
 # Real Postgres test database (created inside the configured instance)
 # ---------------------------------------------------------------------------
-
-import os  # noqa: E402
 
 _DOTENV: dict[str, str] | None = None
 

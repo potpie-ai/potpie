@@ -62,6 +62,7 @@ from potpie_context_engine.core.ports.resource_store import (
     require_resource_slug,
 )
 from potpie_context_engine.adapters.outbound.local_paths import default_home
+from potpie_context_engine.core.resource_reads import read_batch, resource_choices
 
 META_FILENAME = "meta.json"
 VERSIONS_DIRNAME = ".versions"
@@ -551,8 +552,6 @@ class LocalResourceStore:
         resource_ids: tuple[str, ...],
         with_neighbors: bool = False,
     ):
-        from potpie_context_engine.core.resource_reads import read_batch
-
         pot_root = self._pot_root(pot_id)
         documents = set()
         for resource_id in resource_ids:
@@ -584,8 +583,6 @@ class LocalResourceStore:
             )
 
     def _get_one_locked(self, pot_id, resource_id, manifests):
-        from potpie_context_engine.core.resource_reads import resource_choices
-
         resource = parse_resource_id(resource_id)
         manifest_key = f"{resource.doc}@{resource.revision or 'current'}"
         cached = manifests.get(manifest_key)
