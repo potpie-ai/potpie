@@ -53,6 +53,24 @@ from potpie.cli.auth.atlassian_read import (
     run_confluence_use_flow,
     run_jira_use_flow,
 )
+
+
+@pytest.fixture
+def auth_http_client() -> Callable[..., FakeAuthHttpClient]:
+    def make_client(*responses: httpx.Response) -> FakeAuthHttpClient:
+        return FakeAuthHttpClient(list(responses))
+
+    return make_client
+
+
+@pytest.fixture
+def browser(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    browser = MagicMock()
+    browser.open.return_value = True
+    monkeypatch.setattr(atlassian_auth, "webbrowser", browser)
+    return browser
+
+
 # --- test_atlassian_auth_http.py ---
 
 
@@ -98,24 +116,12 @@ def test_parse_gateway_probe_success_variants() -> None:
     )
 
 
-def test_verify_gateway_product_confluence_success() -> None:
-    response = MagicMock()
-    response.status_code = 200
-    response.content = b'{"displayName":"Wiki"}'
-    response.json.return_value = {"displayName": "Wiki"}
-    with patch(
-        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
-        client = MagicMock()
-        mock_client_cls.return_value = client
-        client.get.return_value = response
+def test_verify_gateway_product_confluence_success(auth_http_client) -> None:
+    client = auth_http_client(httpx.Response(200, json={"displayName": "Wiki"}))
 
-        result = verify_gateway_product(
-            "user@example.com",
-            "secret-token",
-            "cloud-id-1",
-            "confluence",
-        )
+    result = verify_gateway_product(
+        "user@example.com", "secret-token", "cloud-id-1", "confluence", http=client
+    )
 
     assert result.ok is True
     assert result.display_name == "Wiki"
@@ -137,47 +143,24 @@ def test_parse_gateway_probe_success_jira_myself() -> None:
     assert name == "Ada"
 
 
-def test_verify_gateway_product_insufficient_scopes_on_403() -> None:
-    response = MagicMock()
-    response.status_code = 403
-    response.content = b""
-    with patch(
-        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
-        client = MagicMock()
-        mock_client_cls.return_value = client
-        client.get.return_value = response
+def test_verify_gateway_product_insufficient_scopes_on_403(auth_http_client) -> None:
+    client = auth_http_client(httpx.Response(403), httpx.Response(403))
 
-        result = verify_gateway_product(
-            "user@example.com",
-            "secret-token",
-            "cloud-id-1",
-            "jira",
-        )
+    result = verify_gateway_product(
+        "user@example.com", "secret-token", "cloud-id-1", "jira", http=client
+    )
 
     assert result.ok is False
     assert result.error_kind == AtlassianAuthErrorKind.INSUFFICIENT_SCOPES
 
 
-def test_verify_gateway_product_success() -> None:
+def test_verify_gateway_product_success(auth_http_client) -> None:
     """Return the display name and Basic scheme when product verification succeeds."""
-    response = MagicMock()
-    response.status_code = 200
-    response.content = b'{"displayName":"Ada"}'
-    response.json.return_value = {"displayName": "Ada"}
-    with patch(
-        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
-        client = MagicMock()
-        mock_client_cls.return_value = client
-        client.get.return_value = response
+    client = auth_http_client(httpx.Response(200, json={"displayName": "Ada"}))
 
-        result = verify_gateway_product(
-            "user@example.com",
-            "secret-token",
-            "cloud-id-1",
-            "jira",
-        )
+    result = verify_gateway_product(
+        "user@example.com", "secret-token", "cloud-id-1", "jira", http=client
+    )
 
     assert result.ok is True
     assert result.display_name == "Ada"
@@ -256,19 +239,14 @@ def test_verify_gateway_product_bearer_after_basic_401(
     ] == ["Basic", "Bearer"]
 
 
-def test_fetch_cloud_id_for_site_success() -> None:
+def test_fetch_cloud_id_for_site_success(auth_http_client) -> None:
     """Read the cloud ID returned by the selected Atlassian site."""
-    response = MagicMock()
-    response.status_code = 200
-    response.json.return_value = {"cloudId": "cloud-xyz"}
-    with patch(
-        "potpie.auth.adapters.atlassian_client.AuthHttpClient"
-    ) as mock_client_cls:
-        client = MagicMock()
-        mock_client_cls.return_value = client
-        client.get.return_value = response
+    client = auth_http_client(httpx.Response(200, json={"cloudId": "cloud-xyz"}))
 
-        assert fetch_cloud_id_for_site("https://team.atlassian.net") == "cloud-xyz"
+    assert (
+        fetch_cloud_id_for_site("https://team.atlassian.net", http=client)
+        == "cloud-xyz"
+    )
 
 
 def test_auth_failure_message_other_error_kinds() -> None:
@@ -697,6 +675,7 @@ def test_run_atlassian_auth_emits_site_discovery_error_on_tenant_http_error(
 
 @pytest.mark.parametrize("product", ["jira", "confluence"])
 def test_run_atlassian_auth_opens_token_page_after_enter(
+    browser: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     product: str,
@@ -727,12 +706,6 @@ def test_run_atlassian_auth_opens_token_page_after_enter(
         "_save_product_credentials",
         lambda *_args: None,
     )
-    opened_urls: list[str] = []
-    monkeypatch.setattr(
-        atlassian_auth.webbrowser,
-        "open",
-        lambda url, **_kwargs: opened_urls.append(url) or True,
-    )
     confirms: list[str] = []
 
     def _confirm(prompt: str, **kwargs: object) -> bool:
@@ -760,7 +733,7 @@ def test_run_atlassian_auth_opens_token_page_after_enter(
     assert "Press Enter to open the page" in out
     assert "Opening id.atlassian.com ..." in out
     assert "Opening Atlassian in 10 seconds..." not in out
-    assert opened_urls == [atlassian_auth.ATLASSIAN_API_TOKEN_PAGE]
+    browser.open.assert_called_once_with(atlassian_auth.ATLASSIAN_API_TOKEN_PAGE, new=1)
     assert confirms == ["Press Enter to continue"]
     assert prompts == ["Enter your API token", "Enter your Atlassian email"]
 
@@ -825,6 +798,7 @@ def test_run_atlassian_auth_target_accepts_either_product(
 
 @pytest.mark.parametrize("product", ["jira", "confluence"])
 def test_run_atlassian_auth_skips_browser_when_confirm_declined(
+    browser: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     product: str,
@@ -855,12 +829,6 @@ def test_run_atlassian_auth_skips_browser_when_confirm_declined(
         "_save_product_credentials",
         lambda *_args: None,
     )
-    opened_urls: list[str] = []
-    monkeypatch.setattr(
-        atlassian_auth.webbrowser,
-        "open",
-        lambda url, **_kwargs: opened_urls.append(url) or True,
-    )
     monkeypatch.setattr(
         atlassian_auth.typer,
         "confirm",
@@ -879,7 +847,7 @@ def test_run_atlassian_auth_skips_browser_when_confirm_declined(
 
     out = capsys.readouterr().out
     assert "Opening id.atlassian.com ..." not in out
-    assert opened_urls == []
+    browser.open.assert_not_called()
     assert prompts == ["Enter your API token", "Enter your Atlassian email"]
 
 
