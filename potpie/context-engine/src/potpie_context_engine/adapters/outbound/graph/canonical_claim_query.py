@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
@@ -18,6 +19,38 @@ from potpie_context_engine.core.claim_codec import (
     row_from_record,
     vector_property,
 )
+
+
+def claim_query_params(
+    filter_: ClaimQueryFilter, *, query_time: datetime
+) -> dict[str, object]:
+    """Translate claim filters to the shared Cypher query parameters."""
+    return {
+        "gid": filter_.pot_id,
+        "preds": list(filter_.predicate_in) or None,
+        "subjects": list(filter_.subject_key_in) or None,
+        "objects": list(filter_.object_key_in) or None,
+        "claim_keys": list(filter_.claim_key_in) or None,
+        "record_ids": list(filter_.record_id_in) or None,
+        "subgraphs": list(filter_.subgraph_in) or None,
+        "excluded_subgraphs": list(filter_.subgraph_not_in) or None,
+        "mutation_ids": list(filter_.mutation_id_in) or None,
+        "source_refs": list(filter_.source_ref_in) or None,
+        "sources": list(filter_.source_system_in) or None,
+        "exact_text": [value.lower() for value in filter_.exact_text_in] or None,
+        "exact_pattern": filter_.exact_text_pattern,
+        "environments": [value.lower() for value in filter_.environment_in] or None,
+        "truths": [value.lower() for value in filter_.truth_in] or None,
+        "endpoint_label": filter_.endpoint_label,
+        "include_invalid": bool(filter_.include_invalidated),
+        "include_retired": bool(filter_.include_retired),
+        "as_of": iso(filter_.as_of),
+        "query_time": iso(query_time),
+        "va_after": iso(filter_.valid_at_after),
+        "va_before": iso(filter_.valid_at_before),
+        "subject_label": filter_.subject_label,
+        "object_label": filter_.object_label,
+    }
 
 
 def claim_is_applicable(row: ClaimRow, *, as_of: datetime | None = None) -> bool:
@@ -67,8 +100,6 @@ def claim_matches_post_filter(
         if values and (actual or "").lower() not in {value.lower() for value in values}:
             return False
     if filter_.exact_text_in or filter_.exact_text_pattern:
-        import re
-
         haystack = " ".join(
             str(value)
             for value in (
@@ -190,6 +221,7 @@ __all__ = [
     "ENTITY_LABELS_CYPHER",
     "FIND_CLAIMS_CYPHER",
     "RESERVED_EDGE_KEYS",
+    "claim_query_params",
     "embedding_score",
     "iso",
     "parse_dt",

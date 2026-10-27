@@ -5,6 +5,8 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -53,12 +55,31 @@ class Embedder:
         return (1.0, 0.0, 0.0)
 
 
+def wait_for_vector_index(graph):
+    deadline = time.monotonic() + 10.0
+    while True:
+        statuses = graph.query(
+            "CALL db.indexes() YIELD label, properties, status "
+            "WHERE label=$label AND $property IN properties RETURN status",
+            params={"label": "RELATES_TO", "property": "fact_embedding"},
+        ).result_set
+        if statuses == [["OPERATIONAL"]]:
+            return
+        if time.monotonic() >= deadline:
+            pytest.fail(
+                "vector index RELATES_TO.fact_embedding did not become OPERATIONAL "
+                f"within 10s; observed statuses: {statuses!r}"
+            )
+        time.sleep(0.01)
+
+
 def reader(graph, *, vector, require_vector=True):
     if vector:
         graph.query(
             "CREATE VECTOR INDEX FOR ()-[r:RELATES_TO]->() ON (r.fact_embedding) "
             "OPTIONS {dimension:3,similarityFunction:'cosine'}"
         )
+        wait_for_vector_index(graph)
     result = FalkorDBClaimQueryStore(
         Settings(), graph=graph, embedder=Embedder() if vector else None
     )
@@ -68,6 +89,53 @@ def reader(graph, *, vector, require_vector=True):
             "native vector query unexpectedly fell back to lexical"
         )
     return result
+
+
+class IndexStatusGraph:
+    def __init__(self, *statuses):
+        self.statuses = list(statuses)
+        self.created = False
+        self.last_status = None
+
+    def query(self, query, params=None):
+        if query.startswith("CREATE VECTOR INDEX"):
+            self.created = True
+            return SimpleNamespace(result_set=[])
+        assert self.created
+        assert "CALL db.indexes()" in query
+        assert params == {"label": "RELATES_TO", "property": "fact_embedding"}
+        if len(self.statuses) > 1:
+            self.last_status = self.statuses.pop(0)
+        else:
+            self.last_status = self.statuses[0]
+        return SimpleNamespace(result_set=self.last_status)
+
+
+def test_vector_reader_waits_for_its_index_to_be_operational(monkeypatch):
+    graph = IndexStatusGraph([], [["UNDER CONSTRUCTION"]], [["OPERATIONAL"]])
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+
+    query = reader(graph, vector=True)
+
+    assert graph.last_status == [["OPERATIONAL"]]
+    assert query._get_graph() is graph
+
+
+def test_vector_reader_reports_index_state_when_readiness_times_out(monkeypatch):
+    graph = IndexStatusGraph([["UNDER CONSTRUCTION"]])
+    clock = [0.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+
+    def advance_clock(_interval):
+        clock[0] += 6.0
+
+    monkeypatch.setattr(time, "sleep", advance_clock)
+
+    with pytest.raises(
+        pytest.fail.Exception,
+        match=r"RELATES_TO\.fact_embedding.*UNDER CONSTRUCTION",
+    ):
+        reader(graph, vector=True)
 
 
 def legacy_claim(

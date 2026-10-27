@@ -1,11 +1,11 @@
 ---
 title: Potpie
-description: Turn your codebase and software development lifecycle into a living context graph for AI agents.
+description: Store codebase and software development context in a graph for AI agents.
 ---
 
 ## Overview
 
-[Potpie](https://potpie.ai) turns your codebase and software development lifecycle into a living context graph for AI agents.
+[Potpie](https://potpie.ai) stores codebase and software development context in a graph for AI agents.
 It indexes code, structure, decisions, source history, team knowledge and engineering workflows, so agents can answer questions, plan changes, debug failures, and write code with project-specific context.
 
 ![Potpie context graph demo](https://raw.githubusercontent.com/potpie-ai/potpie/main/assets/context_graph.gif)
@@ -20,7 +20,7 @@ It indexes code, structure, decisions, source history, team knowledge and engine
 
 ## Architecture
 
-Potpie's current architecture is CLI-first. CLI is designed to be used by both humans and agents. Read the deeper architecture notes in [Context graph architecture](./context-graph/architecture.md).
+Humans and agents use the same Potpie CLI. Read about the services, storage, and runtime in [Context graph architecture](./context-graph/architecture.md).
 
 ## License
 
@@ -32,5 +32,5 @@ This project is licensed under the Apache 2.0 License. See [LICENSE](https://git
 - [Discord](https://discord.gg/ryk5CMD5v6): community discussion and support
 - [Docs](https://docs.potpie.ai): setup, product guides, and integration details
 
-New contributions are always welcome. Read the [Contributing Guide](https://github.com/potpie-ai/potpie/blob/main/.github/CONTRIBUTING.md)
+Read the [contributing guide](https://github.com/potpie-ai/potpie/blob/main/.github/CONTRIBUTING.md)
 to set up your environment, understand the workflow, and open a pull request.

@@ -1057,4 +1057,3 @@ potpie graph propose --file mutation.json
 - [writing.md](./writing.md) — the semantic DSL, propose→commit, risk/validation, inbox, quality.
 - [ingestion-nudge.md](./ingestion-nudge.md) — event stores, connectors, and the nudge trigger model.
 - [skills.md](./skills.md) — the skill catalog, install/drift, and the harness loop.
-- [observability.md](./observability.md) — span names, logs, metrics, readiness.

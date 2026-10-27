@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,40 +25,36 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-PACKAGE_SRC = Path(__file__).resolve().parents[1] / "src"
-if str(PACKAGE_SRC) not in sys.path:
-    sys.path.insert(0, str(PACKAGE_SRC))
-
-from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (  # noqa: E402
+from potpie_context_engine.adapters.inbound.http.api.v1.context.router import (
     create_context_router,
 )
-from potpie.auth.adapters.credentials_store import (  # noqa: E402
+from potpie.auth.adapters.credentials_store import (
     get_active_pot_id,
 )
-from potpie.auth.adapters.potpie_api_config import (  # noqa: E402
+from potpie.auth.adapters.potpie_api_config import (
     resolve_potpie_api_base_url,
     resolve_potpie_api_key,
 )
-from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (  # noqa: E402
+from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (
     IngestRejectedError,
     PotpieContextApiClient,
     PotpieContextApiError,
 )
-from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (  # noqa: E402
+from potpie_context_engine.adapters.outbound.graph.in_memory_reader import (
     InMemoryClaimQueryStore,
 )
-from potpie_context_engine.application.services.envelope_builder import envelope_to_dict  # noqa: E402
-from potpie_context_engine.application.services.read_orchestrator import (  # noqa: E402
+from potpie_context_engine.application.services.envelope_builder import envelope_to_dict
+from potpie_context_engine.application.services.read_orchestrator import (
     ReadOrchestrator,
 )
-from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer  # noqa: E402
-from potpie_context_engine.bootstrap.http_projects import ExplicitPotResolution  # noqa: E402
-from potpie_context_engine.core.agent_context_port import (  # noqa: E402
+from potpie_context_engine.bootstrap.ingestion_server import IngestionServerContainer
+from potpie_context_engine.bootstrap.http_projects import ExplicitPotResolution
+from potpie_context_engine.core.agent_context_port import (
     build_context_record_source_id,
     context_recipe_for_intent,
     normalize_record_type,
 )
-from potpie_context_engine.domain.ports.context_graph_job_queue import (  # noqa: E402
+from potpie_context_engine.domain.ports.context_graph_job_queue import (
     NoOpContextGraphJobQueue,
 )
 

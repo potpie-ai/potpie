@@ -5,9 +5,8 @@ description: Source integrations and coding harnesses that Potpie supports.
 
 ## Integrations and coding harnesses
 
-Potpie supports a variety of integrations and coding harnesses, with more coming.
-If your team needs a new integration or harness, please
-[raise a ticket](https://github.com/potpie-ai/potpie/issues/new/choose).
+Potpie supports the integrations and harnesses below. To request another,
+[open an issue](https://github.com/potpie-ai/potpie/issues/new/choose).
 
 ### Integrations
 

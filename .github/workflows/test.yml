@@ -593,38 +593,6 @@ jobs:
             | python -c 'import json, sys; assert json.load(sys.stdin)["items"], "recorded fix not found"'
           # The daemon is left running; the runner reaps it with the job.
 
-  potpie-sandbox:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "0.10.7"
-
-      - name: Install dependencies
-        run: uv sync --frozen --all-packages --no-cache
-
-      - name: Run sandbox unit tests
-        working-directory: potpie/sandbox
-        run: uv run --project . --extra daytona pytest tests/unit
-
-      - name: Run sandbox local integration tests
-        working-directory: potpie/sandbox
-        run: uv run --project . --extra daytona pytest tests/integration/test_docker_runtime.py tests/e2e/test_local_subprocess_e2e.py
-
   graph-commits-ui:
     # The explorer's commit diffs, presentation and mutation context are pure
     # TypeScript; run every frontend test, then type-check and build.

@@ -16,8 +16,7 @@ python3 -m pip install --user potpie
 ```
 
 > [!NOTE]
-> `uv tool install potpie` is recommended for CLI installs because global
-> mutation of Python packages is generally not recommended.
+> Use `uv tool install potpie` to isolate the CLI from other Python packages.
 
 ## Step 2: start Qdrant for resource semantic search
 

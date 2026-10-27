@@ -85,7 +85,6 @@ exclude = [
     "!/potpie/daemon/http/ui/frontend/dist",
     "/potpie/integrations",
     "/potpie/parsing",
-    "/potpie/sandbox",
 ]
 skip-excluded-dirs = true
 
@@ -116,7 +115,6 @@ exclude = [
     "/potpie/daemon/http/ui/frontend/node_modules",
     "/potpie/integrations",
     "/potpie/parsing",
-    "/potpie/sandbox",
 ]
 
 [tool.uv]
@@ -147,7 +145,6 @@ members = [
     "potpie/context-engine",
     "potpie/integrations",
     "potpie/parsing",
-    "potpie/sandbox",
 ]
 exclude = ["scripts/packaging/falkordblite"]
 

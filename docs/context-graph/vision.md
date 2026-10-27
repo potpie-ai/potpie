@@ -5,21 +5,16 @@ description: "Why the Context Graph exists, claims not payloads, and product bou
 
 ## Overview
 
-The Context Graph is Potpie's **durable, shared project memory for AI agents** — a
-compact, sourced store of facts about a project (decisions, ownership, topology,
-prior bugs and fixes, conventions, features) so an agent does not rebuild context
-from raw code, PRs, tickets, docs, and chat on every task. The root README frames
-it as turning "your codebase and software development lifecycle into a living
-context graph for AI agents."
+The Context Graph stores sourced project facts for AI agents, including decisions,
+ownership, topology, bugs, fixes, conventions, and features. Agents can reuse the
+facts across tasks instead of reading the same source material each time.
 
-This doc covers **what the Context Graph is and why it exists**. The mechanics live
-in sibling docs: layers and composition roots in [architecture.md](./architecture.md),
-the vocabulary in [ontology.md](./ontology.md), reading in [querying.md](./querying.md),
-writing in [writing.md](./writing.md), how raw events arrive and the nudge model in
-[ingestion-nudge.md](./ingestion-nudge.md), and the harness skills in
-[skills.md](./skills.md).
+This page explains the product goals and boundaries. Other pages cover
+[architecture](./architecture.md), [ontology](./ontology.md),
+[reading](./querying.md), [writing](./writing.md), [ingestion and nudges](./ingestion-nudge.md),
+and [skills](./skills.md).
 
-## The Problem
+## The problem
 
 Project context is scattered:
 
@@ -29,7 +24,7 @@ Project context is scattered:
 - agents start each task with no durable memory of what previous agents learned.
 
 Potpie should hold that context once, keep it fresh, and expose it through one
-small, stable surface that both humans and agents use.
+CLI that both humans and agents use.
 
 ## Claims, not payloads
 
@@ -39,11 +34,9 @@ transcripts, logs, webhook archives, or telemetry. A *claim* is a sourced,
 time-stamped fact about an entity or a relationship; a *source ref* points back to
 the evidence (a file path, PR, ticket, doc URL, deploy).
 
-The canonical claim store is the single source of truth. Everything else —
-semantic search indexes, traversal/inspection views, analytics rollups — is a
-**rebuildable projection** off those claims. The governing storage principle:
-
-> The graph model is the invariant. Physical storage is an adapter.
+The canonical claim store holds authoritative state. Semantic search indexes,
+traversal and inspection views, and analytics rollups are rebuildable projections
+of those claims. Storage adapters implement the same graph model.
 
 ```mermaid
 flowchart LR
@@ -57,15 +50,14 @@ flowchart LR
   cg_claims --> cg_analytics
 ```
 
-The full vocabulary — 25 entity types, 27 public predicates plus a `RELATED_TO`
-fallback, 7 truth classes — is owned by [ontology.md](./ontology.md). PRs, commits,
+The entity types, public predicates, `RELATED_TO` fallback, and truth classes are
+defined in [ontology.md](./ontology.md). PRs, commits,
 issues, incidents, and deployments all collapse to a single timeline `Activity`
 entity; an entity exists only if an edge needs it as an endpoint.
 
 ## One CLI surface for humans and agents
 
-There is **no separate human-vs-agent API**. Both users and agents talk to the same
-`potpie` CLI. Engine operations route through the same finite typed operation
+Humans and agents use the same `potpie` CLI. Engine operations route through the same finite typed operation
 catalog whether they run through `LocalEngineClient` or `DaemonEngineClient`;
 root capability commands use explicit root-owned services.
 
@@ -76,15 +68,13 @@ Read mechanics live in [querying.md](./querying.md); write mechanics in
 
 ## Harness-owned intelligence
 
-The intelligence lives in the **user's coding harness** (Claude Code, Codex,
-Cursor, OpenCode), taught via **Potpie skills** — not in a Potpie-owned
-reconciliation or LLM agent. Skills teach an agent how to use the CLI; they are not
-graph facts and not new tools. The anti-goal is verbatim: *"No Potpie-owned
-LLM/reconciliation agent as the canonical source of graph intelligence."*
+The user's coding harness, such as Claude Code, Codex, Cursor, or OpenCode,
+reads source material and authors graph facts. Potpie skills teach the agent to
+use the CLI. Potpie validates and stores the resulting facts.
 
-The code honors this:
+The runtime follows these boundaries:
 
-- The **nudge brain is deterministic** (`NudgeService`, wired by the root runtime
+- The nudge service is deterministic (`NudgeService`, wired by the root runtime
   composition; no model on this path).
 - Retrieval ships a **bundled local embedder by default**, so semantic search needs
   no API key (disable with `CONTEXT_ENGINE_EMBEDDER=none`).
@@ -98,38 +88,36 @@ The code honors this:
 See [skills.md](./skills.md) for the skill catalog and the read/write loop the
 skills teach.
 
-## Product Shape
+## Product shape
 
 ```mermaid
 flowchart TB
   cg_agent["agent harness<br/>(skills + CLI)"]
   cg_cli["potpie CLI → typed clients / root services → ports"]
   cg_graph[("Context Graph<br/>compact claims + source refs")]
-  cg_managed["Managed Potpie graph<br/>(roadmap: not yet wired)"]
+  cg_managed["Managed Potpie graph<br/>(configured host)"]
   cg_ledger["External Event Ledger<br/>(roadmap: client stubs)"]
 
   cg_agent --> cg_cli
   cg_cli --> cg_graph
   cg_graph --> cg_cli
-  cg_cli -. "swap wiring (unbuilt)" .-> cg_managed
+  cg_cli -->|"managed host routing"| cg_managed
   cg_ledger -. "pull / consume (unbuilt)" .-> cg_graph
 ```
 
-There are three intended product boundaries. Only the first is shipped today.
+The local graph, managed graph, and Event Ledger have separate responsibilities.
 
 | Boundary | Status | Description |
 |---|---|---|
-| **Local OSS self-serve** | **Shipped (V1.5)** | Installed with the CLI. `potpie setup` provisions config, local stores, the active `default` pot, source registration, the daemon, and skills. State stays local by default. Default backend `ladybug` on Windows, `falkordb_lite` on macOS/Linux (no Docker/Neo4j/cloud needed). |
-| **Managed Potpie graph** | **Roadmap** | A managed backend API hosting the same engine-owned domain on hosted stores with hosted auth/collaboration. The graph model is identical; deployment-specific composition and clients provide the boundary. |
+| **Local OSS self-serve** | **Shipped (V1.5)** | Installed with the CLI. `potpie setup` provisions config, local stores, the active `default` pot, source registration, the daemon, and skills. State stays local by default. Default backend `falkordb_lite` (no Docker/Neo4j/cloud needed). |
+| **Managed Potpie graph** | **Client routing available** | A managed backend API hosting the same engine-owned domain on hosted stores with hosted auth/collaboration. The graph model is identical; deployment-specific composition and clients provide the boundary. |
 | **Event Ledger** | **Roadmap** | A separate managed-or-self-hostable source-event service (webhooks, polling, replay cursors) that local or managed graphs *pull* from; it is never the graph source of truth. |
 
-> **Roadmap (not yet wired):** Managed routing is designed and wired-for but not
-> functional — `potpie use --managed`, `pot list --managed`, and the entire `cloud`
-> command group raise `CapabilityNotImplemented`. The external Event Ledger clients
-> (`managed_client.py` / `self_hosted_client.py`) are TODO stubs, so `potpie ledger
-> pull/query` is non-functional against any real provider. The live "ledger" today
-> is the internal Postgres event store used by ingestion — see
-> [ingestion-nudge.md](./ingestion-nudge.md) for the two-ledger distinction.
+> Configure managed routing with `potpie host set` and `potpie host use managed`.
+> Graph commands, pot and source management, grants, and status use that host.
+> Cloud login, status, push, pull, and skill sync remain stubs. `ledger use` saves
+> an external Event Ledger binding without activating it. See
+> [ingestion-nudge.md](./ingestion-nudge.md) for the internal Postgres event store.
 
 Local and managed share **one graph model** ("no separate local and cloud graph
 models"). The Event Ledger is adjacent infrastructure for source events, not a
@@ -144,11 +132,11 @@ id **is** the storage `group_id` stamped on every entity node and relationship e
 or managed; the active pot determines routing. First local setup creates an active
 local `default` pot. **Cross-pot federation is an explicit anti-goal.**
 
-## Core Model
+## Core model
 
 | Concept | Meaning |
 |---|---|
-| **Pot** | Unit of isolation and tenancy; `pot_id` is the storage `group_id`. A pot lives in the local daemon or (roadmap) a managed backend; the CLI addresses both through the same pot surface. First local setup creates the active `default` pot. |
+| **Pot** | Unit of isolation and tenancy; `pot_id` is the storage `group_id`. A pot lives in the local daemon or a managed backend; the same CLI addresses both. First local setup creates the active `default` pot. |
 | **Entity** | A stable project object — e.g. a `Service`, `Feature`, `Decision`, `Dependency`, `Person`/`Team`, or a timeline `Activity` (PRs/commits/issues/incidents/deployments collapse here). One of 24 catalog types; minted only when an edge needs it as an endpoint. |
 | **Claim** | A canonical, sourced, time-stamped fact about an entity or relationship, carrying a truth class and provenance. The single source of truth. |
 | **Source ref** | A pointer back to evidence: file path, PR, ticket, doc URL, or deploy. The graph holds the ref, not the payload. |
@@ -158,10 +146,8 @@ local `default` pot. **Cross-pot federation is an explicit anti-goal.**
 
 ## What's shipped now (V1.5)
 
-The single biggest historical drift in these docs framed the `potpie graph …`
-workbench as a future "Graph V2." **That is wrong: the workbench is shipped today
-as V1.5.** Both the legacy V1 wrappers (`resolve` / `search` / `record`) *and* the
-full workbench are registered in `main.py` right now.
+The `potpie graph …` workbench ships as V1.5. `main.py` registers the workbench
+and the legacy `resolve`, `search`, and `record` commands.
 
 Concretely, the live contract constants are:
 
@@ -171,7 +157,7 @@ Concretely, the live contract constants are:
 | `ONTOLOGY_VERSION` | `2026-06-graph` | the catalog/vocabulary version |
 | `GRAPH_WORKBENCH_CONTRACT_VERSION` | `v2` | **only** the workbench *envelope* version string — not a separate, unshipped product |
 
-So "v2" survives solely as the envelope version on workbench responses. What ships:
+The `v2` string identifies the workbench response envelope. Available operations include:
 
 - **Reads:** `potpie resolve/search` and `potpie graph catalog/read/search-entities/
   neighborhood/history` over the single read trunk; reads return ranked evidence
@@ -186,8 +172,8 @@ So "v2" survives solely as the envelope version on workbench responses. What shi
   harness can call from its own hooks — all
   with no mandatory Docker, Neo4j, Postgres, or cloud service.
 
-The canonical local first-run is one command (`setup` registers the repo as a
-source; it never scans the working tree — the harness fills the graph):
+Run setup to register the repo as a source. The agent then ingests project
+context into the graph:
 
 ```bash
 potpie setup --repo . --agent claude
@@ -195,9 +181,9 @@ potpie status
 ```
 
 After setup, an agent discovers the contract (`graph catalog`), reads bounded views
-(`graph read`), resolves identity (`graph search-entities`), and writes durable
-learnings (`graph propose` → `graph commit --verify`). See
-[cli-flow.md](./cli-flow.md) for the full surface.
+(`graph read`), resolves identity (`graph search-entities`), and saves project
+facts (`graph propose` → `graph commit --verify`). See
+[cli-flow.md](./cli-flow.md) for the full command reference.
 
 ## Anti-goals
 
@@ -211,7 +197,7 @@ learnings (`graph propose` → `graph commit --verify`). See
 - No Event Ledger as the graph source of truth.
 - No hidden cloud dependency for local use.
 - No mandatory Docker, Neo4j, Postgres, or cloud embedding service for OSS.
-- No daemon shell as a dumping ground for business logic.
+- No business logic in the daemon lifecycle layer.
 - No cross-pot federation in this design.
 
 ## See also
