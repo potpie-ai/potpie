@@ -178,7 +178,7 @@ potpie ui      [--open/--no-open] [--pot <ref>]   # <ref> may be managed:<id>
   explicit integration-auth report.
 - **`setup`** — idempotent first-run that builds a `SetupPlan`
   (config/storage/daemon/active `default` pot/source registration/skills). `--backend`
-  picks the GraphBackend profile (default `falkordb_lite`) and refuses an unknown
+  picks the GraphBackend profile (Windows default `ladybug`, macOS/Linux default `falkordb_lite`) and refuses an unknown
   profile with `validation_error`; `--embeddings` picks the local embedder (default
   `auto`: sentence-transformers when the `embeddings` extra is installed, otherwise
   the bundled hashing embedder) and `--embedding-model` the model setup prepares;
@@ -370,7 +370,9 @@ potpie daemon start | status | logs [--tail N] [--since 15m|ISO-8601] [--follow]
   CLI's (`null` when either side has no rev). A daemon outlives the install that
   started it, so after an upgrade `stale: true` means `potpie daemon restart`.
   A daemon from before build reporting has neither key.
-  It exits `0` only when the daemon answers its authenticated handshake. A
+  It exits `0` only when an authenticated status response reports the daemon
+  ready and compatible with this client. Readiness and build details come from
+  that same response, so an earlier short probe cannot contradict a live daemon. A
   daemon that is down, or whose process exists but does not answer, is
   `daemon_unavailable` (exit 2); the JSON payload keeps the status fields
   alongside the error keys. A daemon whose operation catalog differs from this
@@ -519,6 +521,15 @@ Document payloads: the bytes the graph only points at. Each command is one typed
 engine operation, so the in-process runtime and the local daemon answer
 identically; the resource store in [architecture.md](./architecture.md) owns the data model, the
 retrieval index and the lifecycle.
+
+The default `qdrant_hybrid` profile combines SQLite text search with a Qdrant
+service; `sqlite_hybrid` remains a compatibility alias. Follow the
+[Qdrant setup instructions](../getting-started/installation.md#step-2-start-qdrant-for-resource-semantic-search),
+or select `sqlite_fts` for text search alone. SQLite keeps text and cached
+embeddings locally, with durable pending updates and deletions for Qdrant.
+When the service is unavailable, retrieval stays lexical and `index status`
+reports the reason. Background retries resume publication from the cached
+embeddings when the service returns.
 
 - **`import`** reads the chunk directory an extraction script produced
   (`<section>/<seq>.txt` plus `meta.json`) on the caller's side and ships its
@@ -907,7 +918,7 @@ potpie graph repair --legacy --apply --repair-id <id> [--yes/-y] [--pot <ref>]
     snapshot is held in memory. Graph and documents don't share a transaction,
     so pause writers for a consistent backup.
 
-Snapshots (`graph export`/`import`) are supported on `in_memory`, `embedded`,
+Snapshots (`graph export`/`import`) are supported on `in_memory`, `embedded`, `ladybug`,
 `falkordb_lite`, `falkordb`, and `neo4j`. `graph inspect`/`neighborhood` remains
 unavailable on `neo4j`.
 
@@ -922,7 +933,7 @@ potpie backend use <profile>        # advisory only — NOT persisted
 potpie backend doctor               # backend.mutation.readiness()
 ```
 
-`KNOWN_PROFILES` = `in_memory, embedded, neo4j, falkordb, falkordb_lite, postgres,
+`KNOWN_PROFILES` = `in_memory, embedded, ladybug, neo4j, falkordb, falkordb_lite, postgres,
 chroma, hosted`. **`backend use` is advisory only** (`persisted: False`) — it
 suggests setting `CONTEXT_ENGINE_BACKEND`; it does not switch the live backend.
 CLI code never queries SQLite/Neo4j/vector indexes/state tables directly — it routes
@@ -934,11 +945,14 @@ through services and capability ports.
 
 | Variable | Purpose / default |
 |---|---|
-| `CONTEXT_ENGINE_BACKEND` | preferred backend selector (host default `falkordb_lite`) |
+| `CONTEXT_ENGINE_BACKEND` | preferred backend selector (Windows default `ladybug`; macOS/Linux default `falkordb_lite`) |
+| `CONTEXT_ENGINE_LADYBUG_PATH` / `LADYBUG_PATH` | Ladybug database path (first wins); default `<home>/context_graph/ladybug.db` |
 | `GRAPH_DB_BACKEND` | legacy fallback selector (ingestion server default `neo4j`) |
 | `CONTEXT_ENGINE_HOST_MODE` | `daemon` (default) \| `in_process` |
 | `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder |
-| `CONTEXT_ENGINE_RESOURCE_INDEX` | resource retrieval index profile: `sqlite_hybrid` (default) \| `sqlite_fts` \| `none`; overrides the `resource_index` config key |
+| `CONTEXT_ENGINE_RESOURCE_INDEX` | resource retrieval index profile: `qdrant_hybrid` (default) \| `sqlite_hybrid` (compatibility alias) \| `sqlite_fts` \| `none`; overrides the `resource_index` config key |
+| `CONTEXT_ENGINE_QDRANT_URL` | Qdrant HTTP service URL; default `http://127.0.0.1:6333` |
+| `CONTEXT_ENGINE_QDRANT_API_KEY` | optional API key for the Qdrant service |
 | `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL` | downgrade-instead-of-fail validation |
 | `CONTEXT_ENGINE_AGENT_PLANNER_ENABLED` | service-side LLM reconciliation (**default off**) |
 | `CONTEXT_ENGINE_MAX_CHUNK_EVENTS` | batch chunk size (default 20) |
@@ -949,7 +963,8 @@ The protocol ontology has no environment switch; it is the `graph.protocols`
 config key (see `config` under *Top-level commands*).
 
 Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >
-`falkordb_lite`. There is **no `NotImplementedError` gate** on falkordb anywhere.
+platform default (`ladybug` on Windows, `falkordb_lite` on macOS/Linux).
+There is **no `NotImplementedError` gate** on falkordb anywhere.
 
 ---
 
@@ -968,7 +983,7 @@ flowchart LR
   cf_write -.-> cf_read
 ```
 
-Local first run (OSS default — `falkordb_lite`, detached daemon, skills installed
+Local first run (OSS default — `ladybug` on Windows, `falkordb_lite` on macOS/Linux, detached daemon, skills installed
 during setup):
 
 **Published package:**
@@ -979,7 +994,9 @@ potpie setup --repo . --agent claude
 potpie status
 ```
 
-The base package is the complete local product. Add the `embeddings` extra
+The base package includes the local graph engine. Resource semantic search uses
+the separate [Qdrant service](../getting-started/installation.md#step-2-start-qdrant-for-resource-semantic-search);
+`sqlite_fts` provides text search without that service. Add the `embeddings` extra
 (`uv tool install 'potpie[embeddings]'`) for sentence-transformers semantic
 search; without it, setup uses the bundled hashing embedder.
 

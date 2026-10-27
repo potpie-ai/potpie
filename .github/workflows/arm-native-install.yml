@@ -1,0 +1,135 @@
+name: Native ARM wheel acceptance
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12.10 is the last CPython 3.12 Windows binary release. Later
+        # security releases have no setup-python Windows ARM64 artifact.
+        python: ["3.12.10", "3.13", "3.14"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: arm64
+      - name: Build and install product wheels in a clean environment
+        run: |
+          set -euo pipefail
+          python -m pip install build
+          python -m build --wheel --outdir dist/engine potpie/context-engine
+          python -m build --wheel --outdir dist/root .
+          python -m venv "$RUNNER_TEMP/arm-install"
+          test_python="$RUNNER_TEMP/arm-install/Scripts/python.exe"
+          root_wheels=(dist/root/*.whl)
+          engine_wheels=(dist/engine/*.whl)
+          test "${#root_wheels[@]}" -eq 1
+          test "${#engine_wheels[@]}" -eq 1
+          "$test_python" -m pip install "${root_wheels[0]}[auth,telemetry]" \
+            "${engine_wheels[0]}" pytest pytest-asyncio
+          "$test_python" -m pip check
+          "$test_python" -I "$GITHUB_WORKSPACE/scripts/test_arm_wheels.py" \
+            --repo "$GITHUB_WORKSPACE" --target windows --reports "$GITHUB_WORKSPACE/reports"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-arm64-${{ matrix.python }}
+          path: |
+            reports/*.xml
+            dist/**/*.whl
+
+  linux:
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: python:${{ matrix.python }}-bookworm
+      # Redis daemonizes; reap its orphaned process after shutdown so the
+      # lifecycle tests can require its PID to disappear, as on a normal host.
+      options: --init
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.19.2
+    env:
+      CONTEXT_ENGINE_QDRANT_URL: http://qdrant:6333
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build prerequisites
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends build-essential ca-certificates \
+            patchelf binutils libssl-dev libgomp1
+      - name: Wait for Qdrant
+        run: |
+          python - <<'PY'
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+          endpoint = os.environ["CONTEXT_ENGINE_QDRANT_URL"] + "/readyz"
+          for attempt in range(30):
+              try:
+                  with urllib.request.urlopen(endpoint, timeout=2) as response:
+                      if response.status == 200:
+                          break
+              except (urllib.error.URLError, TimeoutError):
+                  pass
+              time.sleep(1)
+          else:
+              raise SystemExit("Qdrant did not become ready")
+          PY
+      - name: Build repaired native wheel from a clean source archive
+        run: |
+          set -euo pipefail
+          python -m pip install build
+          python -m build --sdist --outdir dist/source scripts/packaging/falkordblite
+          # pip creates a fresh source tree from the sdist: builder-host
+          # binaries cannot accidentally make this test pass.
+          python -m pip wheel --no-deps --wheel-dir dist/vendor dist/source/*.tar.gz
+      - name: Build and install product wheels in a clean environment
+        run: |
+          set -euo pipefail
+          python -m build --wheel --outdir dist/engine potpie/context-engine
+          python -m build --wheel --outdir dist/root .
+          python -m venv "$RUNNER_TEMP/arm-install"
+          test_python="$RUNNER_TEMP/arm-install/bin/python"
+          root_wheels=(dist/root/*.whl)
+          engine_wheels=(dist/engine/*.whl)
+          vendor_wheels=(dist/vendor/*.whl)
+          test "${#root_wheels[@]}" -eq 1
+          test "${#engine_wheels[@]}" -eq 1
+          test "${#vendor_wheels[@]}" -eq 1
+          "$test_python" -m pip install "${root_wheels[0]}[auth,telemetry]" \
+            "${engine_wheels[0]}" "${vendor_wheels[0]}" pytest pytest-asyncio
+          "$test_python" -m pip check
+          "$test_python" -I "$GITHUB_WORKSPACE/scripts/test_arm_wheels.py" \
+            --repo "$GITHUB_WORKSPACE" --target linux --reports "$GITHUB_WORKSPACE/reports"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-arm64-bookworm-${{ matrix.python }}
+          path: |
+            reports/*.xml
+            dist/**/*.whl
+            dist/source/*.tar.gz

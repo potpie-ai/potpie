@@ -19,7 +19,13 @@ from pathlib import Path
 
 try:
     from packaging.requirements import InvalidRequirement, Requirement
-    from packaging.utils import canonicalize_name
+    from packaging.specifiers import InvalidSpecifier, SpecifierSet
+    from packaging.tags import compatible_tags, cpython_tags
+    from packaging.utils import (
+        InvalidWheelFilename,
+        canonicalize_name,
+        parse_wheel_filename,
+    )
     from packaging.version import InvalidVersion, Version
 except ImportError as exc:  # pragma: no cover - exercised in CI bootstrap failures.
     raise SystemExit(
@@ -30,6 +36,12 @@ except ImportError as exc:  # pragma: no cover - exercised in CI bootstrap failu
 ROOT = Path(__file__).resolve().parents[1]
 PYPI_BASE = "https://pypi.org/pypi"
 CONTEXT_ENGINE_NAME = "potpie-context-engine"
+NATIVE_FALKORDBLITE_NAME = "potpie-falkordblite"
+NATIVE_PYTHON_VERSIONS = ((3, 12), (3, 13), (3, 14))
+# Match the native builder and Bookworm install tests: glibc 2.36, Linux ARM64.
+NATIVE_LINUX_PLATFORMS = [
+    f"manylinux_2_{minor}_aarch64" for minor in range(36, 16, -1)
+] + ["manylinux2014_aarch64"]
 PACKAGE_SOURCES = {
     "context-engine": (
         "potpie/context-engine/pyproject.toml",
@@ -227,6 +239,145 @@ def validate_external_dependencies(
         )
 
 
+def package_release_files(package_name: str, version: str) -> list[dict]:
+    name = urllib.parse.quote(package_name)
+    release = urllib.parse.quote(version)
+    request = urllib.request.Request(  # noqa: S310 - fixed HTTPS scheme and host.
+        f"{PYPI_BASE}/{name}/{release}/json",
+        headers={"User-Agent": "potpie-release-validator/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+            files = json.load(response)["urls"]
+        if not isinstance(files, list) or any(
+            not isinstance(file, dict) for file in files
+        ):
+            raise ValueError("expected a list of release files")
+        return files
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return []
+        fail(f"could not check pypi for {package_name}=={version}: HTTP {exc.code}")
+    except urllib.error.URLError as exc:
+        fail(f"could not check pypi for {package_name}=={version}: {exc.reason}")
+    except (ValueError, KeyError, TypeError) as exc:
+        fail(f"invalid pypi file metadata for {package_name}=={version}: {exc}")
+    return []
+
+
+def validate_native_wheel_availability(version: str) -> None:
+    supported_tags = {}
+    for python_version in NATIVE_PYTHON_VERSIONS:
+        interpreter = "cp" + "".join(map(str, python_version))
+        tags = set(
+            cpython_tags(
+                python_version, abis=[interpreter], platforms=NATIVE_LINUX_PLATFORMS
+            )
+        )
+        tags.update(
+            compatible_tags(
+                python_version,
+                interpreter=interpreter,
+                platforms=NATIVE_LINUX_PLATFORMS,
+            )
+        )
+        # A platform-independent tag cannot attest to the native ARM64 payload.
+        supported_tags[python_version] = {tag for tag in tags if tag.platform != "any"}
+
+    covered = set()
+    for file in package_release_files(NATIVE_FALKORDBLITE_NAME, version):
+        if file.get("packagetype") != "bdist_wheel" or file.get("yanked", False):
+            continue
+        try:
+            name, wheel_version, _, tags = parse_wheel_filename(
+                file.get("filename", "")
+            )
+            requires_python = SpecifierSet(file.get("requires_python") or "")
+        except (InvalidWheelFilename, InvalidSpecifier):
+            continue
+        if name != NATIVE_FALKORDBLITE_NAME or wheel_version != Version(version):
+            continue
+        for python_version, compatible in supported_tags.items():
+            if tags & compatible and requires_python.contains(
+                ".".join(map(str, python_version))
+            ):
+                covered.add(python_version)
+
+    missing = [
+        ".".join(map(str, python_version))
+        for python_version in NATIVE_PYTHON_VERSIONS
+        if python_version not in covered
+    ]
+    if missing:
+        fail(
+            f"{NATIVE_FALKORDBLITE_NAME}=={version} must provide non-yanked Linux ARM64 "
+            "wheels on pypi compatible with glibc 2.36; missing CPython "
+            f"{', '.join(missing)} before publishing {CONTEXT_ENGINE_NAME}; "
+            "publish the corrected native dependency first"
+        )
+
+
+def validate_native_dependency_availability(
+    selected_keys: set[str], preexisting_packages: set[str]
+) -> None:
+    """Require the repaired native distribution before publishing its consumer.
+
+    A combined release may resume using an already-published engine; its
+    dependencies come from that immutable release, not the checkout. Likewise,
+    Potpie-only releases must not inspect the repository's engine metadata.
+    """
+    if (
+        "context-engine" not in selected_keys
+        or CONTEXT_ENGINE_NAME in preexisting_packages
+    ):
+        return
+
+    source, _ = PACKAGE_SOURCES["context-engine"]
+    local_dependencies = (
+        load_toml(source)
+        .get("project", {})
+        .get("optional-dependencies", {})
+        .get("local", [])
+    )
+    matches = []
+    for dependency in local_dependencies:
+        try:
+            requirement = Requirement(dependency)
+        except InvalidRequirement as exc:
+            fail(f"invalid local dependency in {source}: {dependency!r}: {exc}")
+        if canonicalize_name(requirement.name) == NATIVE_FALKORDBLITE_NAME:
+            matches.append(requirement)
+    if not matches:
+        return
+    if len(matches) != 1:
+        fail(f"{source} must declare {NATIVE_FALKORDBLITE_NAME} only once")
+
+    requirement = matches[0]
+    specifiers = list(requirement.specifier)
+    if requirement.url or len(specifiers) != 1 or specifiers[0].operator != "==":
+        fail(
+            f"{source} must pin {NATIVE_FALKORDBLITE_NAME} to one concrete "
+            f"PyPI version; found {requirement}"
+        )
+    version = specifiers[0].version
+    try:
+        parsed_version = Version(version)
+    except InvalidVersion:
+        fail(
+            f"{source} must pin {NATIVE_FALKORDBLITE_NAME} to one concrete "
+            f"PyPI version; found =={version}"
+        )
+    if parsed_version.local is not None:
+        fail(
+            f"{NATIVE_FALKORDBLITE_NAME}=={version} cannot use a local version "
+            "for a PyPI release"
+        )
+
+    # Check every target's declared dependency. Evaluating the Linux ARM marker
+    # here would let a release running on x64 publish an unresolvable ARM wheel.
+    validate_native_wheel_availability(version)
+
+
 def validate_release_source() -> None:
     ref_type = os.getenv("GITHUB_REF_TYPE", "")
     ref_name = os.getenv("GITHUB_REF_NAME", "")
@@ -382,6 +533,7 @@ def main() -> int:
         CONTEXT_ENGINE_NAME,
         context_engine_version,
     )
+    validate_native_dependency_availability(selected_key_set, preexisting_packages)
     metadata_path = emit_metadata(
         args.output_dir,
         scope,

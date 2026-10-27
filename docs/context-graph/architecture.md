@@ -70,7 +70,7 @@ flowchart TB
     cg_cli["potpie CLI · LocalEngineClient / DaemonEngineClient"]
     cg_shell["ContextResourceManager<br/>authorized context lease"]
     cg_services["ContextEngine + root capability services"]
-    cg_lite[("default backend: falkordb_lite<br/>default host mode: daemon")]
+    cg_lite[("backend: ladybug on Windows; falkordb_lite on macOS/Linux<br/>host mode: daemon")]
     cg_cli --> cg_shell --> cg_services --> cg_lite
   end
 
@@ -89,7 +89,7 @@ flowchart TB
    `DaemonEngineClient` over the versioned authenticated daemon protocol. The
    daemon listens privately over UDS with loopback TCP fallback. Root capability
    commands use finite root-owned services. **Default backend:
-   `falkordb_lite`. Default host mode: `daemon`.**
+   `ladybug` on Windows, `falkordb_lite` on macOS/Linux. Default host mode: `daemon`.**
 2. **The ingestion HTTP server** — `bootstrap/ingestion_server.py
    IngestionServerContainer` composes the FastAPI app under
    `adapters/inbound/http/` (the async reconciliation pipeline, connectors, the
@@ -268,7 +268,7 @@ of the six-cap bundle: `inbox_store.py` and `plan_store.py`.
 
 The registry (`adapters/outbound/graph/backends/__init__.py`) is
 `build_backend(profile, *, settings, embedder)`. `KNOWN_PROFILES = (in_memory,
-embedded, neo4j, falkordb, falkordb_lite, postgres, chroma, hosted)`. It
+embedded, ladybug, neo4j, falkordb, falkordb_lite, postgres, chroma, hosted)`. It
 normalizes names (`falkordblite`→`falkordb_lite`, dashes→underscores) and, when
 `embedder is None` for a real profile, default-builds the bundled local embedder
 (disable via `CONTEXT_ENGINE_EMBEDDER=none`).
@@ -283,7 +283,8 @@ and raises `CapabilityNotImplemented`.
 |---|---|---:|---|
 | `in_memory` | `InMemoryGraphBackend` | **6/6** | Conformance/reference; genuinely real (validates, MERGEs by identity, bitemporal invalidation, embeds on write); `dump_store`/`load_store`. |
 | `embedded` | `EmbeddedGraphBackend` | **6/6** (delegated) | OSS JSON-persisted fallback wrapping `in_memory`; persists to `<home>/graph.json` after each mutation (atomic tmp-replace). |
-| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **6/6** | **The OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
+| `ladybug` | `LadybugGraphBackend` | **6/6** (shared semantic adapters) | **The Windows OSS/CLI default.** Native Ladybug tables and atomic transactions with durable receipts, revisions, and journal. |
+| `falkordb_lite` | `FalkorDBLiteGraphBackend` | **6/6** | **The macOS/Linux OSS/CLI default.** Embedded FalkorDBLite via `redislite` over a local file — no server, no Docker. |
 | `falkordb` | `FalkorDBGraphBackend` | **6/6** | Full FalkorDB server over a redis URL; needs the optional `falkordb` client. |
 | `neo4j` | `Neo4jGraphBackend` | **5/6** (no inspection) | "Shape-first production target"; native relationship vector index. |
 | `postgres` / `chroma` / `hosted` | `StubGraphBackend` | **0/6** | Fail-closed seam: every port and `provision` raise `CapabilityNotImplemented("graph.<profile>.<cap>.<method>")`. Documented but unbuilt; `backend list` still shows them. |
@@ -293,16 +294,39 @@ and raises `CapabilityNotImplemented`.
 - Claim-key `mutation.invalidate` runs through the native atomic writer on
   Neo4j and FalkorDB; it raises `CapabilityNotImplemented` only for an injected
   legacy writer that has no atomic mutation surface.
-- `snapshot` (export/import) is implemented on `in_memory`, `embedded`,
+- `snapshot` (export/import) is implemented on `in_memory`, `embedded`, `ladybug`,
   `falkordb_lite`, `falkordb`, and `neo4j`; FalkorDB and Neo4j apply an import
   atomically against the pot's revision (see `graph export`/`graph import` in
   [cli-flow.md](./cli-flow.md)).
 - `inspection` is real on `in_memory`/`embedded`/`falkordb` but **not** Neo4j.
 - Net effect: **FalkorDB is more complete than Neo4j** (6 vs 5 ports), and the
-  OSS default `falkordb_lite` is a first-class backend, not a stub.
+  macOS/Linux default `falkordb_lite` is a first-class backend, not a stub.
 
 > **Roadmap (not yet wired):** `inspection` on neo4j; the
 > `postgres`/`chroma`/`hosted` backends (all `StubGraphBackend`).
+
+### Ladybug storage and scope
+
+Ladybug stores entities, physical claim records, claim-to-entity relationships,
+revisions, execution receipts, and journal entries in native tables. Each
+operation holds the shared local process/file lock while opening the database,
+reading state, and closing it. Writes commit the graph and its receipt together
+before publishing the new state to readers. This lets the CLI and daemon use
+the same database without competing long-lived native handles.
+
+The backend reuses the current local mutation and read adapters for claim
+history, filtering, snapshots, and exact vector ranking. It loads the whole
+graph for operations and replaces native records in a transaction on mutation;
+this first implementation is intended for local graphs, not large-scale native
+query execution. It does not install the native HNSW extension or use an
+isolated search subprocess. Embeddings come from the configured embedder.
+
+The normal Windows install includes Ladybug. To opt in on macOS/Linux, install
+`potpie-context-engine[ladybug]` and set `CONTEXT_ENGINE_BACKEND=ladybug`.
+`CONTEXT_ENGINE_LADYBUG_PATH` (then `LADYBUG_PATH`) overrides the default
+`<CONTEXT_ENGINE_HOME>/context_graph/ladybug.db`; the default home is `~/.potpie`.
+Switching backend does not migrate an existing FalkorDB or experimental Ladybug
+database. Use portable graph export/import to transfer supported graph data.
 
 ## The shared engine room
 
@@ -372,6 +396,7 @@ DETACH DELETE n`. There is no cross-pot federation (an explicit anti-goal).
 | `in_memory` | Process-local, ephemeral | by `group_id` |
 | `embedded` | One multi-pot `<home>/graph.json`, atomic rewrite per mutation | by `group_id` |
 | `falkordb_lite` | `redislite` file at `falkordb_lite_path()` (default `.potpie/context_graph/falkordb.db`), single keyspace `context_graph` | by `group_id` |
+| `ladybug` | native database at `ladybug_path()` (default `<home>/context_graph/ladybug.db`) | composite pot/entity and pot/claim storage identities |
 | `neo4j` | External server, one DB | by `group_id` |
 
 Relevant settings (`domain/ports/settings.py`): `graph_db_backend()='neo4j'`,
@@ -420,12 +445,20 @@ limits        import 64 MiB of UTF-8 per call; get at most 128 ids per call
   citing a changed or removed section are flagged `evidence_review_required`,
   not rewritten; fixing them is an ordinary propose/commit correction. Retention
   is unbounded until `resource rm`.
-- **Retrieval index.** `sqlite_hybrid` (default: BM25 plus vectors, fused by
-  reciprocal rank, reporting itself lexical with a reason when vectors are
-  unavailable), `sqlite_fts`, or `none`, chosen by
-  `CONTEXT_ENGINE_RESOURCE_INDEX`, then the `resource_index` config key. Import
-  writes lexical rows inline; vectors drain in the background in the daemon or
-  an in-process engine host. Similarity bands are calibrated for
+- **Retrieval index.** `qdrant_hybrid` (default) combines SQLite BM25 and Qdrant
+  vectors using reciprocal rank fusion. `sqlite_hybrid` remains a compatibility
+  alias; `sqlite_fts` selects text search alone and `none` disables retrieval.
+  `CONTEXT_ENGINE_RESOURCE_INDEX` takes precedence over the `resource_index`
+  config key. Import writes lexical rows inline. SQLite retains text, cached
+  embeddings and a durable queue of Qdrant updates and deletions; vectors drain
+  in the background in the daemon or an in-process engine host. Qdrant stores
+  vectors and pot/document routing identifiers, including document slugs;
+  resource text remains in SQLite. If Qdrant is
+  unavailable, retrieval remains lexical and reports a reason. The worker
+  retries failures with a five-second backoff and resumes pending publication
+  from cached embeddings, without re-embedding them. See the
+  [Qdrant service setup](../getting-started/installation.md#step-2-start-qdrant-for-resource-semantic-search).
+  Similarity bands are calibrated for
   `all-MiniLM-L6-v2` only: other embedders get rank-and-coverage relevance and
   refuse an explicit passage `--query-threshold`.
 - **Teardown.** `pot reset` and `pot archive` purge the pot's documents and index
@@ -435,7 +468,8 @@ limits        import 64 MiB of UTF-8 per call; get at most 128 ids per call
 ## Backend selection precedence
 
 - **Host / CLI:** `CONTEXT_ENGINE_BACKEND` (preferred) > legacy
-  `GRAPH_DB_BACKEND` > `default_backend_profile()` = **`falkordb_lite`**.
+  `GRAPH_DB_BACKEND` > `default_backend_profile()` = **`ladybug` on Windows**,
+  **`falkordb_lite` on macOS/Linux**.
 - **Ingestion server:** `settings.graph_db_backend()` default **`neo4j`**, but it
   also routes through `build_backend`, so FalkorDB works there too.
 
@@ -456,8 +490,8 @@ skipped | not_implemented | failed`.
 
 Two corrections worth stating here:
 
-- The default backend a fresh `setup` provisions is **`falkordb_lite`** (a local
-  `redislite` file), not `embedded` or `neo4j`. `postgres`/`chroma`/`hosted`
+- A fresh `setup` provisions **`ladybug` on Windows** and **`falkordb_lite`
+  on macOS/Linux**. `postgres`/`chroma`/`hosted`
   cannot be provisioned — `StubGraphBackend.provision()` raises (the prior
   "postgres creates the DB, enables pgvector, runs DDL" claim was aspirational).
 - There is no working-tree scan. `setup` registers the repo as a source and
@@ -513,7 +547,7 @@ by [ingestion-nudge.md](./ingestion-nudge.md).
 
 | Variable | Effect | Default |
 |---|---|---|
-| `CONTEXT_ENGINE_BACKEND` / `GRAPH_DB_BACKEND` | Backend profile (first wins) | `falkordb_lite` (host) / `neo4j` (ingestion server) |
+| `CONTEXT_ENGINE_BACKEND` / `GRAPH_DB_BACKEND` | Backend profile (first wins) | `ladybug` (Windows host), `falkordb_lite` (macOS/Linux host), `neo4j` (ingestion server) |
 | `CONTEXT_ENGINE_HOST_MODE` | `daemon` \| `in_process` | `daemon` |
 | `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder | bundled local embedder |
 | `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL` | Downgrade instead of reject on ontology drift at apply time | off |
@@ -593,7 +627,7 @@ duplicate ontology enums in docs/CLI.
 ## Invariants
 
 - OSS graph use works with no cloud auth and no mandatory Docker/Neo4j/Postgres
-  (the default `falkordb_lite` is embedded).
+  (the platform defaults `ladybug` and `falkordb_lite` are embedded).
 - The CLI is the user and agent surface.
 - The canonical claim store is the only source of truth; semantic/inspection/
   analytics/snapshot are rebuildable projections.

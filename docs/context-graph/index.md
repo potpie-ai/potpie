@@ -28,7 +28,7 @@ flowchart TB
     direction TB
     cg_daemon["local daemon<br/>(detached by default)"]
     cg_services["services:<br/>Pot Mgmt · Graph · Skill Manager"]
-    cg_backend["GraphBackend<br/>(default falkordb_lite, embedded)"]
+    cg_backend["GraphBackend<br/>(Windows: ladybug; macOS/Linux: falkordb_lite)"]
     cg_daemon --> cg_services --> cg_backend
   end
 
@@ -78,7 +78,15 @@ context into the graph when needed. The OSS/CLI default backend is `falkordb_lit
 an embedded FalkorDB over a local file. It requires no Docker, server, Neo4j, or cloud
 key; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
 (precedence: `CONTEXT_ENGINE_BACKEND` > legacy `GRAPH_DB_BACKEND` >
-`falkordb_lite`). Full flags live in [`cli-flow.md`](./cli-flow.md).
+the platform default). Full flags live in [`cli-flow.md`](./cli-flow.md).
+
+Windows installs Ladybug through the normal `pip install potpie` dependency set.
+Use x64 Python 3.12–3.14 and the Microsoft Visual C++ Redistributable. Potpie
+loads CPython's OpenSSL 3 libraries when the Ladybug wheel needs them, including
+when native loading fails during the initial package import. A missing package
+and a native DLL load failure report different installation guidance. The daemon
+host mode remains the default; `CONTEXT_ENGINE_HOST_MODE=in_process` is also
+supported. See [Ladybug storage and scope](./architecture.md#ladybug-storage-and-scope).
 
 Configure a managed host with `potpie host set`, then use `potpie host use managed`
 or pass `--host managed` to a command. Managed hosts support graph operations, pot

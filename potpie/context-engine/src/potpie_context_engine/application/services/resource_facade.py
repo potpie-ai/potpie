@@ -635,11 +635,10 @@ class ResourceFacade:
         if self.index is None:
             return DrainReport(profile="none", detail="no resource index is wired")
         report = self.index.drain(pot_id=pot_id, budget=budget)
-        while wait and report.remaining and report.embedded:
-            # Stop on ``embedded == 0`` as well as on an empty backlog: a batch
-            # that embeds nothing and still reports work outstanding means the
-            # embedder is failing, and looping on that would hang the command
-            # instead of returning a report that shows it.
+        while wait and report.remaining and (report.embedded or report.processed):
+            # Cached vector publication, deletion and terminal skips also drain
+            # the backlog. Stop only when no operation made progress, so service
+            # failures return their report instead of hanging the command.
             report = self.index.drain(pot_id=pot_id, budget=budget)
         return report
 

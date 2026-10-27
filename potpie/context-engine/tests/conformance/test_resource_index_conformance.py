@@ -13,6 +13,8 @@ becomes lexical looks identical from the outside until recall is measured.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from potpie_context_engine.adapters.outbound.resources.index import (
@@ -29,14 +31,21 @@ from potpie_context_engine.testing.conformance import (
     run_resource_index_conformance,
 )
 
-RUNNABLE_PROFILES = ["sqlite_hybrid", "sqlite_fts", "none"]
+RUNNABLE_PROFILES = ["qdrant_hybrid", "sqlite_hybrid", "sqlite_fts", "none"]
 
 
 @pytest.mark.parametrize("profile", RUNNABLE_PROFILES)
 def test_resource_index_conformance(profile, tmp_path):
-    run_resource_index_conformance(
-        lambda: build_resource_index(profile, home=tmp_path / profile)
-    )
+    def create_index():
+        index = build_resource_index(profile, home=tmp_path / profile)
+        if (
+            profile in {"qdrant_hybrid", "sqlite_hybrid"}
+            and os.getenv("POTPIE_REQUIRE_QDRANT") == "1"
+        ):
+            assert index.capabilities().semantic, index.status().detail
+        return index
+
+    run_resource_index_conformance(create_index)
 
 
 def test_hybrid_without_an_embedder_degrades_in_a_labeled_way(tmp_path):
@@ -65,7 +74,9 @@ def test_hybrid_without_an_embedder_degrades_in_a_labeled_way(tmp_path):
     assert all(hit.similarity is None for hit in found.hits)
 
     drained = index.drain()
-    assert drained.embedded == 0 and drained.detail
+    # A successful cleanup-only pass is not an error. Availability diagnostics
+    # belong to status; the worker uses drain.detail to back off failed work.
+    assert drained.embedded == 0 and drained.remaining == 0
 
     status = index.status(pot_id="p")
     assert status.ready is True

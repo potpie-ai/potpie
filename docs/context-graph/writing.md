@@ -285,6 +285,7 @@ so unrelated writes to the same pot still conflict. The conflict result carries
 |---|---|
 | `in_memory` | one per-backend lock over revision check, mutation, receipt and increment; process-local by design |
 | `embedded` | a process plus interprocess file lock over reload, check, mutation and atomic `graph.json` replace; revisions and receipts persist there |
+| `ladybug` | a process plus interprocess file lock over reload and check; one native transaction persists graph, revision, receipt, and journal before publication |
 | `neo4j` | one transaction owns the revision, the batch and a durable receipt |
 | `falkordb`, `falkordb_lite` | Redis `WATCH`, then one `GRAPH.QUERY` inside `MULTI`/`EXEC` applies batch, revision and receipt |
 

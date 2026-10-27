@@ -45,8 +45,15 @@ from potpie.pots.contracts import (
 runner = CliRunner()
 
 
-def test_setup_plan_defaults_to_local_lite_backend() -> None:
-    assert SetupPlan().backend == "falkordb_lite"
+@pytest.mark.parametrize(
+    ("platform_name", "backend"),
+    [("win32", "ladybug"), ("darwin", "falkordb_lite"), ("linux", "falkordb_lite")],
+)
+def test_setup_plan_defaults_to_platform_backend(
+    monkeypatch, platform_name, backend
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform_name)
+    assert SetupPlan().backend == backend
 
 
 @dataclass(frozen=True)

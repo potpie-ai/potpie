@@ -92,29 +92,34 @@ class CliExpectedFailureExit(typer.Exit):
         self.error_code = error_code
 
 
-_state: dict[str, Any] = {
-    "json": False,
-    "verbose": False,
-    "runtime": None,
-    "store": None,
-    "json_error_formatter": None,
-    "engine_runner": None,
-    "engine_manager": None,
-    "engine_runtime": None,
-    "engine_daemon_client": None,
-    "engine_daemon_key": None,
-    "pot_service": None,
-    "pot_service_runtime": None,
-    "root_product_services": {},
-    "root_product_services_runtime": None,
-    "root_runtime": None,
-    "root_runtime_source": None,
-    # Pot directories per origin: a test seam (``set_pot_directory_factory``)
-    # and the managed host's directory, kept for the process so its listing
-    # memo spans the whole command.
-    "pot_directory_factory": None,
-    "managed_pots": None,
-}
+def _new_cli_state() -> dict[str, Any]:
+    """Return independent defaults for process-wide CLI state."""
+    return {
+        "json": False,
+        "verbose": False,
+        "runtime": None,
+        "store": None,
+        "json_error_formatter": None,
+        "engine_runner": None,
+        "engine_manager": None,
+        "engine_runtime": None,
+        "engine_daemon_client": None,
+        "engine_daemon_key": None,
+        "pot_service": None,
+        "pot_service_runtime": None,
+        "root_product_services": {},
+        "root_product_services_runtime": None,
+        "root_runtime": None,
+        "root_runtime_source": None,
+        # Pot directories per origin: a test seam (``set_pot_directory_factory``)
+        # and the managed host's directory, kept for the process so its listing
+        # memo spans the whole command.
+        "pot_directory_factory": None,
+        "managed_pots": None,
+    }
+
+
+_state: dict[str, Any] = _new_cli_state()
 _CLI_METRIC_ATTRIBUTE_KEYS: Final[frozenset[str]] = frozenset(
     {
         "arch",

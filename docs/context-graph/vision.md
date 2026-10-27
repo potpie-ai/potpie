@@ -167,7 +167,7 @@ The `v2` string identifies the workbench response envelope. Available operations
   --verify`**. `graph mutate` is a **legacy wrapper** that internally calls
   propose+commit; `potpie record` remains the compatibility write path
   ([writing.md](./writing.md)).
-- **Defaults:** `falkordb_lite` embedded backend, a detached `daemon` host mode, the
+- **Defaults:** `ladybug` on Windows and `falkordb_lite` on macOS/Linux, a detached `daemon` host mode, the
   bundled local embedder, installed skills, and the zero-token `graph nudge` a
   harness can call from its own hooks — all
   with no mandatory Docker, Neo4j, Postgres, or cloud service.
