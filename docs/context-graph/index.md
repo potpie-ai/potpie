@@ -109,7 +109,6 @@ and source management, grants, and status. See the [CLI reference](../reference/
 | [`ingestion-nudge.md`](./ingestion-nudge.md) | Event admission, internal event storage, external Event Ledger clients, connectors, batching, and ingestion nudges. |
 | [`skills.md`](./skills.md) | Bundled CLI skills, agent responses to nudges, and separate server-side reconciliation skills. |
 | [`cli-flow.md`](./cli-flow.md) | Commands, flags, exit codes, snapshots, and the CLI workflow. |
-| [`observability.md`](./observability.md) | Logs, traces, metrics, readiness, and span names. |
 | [`bench-plan.md`](./bench-plan.md) | Graph quality validation across backends, the invariant judge, and `run-light`. |
 
 ## Vocabulary
