@@ -210,6 +210,32 @@ def test_non_ascii_query_finds_the_chunk_that_contains_it(tmp_path):
     index.close()
 
 
+def test_coverage_folds_diacritics_like_the_index(tmp_path):
+    """``unicode61`` matches ``fiance`` to ``fiancé``; coverage must agree."""
+    import dataclasses
+
+    from potpie_context_engine.application.readers.resources import _relevance
+
+    assert term_coverage("Your fiancé owns the archive.", ("fiance",)) == 1.0
+    assert term_coverage("Your fiance owns the archive.", ("fiancé",)) == 1.0
+    assert term_coverage("Moved to Zurich.", ("ZÜRICH",)) == 1.0
+
+    manifest, chunks = build_conformance_document(pot_id="p")
+    chunks = (
+        dataclasses.replace(chunks[0], text="Your fiancé owns the archive."),
+        *chunks[1:],
+    )
+    index = build_resource_index("sqlite_fts", home=tmp_path)
+    index.index_document(pot_id="p", manifest=manifest, chunks=chunks)
+    result = index.search(pot_id="p", query="fiance")
+    assert [hit.seq for hit in result.hits] == [chunks[0].seq]
+    hit = result.hits[0]
+    assert hit.lexical_rank == 1
+    assert hit.term_coverage == 1.0
+    assert _relevance(hit, calibrated=result.similarity_calibrated) == 1.0
+    index.close()
+
+
 def test_function_words_are_dropped_so_a_question_does_not_match_everything():
     """Measured, not stylistic: OR-ing 'why/did/we' retrieves the whole corpus.
 

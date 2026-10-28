@@ -38,6 +38,7 @@ import re
 import sqlite3
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -269,8 +270,23 @@ def term_coverage(text: str, terms: Sequence[str]) -> float | None:
     """
     if not terms:
         return None
-    present = {token.lower() for token in _TOKEN_RE.findall(text or "")}
-    return sum(1 for term in terms if _covers(present, term.lower())) / len(terms)
+    present = {_fold(token) for token in _TOKEN_RE.findall(text or "")}
+    return sum(1 for term in terms if _covers(present, _fold(term))) / len(terms)
+
+
+def _fold(token: str) -> str:
+    """Lowercase ``token`` and drop the diacritics ``unicode61`` drops.
+
+    The index folds ``fiancé`` to ``fiance``, so a query for either retrieves
+    the chunk. Coverage has to fold the same way, or it scores a hit that MATCH
+    found as missing every term. Only the combining diacritical marks block is
+    removed, which is what ``remove_diacritics`` does to Latin letters; marks in
+    other scripts are part of the word and stay.
+    """
+    decomposed = unicodedata.normalize("NFD", token.lower())
+    return unicodedata.normalize(
+        "NFC", "".join(ch for ch in decomposed if not "\u0300" <= ch <= "\u036f")
+    )
 
 
 def _covers(present: frozenset[str] | set[str], term: str) -> bool:
