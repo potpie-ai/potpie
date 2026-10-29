@@ -72,6 +72,7 @@ from potpie_context_engine.application.services.nudge_service import NudgeServic
 from potpie.pots.local_service import (
     LocalPotManagementService,
 )
+from potpie_context_engine.application.services.resource_service import ResourceService
 from potpie.setup.orchestrator import (
     DefaultSetupOrchestrator,
 )
@@ -117,7 +118,12 @@ class LocalRuntimeComposition:
         """Start the resource-index drain. Idempotent; a lexical index has none."""
         resources = self.engine.resources
         drain = getattr(resources, "drain", None)
-        if drain is not None:
+        # A local runtime starts the worker only when semantic indexing is
+        # actually available.  The drain itself still supports the explicit
+        # unavailable-index retry mode for hosts that opt into it; keeping the
+        # composition lazy avoids creating a background thread in lexical-only
+        # or offline local test/CLI sessions.
+        if drain is not None and bool(resources.index.capabilities().semantic):
             drain.start()
 
     def close(self) -> None:
@@ -281,6 +287,27 @@ def build_local_runtime(
         ledger = LedgerService(
             client=ledger_client or ManagedEventLedgerClient(),
             cursors=LocalLedgerCursorStore(),
+        )
+
+        # Keep the typed facade on the engine boundary.  The parser-backed
+        # service is retained only as a compatibility adapter for the older
+        # document CLI and for the docs reader's chunk-search callback; using
+        # it as the engine resource object would silently discard the store,
+        # index, drain, and journal composed above.
+        legacy_resources = ResourceService(
+            store=resource_store,
+            index=resource_index,
+            graph=graph,
+        )
+        graph.wire_chunk_search(
+            lambda pot_id, query, limit, filters: legacy_resources.search_chunks(
+                pot_id=pot_id,
+                query=query,
+                limit=limit,
+                doc_slug=filters.doc_slug,
+                source_kind=filters.source_kind,
+                page_number=filters.page_number,
+            )
         )
 
         engine_services = LocalEngineServices(

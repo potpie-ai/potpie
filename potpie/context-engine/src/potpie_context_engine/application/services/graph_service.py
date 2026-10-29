@@ -197,6 +197,18 @@ class DefaultGraphService:
     def backed_includes(self) -> frozenset[str]:
         return self._orchestrator.backed_includes
 
+    def wire_chunk_search(self, search: Callable[..., list[dict[str, Any]]]) -> None:
+        """Attach the local chunk index to the docs reader when available.
+
+        The newer ``resources`` family owns direct passage retrieval, while
+        the docs family still benefits from indexed evidence when a query asks
+        for document content. Keeping this seam optional preserves hosts that
+        only provide the graph backend.
+        """
+        reader = self._orchestrator._routing.get("docs")
+        if reader is not None and hasattr(reader, "chunk_search"):
+            reader.chunk_search = search
+
     # --- reads --------------------------------------------------------------
     def resolve(self, request: ResolveRequest) -> AgentEnvelope:
         return self._orchestrator.resolve(

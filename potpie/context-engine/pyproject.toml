@@ -66,6 +66,12 @@ observability = [
     "opentelemetry-instrumentation-openai>=0.40b0",
     "sentry-sdk>=2.61.1,<3.0.0",
 ]
+documents = [
+    "pypdf>=5.0",
+    "docling[rapidocr]>=2.59",
+    "pypdfium2>=4.0",
+    "httpx>=0.28.0",
+]
 all = [
     "potpie-context-engine[http,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
 ]

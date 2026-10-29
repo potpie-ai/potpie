@@ -1206,50 +1206,50 @@
   "Chunk": {
    "fields": [
     {
+     "default": "",
      "name": "resource_id",
-     "required": true,
      "schema": {
       "kind": "string"
      }
     },
     {
+     "default": "",
      "name": "doc",
-     "required": true,
      "schema": {
       "kind": "string"
      }
     },
     {
+     "default": "",
      "name": "section",
-     "required": true,
      "schema": {
       "kind": "string"
      }
     },
     {
+     "default": 0,
      "name": "seq",
-     "required": true,
      "schema": {
       "kind": "integer"
      }
     },
     {
+     "default": "",
      "name": "text",
-     "required": true,
      "schema": {
       "kind": "string"
      }
     },
     {
+     "default": 0,
      "name": "chars",
-     "required": true,
      "schema": {
       "kind": "integer"
      }
     },
     {
+     "default": 0,
      "name": "revision",
-     "required": true,
      "schema": {
       "kind": "integer"
      }
@@ -1292,6 +1292,206 @@
       "options": [
        {
         "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "uri",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "pot_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "doc_slug",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "section_slug",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "content",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "",
+     "name": "ocr_text",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "provenance",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "items": {
+         "keys": {
+          "kind": "string"
+         },
+         "kind": "map",
+         "values": {
+          "kind": "any"
+         }
+        },
+        "kind": "array"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "neighbors",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "items": {
+         "keys": {
+          "kind": "string"
+         },
+         "kind": "map",
+         "values": {
+          "kind": "any"
+         }
+        },
+        "kind": "array"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "source_kind",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "section_title",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "parser_tier",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "page_numbers",
+     "schema": {
+      "items": {
+       "kind": "integer"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "score",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "number"
        },
        {
         "kind": "null"
@@ -8348,15 +8548,15 @@
   "ResourceStoreStatus": {
    "fields": [
     {
+     "default": "local",
      "name": "kind",
-     "required": true,
      "schema": {
       "kind": "string"
      }
     },
     {
+     "default": false,
      "name": "ready",
-     "required": true,
      "schema": {
       "kind": "boolean"
      }
@@ -8394,6 +8594,21 @@
     {
      "default": null,
      "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "backend",
      "schema": {
       "kind": "union",
       "options": [

@@ -16,6 +16,7 @@ cannot mask a regression.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -60,11 +61,17 @@ print(json.dumps(sorted({module.split(".")[0] for module in sys.modules})))
 
 
 def test_supported_imports_do_not_load_optional_dependencies() -> None:
+    env = os.environ.copy()
+    # Pydantic discovers installed plugins at import time.  Keep this
+    # packaging contract focused on the context-engine imports themselves,
+    # independent of optional plugins installed in the developer environment.
+    env["PYDANTIC_DISABLE_PLUGINS"] = "__all__"
     result = subprocess.run(
         [sys.executable, "-c", _IMPORT_SNIPPET],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     assert result.returncode == 0, result.stderr
     loaded = set(json.loads(result.stdout))
@@ -189,10 +196,15 @@ def test_public_distributions_package_pep561_markers() -> None:
 
 
 def test_legacy_top_level_packages_are_gone() -> None:
-    import importlib.util
+    from importlib.machinery import PathFinder
+
+    package_root = Path(__file__).resolve().parents[2] / "src"
 
     for legacy in ("domain", "application", "adapters", "bootstrap", "host"):
-        spec = importlib.util.find_spec(legacy)
+        # Limit discovery to the source root that is packaged into the wheel.
+        # A checkout may contain ignored/generated directories with legacy
+        # names; those must not affect the distribution namespace contract.
+        spec = PathFinder.find_spec(legacy, [str(package_root)])
         assert spec is None, (
             f"legacy top-level package {legacy!r} is still importable; the "
             "wheel must ship only the potpie_context_engine namespace"

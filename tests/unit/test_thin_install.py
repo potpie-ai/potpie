@@ -31,6 +31,7 @@ ENGINE = "potpie-context-engine"
 #: Extras that installers already pass, plus the heavy parts of the product.
 EXPECTED_EXTRAS = {
     "daemon",
+    "documents",
     "local",
     "auth",
     "embeddings",
@@ -191,6 +192,7 @@ def _environment(sys_platform: str) -> dict[str, str]:
         "platform_system": {"win32": "Windows", "darwin": "Darwin"}.get(
             sys_platform, "Linux"
         ),
+        "platform_machine": "x86_64",
         "os_name": "nt" if sys_platform == "win32" else "posix",
         "extra": "",
     }

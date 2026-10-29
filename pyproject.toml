@@ -42,6 +42,7 @@ dependencies = [
 
 [project.optional-dependencies]
 daemon = ["potpie-context-engine[http]"]
+documents = ["potpie-context-engine[documents]==0.2.0"]
 local = ["potpie-context-engine[local]"]
 auth = ["keyring>=25.0.0"]
 embeddings = ["potpie-context-engine[embeddings]"]
@@ -56,7 +57,7 @@ telemetry = [
 ]
 ui = ["pillow>=12.3.0"]
 all = [
-    "potpie[daemon,local,auth,embeddings,ingest,telemetry,ui]",
+    "potpie[daemon,documents,local,auth,embeddings,ingest,telemetry,ui]",
     "potpie-context-engine[all]",
     "pydantic-settings>=2.14.2",
 ]
@@ -184,8 +185,10 @@ extend-select = ["S"]
 "potpie/cli/commands/_common.py" = ["S112"]
 "potpie/cli/ui/setup_ux.py" = ["S112"]
 "tests/_auth_fakes.py" = ["S108"]
+"tests/characterization/test_documents_extra_metadata.py" = ["S101"]
 "tests/unit/test_cli_linear.py" = ["S310"]
 "tests/unit/test_build_hook_config.py" = ["S101"]
 "tests/unit/test_nudge_adapter.py" = ["S102"]
+"tests/unit/test_query_search_scope.py" = ["S101"]
 "tests/unit/test_validate_python_release.py" = ["S101"]
 "tests/unit/test_verify_pypi_release.py" = ["S101"]

@@ -26,6 +26,7 @@ EXPECTED_CLI_COMMANDS = {
     "confluence",
     "daemon",
     "doctor",
+    "document",
     "git",
     "github",
     "gitbucket",

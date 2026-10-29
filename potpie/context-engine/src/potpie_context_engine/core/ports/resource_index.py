@@ -196,7 +196,9 @@ class IndexCapabilities:
     attributable in telemetry rather than an ``AttributeError`` at a call site.
     """
 
-    profile: str
+    profile: str = "sqlite_fts"
+    semantic_provider: str | None = None
+    semantic_model: str | None = None
     lexical: bool = False
     """BM25 / term match over chunk text."""
 
@@ -249,20 +251,20 @@ class ChunkHit:
     retrieval round trip.
     """
 
-    resource_id: str
-    doc: str
-    section: str
-    seq: int
-    document_key: str
-    section_key: str
-    section_title: str
-    label: str
-    snippet: str
-    chars: int
-    revision: int
-    score: float
-    rank: int
-    match_mode: str
+    resource_id: str = ""
+    doc: str = ""
+    section: str = ""
+    seq: int = 0
+    document_key: str = ""
+    section_key: str = ""
+    section_title: str = ""
+    label: str = ""
+    snippet: str = ""
+    chars: int = 0
+    revision: int = 0
+    score: float = 0.0
+    rank: int = 0
+    match_mode: str = MATCH_MODE_DISABLED
     source_ref: str | None = None
     lexical_rank: int | None = None
     """Rank in the lexical arm, when that arm returned this chunk."""
@@ -289,6 +291,38 @@ class ChunkHit:
 
     ``None`` when no arm measured it (a semantic-only hit, or an index with no
     lexical arm), which readers must treat as "unknown", never as zero."""
+
+    # Compatibility fields for the original PDF/resource adapter. They are
+    # aliases, not a second retrieval contract; keeping them here lets old
+    # local adapters and the newer resource index coexist during migration.
+    doc_slug: str | None = None
+    section_slug: str | None = None
+    fts_score: float | None = None
+    semantic_score: float | None = None
+    retrieval_source: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.doc and self.doc_slug:
+            object.__setattr__(self, "doc", self.doc_slug)
+        if not self.section and self.section_slug:
+            object.__setattr__(self, "section", self.section_slug)
+        if not self.doc_slug and self.doc:
+            object.__setattr__(self, "doc_slug", self.doc)
+        if not self.section_slug and self.section:
+            object.__setattr__(self, "section_slug", self.section)
+        if self.semantic_score is None and self.similarity is not None:
+            object.__setattr__(self, "semantic_score", self.similarity)
+        if self.retrieval_source is None:
+            object.__setattr__(self, "retrieval_source", self.match_mode)
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceSearchFilters:
+    """Optional source metadata filters shared by legacy and new indexes."""
+
+    doc_slug: str | None = None
+    source_kind: str | None = None
+    page_number: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -480,5 +514,6 @@ __all__ = [
     "ResourceIndexError",
     "ResourceIndexPort",
     "ResourceIndexStatus",
+    "ResourceSearchFilters",
     "embedding_model_is_calibrated",
 ]

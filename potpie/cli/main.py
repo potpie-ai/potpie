@@ -25,6 +25,7 @@ from potpie.cli.commands import (
     bootstrap,
     cloud,
     daemon,
+    document,
     graph,
     ledger,
     pots,
@@ -202,6 +203,7 @@ def build_app() -> typer.Typer:
     app.add_typer(graph.backend_app, name="backend")
     app.add_typer(skills_cmds.skills_app, name="skills")
     app.add_typer(resource_cmds.resource_app, name="resource")
+    app.add_typer(document.document_app, name="document")
     # Keep cloud discoverable but below the local happy path — managed routing
     # is still in development (see cli-flow.md).
     app.add_typer(

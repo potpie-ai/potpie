@@ -22,6 +22,7 @@ from potpie.skills.catalog import RECOMMENDED_SKILL_IDS
 EXPECTED_CATALOG = {
     "potpie-change-timeline": "3",
     "potpie-cli": "6",
+    "potpie-document-ingestion": "1",
     "potpie-debug-memory": "5",
     "potpie-graph": "9",
     "potpie-infra-architecture": "5",

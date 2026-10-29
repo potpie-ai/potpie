@@ -33,10 +33,12 @@ from potpie.cli.commands._common import (
     fail,
     get_engine_client,
     get_root_runtime,
+    get_runtime,
     is_json,
     resolve_pot_id,
     run_engine_operation,
 )
+from potpie_context_engine.application.services.resource_service import ResourceService
 from potpie_context_engine.core.cli_commands import join_command
 from potpie_context_engine.core.ports.resource_store import (
     RESOURCE_GET_MAX_IDS,
@@ -103,6 +105,58 @@ def _target_pot(pot: str | None) -> str:
     return resolve_pot_id(get_root_runtime(), pot)
 
 
+def _legacy_resource_service() -> ResourceService:
+    """Compatibility seam for the parser-backed document commands."""
+    runtime = get_runtime()
+    resources = getattr(getattr(runtime, "engine", None), "resources", None)
+    if resources is None:
+        fail(
+            code="resource_service_unavailable",
+            message="document service is not available on this host",
+            next_action="run the command with the context engine available",
+            exit_code=2,
+        )
+    if isinstance(resources, ResourceService):
+        return resources
+    return ResourceService(
+        store=resources.store,
+        index=resources.index,
+        graph=resources.graph,
+    )
+
+
+def _legacy_import_human(report) -> str:
+    lines = [
+        f"doc={report.doc_slug} graph_written={report.graph_written}",
+        f"parser_tier={report.parser_tier} provenance_version={report.provenance_version}",
+        f"added={report.sections_added} kept={report.sections_kept} "
+        f"changed={report.sections_changed} removed={report.sections_removed}",
+    ]
+    if report.elements_added or report.elements_removed:
+        lines.append(
+            f"elements_added={report.elements_added} elements_removed={report.elements_removed}"
+        )
+    if report.summary_pending:
+        lines.append(f"summary_pending: {', '.join(report.summary_pending)}")
+    if report.recommended_next_action:
+        lines.append(f"next: {report.recommended_next_action}")
+    return "\n".join(lines)
+
+
+def _legacy_emit_import_report(report) -> None:
+    if report.errors or not report.graph_written:
+        first = report.errors[0] if report.errors else {}
+        code = first.get("code") or "resource_graph_write_failed"
+        fail(
+            code=code,
+            message=first.get("message") or "document ingest did not complete",
+            detail=report.model_dump(),
+            next_action=report.recommended_next_action,
+            exit_code=2 if code.startswith("resource_graph") else 1,
+        )
+    emit(report.model_dump(), human=_legacy_import_human(report))
+
+
 @resource_app.command("import")
 def resource_import(
     directory: Path = typer.Argument(
@@ -139,6 +193,74 @@ def resource_import(
         )
         payload = _import_payload(result)
         emit(payload, human=_import_human(payload))
+
+
+@resource_app.command("parse")
+def resource_parse(
+    path: str = typer.Argument(..., help="Source file to parse into staging layout"),
+    out: str = typer.Option(..., "--out", help="Staging output directory"),
+    pot: str | None = typer.Option(None, "--pot"),
+    doc: str | None = typer.Option(None, "--doc"),
+    source_ref: str | None = typer.Option(None, "--source-ref"),
+    chunk_size: int = typer.Option(4000, "--chunk-size"),
+    force: bool = typer.Option(False, "--force"),
+    vision_provider: str = typer.Option("local", "--vision-provider"),
+    import_after: bool = typer.Option(False, "--import"),
+) -> None:
+    """Compatibility parser command for the PDF/document ingestion surface."""
+    with contract():
+        pot_id = _target_pot(pot) if pot or import_after else None
+        if import_after and not doc:
+            fail("--import requires --doc")
+        service = _legacy_resource_service()
+        if import_after and pot_id and doc:
+            report = service.parse_and_import(
+                pot_id=pot_id,
+                doc_slug=doc,
+                source_path=path,
+                staging_dir=out,
+                chunk_size=chunk_size,
+                force=force,
+                source_ref=source_ref,
+                vision_provider=vision_provider,
+            )
+            _legacy_emit_import_report(report)
+            return
+        manifest = service.parse_to_staging(
+            source_path=path,
+            out_dir=out,
+            chunk_size=chunk_size,
+            force=force,
+            pot_id=pot_id,
+            vision_provider=vision_provider,
+        )
+        emit(manifest.model_dump(), human=f"parsed {len(manifest.sections)} sections → {out}")
+
+
+@resource_app.command("ingest")
+def resource_ingest(
+    path: str = typer.Argument(..., help="Source file (.md, .txt, .pdf, images)"),
+    doc: str = typer.Option(..., "--doc"),
+    pot: str | None = typer.Option(None, "--pot"),
+    source_ref: str | None = typer.Option(None, "--source-ref"),
+    chunk_size: int = typer.Option(4000, "--chunk-size"),
+    force: bool = typer.Option(False, "--force"),
+    vision_provider: str = typer.Option("local", "--vision-provider"),
+    allow_degraded: bool = typer.Option(False, "--allow-degraded"),
+) -> None:
+    """Compatibility alias; ``potpie document ingest`` is the preferred name."""
+    with contract():
+        report = _legacy_resource_service().ingest_file(
+            pot_id=_target_pot(pot),
+            doc_slug=doc,
+            source_path=path,
+            chunk_size=chunk_size,
+            force=force,
+            source_ref=source_ref,
+            vision_provider=vision_provider,
+            allow_degraded=allow_degraded,
+        )
+        _legacy_emit_import_report(report)
 
 
 @resource_app.command("get")
