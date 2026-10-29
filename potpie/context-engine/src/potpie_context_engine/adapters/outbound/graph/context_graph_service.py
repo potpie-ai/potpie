@@ -159,7 +159,18 @@ class ContextGraphService(ContextGraphPort):
             recommended_next_action="Route writes through GraphService.mutate.",
         )
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+    def journal_capture_active(self, pot_id: str) -> bool:
+        """Whether the graph journal is capturing commits for ``pot_id``."""
+        from potpie_context_engine.application.services.resource_journal import (
+            journal_capture_active,
+        )
+
+        backend = getattr(self._graph, "backend", None)
+        return journal_capture_active(getattr(backend, "journal", None), pot_id)
+
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
         # The backend mutation owns the sync/async bridge (Neo4j refuses inside a
         # running loop, matching this port's no-async-reset contract).
         backend = getattr(self._graph, "backend", None)
@@ -168,9 +179,15 @@ class ContextGraphService(ContextGraphPort):
                 "context_graph.reset_pot",
                 detail="the wrapped graph service does not expose a backend",
             )
-        inner = backend.mutation.reset_pot(pot_id)
+        inner = backend.mutation.reset_pot(pot_id, mutation_id=mutation_id)
         ok = bool(inner.get("ok", True))  # backends with no explicit ok succeed
-        out: dict[str, Any] = {"pot_id": pot_id, "ok": ok, "graph_writer": inner}
+        out: dict[str, Any] = {
+            "pot_id": pot_id,
+            "ok": ok,
+            "graph_writer": inner,
+            "mutation_id": inner.get("mutation_id"),
+            "execution": inner.get("execution"),
+        }
         if not ok:
             out["error"] = inner.get("error", "graph_reset_failed")
         return out

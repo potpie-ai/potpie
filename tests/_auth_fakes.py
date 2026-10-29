@@ -276,6 +276,8 @@ class InMemoryCredentialStore:
             self._gitlab_pat_secrets.pop(instance_host, None)
             if instances:
                 gitlab["instances"] = instances
+                if gitlab.get("active_instance_host") == instance_host:
+                    gitlab["active_instance_host"] = next(iter(instances))
                 self.providers["gitlab"] = gitlab
             else:
                 self.providers.pop("gitlab", None)

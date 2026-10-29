@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from typing import Generic, Literal, Mapping, TypeAlias, TypeVar
 
+from potpie.runtime.extensions import EXTENSION_NAME
+from potpie.runtime.host_operations import HOST_OPERATION_CATALOG, HostOperation
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
     DaemonControlOperation,
@@ -90,8 +92,26 @@ class HandshakePayload:
 LifecycleState = Literal["starting", "ready", "draining", "failed", "stopped"]
 
 
+#: The daemon-control operations a control-scoped compatibility ticket
+#: authorizes. A daemon issues that ticket when the client's operation catalog
+#: differs from its own, so a client can still see and stop a daemon from
+#: another build. Their wire semantics are governed by ``PROTOCOL_VERSION``,
+#: not by the catalog fingerprint: changing the handshake, status, or shutdown
+#: wire shape requires a protocol version change.
+CONTROL_TICKET_OPERATIONS: frozenset[DaemonControlOperation] = frozenset(
+    {DaemonControlOperation.STATUS, DaemonControlOperation.SHUTDOWN}
+)
+
+
 @dataclass(frozen=True, slots=True)
 class HandshakeResult:
+    """A daemon's handshake answer.
+
+    ``compatibility_ticket`` authorizes the full catalog when
+    ``operation_catalog_fingerprint`` equals the client's own, and only
+    :data:`CONTROL_TICKET_OPERATIONS` when it differs.
+    """
+
     protocol_min: int
     protocol_max: int
     instance_id: str
@@ -121,12 +141,31 @@ class DaemonStatusPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class DaemonBuild:
+    """Source identity of the build a daemon process was started from."""
+
+    rev: str | None = None
+    dirty: bool | None = None
+    built_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class DaemonStatusResult:
+    """Live daemon status.
+
+    ``version`` and ``build`` say which build is serving. They travel as a
+    pair that a daemon from before build reporting omits; either way an
+    unreported build is ``None``, and an unknown field inside a reported one
+    is ``None`` too.
+    """
+
     instance_id: str
     pid: int
     lifecycle_state: LifecycleState
     backend_profile: str
     ui_url: str
+    version: str | None = None
+    build: DaemonBuild | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +185,48 @@ class EngineOperationRequest:
             raise ValueError(
                 f"{self.operation.value} requires payload {expected.__name__}"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class HostOperationRequest:
+    """A ``host.*`` or ``ext.<vendor>.<op>`` request, on the engine envelope.
+
+    Same wire shape as :class:`EngineOperationRequest`; only a host that
+    serves the operation decodes it. ``payload`` is the operation's request
+    dataclass (the host catalog's type for ``host.*``, the extension's own
+    type for ``ext.*``).
+    """
+
+    protocol_version: int
+    request_id: str
+    operation: str
+    selector: ContextSelector
+    payload: object
+    destructive_intent: DestructiveIntent | None = None
+    compatibility_ticket: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_request_identity(self.protocol_version, self.request_id)
+        if not is_dataclass(self.payload) or isinstance(self.payload, type):
+            raise ValueError(f"{self.operation} requires a dataclass payload")
+        try:
+            host_operation = HostOperation(self.operation)
+        except ValueError:
+            if not EXTENSION_NAME.fullmatch(str(self.operation)):
+                raise ValueError(
+                    f"{self.operation!r} is neither a host operation nor an "
+                    "extension operation name"
+                ) from None
+            return
+        expected = HOST_OPERATION_CATALOG[host_operation].request_type
+        if type(self.payload) is not expected:
+            raise ValueError(
+                f"{host_operation.value} requires payload {expected.__name__}"
+            )
+
+    @property
+    def is_extension(self) -> bool:
+        return str(self.operation).startswith("ext.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,7 +269,11 @@ class DaemonStatusRequest:
 
 
 ProtocolRequest: TypeAlias = (
-    EngineOperationRequest | HandshakeRequest | DaemonStatusRequest | ShutdownRequest
+    EngineOperationRequest
+    | HostOperationRequest
+    | HandshakeRequest
+    | DaemonStatusRequest
+    | ShutdownRequest
 )
 
 T = TypeVar("T")
@@ -254,9 +339,11 @@ def _validate_request_identity(protocol_version: int, request_id: str) -> None:
 
 
 __all__ = [
+    "CONTROL_TICKET_OPERATIONS",
     "PROTOCOL_MAX_VERSION",
     "PROTOCOL_MIN_VERSION",
     "PROTOCOL_VERSION",
+    "DaemonBuild",
     "DaemonInternalError",
     "DaemonStatusPayload",
     "DaemonStatusRequest",
@@ -266,6 +353,7 @@ __all__ = [
     "HandshakePayload",
     "HandshakeRequest",
     "HandshakeResult",
+    "HostOperationRequest",
     "LifecycleState",
     "ProtocolError",
     "ProtocolRequest",

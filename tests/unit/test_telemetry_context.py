@@ -4,7 +4,10 @@ from typer.testing import CliRunner
 
 from potpie.cli import main as host_cli
 from potpie.cli.commands import _common
-from potpie.cli.telemetry.context import current_telemetry_context
+from potpie.cli.telemetry.context import (
+    bind_daemon_telemetry_context,
+    current_telemetry_context,
+)
 from potpie.cli.telemetry.identity_store import load_or_create_identity
 
 
@@ -13,6 +16,7 @@ def test_cli_invocations_share_install_and_daemon_session_ids(
     tmp_path,
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("CONTEXT_ENGINE_HOME", str(tmp_path / "context-home"))
     monkeypatch.setenv("POTPIE_ENVIRONMENT", "staging")
     monkeypatch.delenv("POTPIE_SENTRY_DSN", raising=False)
     runner = CliRunner()
@@ -22,8 +26,11 @@ def test_cli_invocations_share_install_and_daemon_session_ids(
     second = runner.invoke(host_cli.app, ["--json", "daemon", "status"])
     second_ctx = current_telemetry_context()
 
-    assert first.exit_code == 0, first.stdout
-    assert second.exit_code == 0, second.stdout
+    # `daemon status` is a vehicle here, not the subject. No daemon runs against
+    # this home, which is now a `daemon_unavailable` at EXIT_UNAVAILABLE; the
+    # command still ran, which is all the telemetry assertions below need.
+    assert first.exit_code == _common.EXIT_UNAVAILABLE, first.stdout
+    assert second.exit_code == _common.EXIT_UNAVAILABLE, second.stdout
     assert first_ctx is not None
     assert second_ctx is not None
     assert first_ctx.anonymous_install_id == second_ctx.anonymous_install_id
@@ -50,3 +57,14 @@ def test_cli_context_does_not_include_command_args(monkeypatch, tmp_path) -> Non
     assert ctx is not None
     assert ctx.command == "pot"
     assert ctx.subcommand is None
+
+
+def test_daemon_context_uses_install_id_and_ui_command(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    ctx = bind_daemon_telemetry_context()
+
+    assert ctx.command == "ui"
+    assert ctx.subcommand is None
+    assert ctx.output_mode == "ui"
+    assert current_telemetry_context() is ctx
+    assert load_or_create_identity().anonymous_install_id == ctx.anonymous_install_id

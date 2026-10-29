@@ -3,15 +3,27 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, fields
 from typing import Any, cast
 
-from potpie.cli.repo_location import repo_identity_key
+from potpie.pots.resolution import (
+    ARCHIVED_POT_NEXT_ACTION,
+    archived_pot_message,
+    is_archived,
+    repo_source_index,
+)
 from potpie.runtime.clients import ClientOutcome
+from potpie.runtime.commit_access import (
+    commit_access_for,
+    commit_grant,
+    current_authorization_scope,
+)
+from potpie.runtime.selection import CatalogSelectorResolver
 from potpie.runtime.operations import EngineOperation
 from potpie.runtime.resource_manager import (
     AuthenticatedActor,
+    AuthorizationError,
     AuthorizationScope,
     CompositionFingerprint,
     ContextResourceManager,
@@ -29,6 +41,15 @@ from potpie_context_engine import (
     Outcome,
     Success,
 )
+from potpie_context_engine.application.services.resource_journal import (
+    JOURNAL_CAPTURE_ACTIVE,
+)
+from potpie_context_engine.core.api import run_in_worker_thread
+from potpie_context_engine.core.commit_service import (
+    COMMIT_ACCESS_LEVELS,
+    CommitAccessDenied,
+)
+from potpie_context_engine.core.graph_journal import JournalError
 from potpie_context_engine.core.errors import (
     CapabilityNotImplemented,
     ContextEngineDisabled,
@@ -49,18 +70,31 @@ from potpie_context_engine.core.ports.graph_service import (
     GraphEntitySearchRequest,
     GraphReadRequest,
 )
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.graph.snapshot import SnapshotManifest
+from potpie_context_engine.core.ports.resource_index import ResourceIndexError
+from potpie_context_engine.core.ports.resource_store import (
+    ResourceBatchResult,
+    ResourceStoreError,
+)
 from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 from potpie_context_engine.domain.nudge import GraphNudgeRequest
 from potpie_context_engine.domain.ingestion_event_models import (
     IngestionSubmissionRequest,
 )
 from potpie_context_engine.requests import (
+    ApplyPreviewRequest,
     CatalogRequest,
     CommitRequest,
+    CommitShowRequest,
+    CommitStatusRequest,
+    CommitsRequest,
     DataPlaneStatusRequest,
     DescribeRequest,
+    DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
+    GraphSliceRequest,
     HistoryRequest,
     ImportSnapshotRequest,
     InboxAddRequest,
@@ -71,28 +105,52 @@ from potpie_context_engine.requests import (
     InboxMarkRejectedRequest,
     InboxShowRequest,
     InspectRequest,
+    JournalStatusRequest,
     MutateRequest,
     NeighborhoodRequest,
     NudgeRequest,
     ProposeRequest,
     QualityRequest,
     ReadRequest,
+    RebuildCommitsRequest,
     RecordRequest,
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    ResourceGetRequest,
+    ResourceImportRequest,
+    ResourceIndexBuildRequest,
+    ResourceIndexRebuildRequest,
+    ResourceIndexStatusRequest,
+    ResourceListRequest,
+    ResourceRmRequest,
+    ResourceStatusRequest,
+    RevertPreviewRequest,
+    RollbackPreviewRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
     ProcessingStatusRequest,
+    VerifyCommitRequest,
 )
-from potpie_context_engine.results import DescribeResult, ResetContextResult
+from potpie_context_engine.results import (
+    DescribeResult,
+    ExportSnapshotResult,
+    GraphJournalResult,
+    ResourceIndexRebuildResult,
+    ResourceListResult,
+)
 
 
 @dataclass(frozen=True, slots=True)
-class LocalEngineServices:
-    """Concrete engine-owned services used by the local typed boundary."""
+class EngineServices:
+    """Concrete engine-owned services behind the typed engine boundary.
+
+    The local runtime composes them in-process; an embedding host composes its
+    own from one graph runtime. ``pots`` is the local pot service and may be
+    ``None`` for a host that resolves pots through its own catalog.
+    """
 
     pots: Any
     agent_context: Any
@@ -103,126 +161,133 @@ class LocalEngineServices:
     ingestion: Any | None = None
     ingestion_events: Any | None = None
     resources: Any | None = None
+    """The ``ResourceFacade`` (document store + index), or ``None`` if absent."""
 
 
-class LocalContextSelectorResolver:
-    """Resolve exact, active, and repository selectors through Potpie services."""
+class LocalActorPotCatalog:
+    """The local pot catalog: one fixed actor sees every pot in this home.
+
+    A local home has one principal, so every method ignores ``actor``.
+    """
 
     def __init__(self, services: Any) -> None:
         self._services = services
 
-    async def resolve(
-        self, selector: ContextSelector
+    async def pots_for(self, actor: AuthenticatedActor) -> Sequence[Any]:
+        del actor
+        return await asyncio.to_thread(lambda: tuple(self._services.pots.list_pots()))
+
+    async def active_for(self, actor: AuthenticatedActor) -> Any | None:
+        del actor
+        return await asyncio.to_thread(self._services.pots.active_pot)
+
+    async def repo_default_for(
+        self, actor: AuthenticatedActor, repo: str
+    ) -> str | None:
+        del actor
+        return await asyncio.to_thread(
+            lambda: self._services.pots.repo_default(repo=repo)
+        )
+
+    async def repo_sources_for(self, actor: AuthenticatedActor) -> Sequence[Any]:
+        del actor
+        return await asyncio.to_thread(
+            lambda: tuple(repo_source_index(self._services.pots))
+        )
+
+
+#: The one actor of a local home, used when a local caller resolves a selector
+#: without naming an actor.
+LOCAL_ACTOR = AuthenticatedActor(actor_id="local-cli")
+
+
+class LocalContextSelectorResolver(CatalogSelectorResolver):
+    """Resolve exact, active, and repository selectors through Potpie services."""
+
+    def __init__(self, services: Any) -> None:
+        super().__init__(LocalActorPotCatalog(services))
+
+    async def resolve(  # type: ignore[override]
+        self,
+        selector: ContextSelector,
+        *,
+        actor: AuthenticatedActor = LOCAL_ACTOR,
     ) -> Success[ContextIdentity] | Failure[SelectionError]:
-        return await asyncio.to_thread(self._resolve, selector)
-
-    def _resolve(
-        self, selector: ContextSelector
-    ) -> Success[ContextIdentity] | Failure[SelectionError]:
-        try:
-            pots = tuple(self._services.pots.list_pots())
-            active = self._services.pots.active_pot()
-        except Exception:
-            return Failure(
-                SelectionError(
-                    code="context_selection_unavailable",
-                    message="Potpie could not read the local context catalog.",
-                    recommended_next_action="check daemon readiness with 'potpie doctor'",
-                    retry_posture="safe",
-                )
-            )
-
-        if selector.kind == "explicit":
-            for pot in pots:
-                if selector.value in {pot.pot_id, pot.name}:
-                    return Success(ContextIdentity(pot.pot_id))
-            return Failure(
-                SelectionError(
-                    code="pot_not_found",
-                    message=f"No pot matching '{selector.value}'.",
-                    recommended_next_action="run 'potpie pot list'",
-                )
-            )
-
-        if selector.kind == "active":
-            if active is not None:
-                return Success(ContextIdentity(active.pot_id))
-            return Failure(_no_active_pot_error())
-
-        repo = selector.value or ""
-        try:
-            default_pot_id = self._services.pots.repo_default(repo=repo)
-        except Exception:
-            default_pot_id = None
-        known_ids = {pot.pot_id for pot in pots}
-        if default_pot_id and default_pot_id in known_ids:
-            return Success(ContextIdentity(str(default_pot_id)))
-
-        matches = []
-        for pot in pots:
-            try:
-                sources = self._services.pots.list_sources(pot_id=pot.pot_id)
-            except Exception:  # noqa: S112 - one unreadable pot must not mask others.
-                continue
-            if any(
-                source.kind == "repo"
-                and any(
-                    repo_identity_key(ref) == repo
-                    for ref in (source.name, source.location)
-                    if ref
-                )
-                for source in sources
-            ):
-                matches.append(pot)
-
-        if len(matches) == 1:
-            return Success(ContextIdentity(matches[0].pot_id))
-        if len(matches) > 1:
-            if active is not None and any(
-                active.pot_id == pot.pot_id for pot in matches
-            ):
-                return Success(ContextIdentity(active.pot_id))
-            names = ", ".join(f"{pot.name} ({pot.pot_id})" for pot in matches)
-            return Failure(
-                SelectionError(
-                    code="ambiguous_pot",
-                    message=f"Current repo is registered in multiple pots: {names}.",
-                    recommended_next_action=(
-                        "pick one with '--pot <id-or-name>' or set it active with "
-                        "'potpie pot use <id-or-name>'"
-                    ),
-                )
-            )
-        if active is not None:
-            return Success(ContextIdentity(active.pot_id))
-        return Failure(_no_active_pot_error())
+        return await super().resolve(selector, actor=actor)
 
 
 class LocalCliAuthenticator:
     async def authenticate(self, authentication: object):
         del authentication
-        return Success(AuthenticatedActor(actor_id="local-cli"))
+        return Success(LOCAL_ACTOR)
 
 
 class LocalCliAuthorizer:
+    """Authorize local operations; an archived pot admits only ``reset_context``.
+
+    Selection resolves an archived pot by its exact id so its graph state can
+    still be cleared (``pot archive`` on an already-archived pot). Every other
+    operation against it is refused here, so nothing reads from or writes into
+    a retired pot through the typed boundary.
+    """
+
+    def __init__(self, services: Any | None = None) -> None:
+        self._services = services
+
     async def authorize(
         self,
         actor: AuthenticatedActor,
         operation: str,
         context: ContextIdentity,
     ):
+        if operation != EngineOperation.RESET_CONTEXT:
+            archived = await asyncio.to_thread(self._archived_pot, context.value)
+            if archived is not None:
+                return Failure(
+                    AuthorizationError(
+                        code="pot_archived",
+                        message=archived_pot_message(archived),
+                        recommended_next_action=ARCHIVED_POT_NEXT_ACTION,
+                    )
+                )
         return Success(
             AuthorizationScope(
                 actor_id=actor.actor_id,
                 operation=operation,
                 context=context,
-                attributes={"trust_boundary": "local_user"},
+                # The local owner holds every commit level on every pot.
+                attributes={"trust_boundary": "local_user", "commit_access": "admin"},
             )
         )
 
+    def _archived_pot(self, pot_id: str) -> Any | None:
+        pots = getattr(self._services, "pots", None)
+        if pots is None:
+            return None
+        try:
+            rows = pots.list_pots()
+        except Exception:  # noqa: BLE001 - selection just read the same catalog.
+            return None
+        return next(
+            (pot for pot in rows if pot.pot_id == pot_id and is_archived(pot)),
+            None,
+        )
 
-class LocalEngineOperations:
-    """Finite engine-owned operations backed by explicit local services."""
+
+#: The failure code for an engine operation that raised something unexpected.
+#: Transport-neutral: the local daemon and a managed host report the same one.
+ENGINE_OPERATION_FAILED = "engine_operation_failed"
+
+
+class ServiceEngineOperations:
+    """Finite engine-owned operations backed by explicit engine services.
+
+    The one implementation of every engine operation, for the local runtime
+    and for embedding hosts alike. Sync service calls run in a worker thread
+    bridged to the calling event loop (``run_in_worker_thread``), so a host
+    whose plan or inbox store is async only (an async database pool) serves
+    every operation from the loop that owns that store.
+    """
 
     def __init__(self, services: Any) -> None:
         self._services = services
@@ -265,6 +330,7 @@ class LocalEngineOperations:
                     mode=request.mode,
                     source_policy=request.source_policy,
                     max_items=request.max_items,
+                    intent=request.intent,
                     metadata=request.metadata,
                 )
             )
@@ -402,29 +468,49 @@ class LocalEngineOperations:
             lambda: self._inspection_neighborhood(context=context, request=request)
         )
 
+    async def slice(
+        self, context: ContextIdentity, request: GraphSliceRequest
+    ) -> Outcome[object]:
+        """The pot's whole graph, as the explorer draws it."""
+
+        return await self._call(
+            lambda: self._services.backend.inspection.slice(
+                pot_id=context.value,
+                filter_=ClaimQueryFilter(
+                    pot_id=context.value,
+                    include_invalidated=request.include_invalidated,
+                    limit=request.limit,
+                ),
+            )
+        )
+
     async def export_snapshot(
         self, context: ContextIdentity, request: ExportSnapshotRequest
     ) -> Outcome[object]:
         return await self._call(
-            lambda: self._snapshot_port("export").export(
-                pot_id=context.value,
-                destination=_required_value(request.destination, "destination"),
-            )
+            lambda: self._export_snapshot(pot_id=context.value, request=request)
         )
 
     async def import_snapshot(
         self, context: ContextIdentity, request: ImportSnapshotRequest
     ) -> Outcome[object]:
         return await self._call(
-            lambda: self._snapshot_port("import_").import_(
-                pot_id=context.value,
-                source=_required_value(request.source, "source"),
-            )
+            lambda: self._import_snapshot(pot_id=context.value, request=request)
         )
 
     async def repair(
         self, context: ContextIdentity, request: RepairRequest
     ) -> Outcome[object]:
+        if request.legacy_mode is not None:
+            return await self._authorized_graph_call(
+                "legacy_repair",
+                context,
+                lambda workbench: workbench.repair_legacy_async(
+                    pot_id=context.value,
+                    mode=request.legacy_mode,
+                    repair_id=request.repair_id,
+                ),
+            )
         return await self._call(
             lambda: self._services.backend.analytics.repair(
                 context.value,
@@ -435,16 +521,18 @@ class LocalEngineOperations:
     async def reset_context(
         self, context: ContextIdentity, request: ResetContextRequest
     ) -> Outcome[object]:
-        del request
+        from potpie_context_engine.application.services.context_reset import (
+            reset_context,
+        )
 
-        def reset() -> ResetContextResult:
-            result = self._services.backend.mutation.reset_pot(context.value)
-            return ResetContextResult(
-                context_id=context.value,
-                reset=bool(result.get("ok", True)),
+        return await self._call(
+            lambda: reset_context(
+                self._services.backend,
+                self._resources_or_none(),
+                pot_id=context.value,
+                mutation_id=request.mutation_id,
             )
-
-        return await self._call(reset)
+        )
 
     async def propose(
         self, context: ContextIdentity, request: ProposeRequest
@@ -454,6 +542,7 @@ class LocalEngineOperations:
                 request.mutation,
                 pot_id=context.value,
                 ttl_seconds=request.ttl_seconds,
+                approved_by=request.approved_by,
             )
         )
 
@@ -466,6 +555,8 @@ class LocalEngineOperations:
                 pot_id=context.value,
                 approved_by=request.approved_by,
                 verify=request.verify,
+                defer_verification=request.defer_verification,
+                recover_stale=request.recover_stale,
             )
         )
 
@@ -483,6 +574,7 @@ class LocalEngineOperations:
                 since=request.since,
                 until=request.until,
                 limit=request.limit,
+                include_claims=request.include_claims,
             )
         )
 
@@ -666,7 +758,7 @@ class LocalEngineOperations:
     ) -> Outcome[object]:
         event_id = _required_value(request.event_id, "event_id")
         try:
-            event = await asyncio.to_thread(
+            event = await run_in_worker_thread(
                 self._ingestion_event_store().get_event, event_id
             )
         except Exception as exc:
@@ -698,6 +790,276 @@ class LocalEngineOperations:
             )
         )
 
+    # --- document resources -------------------------------------------------
+
+    async def resource_import(
+        self, context: ContextIdentity, request: ResourceImportRequest
+    ) -> Outcome[object]:
+        # Contents only, never a path: see ``ResourceImportRequest``.
+        return await self._call(
+            lambda: self._resources().import_dir(
+                pot_id=context.value,
+                slug=_required_value(request.doc, "doc"),
+                files=dict(request.files),
+                source_ref=request.source_ref,
+                source_kind=request.source_kind,
+            )
+        )
+
+    async def resource_get(
+        self, context: ContextIdentity, request: ResourceGetRequest
+    ) -> Outcome[object]:
+        def get() -> ResourceBatchResult:
+            if not request.resource_ids:
+                raise ValueError("resource_ids is required")
+            result = self._resources().get(
+                pot_id=context.value,
+                resource_ids=tuple(request.resource_ids),
+                with_neighbors=request.with_neighbors,
+            )
+            if isinstance(result, ResourceBatchResult):
+                return result
+            # Every id resolved: the facade keeps its historical tuple shape,
+            # the typed boundary always answers one batch receipt.
+            return ResourceBatchResult(
+                chunks=tuple(result), outcomes=(), status="success"
+            )
+
+        return await self._call(get)
+
+    async def resource_list(
+        self, context: ContextIdentity, request: ResourceListRequest
+    ) -> Outcome[object]:
+        def list_sections() -> ResourceListResult:
+            doc = _required_value(request.doc, "doc")
+            return ResourceListResult(
+                doc=doc,
+                sections=tuple(
+                    self._resources().list(
+                        pot_id=context.value, slug=doc, section=request.section
+                    )
+                ),
+            )
+
+        return await self._call(list_sections)
+
+    async def resource_rm(
+        self, context: ContextIdentity, request: ResourceRmRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._resources().delete(
+                pot_id=context.value, slug=_required_value(request.doc, "doc")
+            )
+        )
+
+    async def resource_status(
+        self, context: ContextIdentity, request: ResourceStatusRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._call(lambda: self._resources().status(pot_id=context.value))
+
+    async def resource_index_status(
+        self, context: ContextIdentity, request: ResourceIndexStatusRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._call(
+            lambda: self._resources().index_status(pot_id=context.value)
+        )
+
+    async def resource_index_build(
+        self, context: ContextIdentity, request: ResourceIndexBuildRequest
+    ) -> Outcome[object]:
+        def build() -> object:
+            resources = self._resources()
+            # Pending work is per pot, so ``doc`` narrows by re-deriving that
+            # document's rows first; that is what makes it mean something on a
+            # document whose index rows are missing entirely.
+            if request.doc:
+                resources.index_rebuild(pot_id=context.value, doc=request.doc)
+            return resources.index_build(pot_id=context.value, wait=request.wait)
+
+        return await self._call(build)
+
+    async def resource_index_rebuild(
+        self, context: ContextIdentity, request: ResourceIndexRebuildRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: ResourceIndexRebuildResult(
+                reports=tuple(
+                    self._resources().index_rebuild(
+                        pot_id=context.value, doc=request.doc or None
+                    )
+                )
+            )
+        )
+
+    async def commit_status(
+        self, context: ContextIdentity, request: CommitStatusRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._services.graph_workbench.commit_status(
+                _required_value(request.plan_id, "plan_id"), pot_id=context.value
+            )
+        )
+
+    async def verify_commit(
+        self, context: ContextIdentity, request: VerifyCommitRequest
+    ) -> Outcome[object]:
+        return await self._call(
+            lambda: self._services.graph_workbench.verify_commit(
+                _required_value(request.plan_id, "plan_id"), pot_id=context.value
+            )
+        )
+
+    async def journal_status(
+        self, context: ContextIdentity, request: JournalStatusRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._journal(
+            "journal_status",
+            context,
+            lambda commits: commits.journal_status_async(pot_id=context.value),
+        )
+
+    async def commits(
+        self, context: ContextIdentity, request: CommitsRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "commits",
+            context,
+            lambda commits: commits.commits_async(
+                pot_id=context.value,
+                cursor=request.cursor,
+                limit=request.limit,
+                actor=request.actor,
+                origin=request.origin,
+                logical_key=request.logical_key,
+            ),
+        )
+
+    async def commit_show(
+        self, context: ContextIdentity, request: CommitShowRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "commit_show",
+            context,
+            lambda commits: commits.commit_show_async(
+                _required_value(request.commit_id, "commit_id"),
+                pot_id=context.value,
+                offset=request.offset,
+                limit=request.limit,
+            ),
+        )
+
+    async def revert_preview(
+        self, context: ContextIdentity, request: RevertPreviewRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "revert_preview",
+            context,
+            lambda commits: commits.revert_preview_async(
+                _required_value(request.commit_id, "commit_id"),
+                pot_id=context.value,
+                expected_head=_required_value(request.expected_head, "expected_head"),
+            ),
+        )
+
+    async def rollback_preview(
+        self, context: ContextIdentity, request: RollbackPreviewRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "rollback_preview",
+            context,
+            lambda commits: commits.rollback_preview_async(
+                _required_value(request.target_commit_id, "target_commit_id"),
+                pot_id=context.value,
+                expected_head=_required_value(request.expected_head, "expected_head"),
+            ),
+        )
+
+    async def apply_preview(
+        self, context: ContextIdentity, request: ApplyPreviewRequest
+    ) -> Outcome[object]:
+        return await self._journal(
+            "apply_preview",
+            context,
+            lambda commits: commits.apply_preview_async(
+                _required_value(request.preview_id, "preview_id"),
+                pot_id=context.value,
+            ),
+        )
+
+    async def disable_rollback(
+        self, context: ContextIdentity, request: DisableRollbackRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._journal(
+            "disable_rollback",
+            context,
+            lambda commits: commits.disable_rollback_async(pot_id=context.value),
+        )
+
+    async def rebuild_commits(
+        self, context: ContextIdentity, request: RebuildCommitsRequest
+    ) -> Outcome[object]:
+        del request
+        return await self._journal(
+            "rebuild_commits",
+            context,
+            lambda commits: commits.rebuild_commits_async(pot_id=context.value),
+        )
+
+    async def _journal(
+        self,
+        operation: str,
+        context: ContextIdentity,
+        call: Callable[[Any], Awaitable[Any]],
+    ) -> Outcome[object]:
+        result = await self._authorized_graph_call(operation, context, call)
+        if isinstance(result, Failure):
+            return result
+        return Success(GraphJournalResult.from_value(result.value))
+
+    async def _authorized_graph_call(
+        self,
+        operation: str,
+        context: ContextIdentity,
+        call: Callable[[Any], Awaitable[Any]],
+    ) -> Outcome[object]:
+        """Run one commit-service call inside this pot's commit grant.
+
+        Every call that reaches here passed the resource manager, which
+        authenticated the caller and authorized this operation for exactly
+        this pot, so the grant is scoped to that pot and nothing wider. Its
+        levels are the ones the authorized scope carries; a call made outside
+        the typed boundary (in-process, local only) keeps every level.
+        """
+
+        scope = current_authorization_scope()
+        access = commit_access_for(scope) if scope is not None else COMMIT_ACCESS_LEVELS
+        try:
+            with commit_grant(context.value, access):
+                value = await call(self._services.graph_workbench)
+        except CommitAccessDenied as exc:
+            return Failure(
+                DomainError(
+                    code="commit_access_denied",
+                    message=str(exc),
+                    details={"operation": operation},
+                )
+            )
+        except ValueError as exc:
+            return Failure(
+                DomainError(
+                    code="validation_error",
+                    message=str(exc),
+                    details={"operation": operation},
+                )
+            )
+        except Exception as exc:
+            return await self._dependency_failure(operation, exc)
+        return Success(value)
+
     async def invoke(
         self,
         operation: EngineOperation,
@@ -719,6 +1081,7 @@ class LocalEngineOperations:
             EngineOperation.MUTATE: self.mutate,
             EngineOperation.NEIGHBORHOOD: self.neighborhood,
             EngineOperation.INSPECT: self.inspect,
+            EngineOperation.GRAPH_SLICE: self.slice,
             EngineOperation.EXPORT_SNAPSHOT: self.export_snapshot,
             EngineOperation.IMPORT_SNAPSHOT: self.import_snapshot,
             EngineOperation.REPAIR: self.repair,
@@ -738,13 +1101,31 @@ class LocalEngineOperations:
             EngineOperation.SUBMIT_ARTIFACT: self.submit_artifact,
             EngineOperation.PROCESSING_STATUS: self.processing_status,
             EngineOperation.NUDGE: self.nudge,
+            EngineOperation.RESOURCE_IMPORT: self.resource_import,
+            EngineOperation.RESOURCE_GET: self.resource_get,
+            EngineOperation.RESOURCE_LIST: self.resource_list,
+            EngineOperation.RESOURCE_RM: self.resource_rm,
+            EngineOperation.RESOURCE_STATUS: self.resource_status,
+            EngineOperation.RESOURCE_INDEX_STATUS: self.resource_index_status,
+            EngineOperation.RESOURCE_INDEX_BUILD: self.resource_index_build,
+            EngineOperation.RESOURCE_INDEX_REBUILD: self.resource_index_rebuild,
+            EngineOperation.COMMIT_STATUS: self.commit_status,
+            EngineOperation.VERIFY_COMMIT: self.verify_commit,
+            EngineOperation.JOURNAL_STATUS: self.journal_status,
+            EngineOperation.COMMITS: self.commits,
+            EngineOperation.COMMIT_SHOW: self.commit_show,
+            EngineOperation.REVERT_PREVIEW: self.revert_preview,
+            EngineOperation.ROLLBACK_PREVIEW: self.rollback_preview,
+            EngineOperation.APPLY_PREVIEW: self.apply_preview,
+            EngineOperation.DISABLE_ROLLBACK: self.disable_rollback,
+            EngineOperation.REBUILD_COMMITS: self.rebuild_commits,
         }
         handler = handlers.get(operation)
         if handler is None:
             return Failure(
                 DomainError(
                     code="operation_not_supported",
-                    message=f"{operation.value} is not supported by the local engine",
+                    message=f"{operation.value} is not supported by this engine",
                 )
             )
         return await handler(context, request)
@@ -803,6 +1184,116 @@ class LocalEngineOperations:
             )
         return self._services.backend.snapshot
 
+    def _export_snapshot(
+        self, *, pot_id: str, request: ExportSnapshotRequest
+    ) -> ExportSnapshotResult:
+        version = _snapshot_request_version(request.version)
+        if version == 1:
+            manifest = self._snapshot_port("export").export(
+                pot_id=pot_id,
+                destination=_required_value(request.destination, "destination"),
+            )
+            return ExportSnapshotResult(
+                **{
+                    item.name: getattr(manifest, item.name)
+                    for item in fields(SnapshotManifest)
+                }
+            )
+        if request.destination:
+            raise ValueError(
+                "a version 2 snapshot export takes no destination: the snapshot "
+                "is returned as data and the caller writes the files"
+            )
+        snapshot = self._snapshot_port("export_data")
+        if request.include_resources:
+            payload = dict(
+                self._snapshot_resources("export_snapshot").export_snapshot(
+                    pot_id=pot_id
+                )
+            )
+        else:
+            payload = dict(snapshot.export_data(pot_id=pot_id))
+        metadata: dict[str, Any] = {}
+        resources = payload.get("resources")
+        if isinstance(resources, Mapping):
+            metadata["documents"] = _snapshot_document_count(resources)
+        return ExportSnapshotResult(
+            pot_id=pot_id,
+            location="",
+            format_version=str(payload.get("format_version") or "2"),
+            entity_count=len(payload.get("entities") or ()),
+            claim_count=len(payload.get("claims") or ()),
+            metadata=metadata,
+            payload=payload,
+        )
+
+    def _import_snapshot(
+        self, *, pot_id: str, request: ImportSnapshotRequest
+    ) -> object:
+        version = _snapshot_request_version(request.version)
+        identity = (
+            {"mutation_id": request.mutation_id}
+            if request.mutation_id is not None
+            else {}
+        )
+        if version == 1:
+            if request.payload:
+                raise ValueError(
+                    "a version 1 snapshot import reads 'source'; send the "
+                    "snapshot as 'payload' with version 2"
+                )
+            return self._snapshot_port("import_").import_(
+                pot_id=pot_id,
+                source=_required_value(request.source, "source"),
+                **identity,
+            )
+        if request.source:
+            raise ValueError(
+                "a version 2 snapshot import takes no source path: send the "
+                "snapshot itself as 'payload'"
+            )
+        if not request.payload:
+            raise ValueError("payload is required for a version 2 snapshot import")
+        snapshot = self._snapshot_port("import_data")
+        payload = dict(request.payload)
+        if "resources" in payload:
+            # Graph and document text restore together: resource bytes are
+            # staged and rolled back if the graph import fails.
+            return self._snapshot_resources("import_snapshot").import_snapshot(
+                pot_id=pot_id, payload=payload, **identity
+            )
+        return snapshot.import_data(pot_id=pot_id, payload=payload, **identity)
+
+    def _snapshot_resources(self, method: str) -> Any:
+        resources = self._resources_or_none()
+        if resources is None:
+            raise CapabilityNotImplemented(
+                f"resources.{method}",
+                detail=(
+                    "this runtime does not compose a document resource store, so "
+                    "a snapshot cannot carry document text"
+                ),
+                recommended_next_action=(
+                    "retry with --graph-only to move only graph entities and claims"
+                ),
+            )
+        return resources
+
+    def _resources_or_none(self) -> Any | None:
+        return getattr(self._services, "resources", None)
+
+    def _resources(self) -> Any:
+        resources = self._resources_or_none()
+        if resources is None:
+            raise CapabilityNotImplemented(
+                "resources",
+                detail="this runtime does not compose a document resource store",
+                recommended_next_action=(
+                    "run against the local Potpie runtime, which composes one"
+                ),
+            )
+        return resources
+
     def _ingestion_submission(self) -> Any:
         service = self._services.ingestion
         if service is None:
@@ -820,8 +1311,8 @@ class LocalEngineOperations:
     ) -> Failure[DependencyError]:
         return Failure(
             DependencyError(
-                code="local_engine_operation_failed",
-                message="the local engine operation failed",
+                code=ENGINE_OPERATION_FAILED,
+                message="the engine operation failed",
                 details={"operation": operation, "error_type": type(exc).__name__},
                 recommended_next_action="inspect runtime logs",
             )
@@ -829,7 +1320,7 @@ class LocalEngineOperations:
 
     async def _call(self, call: Callable[[], object]) -> Outcome[object]:
         try:
-            return Success(await asyncio.to_thread(call))
+            return Success(await run_in_worker_thread(call))
         except CapabilityNotImplemented as exc:
             return Failure(
                 DomainError(
@@ -841,6 +1332,37 @@ class LocalEngineOperations:
             )
         except PotNotFound as exc:
             return Failure(DomainError(code="pot_not_found", message=str(exc)))
+        except (ResourceStoreError, ResourceIndexError) as exc:
+            # The store's own stable code, not ``validation_error``: an agent
+            # retries a bad slug and an oversized chunk differently.
+            return Failure(
+                DomainError(
+                    code=exc.code,
+                    message=str(exc),
+                    details={"detail": exc.detail} if exc.detail is not None else {},
+                    recommended_next_action=exc.recommended_next_action,
+                )
+            )
+        except JournalError as exc:
+            if exc.code == JOURNAL_CAPTURE_ACTIVE:
+                return Failure(
+                    DomainError(
+                        code=JOURNAL_CAPTURE_ACTIVE,
+                        message=str(exc),
+                        recommended_next_action=(
+                            "inspect the pot's journal with 'potpie graph "
+                            "journal-status'; no command retires journal "
+                            "capture yet"
+                        ),
+                    )
+                )
+            return Failure(
+                DomainError(
+                    code="validation_error",
+                    message=str(exc),
+                    details={"detail": getattr(exc, "detail", None)},
+                )
+            )
         except ValueError as exc:
             return Failure(
                 DomainError(
@@ -859,8 +1381,11 @@ class LocalEngineOperations:
                 DependencyError(
                     code="unavailable",
                     message=str(exc),
+                    # A graph store that refuses to serve possibly stale data
+                    # names its own repair; keep it instead of the generic one.
                     recommended_next_action=(
-                        "check backend/daemon readiness with 'potpie doctor'"
+                        getattr(exc, "recommended_next_action", None)
+                        or "check backend/daemon readiness with 'potpie doctor'"
                     ),
                     retry_posture="safe",
                 )
@@ -868,19 +1393,19 @@ class LocalEngineOperations:
         except Exception as exc:
             return Failure(
                 DependencyError(
-                    code="local_engine_operation_failed",
-                    message="the local engine operation failed",
+                    code=ENGINE_OPERATION_FAILED,
+                    message="the engine operation failed",
                     details={"error_type": type(exc).__name__},
                     recommended_next_action="inspect runtime logs",
                 )
             )
 
 
-class LocalGraphMetadataOperationHandler:
-    """Shared context-free graph metadata execution for every local transport."""
+class GraphMetadataOperationHandler:
+    """Shared context-free graph metadata execution (``describe``)."""
 
-    def __init__(self, services: LocalEngineServices) -> None:
-        self._operations = LocalEngineOperations(services)
+    def __init__(self, services: EngineServices) -> None:
+        self._operations = ServiceEngineOperations(services)
 
     async def handle(
         self, operation: EngineOperation, request: EngineRequest
@@ -897,7 +1422,14 @@ class LocalGraphMetadataOperationHandler:
         )
 
 
-class LocalContextResourceComposer:
+class ServiceResourceComposer:
+    """Compose one context-bound engine over shared engine services.
+
+    Each cached engine is a thin wrapper: every context shares the same
+    services, so composition is cheap and an evicted engine costs nothing to
+    rebuild.
+    """
+
     def __init__(self, services: Any) -> None:
         self._services = services
 
@@ -909,7 +1441,7 @@ class LocalContextResourceComposer:
     async def compose(
         self, context: ContextIdentity, fingerprint: CompositionFingerprint
     ):
-        operations = LocalEngineOperations(self._services)
+        operations = ServiceEngineOperations(self._services)
         return Success(
             ResourceComposition(
                 fingerprint=fingerprint,
@@ -920,17 +1452,25 @@ class LocalContextResourceComposer:
                     workbench=operations,
                     ingestion=operations,
                     nudge=operations,
+                    documents=operations,
                 ),
             )
         )
+
+
+#: The local names, kept for existing callers.
+LocalEngineServices = EngineServices
+LocalEngineOperations = ServiceEngineOperations
+LocalContextResourceComposer = ServiceResourceComposer
+LocalGraphMetadataOperationHandler = GraphMetadataOperationHandler
 
 
 def build_local_resource_manager(services: Any) -> ContextResourceManager:
     return ContextResourceManager(
         resolver=LocalContextSelectorResolver(services),
         authenticator=LocalCliAuthenticator(),
-        authorizer=LocalCliAuthorizer(),
-        composer=LocalContextResourceComposer(services),
+        authorizer=LocalCliAuthorizer(services),
+        composer=ServiceResourceComposer(services),
     )
 
 
@@ -940,26 +1480,37 @@ def _required_value(value: str | None, field: str) -> str:
     return value
 
 
-def _no_active_pot_error() -> SelectionError:
-    return SelectionError(
-        code="no_active_pot",
-        message=(
-            "No active pot, and the current repo is not registered as a source "
-            "in any pot."
-        ),
-        recommended_next_action=(
-            "run 'potpie setup', or create a pot with 'potpie pot create <name> "
-            "--use' and register this repo with 'potpie source add repo .'"
-        ),
-    )
+def _snapshot_request_version(version: object) -> int:
+    if isinstance(version, bool) or version not in (1, 2):
+        raise ValueError(
+            f"unsupported snapshot request version {version!r}; expected 1 or 2"
+        )
+    return cast(int, version)
+
+
+def _snapshot_document_count(resources: Mapping[str, Any]) -> int:
+    """How many documents a snapshot's resource files belong to."""
+
+    files = resources.get("files")
+    if not isinstance(files, Mapping):
+        return 0
+    return len({str(name).split("/", 1)[0] for name in files})
 
 
 __all__ = [
-    "LocalEngineServices",
+    "ENGINE_OPERATION_FAILED",
+    "LOCAL_ACTOR",
+    "EngineServices",
+    "GraphMetadataOperationHandler",
+    "LocalActorPotCatalog",
+    "LocalCliAuthenticator",
+    "LocalCliAuthorizer",
     "LocalContextResourceComposer",
     "LocalContextSelectorResolver",
     "LocalEngineOperations",
-    "LocalCliAuthenticator",
-    "LocalCliAuthorizer",
+    "LocalEngineServices",
+    "LocalGraphMetadataOperationHandler",
+    "ServiceEngineOperations",
+    "ServiceResourceComposer",
     "build_local_resource_manager",
 ]

@@ -1,48 +1,24 @@
-"""Canonical Potpie context graph ontology — unified topology + memory.
+"""Canonical catalog of context graph entities, predicates, and record types.
 
-Single declarative catalog covering everything an agent can read or write.
-Three sections, all spec-driven:
+Add an entity to :data:`ENTITY_TYPES`, a predicate to :data:`EDGE_TYPES`, or a
+record type to :data:`RECORD_TYPES`. Entity entries define labels, key prefixes,
+identity rules, freshness TTLs, and classifier cues. Edge entries define the
+``:RELATES_TO`` predicates and their categories. Record entries map the
+``context_record`` vocabulary to entities, predicates, payload schemas, and
+reader include keys.
 
-1. :data:`ENTITY_TYPES` — every label that can live in the graph, with the
-   identity class and key prefix that mint it, plus fact family, freshness
-   TTL, classifier cues, and project-map / debugging family mappings.
-2. :data:`EDGE_TYPES` — every predicate that can ride on a ``:RELATES_TO``
-   claim, grouped by ``category`` (``topology`` / ``ownership`` / ``people``
-   / ``timeline`` / ``memory`` / ``generic``).
-3. :data:`RECORD_TYPES` — the agent-facing context_record vocabulary, each
-   row joining a record type to its anchor entity, emitted predicate,
-   payload schema, and reader include key. This is the table that unifies
-   the agent surface (record types + include families) with the graph
-   ontology (entities + predicates).
+Writers, readers, reconciliation validation, graph quality checks, and the
+agent context port use these catalogs. The identity registry derives from
+:data:`ENTITY_TYPES`. Record-type and include vocabularies derive from
+:data:`RECORD_TYPES`. :mod:`potpie_context_engine.core.coherence` checks their
+consistency at import time.
 
-Every other module — canonical writer, structural reader, reconciliation
-validation, graph-quality policy, agent context port — derives its behavior
-from these three catalogs rather than carrying parallel vocabularies.
-
-**Adding an entity:** one row in :data:`ENTITY_TYPES`.
-**Adding a predicate:** one row in :data:`EDGE_TYPES`.
-**Adding a record type:** one row in :data:`RECORD_TYPES`.
-
-The identity registry (:mod:`potpie_context_engine.core.identity`) is a *view* over
-:data:`ENTITY_TYPES` (populated at the bottom of this module). The agent
-context port's record-type and include vocabularies are *views* over
-:data:`RECORD_TYPES`. :mod:`potpie_context_engine.core.coherence` runs import-time invariants
-that fail loud if any two views disagree.
-
-Design pillars:
-
-1. **An entity exists only if an edge needs it as an endpoint.** No
-   aspirational nodes; if nothing connects to it and no query traverses it,
-   it is a property, not a node.
-2. **Identity-only required fields.** A node needs its ``entity_key`` and a
-   label; everything else is optional enrichment. No required-property
-   downgrade traps.
-3. **One name per edge, declared once.** The edge vocabulary *is* the schema;
-   readers and writers traverse the same names.
-4. **A ``Scope`` interface, not a base class.** Entities flagged
-   ``scope=True`` (``Repository``/``Service``/``Environment``/``DataStore``/
-   ``Cluster``) act as scope endpoints for cross-cutting edges (memory
-   claims, ownership) without each edge enumerating them.
+Entities exist as edge endpoints. Their required fields are ``entity_key`` and
+a label. Other fields are optional. Each predicate has one declared name that
+readers and writers share. ``Repository``, ``Service``, ``Environment``,
+``DataStore``, and ``Cluster`` implement the ``Scope`` interface through
+``scope=True``. Cross-cutting edges can name that interface instead of listing
+every scope type.
 """
 
 from __future__ import annotations
@@ -63,6 +39,7 @@ from potpie_context_engine.core.identity import (
     IdentitySpec,
     register_identity,
 )
+from potpie_context_engine.core.singleton_predicates import replace_singletons
 
 # ``ONTOLOGY_VERSION`` is owned by :mod:`potpie_context_engine.core.graph_contract` (the single
 # contract home) and mirrored here so existing importers of
@@ -625,41 +602,54 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         text_patterns=(r"\bdecision\b", r"\b(ADR|architecture decision)\b"),
         property_signatures=("rationale", "alternatives_rejected"),
     ),
-    "DocumentSection": _e(
-        "DocumentSection",
-        "memory",
-        "A searchable division of an ingested document (section with summary + chunk refs).",
-        identity_class=IdentityClass.CONTENT_HASH,
-        key_prefix="document-section",
-        fact_family="docs",
-        source_of_truth=SOT_MEMORY,
-        freshness_ttl_hours=24 * WEEK,
-    ),
-    "DocumentElement": _e(
-        "DocumentElement",
-        "memory",
-        "A provenance element from an ingested document (page region, table, figure, text block).",
-        identity_class=IdentityClass.CONTENT_HASH,
-        key_prefix="document-element",
-        fact_family="docs",
-        source_of_truth=SOT_MEMORY,
-        freshness_ttl_hours=24 * WEEK,
-    ),
-    # --- Generic fail-open fallbacks (soft-fail downgrade targets) ----------
-    # The agent reconciliation path coerces unrecognized output onto these
-    # rather than rejecting the batch. ``public=False`` keeps them out of the
-    # agent-facing topology contract; they carry no project-map family.
+    # --- Ingested reference material ----------------------------------------
+    # A document is split in half: its structure lives here, its payload bytes
+    # live in the resource store as chunk files (see "Resource store" in
+    # ``docs/context-graph/architecture.md``). Sections are the searchable grain —
+    # each carries an agent-authored summary that becomes an ordinary claim, so
+    # the existing embedding path is the index and no chunk ever enters a node.
     "Document": _e(
         "Document",
-        "memory",
-        "An ingested or referenced project document (slug identity, chunk refs off-graph).",
+        "evidence",
+        "A named document ingested into the pot — a PDF, spreadsheet, runbook, "
+        "or design note. The graph holds its identity and section structure; "
+        "the payload bytes live in the resource store as chunk files, never as "
+        "node properties.",
         identity_class=IdentityClass.SLUG_ALIAS,
         key_prefix="document",
-        public=True,
-        fact_family="docs",
+        identity_policy="document:<slug>",
+        # Own SoT family so a doc corpus does not share freshness / ranking
+        # policy with soft-fail Observation nodes (resources P9).
+        fact_family="documents",
         source_of_truth=SOT_MEMORY,
-        freshness_ttl_hours=24 * WEEK,
+        freshness_ttl_hours=12 * WEEK,
+        # No property signature: ``source_kind`` is this codebase's general
+        # provenance word (``ProvenanceContext.source_kind``), and the
+        # classifier treats one signature property as sufficient — a Service
+        # carrying ``source_kind: github`` would be labelled a Document. The
+        # ``document:`` key prefix already classifies these nodes.
     ),
+    "DocumentSection": _e(
+        "DocumentSection",
+        "evidence",
+        "One structural division of a document — a heading, sheet, or chapter. "
+        "It carries the agent-authored summary that is the only index into its "
+        "chunks; the chunk payloads live in the resource store, never in the "
+        "graph.",
+        identity_class=IdentityClass.SLUG_ALIAS,
+        key_prefix="docsection",
+        identity_policy="docsection:<doc>:<section>",
+        fact_family="documents",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+        property_signatures=("chunk_count",),
+    ),
+    # --- Generic fail-open fallbacks (soft-fail downgrade targets) ----------
+    # The agent reconciliation path coerces unrecognized output onto these two
+    # rather than rejecting the batch. ``public=False`` keeps them out of the
+    # agent-facing topology contract; they carry no project-map family.
+    # ``Document`` used to live here; it is now a public entity above, so the
+    # ADR downgrade path lands on a real label rather than a catch-all.
     "Observation": _e(
         "Observation",
         "evidence",
@@ -959,23 +949,32 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         category="memory",
         source_inferred=("Decision",),
     ),
+    # --- Reference material (ingested documents) ----------------------------
+    # The structural half of the resource store: SECTION_OF holds a document
+    # together, DOCUMENTS points it at whatever it is reference material for.
     "SECTION_OF": _x(
         "SECTION_OF",
-        "A document section belongs to its parent document.",
+        "A section belongs to a document. Singleton on purpose: a section has "
+        "exactly one parent, so re-parenting supersedes the prior claim "
+        "instead of leaving the section attached to two documents.",
         [("DocumentSection", "Document")],
-        category="memory",
+        category="knowledge",
         predicate_family="document_structure",
+        exclusive_family="document_structure",
+        singleton=True,
         source_inferred=("DocumentSection",),
         target_inferred=("Document",),
     ),
-    "ELEMENT_OF": _x(
-        "ELEMENT_OF",
-        "A document element belongs to its parent document (provenance ledger projection).",
-        [("DocumentElement", "Document")],
-        category="memory",
-        predicate_family="document_structure",
-        source_inferred=("DocumentElement",),
-        target_inferred=("Document",),
+    "DOCUMENTS": _x(
+        "DOCUMENTS",
+        "A document, or one of its sections, is reference material for an "
+        "entity — the structural answer to 'what documentation covers "
+        "service:payments-api'. This is the public, typed version of the "
+        "RELATED_TO fallback that doc_reference records land on today. The "
+        "source label is ambiguous between Document and DocumentSection, so "
+        "neither is inferred.",
+        [("Document", WILDCARD_ENDPOINT), ("DocumentSection", WILDCARD_ENDPOINT)],
+        category="knowledge",
     ),
     # --- Generic fail-open fallback (soft-fail downgrade target) ------------
     # Unrecognized agent-emitted edge types coerce onto this wildcard edge
@@ -1029,8 +1028,6 @@ def _sync_singleton_registry() -> None:
     supersession path. Tests that need a custom set should use
     :func:`potpie_context_engine.core.singleton_predicates.replace_singletons` then restore.
     """
-    from potpie_context_engine.core.singleton_predicates import replace_singletons
-
     replace_singletons(SINGLETON_EDGE_TYPES)
 
 
@@ -1314,6 +1311,11 @@ def validate_entity_upsert(item: EntityUpsert) -> list[str]:
     if not item.entity_key or not item.entity_key.strip():
         errors.append("entity_key is required")
 
+    if item.preserve_labels:
+        if item.labels:
+            errors.append("property-only entity projection cannot author labels")
+        return errors
+
     labels = tuple(label for label in item.labels if label)
     if not labels:
         errors.append(
@@ -1422,7 +1424,7 @@ def _validate_edge(
         errors.append("edge_type is required")
         return errors
     spec = EDGE_TYPES.get(edge_type)
-    if spec is None:
+    if spec is None and edge_type not in SYSTEM_EDGE_TYPES:
         errors.append(f"{edge_type}: unknown canonical edge type")
         return errors
 
@@ -1430,6 +1432,9 @@ def _validate_edge(
         errors.append(f"{edge_type}: from_entity_key is required")
     if not to_entity_key or not to_entity_key.strip():
         errors.append(f"{edge_type}: to_entity_key is required")
+
+    if spec is None:
+        return errors
 
     missing = sorted(
         prop for prop in spec.required_properties if prop not in properties
@@ -1714,6 +1719,12 @@ STRUCTURAL_INCLUDES: frozenset[str] = frozenset(
         "timeline",
         "owners",
         "raw_graph",
+        # Document *payloads*, served by the resource index rather than by the
+        # claim store. Structural because no record type produces it: an agent
+        # never submits a chunk, it imports a document and the chunks are
+        # derived. ``docs`` stays the record-backed family for what an agent
+        # wrote *about* a document.
+        "resources",
     }
 )
 

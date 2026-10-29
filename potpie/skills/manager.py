@@ -1,15 +1,17 @@
 """``DefaultSkillManager`` — catalog + per-harness install drift.
 
 Owns the catalog/drift logic; delegates the where/how of installation to a
-registered :class:`AgentTargetPort` per harness. Built over the static builtin
-catalog and the (POC) Claude target.
+registered :class:`AgentTargetPort` per harness.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Iterable, Mapping, cast
+from urllib.parse import urlsplit
 
+from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.ports.agent_context import SkillNudge
 
 from potpie.skills.catalog import (
@@ -22,12 +24,75 @@ from potpie.skills.contracts import (
     SkillOperationResult,
     SkillStatus,
 )
-from potpie.skills.installer import (
-    validate_packaged_skill_command_snippets,
-)
-from potpie.skills.targets import (
-    ProjectAgentTarget,
-)
+from potpie.skills.errors import UnknownAgentTargetError
+from potpie.skills.targets import AgentTarget
+
+#: URL schemes a catalog add could plausibly fetch a skill from. Anything else
+#: is a typo wearing a colon.
+_FETCHABLE_SCHEMES = frozenset({"http", "https", "git", "ssh"})
+
+#: What a skill source has to contain to be one.
+SKILL_MANIFEST = "SKILL.md"
+
+
+def validate_skill_source(source: str) -> None:
+    """Validate the source before attempting catalog registration.
+
+    Reject missing paths, bare hostnames, unsupported URL schemes and empty
+    values. A syntactically valid source may still be unsupported by the catalog.
+    """
+    text = (source or "").strip()
+    if not text:
+        raise ValueError(
+            f"Pass a skill source: a directory containing a {SKILL_MANIFEST}, "
+            f"or an https URL."
+        )
+    scheme = urlsplit(text).scheme.lower()
+    if scheme:
+        if scheme not in _FETCHABLE_SCHEMES:
+            raise ValueError(
+                f"Cannot fetch a skill over '{scheme}'. "
+                f"Supported: {', '.join(sorted(_FETCHABLE_SCHEMES))}."
+            )
+        return
+    candidate = Path(text).expanduser()
+    if not candidate.exists():
+        raise ValueError(
+            f"No such skill source: {candidate}. A local source is a directory "
+            f"containing a {SKILL_MANIFEST}; a remote one needs its scheme "
+            f"(e.g. 'https://…')."
+        )
+    if candidate.is_dir():
+        if not (candidate / SKILL_MANIFEST).is_file():
+            raise ValueError(f"{candidate} is not a skill: it has no {SKILL_MANIFEST}.")
+        return
+    if candidate.name != SKILL_MANIFEST:
+        raise ValueError(
+            f"{candidate} is not a skill: point at a directory containing a "
+            f"{SKILL_MANIFEST}, or at the {SKILL_MANIFEST} itself."
+        )
+
+
+def _instructions_metadata(
+    *,
+    instruction_files: tuple[str, ...],
+    retired_removed: tuple[str, ...] = (),
+    leftovers: tuple[Mapping[str, str], ...] = (),
+) -> dict[str, Any]:
+    """Describe a routing-block sweep in the result metadata.
+
+    ``support_files`` lists instruction files written or cleaned.
+    ``retired_files_removed`` lists deleted files from earlier releases.
+    ``leftovers`` lists preserved files and their removal instructions.
+    """
+    metadata: dict[str, Any] = {}
+    if instruction_files:
+        metadata["support_files"] = list(instruction_files)
+    if retired_removed:
+        metadata["retired_files_removed"] = list(retired_removed)
+    if leftovers:
+        metadata["leftovers"] = [dict(item) for item in leftovers]
+    return metadata
 
 
 @dataclass(slots=True)
@@ -37,7 +102,7 @@ class DefaultSkillManager:
     def _target(self, agent: str) -> AgentTargetPort:
         target = self.targets.get(agent)
         if target is None:
-            raise ValueError(
+            raise UnknownAgentTargetError(
                 f"No install target registered for agent '{agent}'. "
                 f"Known: {', '.join(sorted(self.targets)) or '(none)'}."
             )
@@ -50,35 +115,219 @@ class DefaultSkillManager:
         if normalized_scope == "global":
             return self._target(agent)
         if normalized_scope == "project":
-            return ProjectAgentTarget(agent=agent, path=Path(path or "."))
+            # The same refusal global scope makes, for the same reason. A
+            # project target can be built for *any* string, and an unknown
+            # harness would fall through to the default ``.agents/skills``
+            # layout — so ``skills list --agent clawd --scope project`` would
+            # answer a typo with a complete, plausible listing of every skill,
+            # all ``installed: false``, for a harness that does not exist.
+            self._target(agent)
+            return AgentTarget(agent=agent, scope="project", path=Path(path or "."))
         raise ValueError("scope must be 'global' or 'project'")
 
     @staticmethod
-    def _metadata(target: AgentTargetPort, *, scope: str) -> dict[str, str]:
-        root = getattr(target, "skills_root", None) or getattr(target, "path", None)
-        metadata = {"scope": scope}
+    def _metadata(
+        target: AgentTargetPort,
+        *,
+        scope: str,
+        unavailable: tuple[str, ...] = (),
+        not_installed: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        # ``target_root`` first: it is where files actually land. Reading
+        # ``path`` off a project target reported the ``--path`` the caller typed,
+        # which is a different directory from the repo root the installer
+        # resolves to whenever they point at a subdirectory.
+        root = (
+            getattr(target, "target_root", None)
+            or getattr(target, "skills_root", None)
+            or getattr(target, "path", None)
+        )
+        metadata: dict[str, Any] = {"scope": scope}
         if root is not None:
             metadata["target_root"] = str(root)
+        if unavailable:
+            metadata["unavailable"] = list(unavailable)
+        if not_installed:
+            metadata["not_installed"] = list(not_installed)
         return metadata
 
     @staticmethod
-    def _install_support_files(
-        target: AgentTargetPort, *, path: str | None = None
+    def _available(target: AgentTargetPort) -> frozenset[str] | None:
+        """Return the skill ids this agent can install, or ``None`` if unspecified.
+
+        Catalog membership alone does not imply that an agent's bundle has the skill.
+        """
+        lister = getattr(target, "available", None)
+        if not callable(lister):
+            return None
+        return frozenset(cast("Iterable[str]", lister()))
+
+    def _agents_carrying(self, sid: str, *, besides: str) -> list[str]:
+        """Return registered agents whose bundles carry this skill.
+
+        Treat a target that does not report its contents as available, consistent
+        with :meth:`_matches_bundle`.
+        """
+        return [
+            name
+            for name, target in sorted(self.targets.items())
+            if name != besides
+            and ((available := self._available(target)) is None or sid in available)
+        ]
+
+    def _unavailable_skill_error(self, sid: str, agent: str) -> ValueError:
+        alternatives = self._agents_carrying(sid, besides=agent)
+        way_out = (
+            f"Install it for a harness that carries it, e.g. 'potpie skills "
+            f"install {sid} --agent {alternatives[0]}'."
+            if alternatives
+            else "No harness bundle in this build carries it."
+        )
+        return ValueError(
+            f"Skill '{sid}' is in the catalog but this build's {agent} bundle "
+            f"does not carry it, so there is nothing to install. {way_out}"
+        )
+
+    def _missing_skill_error(
+        self,
+        sid: str,
+        catalog: dict[str, SkillInfo],
+        *,
+        agent: str,
+        installed: bool = False,
+    ) -> ValueError:
+        """Distinguish an unknown id from a skill absent from this agent's bundle.
+
+        Check catalog membership before suggesting another agent. An id absent
+        from both the catalog and the bundle has no valid installation target.
+        """
+        if sid not in catalog:
+            return self._unknown_skill_error(sid, catalog, installed=installed)
+        return self._unavailable_skill_error(sid, agent)
+
+    @staticmethod
+    def _matches_bundle(
+        target: AgentTargetPort, skill_id: str, *, path: str | None
+    ) -> bool:
+        """Is the installed skill's content still what the bundle carries?
+
+        A target that cannot answer is taken at its word rather than assumed
+        drifted — the alternative reinstalls every skill on every command for
+        anyone running a target this build does not know about.
+        """
+        checker = getattr(target, "matches_bundle", None)
+        if not callable(checker):
+            return True
+        return bool(checker(skill_id=skill_id, path=path))
+
+    @staticmethod
+    def _locally_modified(target: AgentTargetPort, skill_id: str) -> bool:
+        checker = getattr(target, "locally_modified", None)
+        return bool(checker(skill_id=skill_id)) if callable(checker) else False
+
+    @staticmethod
+    def _disabled(target: AgentTargetPort) -> frozenset[str]:
+        reader = getattr(target, "disabled", None)
+        return frozenset(reader()) if callable(reader) else frozenset()
+
+    @staticmethod
+    def _set_disabled(
+        target: AgentTargetPort, *, skill_id: str, disabled: bool
     ) -> None:
-        installer = getattr(target, "install_support_files", None)
-        if callable(installer):
-            installer(path=path)
+        writer = getattr(target, "set_disabled", None)
+        if callable(writer):
+            writer(skill_id=skill_id, disabled=disabled)
+
+    def _is_current(
+        self,
+        target: AgentTargetPort,
+        sid: str,
+        *,
+        installed: Mapping[str, str],
+        version: str,
+        path: str | None,
+    ) -> bool:
+        """Both halves of "already installed": the right version, intact on disk."""
+        if installed.get(sid) != version:
+            return False
+        return self._matches_bundle(target, sid, path=path)
+
+    @staticmethod
+    def _unknown_skill_error(
+        sid: str, catalog: dict[str, SkillInfo], *, installed: bool = False
+    ) -> ValueError:
+        """Refuse a caller-specified id absent from the catalog.
+
+        If the skill is installed but no longer bundled, recommend removal.
+        Reinstallation cannot restore an unavailable version.
+        """
+        if installed:
+            return ValueError(
+                f"Skill '{sid}' is installed but this build's bundle no longer "
+                f"carries it, so there is no version to update to. "
+                f"Remove it with 'potpie skills remove {sid}'."
+            )
+        return ValueError(
+            f"Unknown skill '{sid}'. "
+            f"Available: {', '.join(sorted(catalog)) or '(none)'}."
+        )
+
+    @staticmethod
+    def _install_instructions(
+        target: AgentTargetPort, *, path: str | None = None
+    ) -> dict[str, Any]:
+        """Write the bundle's routing block and report the affected files.
+
+        Only bundle-wide installs call this method. Installing a named skill
+        must not change the user's instruction file.
+        """
+        installer = getattr(target, "install_instructions", None)
+        if not callable(installer):
+            return {}
+        result = installer(path=path)
+        created = tuple(getattr(result, "created", ()) or ())
+        updated = tuple(getattr(result, "updated", ()) or ())
+        return _instructions_metadata(
+            instruction_files=created + updated,
+            retired_removed=tuple(getattr(result, "removed", ()) or ()),
+            leftovers=tuple(getattr(result, "leftovers", ()) or ()),
+        )
+
+    @staticmethod
+    def _remove_instructions(
+        target: AgentTargetPort, *, path: str | None = None
+    ) -> dict[str, Any]:
+        """Remove the bundle's routing block and report the affected files.
+
+        Only bundle-wide removals call this method because the block belongs
+        to the bundle, rather than an individual skill.
+        """
+        remover = getattr(target, "remove_instructions", None)
+        if not callable(remover):
+            return {}
+        result = remover(path=path)
+        return _instructions_metadata(
+            instruction_files=tuple(getattr(result, "removed", ()) or ()),
+            leftovers=tuple(getattr(result, "leftovers", ()) or ()),
+        )
 
     def list(
         self, *, agent: str = "claude", scope: str = "global", path: str | None = None
     ) -> list[SkillInfo]:
         catalog = catalog_by_id()
-        installed = self._target_for_scope(
-            agent=agent, scope=scope, path=path
-        ).installed()
+        target = self._target_for_scope(agent=agent, scope=scope, path=path)
+        installed = target.installed()
+        disabled = self._disabled(target)
         out: list[SkillInfo] = []
         for sid, info in catalog.items():
             ver = installed.get(sid)
+            # The *installed* version, not the catalog's. Reporting the catalog
+            # version beside every installed skill made this listing
+            # structurally unable to show drift: it gave a clean bill of health
+            # to the same skills ``skills status`` was calling outdated.
+            drifted = ver is not None and not self._matches_bundle(
+                target, sid, path=path
+            )
             out.append(
                 SkillInfo(
                     id=info.id,
@@ -87,6 +336,8 @@ class DefaultSkillManager:
                     description=info.description,
                     installed=ver is not None,
                     installed_version=ver,
+                    drifted=drifted,
+                    disabled=sid in disabled,
                 )
             )
         return out
@@ -101,24 +352,69 @@ class DefaultSkillManager:
     ) -> SkillOperationResult:
         target = self._target_for_scope(agent=agent, scope=scope, path=path)
         catalog = catalog_by_id()
-        ids = [skill_id] if skill_id else list(RECOMMENDED_SKILL_IDS)
+        requested = bool(skill_id)
+        ids = [skill_id] if requested else list(RECOMMENDED_SKILL_IDS)
         changed: list[str] = []
+        preserved: list[str] = []
+        unavailable: list[str] = []
+        available = self._available(target)
         installed = target.installed()
+        disabled = self._disabled(target)
         for sid in ids:
+            if not requested and sid in disabled:
+                continue
+            if available is not None and sid not in available:
+                # Named, it is a refusal: there is no version of this skill for
+                # this harness and reporting it installed is how a caller comes
+                # to believe an agent has context it does not. Swept, it is
+                # reported instead of skipped — a bundle that cannot carry
+                # everything should say so, not quietly install a subset.
+                if requested:
+                    raise self._missing_skill_error(str(sid), catalog, agent=agent)
+                unavailable.append(str(sid))
+                continue
             info = catalog.get(sid)
             if info is None:
+                # A *recommended* id the catalog does not carry is a packaging
+                # gap to walk past — the rest of the bundle still installs. An
+                # id the caller typed is a typo, and skipping it reported the
+                # install as done for a skill that does not exist, so the next
+                # command runs without the context it was told it had.
+                if requested:
+                    raise self._unknown_skill_error(sid, catalog)
                 continue
-            if installed.get(sid) == info.version:
+            if self._is_current(
+                target, sid, installed=installed, version=info.version, path=path
+            ):
                 continue
-            validate_packaged_skill_command_snippets(skill_ids=(sid,))
+            if (
+                not requested
+                and sid in installed
+                and self._locally_modified(target, sid)
+            ):
+                preserved.append(sid)
+                continue
             target.install(skill_id=sid, version=info.version, path=path)
+            self._set_disabled(target, skill_id=sid, disabled=False)
             changed.append(sid)
-        self._install_support_files(target, path=path)
+        # Only the sweep gets to touch the harness's own files. Naming one skill
+        # id is a request for that skill, and honouring it by also rewriting
+        # CLAUDE.md — a file the user wrote — is a bigger edit than the one they
+        # asked for, made without saying so.
+        routing = {} if requested else self._install_instructions(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="install",
             changed=tuple(changed),
-            metadata=self._metadata(target, scope=scope),
+            metadata={
+                **self._metadata(
+                    target,
+                    scope=scope,
+                    unavailable=tuple(unavailable),
+                ),
+                **routing,
+                **({"preserved_user_edits": preserved} if preserved else {}),
+            },
         )
 
     def update(
@@ -130,23 +426,67 @@ class DefaultSkillManager:
         path: str | None = None,
         scope: str = "global",
     ) -> SkillOperationResult:
+        if all_ and skill_id:
+            # The refusal ``remove`` already makes, for the same reason: the two
+            # name different sets, so honouring one silently discards the other
+            # — and the discarded half is the id the caller typed. ``--all``
+            # used to win outright, which made ``skills update <id> --all``
+            # report a sweep of everything installed as though it had been the
+            # answer to a question about one skill.
+            raise ValueError("pass either a skill id or --all, not both")
         target = self._target_for_scope(agent=agent, scope=scope, path=path)
         catalog = catalog_by_id()
         installed = target.installed()
-        ids = list(installed) if (all_ or skill_id is None) else [skill_id]
+        # No id at all is the sweep, so ``--all`` is only ever the explicit
+        # spelling of the default; what it must not be is a way to make a named
+        # id disappear.
+        requested = bool(skill_id)
+        ids = [skill_id] if requested else list(installed)
         changed: list[str] = []
+        preserved: list[str] = []
+        available = self._available(target)
         for sid in ids:
+            if available is not None and sid not in available:
+                # Same split as ``install``: the sweep only ever walks ids that
+                # are already installed, so reaching this at all means a named
+                # id, and there is no version of it for this harness to move to
+                # — unless the catalog has never heard of it either, which is a
+                # typo and gets told so rather than sent to another harness.
+                raise self._missing_skill_error(
+                    str(sid), catalog, agent=agent, installed=sid in installed
+                )
             info = catalog.get(sid)
-            if info and installed.get(sid) != info.version:
-                validate_packaged_skill_command_snippets(skill_ids=(sid,))
-                target.install(skill_id=sid, version=info.version)
-                changed.append(sid)
-        self._install_support_files(target, path=path)
+            if info is None:
+                # Sweeping what is installed must walk past an entry this
+                # build's bundle no longer carries. A named id is different:
+                # skipping it exited 0 with `changed: []`, which reads exactly
+                # like "already up to date" for a skill the caller never had.
+                if requested:
+                    raise self._unknown_skill_error(
+                        sid, catalog, installed=sid in installed
+                    )
+                continue
+            if self._is_current(
+                target, sid, installed=installed, version=info.version, path=path
+            ):
+                continue
+            if self._locally_modified(target, sid):
+                preserved.append(sid)
+                continue
+            # ``path=`` was dropped here while ``install`` passed it, so the two
+            # commands could resolve the same ``--path`` to different roots.
+            target.install(skill_id=sid, version=info.version, path=path)
+            changed.append(sid)
+        routing = {} if requested else self._install_instructions(target, path=path)
         return SkillOperationResult(
             agent=agent,
             operation="update",
             changed=tuple(changed),
-            metadata=self._metadata(target, scope=scope),
+            metadata={
+                **self._metadata(target, scope=scope),
+                **routing,
+                **({"preserved_user_edits": preserved} if preserved else {}),
+            },
         )
 
     def remove(
@@ -163,54 +503,113 @@ class DefaultSkillManager:
         if not all_ and not skill_id:
             raise ValueError("pass a skill id or --all")
         target = self._target_for_scope(agent=agent, scope=scope, path=path)
+        catalog = catalog_by_id()
         installed = target.installed()
         ids = list(installed) if all_ else [skill_id]
         changed: list[str] = []
+        not_installed: list[str] = []
         for sid in ids:
-            if sid is None or sid not in installed:
+            if sid is None:
+                continue
+            if sid not in installed:
+                # "Not installed" is a real answer here — the end state the
+                # caller asked for already holds, and `removed: []` says so, so
+                # a second `skills remove` must not fail. An id that neither the
+                # catalog nor the harness has ever heard of is a typo instead,
+                # and answering a typo with `removed: []` is how a caller comes
+                # to believe a skill is gone from a harness it was never in.
+                if not all_ and sid not in catalog:
+                    raise self._unknown_skill_error(sid, catalog)
+                # Reported rather than merely skipped: `removed: []` alone is
+                # the same answer this command gives when it removed the last
+                # skill a moment ago, so the caller could not tell "already
+                # gone" from "gone from a harness you did not mean".
+                not_installed.append(sid)
                 continue
             target.remove(skill_id=sid)
+            if not all_:
+                self._set_disabled(target, skill_id=sid, disabled=True)
             changed.append(sid)
+        # Only the sweep owns the harness's own files — the mirror of the rule
+        # `install` follows. It runs whether or not any skill was removed:
+        # the instruction file outlives the skill directories (a hand-deleted
+        # `.claude/skills` leaves it orphaned), so gating on `changed` would
+        # make the second `remove --all` the one that finally cannot clean up.
+        routing = self._remove_instructions(target, path=path) if all_ else {}
         return SkillOperationResult(
             agent=agent,
             operation="remove",
             changed=tuple(changed),
-            metadata=self._metadata(target, scope=scope),
+            metadata={
+                **self._metadata(
+                    target,
+                    scope=scope,
+                    not_installed=tuple(not_installed),
+                ),
+                **routing,
+            },
         )
 
     def status(
         self, *, agent: str, path: str | None = None, scope: str = "global"
     ) -> SkillStatus:
         catalog = catalog_by_id()
-        installed = self._target_for_scope(
-            agent=agent, scope=scope, path=path
-        ).installed()
+        target = self._target_for_scope(agent=agent, scope=scope, path=path)
+        installed = target.installed()
+        available = self._available(target)
         installed_infos: list[SkillInfo] = []
         missing: list[SkillInfo] = []
         outdated: list[SkillInfo] = []
+        disabled_infos: list[SkillInfo] = []
+        disabled = self._disabled(target)
         for sid in RECOMMENDED_SKILL_IDS:
+            # "Recommended" has to mean recommended *for this harness*. A skill
+            # its bundle cannot carry is not missing, it is inapplicable, and
+            # listing it as missing produced a permanent nag whose install
+            # command has nothing to install.
+            if available is not None and sid not in available:
+                continue
             info = catalog[sid]
-            ver = installed.get(sid)
-            if ver is None:
-                missing.append(info)
-            elif ver != info.version:
-                outdated.append(info)
-            else:
-                installed_infos.append(
+            if sid in disabled:
+                disabled_infos.append(
                     SkillInfo(
                         id=info.id,
                         title=info.title,
                         version=info.version,
                         description=info.description,
-                        installed=True,
-                        installed_version=ver,
+                        disabled=True,
                     )
                 )
+                continue
+            ver = installed.get(sid)
+            if ver is None:
+                missing.append(info)
+                continue
+            # Content drift lands in ``outdated`` beside a stale version, and
+            # for the same reason: both mean "what the harness is loading is not
+            # what this build ships", and both are fixed by the same reinstall.
+            # A file corrupted at its recorded version was previously reported
+            # as healthy by every command in this group.
+            drifted = not self._matches_bundle(target, sid, path=path)
+            record = SkillInfo(
+                id=info.id,
+                title=info.title,
+                version=info.version,
+                description=info.description,
+                installed=True,
+                installed_version=ver,
+                drifted=drifted,
+            )
+            if ver != info.version or drifted:
+                outdated.append(record)
+            else:
+                installed_infos.append(record)
         return SkillStatus(
             agent=agent,
             installed=tuple(installed_infos),
             missing=tuple(missing),
             outdated=tuple(outdated),
+            disabled=tuple(disabled_infos),
         )
 
     def nudge(self, *, agent: str) -> SkillNudge:
@@ -229,12 +628,23 @@ class DefaultSkillManager:
         )
 
     def add(self, *, source: str) -> SkillOperationResult:
-        # TODO(stage-N): register a local-path/URL skill into the catalog.
-        return SkillOperationResult(
-            agent="(catalog)",
-            operation="add",
-            detail=f"catalog add not implemented (source={source})",
+        """Validate an external skill source, then report registration as unsupported.
+
+        Invalid sources receive a validation error. Valid sources receive the
+        structured not-implemented error until catalog registration is implemented.
+        """
+        validate_skill_source(source)
+        raise CapabilityNotImplemented(
+            "skills.catalog.add",
+            detail=(
+                f"'{source}' looks like a usable skill source, but this build "
+                f"cannot register external skills into the catalog yet."
+            ),
+            recommended_next_action=(
+                "install a packaged skill instead with 'potpie skills install "
+                "[<id>]', or list what this build carries with 'potpie skills list'"
+            ),
         )
 
 
-__all__ = ["DefaultSkillManager"]
+__all__ = ["DefaultSkillManager", "validate_skill_source"]

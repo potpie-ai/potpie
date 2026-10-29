@@ -1,4 +1,0 @@
-interface:
-  display_name: "Potpie Document Ingestion"
-  short_description: "Ingest PDFs, images, and text into Potpie search"
-  default_prompt: "Use $potpie-document-ingestion to ingest the user's document(s) into Potpie end-to-end."

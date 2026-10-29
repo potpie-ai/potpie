@@ -10,11 +10,13 @@ from pathlib import Path
 import httpx
 import pytest
 
+from potpie.runtime import clients as runtime_clients
 from potpie.runtime import (
     PROTOCOL_VERSION,
     AuthenticationError,
     CanonicalDaemonRuntime,
     ContextSelector,
+    DaemonBuild,
     DaemonControlClient,
     DaemonEngineClient,
     DaemonInternalError,
@@ -63,6 +65,9 @@ class _Handler:
         )
 
 
+_SERVED_BUILD = DaemonBuild(rev="a" * 40, dirty=False, built_at="2026-06-28T00:00:00Z")
+
+
 def _endpoint(kind: str, tmp_path: Path) -> RuntimeEndpoint:
     if kind == "uds":
         return RuntimeEndpoint(kind="uds", address=str(tmp_path / "runtime.sock"))
@@ -81,6 +86,8 @@ async def _running_runtime(kind: str, tmp_path: Path, handler: _Handler):
         instance_id="instance-1",
         backend_profile="embedded",
         ui_url="http://127.0.0.1:8765",
+        version="2.0.1",
+        build=_SERVED_BUILD,
         coordinator=OperationCoordinator(),
     )
     await runtime.start()
@@ -135,6 +142,8 @@ async def test_authenticated_runtime_handshake_operation_and_typed_stop(
         assert isinstance(status, Success)
         assert status.value.backend_profile == "embedded"
         assert status.value.ui_url == "http://127.0.0.1:8765"
+        assert status.value.version == "2.0.1"
+        assert status.value.build == _SERVED_BUILD
         assert isinstance(operation, Success)
         assert operation.value == AgentEnvelope(
             pot_id="context-a",
@@ -201,37 +210,77 @@ async def test_bad_bearer_token_returns_typed_authentication_failure(
 
 
 @pytest.mark.anyio
-async def test_catalog_mismatch_is_rejected_during_handshake(tmp_path: Path) -> None:
+async def test_another_catalog_gets_a_ticket_for_daemon_control_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A client from another build can see and stop the daemon, nothing more."""
     handler = _Handler()
     async with _running_runtime("tcp", tmp_path, handler) as (
-        _runtime,
-        _serve_task,
+        runtime,
+        serve_task,
         endpoint,
         token,
     ):
-        base_url = f"http://{endpoint.address}:{endpoint.port}"
-        async with httpx.AsyncClient(base_url=base_url) as client:
-            response = await client.post(
-                "/v1/operations",
-                headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "protocol_version": PROTOCOL_VERSION,
-                    "request_id": "catalog-mismatch-1",
-                    "operation": "daemon.handshake",
-                    "payload": {
-                        "client_protocol_min": PROTOCOL_VERSION,
-                        "client_protocol_max": PROTOCOL_VERSION,
-                        "expected_instance_id": "instance-1",
-                        "client_operation_catalog_fingerprint": "different",
-                    },
-                },
-            )
-
-        assert response.status_code == 409
-        assert response.json()["outcome"]["error"]["code"] == (
-            "operation_catalog_mismatch"
+        # Same protocol, different operation catalog: another build's client.
+        monkeypatch.setattr(
+            runtime_clients, "operation_catalog_fingerprint", lambda: "0" * 64
         )
-        assert handler.calls == []
+        transport = HttpDaemonTransport(endpoint=endpoint, bearer_token=token)
+        engine_client = DaemonEngineClient(
+            selector=ContextSelector(kind="explicit", value="context-a"),
+            transport=transport,
+            expected_instance_id="instance-1",
+        )
+        control_client = DaemonControlClient(
+            transport=transport,
+            expected_instance_id="instance-1",
+        )
+
+        refused_engine = await engine_client.handshake()
+        readiness = await control_client.handshake()
+        status = await control_client.status()
+        control = control_client.control_result
+        assert control is not None
+        forged = await transport.send(
+            EngineOperationRequest(
+                protocol_version=PROTOCOL_VERSION,
+                request_id="search-with-control-ticket",
+                operation=EngineOperation.SEARCH,
+                selector=ContextSelector(kind="explicit", value="context-a"),
+                payload=SearchRequest(query="typed"),
+                compatibility_ticket=control.compatibility_ticket,
+            )
+        )
+        _scope, rest = control.compatibility_ticket.split(".", 1)
+        widened = await transport.send(
+            EngineOperationRequest(
+                protocol_version=PROTOCOL_VERSION,
+                request_id="search-with-widened-ticket",
+                operation=EngineOperation.SEARCH,
+                selector=ContextSelector(kind="explicit", value="context-a"),
+                payload=SearchRequest(query="typed"),
+                compatibility_ticket=f"full.{rest}",
+            )
+        )
+        shutdown = await control_client.shutdown(reason="catalog_change")
+        await asyncio.wait_for(serve_task, timeout=2)
+        await transport.close()
+
+    assert isinstance(refused_engine, Failure)
+    assert refused_engine.error.code == "operation_catalog_mismatch"
+    assert isinstance(readiness, Failure)
+    assert readiness.error.code == "operation_catalog_mismatch"
+    assert control_client.catalog_compatible is False
+    assert isinstance(status, Success)
+    assert status.value.build == _SERVED_BUILD
+    assert isinstance(forged, FailureResponse)
+    assert forged.outcome.error.code == "operation_catalog_mismatch"
+    assert isinstance(widened, FailureResponse)
+    assert widened.outcome.error.code == "compatibility_ticket_invalid"
+    assert isinstance(shutdown, Success)
+    assert shutdown.value.accepted is True
+    assert runtime.lifecycle_state == "stopped"
+    assert handler.calls == []
 
 
 @pytest.mark.anyio

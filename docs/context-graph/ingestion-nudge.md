@@ -5,8 +5,6 @@ description: How source events enter the graph and how session nudges fire.
 
 ## Overview
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
-
 This doc covers how source events get *into* the Context Graph, and how the
 zero-token **nudge** model gets the *right slice back out* to an in-session agent
 at the right moment. Both subsystems have drifted hard from their original
@@ -94,7 +92,7 @@ For non-record events, `_do_submit` resolves pot/repo/source_id and calls
 `scope + source_id` → `duplicate`), upsert it into the pot's open batch, and
 either enqueue immediately or leave it for the flusher (windowed mode, §5). It
 also persists the ingress W3C `traceparent` onto the row's `correlation_id` so
-the later fan-in span can link back (see [observability.md](./observability.md)).
+the later fan-in span can link back.
 
 ---
 
@@ -181,7 +179,7 @@ When events do flow through the async pipeline, the shape is:
 
 The spans on this path are the fan-in **`batch.process`** and the per-chunk
 **`agent.run_batch`** (the per-event `reconciliation_run` is a durable ledger
-row, not a span); all are catalogued in [observability.md](./observability.md).
+row, not a span).
 
 ---
 
@@ -216,10 +214,11 @@ in [cli-flow.md](./cli-flow.md).
 ## 7. The zero-token "nudge" trigger model
 
 Nudges are how durable graph memory reaches an in-session agent **without
-spending tokens to ask for it** — a mechanical hook reads the graph at lifecycle
-moments and injects the relevant slice (or a directive) into the agent's
-context. The whole trigger brain is **deterministic — no model on this path**;
-similarity uses the bundled local embedder only.
+spending tokens to ask for it** — at lifecycle moments a harness calls
+`potpie graph nudge`, which reads the graph, and the harness injects the
+relevant slice (or a directive) into the agent's context. The whole trigger
+brain is **deterministic — no model on this path**; similarity uses the bundled
+local embedder only.
 
 Three model-free layers:
 
@@ -243,9 +242,9 @@ for the agent to act on — never an auto-write):
 Data policies name `NudgeViewSpec`s (which `domain.graph_views` view to read);
 the views themselves are owned by [querying.md](./querying.md).
 
-> `NudgePolicy.triggers_ingest` is **dead** — `NudgeService` never reads it, the
-> hook never runs ingest, and the top-level `potpie ingest` command was removed
-> in `5af8ea5f`. A nudge never ingests; it only reads or instructs.
+> `NudgePolicy.triggers_ingest` is **dead** — `NudgeService` never reads it,
+> nothing on the nudge path runs ingest, and the top-level `potpie ingest`
+> command was removed in `5af8ea5f`. A nudge never ingests; it only reads or instructs.
 
 ### 7.2 Executor (`application/services/nudge_service.py NudgeService`)
 
@@ -268,7 +267,8 @@ operation catalog.
 
 `LocalInjectionLedger` persists injected keys per session to
 `~/.potpie/nudge_sessions.json` (atomic write, bounded to 500 sessions) so dedup
-**survives across the short-lived hook processes within one session**.
+**survives across the short-lived `graph nudge` processes within one
+session**.
 `InMemoryInjectionLedger` is the test double.
 
 ### 7.4 The CLI surface
@@ -280,25 +280,24 @@ potpie graph nudge --event <e> --session <id> [--path --query --scope --pot --li
 routes to `host.nudge.nudge(GraphNudgeRequest)`. Full flags are in
 [cli-flow.md](./cli-flow.md).
 
-### 7.5 The fail-safe Claude Code hook
+### 7.5 Wiring a harness
 
-`potpie/cli/templates/claude_plugin/hooks/potpie_nudge.py` is the thin
-adapter that turns harness lifecycle events into nudge events and shells
-`potpie --json graph nudge`. Event mapping:
+Potpie ships no hook adapter: a harness invokes nudges itself. A harness with
+lifecycle hooks runs `potpie --json graph nudge` at the moments the policy
+covers, passing its own session id as `--session` (the dedup key):
 
-- `SessionStart` → `session_start`
-- `PreToolUse(Write|Edit|MultiEdit|NotebookEdit)` → `pre_edit`
-- `PreToolUse(Bash)` → `pre_deploy` (only on deploy markers)
-- `PostToolUse(Bash)` → `test_failed` / `test_passed` (only on test markers; exit
-  code → `N failed` count → anchored markers)
-- ambiguous → silent
+- session start → `session_start`
+- before a file edit → `pre_edit`, with `--path <file>`
+- before a deploy command → `pre_deploy`
+- after a test run → `test_failed` (with the failure text as `--query`) or
+  `test_passed`
+- end of the agent's turn → `stop`
+- anything ambiguous → no call
 
-It renders results as Claude `hookSpecificOutput.additionalContext` (or
-`systemMessage` at `Stop`). **Fail-safe by construction**: any error, missing
-binary, or unparseable payload → exit 0 with no output, so the hook can never
-break the user's session. It tolerates both the V1.5 flat and the V2
-`result`-wrapped envelope shapes. Hook env knobs:
-`POTPIE_HOOK_DEBUG` / `POTPIE_HOOK_TIMEOUT` / `POTPIE_BIN` / `POTPIE_POT`.
+It reads the `result` object of the envelope: inject `inject_context` or
+`instruction` into the agent's context, and nothing when `silent` is true. Keep
+the hook fail-safe — on a missing binary, a non-zero exit, or output it cannot
+parse, inject nothing rather than break the user's session.
 
 The agent's half of the loop (how to act on an injected slice vs a directive) is
 taught in the `potpie-graph` skill's "Responding To Nudges" — see
@@ -316,5 +315,3 @@ taught in the `potpie-graph` skill's "Responding To Nudges" — see
   roots that this doc's ingestion server vs local spine split rests on.
 - [querying.md](./querying.md) — the named views a nudge reads.
 - [cli-flow.md](./cli-flow.md) — full flags for `ledger ...` and `graph nudge`.
-- [observability.md](./observability.md) — `batch.process` / `agent.run_batch`
-  spans (and the `reconciliation_run` ledger row) and ingestion metrics.

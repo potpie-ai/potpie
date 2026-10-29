@@ -43,3 +43,7 @@ def test_parse_image_to_staging_writes_ocr_sidecar(tmp_path: Path) -> None:
     assert "diagram" in chunk_txt.read_text(encoding="utf-8").lower()
     assert ocr_txt.read_text(encoding="utf-8") == "Hello from OCR"
     assert (out / "artifacts" / "source.png").is_file()
+    observations = manifest.ingestion_diagnostics["image_enrichment"]
+    assert observations["ocr_observed"] is True
+    assert observations["visual_caption_observed"] is True
+    assert observations["warnings"] == []

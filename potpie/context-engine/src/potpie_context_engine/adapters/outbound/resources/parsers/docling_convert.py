@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from potpie_context_engine.adapters.outbound.resources.local_chunk_store import (
@@ -24,6 +25,7 @@ from potpie_context_engine.domain.resource_models import (
 
 _DOCUMENTS_INSTALL = "pip install potpie[documents]"
 _PROVENANCE_VERSION = 2
+logger = logging.getLogger(__name__)
 
 _MIME_BY_SUFFIX = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -90,7 +92,13 @@ def parse_docling_file(
                 artifacts_dir=artifacts_dir,
             )
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Docling structured extraction failed for %s; falling back to Markdown "
+            "without element provenance: %s",
+            path.name,
+            exc,
+        )
         parsed_sections = []
 
     if not parsed_sections:

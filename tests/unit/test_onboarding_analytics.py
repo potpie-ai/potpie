@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
 from potpie.cli.auth import auth_commands
+from potpie.cli.commands import _common, skills as skills_commands
 from potpie.cli.telemetry.onboarding_events import (
     CliSetupAnalyticsObserver,
+    agent_skills_failure_kind,
     begin_setup_run,
-    capture_activation_succeeded,
+    capture_agent_skills_install_outcome,
+    capture_agent_skills_selection_outcome,
+    capture_activation_command_outcome,
+    capture_context_result_returned,
     capture_github_prompt_outcome,
     capture_github_prompt_shown,
     capture_setup_completed,
+    capture_setup_incomplete,
     capture_setup_started,
     current_setup_run_id,
     onboarding_entrypoint,
@@ -22,6 +30,7 @@ from potpie.cli.telemetry.product_analytics import (
     set_product_analytics_sink,
 )
 from potpie.runtime.composition import build_local_runtime
+from potpie.skills.errors import InvalidSkillsInstallPathError, UnknownAgentTargetError
 from potpie_context_engine.adapters.outbound.graph.backends.in_memory_backend import (
     InMemoryGraphBackend,
 )
@@ -75,7 +84,12 @@ def test_setup_events_share_one_setup_run_id(fake_sink: _FakeSink) -> None:
     plan = SetupPlan(repo=".", agent="claude", scan=True, assume_yes=True)
 
     setup_run_id = begin_setup_run()
-    capture_setup_started(plan, interactive=False, json_output=True)
+    capture_setup_started(
+        plan,
+        interactive=False,
+        json_output=True,
+        dry_run=False,
+    )
     capture_setup_completed(
         plan=plan,
         ok=True,
@@ -92,8 +106,119 @@ def test_setup_events_share_one_setup_run_id(fake_sink: _FakeSink) -> None:
     assert fake_sink.events[0].properties["setup_run_id"] == setup_run_id
     assert fake_sink.events[0].properties["repo_location_kind"] == "current_directory"
     assert fake_sink.events[0].properties["scan_requested"] is True
+    assert fake_sink.events[0].properties["dry_run"] is False
     assert fake_sink.events[1].properties["duration_ms"] == 12
+    assert fake_sink.events[1].properties["dry_run"] is False
     assert "repo" not in fake_sink.events[0].properties
+
+
+def test_setup_cancellation_is_an_incomplete_terminal_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    plan = SetupPlan(repo=".", agent="claude")
+
+    begin_setup_run()
+    capture_setup_started(
+        plan,
+        interactive=True,
+        json_output=False,
+        dry_run=False,
+    )
+    capture_setup_incomplete(
+        plan=plan,
+        incomplete_kind="cancelled",
+        duration_ms=17,
+        failure_stage="backend.provision",
+    )
+
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_setup_started",
+        "cli_onboarding_setup_incomplete",
+    ]
+    assert fake_sink.events[1].properties["duration_ms"] == 17
+    assert fake_sink.events[1].properties["dry_run"] is False
+    assert fake_sink.events[1].properties["incomplete_kind"] == "cancelled"
+    assert fake_sink.events[1].properties["failure_stage"] == "backend.provision"
+    assert fake_sink.events[1].properties["setup_run_id"] == current_setup_run_id()
+
+
+def test_setup_dry_run_cancellation_preserves_dry_run_on_incomplete_event(
+    fake_sink: _FakeSink,
+) -> None:
+    plan = SetupPlan(repo=".", agent="claude")
+
+    begin_setup_run()
+    capture_setup_started(
+        plan,
+        interactive=False,
+        json_output=False,
+        dry_run=True,
+    )
+    capture_setup_incomplete(
+        plan=plan,
+        incomplete_kind="cancelled",
+        duration_ms=9,
+        failure_stage="setup_execution",
+        dry_run=True,
+    )
+
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_setup_started",
+        "cli_onboarding_setup_incomplete",
+    ]
+    assert fake_sink.events[0].properties["dry_run"] is True
+    assert fake_sink.events[1].properties["dry_run"] is True
+    assert fake_sink.events[1].properties["incomplete_kind"] == "cancelled"
+
+
+def test_setup_hard_failure_has_bounded_incomplete_kind(fake_sink: _FakeSink) -> None:
+    capture_setup_completed(
+        plan=SetupPlan(),
+        ok=False,
+        duration_ms=23,
+        hard_failed_step="config",
+        soft_warning_count=0,
+    )
+
+    assert fake_sink.events[0].name == "cli_onboarding_setup_incomplete"
+    assert fake_sink.events[0].properties["incomplete_kind"] == "hard_failure"
+    assert fake_sink.events[0].properties["failure_stage"] == "config"
+
+
+def test_setup_dry_run_is_explicit_on_started_event(fake_sink: _FakeSink) -> None:
+    capture_setup_started(
+        SetupPlan(),
+        interactive=False,
+        json_output=False,
+        dry_run=True,
+    )
+
+    assert fake_sink.events[0].properties["dry_run"] is True
+
+
+@pytest.mark.parametrize(
+    ("interactive", "json_output"),
+    [
+        (True, False),
+        (False, False),
+        (False, True),
+    ],
+    ids=["interactive", "plain", "json"],
+)
+def test_setup_started_preserves_output_mode_dimensions(
+    fake_sink: _FakeSink,
+    *,
+    interactive: bool,
+    json_output: bool,
+) -> None:
+    capture_setup_started(
+        SetupPlan(),
+        interactive=interactive,
+        json_output=json_output,
+    )
+
+    assert fake_sink.events[0].properties["interactive"] is interactive
+    assert fake_sink.events[0].properties["json_output"] is json_output
 
 
 def test_setup_observer_emits_step_timing(
@@ -151,21 +276,321 @@ def test_github_prompt_unknown_outcome_falls_back_to_aborted(
     assert fake_sink.events[0].properties["duration_ms"] == 25
 
 
-def test_activation_event_marks_context_results(fake_sink: _FakeSink) -> None:
+def test_activation_events_have_canonical_repeatable_names(
+    fake_sink: _FakeSink,
+) -> None:
     begin_setup_run()
 
-    capture_activation_succeeded(
+    capture_activation_command_outcome(
         command="resolve",
+        outcome="succeeded",
         result_kind="context_result",
+        duration_ms=17,
+    )
+    capture_context_result_returned(
+        command="resolve",
         item_count=3,
+        confidence="high",
     )
 
     assert [event.name for event in fake_sink.events] == [
-        "cli_onboarding_first_use_command_succeeded",
-        "cli_onboarding_first_context_result_returned",
+        "cli_onboarding_activation_command_outcome",
+        "cli_onboarding_context_result_returned",
     ]
     assert fake_sink.events[0].properties["command"] == "resolve"
+    assert fake_sink.events[0].properties["outcome"] == "succeeded"
+    assert fake_sink.events[0].properties["duration_ms"] == 17
     assert fake_sink.events[1].properties["item_count"] == 3
+    assert fake_sink.events[1].properties["result_kind"] == "non_empty"
+    assert fake_sink.events[1].properties["confidence"] == "high"
+
+
+def test_empty_context_result_and_unknown_confidence_are_bounded(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_context_result_returned(
+        command="search",
+        item_count=0,
+        confidence="unbounded-value",
+    )
+
+    assert fake_sink.events[0].properties["result_kind"] == "empty"
+    assert fake_sink.events[0].properties["item_count"] == 0
+    assert fake_sink.events[0].properties["confidence"] == "unknown"
+
+
+def test_activation_failure_category_is_bounded(fake_sink: _FakeSink) -> None:
+    capture_activation_command_outcome(
+        command="status",
+        outcome="expected_failed",
+        result_kind="status_result",
+        duration_ms=3,
+        failure_category="private-dynamic-error",
+    )
+
+    assert fake_sink.events[0].properties["failure_category"] == "other_expected"
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (UnknownAgentTargetError("agent name changed"), "invalid_agent"),
+        (
+            InvalidSkillsInstallPathError("path validation text changed"),
+            "filesystem",
+        ),
+        (ValueError("No install target registered for agent 'other'"), "unexpected"),
+        (
+            ValueError("Expected a directory path, got file: /private/repo"),
+            "unexpected",
+        ),
+        (ValueError("other validation failure"), "unexpected"),
+        (PermissionError("denied"), "permission_denied"),
+        (OSError("disk unavailable"), "filesystem"),
+        (RuntimeError("unexpected"), "unexpected"),
+    ],
+)
+def test_agent_skills_failure_kind_is_bounded(
+    exc: BaseException, expected: str
+) -> None:
+    assert agent_skills_failure_kind(exc) == expected
+
+
+@dataclass
+class _InstallSkills:
+    results: list[object] = field(default_factory=list)
+    error: Exception | None = None
+
+    def install(self, **kwargs: object) -> object:
+        del kwargs
+        if self.error is not None:
+            raise self.error
+        return self.results.pop(0)
+
+
+def test_direct_skills_install_emits_one_canonical_outcome_per_command(
+    fake_sink: _FakeSink,
+) -> None:
+    fake_skills = _InstallSkills(
+        results=[
+            SimpleNamespace(agent="codex", changed=("potpie-cli",), metadata={}),
+            SimpleNamespace(agent="codex", changed=(), metadata={}),
+        ]
+    )
+    _common.set_runtime(SimpleNamespace(skills=fake_skills))
+
+    runner = CliRunner()
+    first = runner.invoke(skills_commands.skills_app, ["install", "--agent", "CoDeX"])
+    second = runner.invoke(skills_commands.skills_app, ["install", "--agent", "codex"])
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    outcomes = [
+        event
+        for event in fake_sink.events
+        if event.name == "cli_onboarding_agent_skills_install_outcome"
+    ]
+    assert len(outcomes) == 2
+    assert [event.properties["outcome"] for event in outcomes] == [
+        "installed",
+        "already_installed",
+    ]
+    for event in outcomes:
+        assert event.properties["agent"] == "codex"
+        assert event.properties["entrypoint"] == "direct_command"
+        assert event.properties["scope"] == "global"
+        assert "failure_kind" not in event.properties
+        assert "skill_id" not in event.properties
+
+
+def test_direct_skills_install_captures_bounded_failure_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(skills=_InstallSkills(error=PermissionError("private path")))
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "codex"]
+    )
+
+    assert result.exit_code != 0
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_agent_skills_install_outcome",
+    ]
+    outcome = fake_sink.events[0]
+    assert outcome.properties["outcome"] == "failed"
+    assert outcome.properties["failure_kind"] == "permission_denied"
+    assert "private path" not in outcome.properties.values()
+
+
+def test_direct_skills_install_captures_cancelled_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(skills=_InstallSkills(error=KeyboardInterrupt()))
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "codex"]
+    )
+
+    assert result.exit_code == 130
+    assert [event.name for event in fake_sink.events] == [
+        "cli_onboarding_agent_skills_install_outcome",
+    ]
+    outcome = fake_sink.events[0]
+    assert outcome.properties["outcome"] == "cancelled"
+    assert "failure_kind" not in outcome.properties
+
+
+def test_direct_skills_install_skips_canonical_events_for_non_activation_agents(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(
+            skills=_InstallSkills(
+                results=[
+                    SimpleNamespace(
+                        agent="default", changed=("AGENTS.md",), metadata={}
+                    )
+                ]
+            )
+        )
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "default"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [
+        event
+        for event in fake_sink.events
+        if event.name == "cli_onboarding_agent_skills_install_outcome"
+    ] == []
+    assert [event.name for event in fake_sink.events] == [
+        "cli_usage_command_succeeded",
+    ]
+
+
+def test_direct_skills_install_drops_canonical_events_for_invalid_agent_failure(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(
+            skills=_InstallSkills(
+                error=UnknownAgentTargetError("install target is unavailable")
+            )
+        )
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app, ["install", "--agent", "default"]
+    )
+
+    assert result.exit_code != 0
+    assert fake_sink.events == []
+
+
+def test_direct_skills_install_drops_canonical_events_for_invalid_scope(
+    fake_sink: _FakeSink,
+) -> None:
+    _common.set_runtime(
+        SimpleNamespace(
+            skills=_InstallSkills(
+                error=ValueError("scope must be 'global' or 'project'")
+            )
+        )
+    )
+
+    result = CliRunner().invoke(
+        skills_commands.skills_app,
+        ["install", "--agent", "cursor", "--scope", "banana"],
+    )
+
+    assert result.exit_code != 0
+    assert fake_sink.events == []
+
+
+@pytest.mark.parametrize(
+    ("outcome", "failure_kind"),
+    [
+        ("installed", None),
+        ("failed", "filesystem"),
+    ],
+)
+def test_agent_skills_events_drop_noncanonical_scope(
+    fake_sink: _FakeSink,
+    outcome: str,
+    failure_kind: str | None,
+) -> None:
+    capture_agent_skills_install_outcome(
+        agent="codex",
+        entrypoint="direct_command",
+        scope="/private/repo",
+        outcome=outcome,
+        duration_ms=1,
+        failure_kind=failure_kind,
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_events_drop_invalid_install_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_install_outcome(
+        agent="codex",
+        entrypoint="direct_command",
+        scope="global",
+        outcome="PermissionError: private path",
+        duration_ms=1,
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_events_drop_invalid_failure_kind(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_install_outcome(
+        agent="codex",
+        entrypoint="direct_command",
+        scope="global",
+        outcome="failed",
+        duration_ms=1,
+        failure_kind="PermissionError: /private/repo",
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_events_drop_invalid_selection_outcome(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_selection_outcome(
+        selection_outcome="user typed a prompt",
+        selected_agents=("claude",),
+        duration_ms=12,
+    )
+
+    assert fake_sink.events == []
+
+
+def test_agent_skills_selection_keeps_only_canonical_agents(
+    fake_sink: _FakeSink,
+) -> None:
+    capture_agent_skills_selection_outcome(
+        selection_outcome="selected",
+        selected_agents=("claude", "default", "codex"),
+        duration_ms=12,
+    )
+
+    outcome = fake_sink.events[0]
+    assert outcome.name == "cli_onboarding_agent_skills_selection_outcome"
+    assert outcome.properties["selected_agents"] == ("claude", "codex")
+    assert outcome.properties["selected_agent_count"] == 2
 
 
 def test_direct_linear_login_records_integration_funnel(

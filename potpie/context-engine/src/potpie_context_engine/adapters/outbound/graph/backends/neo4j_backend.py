@@ -7,11 +7,11 @@ relationship vector index, while inspection/snapshot remain fail-closed stubs
 until they are built out.
 
     claim_query  -> Neo4jClaimQueryStore           (existing, real)
-    mutation     -> existing apply path             # TODO(stage-N)
+    mutation     -> atomic batch + durable receipt and pot revision
     analytics    -> ClaimQueryAnalytics             (computed from claim_query, real)
     semantic     -> ClaimQuerySemanticSearch        (native vector via claim_query)
     inspection   -> CapabilityNotImplemented        # TODO(stage-N): cypher traversal
-    snapshot     -> CapabilityNotImplemented        # TODO(stage-N): portable export/import
+    snapshot     -> Neo4jSnapshot                    (transactional portable export/import)
 
 Neo4j imports are lazy so the skeleton (and the in_memory profile) load without
 the ``graph`` extra installed; a missing driver surfaces only when this profile
@@ -20,51 +20,40 @@ is actually selected.
 
 from __future__ import annotations
 
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping
-import uuid
+from typing import Any
+
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphDefinition,
+)
+from potpie_context_engine.core.graph_mutations import InvalidationOp, ProvenanceContext
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
+from potpie_context_engine.core.legacy_records import LegacyInventory
+from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
+from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
+from potpie_context_engine.core.ports.graph.mutation import (
+    BackendReadiness,
+    MutationExecutionLookup,
+    MutationExecutionState,
+)
+from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 
 from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
     MutationExecutionRegistry,
 )
 from potpie_context_engine.adapters.outbound.graph.backends._unimplemented import (
     UnimplementedInspection,
-    UnimplementedSnapshot,
-)
-from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
-    ClaimQuerySemanticSearch,
 )
 from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import (
     ClaimQueryAnalytics,
 )
-from potpie_context_engine.adapters.outbound.graph.cypher import _coerce_props_for_neo4j
-from potpie_context_engine.core.definition import (
-    DEFAULT_GRAPH_DEFINITION,
-    GraphDefinition,
+from potpie_context_engine.adapters.outbound.graph.backends.claim_query_semantic import (
+    ClaimQuerySemanticSearch,
 )
-from potpie_context_engine.adapters.outbound.graph.entity_summary_repair import (
-    ENTITY_SUMMARY_REPAIR_LIMIT,
-    ENTITY_SUMMARY_SCAN_CYPHER,
-    ENTITY_SUMMARY_UPDATE_CYPHER,
-    repaired_entity_properties,
-)
-from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
-    ENTITY_LABEL_REPAIR_LIMIT,
-    ENTITY_LABEL_SCAN_CYPHER,
-    canonical_label_changes,
-    repaired_entity_labels,
-)
-from potpie_context_engine.core.graph_mutations import ProvenanceContext
-from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
-from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
-from potpie_context_engine.core.ports.graph.mutation import BackendReadiness
-from potpie_context_engine.core.ports.graph.mutation import (
-    MutationExecutionLookup,
-    MutationExecutionState,
-)
-from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
-from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 from potpie_context_engine.domain.ports.provisioning import BackendProvisionResult
 
 _PROFILE = "neo4j"
@@ -87,7 +76,7 @@ def _run_sync(coro: Any) -> Any:
     coro.close()
     raise RuntimeError(
         "Neo4jGraphBackend sync mutation cannot run inside an event loop; "
-        "use the async door (mutation.apply_async)."
+        "use the corresponding async method."
     )
 
 
@@ -96,10 +85,9 @@ class _Neo4jMutation:
     """``GraphMutationPort`` over ``Neo4jGraphWriter`` + ``apply_mutation_batch``.
 
     ``apply_async`` is the native door (it ``await``s the async writer directly);
-    ``apply`` is a loop-aware sync bridge for CLI/tests. The writer is created
-    once and reused — its async driver binds to the loop that first ``await``s
-    it, which in managed is uvicorn's single request loop (the same pattern the
-    production ``ContextGraphService`` uses with one long-lived writer).
+    ``apply`` is a loop-aware sync bridge for CLI/tests. Each operation owns and
+    closes its async driver on the caller's loop; transaction-bound writers
+    borrow that operation's transaction and never create or close a driver.
     """
 
     settings: Any
@@ -120,6 +108,20 @@ class _Neo4jMutation:
                 definition=self.definition,
             )
         return self.writer
+
+    @property
+    def atomic_mutations_supported(self) -> bool:
+        return callable(getattr(self._get_writer(), "in_transaction", None))
+
+    @property
+    def capabilities(self) -> MutationCapabilities:
+        native = self.atomic_mutations_supported
+        return MutationCapabilities(
+            atomic_writes=native,
+            revision_check=native,
+            execution_lookup=native,
+            durable_receipts=native,
+        )
 
     async def apply_async(
         self,
@@ -142,6 +144,20 @@ class _Neo4jMutation:
             provenance_context or ProvenanceContext(),
             mutation_id=mutation_id,
         )
+        writer = self._get_writer()
+        if callable(getattr(writer, "in_transaction", None)):
+            from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
+                apply_atomic,
+            )
+
+            return await apply_atomic(
+                writer,
+                plan,
+                expected_pot_id=expected_pot_id,
+                provenance_context=context,
+                definition=self.definition,
+                reconciliation_config=reconciliation_config,
+            )
         return await self.execution_registry.execute_async(
             plan,
             expected_pot_id=expected_pot_id,
@@ -156,13 +172,25 @@ class _Neo4jMutation:
             ),
         )
 
-    def lookup_execution(
+    async def lookup_execution_async(
         self,
         plan: MutationBatch,
         *,
         expected_pot_id: str,
         mutation_id: str,
     ) -> MutationExecutionLookup:
+        writer = self._get_writer()
+        if callable(getattr(writer, "in_transaction", None)):
+            from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
+                lookup_execution,
+            )
+
+            return await lookup_execution(
+                writer,
+                plan,
+                expected_pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+            )
         lookup = self.execution_registry.lookup(
             plan,
             expected_pot_id=expected_pot_id,
@@ -175,6 +203,98 @@ class _Neo4jMutation:
             mutation_id=mutation_id,
             batch_fingerprint=lookup.batch_fingerprint,
             detail="Neo4j mutation receipts are not durable across processes",
+        )
+
+    def lookup_execution(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        mutation_id: str,
+    ) -> MutationExecutionLookup:
+        return _run_sync(
+            self.lookup_execution_async(
+                plan, expected_pot_id=expected_pot_id, mutation_id=mutation_id
+            )
+        )
+
+    async def current_version_async(self, pot_id: str) -> int:
+        from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
+            current_version,
+        )
+
+        if not self.atomic_mutations_supported:
+            raise NotImplementedError(
+                "injected Neo4j writer has no native revision check"
+            )
+        return await current_version(self._get_writer(), pot_id)
+
+    def current_version(self, pot_id: str) -> int:
+        return _run_sync(self.current_version_async(pot_id))
+
+    async def legacy_inventory_async(self, pot_id: str) -> LegacyInventory:
+        from potpie_context_engine.adapters.outbound.graph.neo4j_legacy import (
+            legacy_inventory,
+        )
+
+        if not self.atomic_mutations_supported:
+            raise NotImplementedError(
+                "Neo4j legacy inventory requires native atomic mutations"
+            )
+        return await legacy_inventory(self._get_writer(), pot_id)
+
+    def legacy_inventory(self, pot_id: str) -> LegacyInventory:
+        return _run_sync(self.legacy_inventory_async(pot_id))
+
+    async def compare_and_apply_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
+        from potpie_context_engine.adapters.outbound.graph.neo4j_atomic import (
+            apply_atomic,
+        )
+
+        if not self.atomic_mutations_supported:
+            raise NotImplementedError(
+                "injected Neo4j writer has no native atomic execution"
+            )
+        context = replace(
+            provenance_context or ProvenanceContext(),
+            mutation_id=(provenance_context.mutation_id if provenance_context else None)
+            or uuid.uuid4().hex,
+        )
+        return await apply_atomic(
+            self._get_writer(),
+            plan,
+            expected_pot_id=expected_pot_id,
+            expected_version=expected_version,
+            provenance_context=context,
+            definition=self.definition,
+            reconciliation_config=reconciliation_config,
+        )
+
+    def compare_and_apply(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+        reconciliation_config: ReconciliationConfig | None = None,
+    ) -> MutationResult:
+        return _run_sync(
+            self.compare_and_apply_async(
+                plan,
+                expected_pot_id=expected_pot_id,
+                expected_version=expected_version,
+                provenance_context=provenance_context,
+                reconciliation_config=reconciliation_config,
+            )
         )
 
     def apply(
@@ -197,30 +317,66 @@ class _Neo4jMutation:
     def invalidate(
         self, *, pot_id: str, claim_keys: Any, reason: str | None = None
     ) -> int:
-        # TODO(stage-N): cypher invalidation by claim key.
-        from potpie_context_engine.core.errors import CapabilityNotImplemented
-
-        raise CapabilityNotImplemented(
-            "graph.neo4j.mutation.invalidate",
-            recommended_next_action="implement cypher invalidation",
+        keys = tuple(dict.fromkeys(claim_keys))
+        if not keys:
+            return 0
+        result = self.apply(
+            MutationBatch(
+                invalidations=[
+                    InvalidationOp(
+                        target_entity_key=None,
+                        target_edge=None,
+                        target_claim_keys=keys,
+                        reason=reason or "claim invalidated",
+                    )
+                ]
+            ),
+            expected_pot_id=pot_id,
         )
+        return result.mutation_summary.invalidations_applied
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
-        # TODO(stage-N): route through the existing hard_reset_pot use case.
-        return _run_sync(self._get_writer().reset_pot(pot_id))
+    async def reset_pot_async(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
+        if not self.atomic_mutations_supported:
+            raise NotImplementedError("Neo4j reset requires native atomic mutations")
+        if mutation_id is not None and (
+            not isinstance(mutation_id, str) or not mutation_id
+        ):
+            raise ValueError("reset mutation_id must be a nonempty string")
+        result = await self.apply_async(
+            MutationBatch(reset_pot=True),
+            expected_pot_id=pot_id,
+            provenance_context=ProvenanceContext(mutation_id=mutation_id),
+        )
+        return {
+            "ok": result.ok,
+            **result.administrative_summary,
+            "mutation_id": result.mutation_id,
+            "execution": result.execution.to_dict() if result.execution else None,
+        }
+
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
+        return _run_sync(self.reset_pot_async(pot_id, mutation_id=mutation_id))
 
     def readiness(self, pot_id: str) -> BackendReadiness:
+        ready = bool(getattr(self._get_writer(), "enabled", False))
+        atomic = ready and self.atomic_mutations_supported
         return BackendReadiness(
             profile=_PROFILE,
-            ready=True,
-            detail="neo4j claim_query + mutation + semantic + analytics wired; inspection/snapshot pending",
+            ready=ready,
+            detail="neo4j claim_query + mutation + semantic + analytics + snapshot wired; inspection pending",
             capability_ready={
-                "mutation": True,
-                "claim_query": True,
-                "analytics": True,
-                "semantic": True,
+                "mutation": ready,
+                "claim_query": ready,
+                "analytics": ready,
+                "atomic_mutation": atomic,
+                "durable_mutation_receipts": atomic,
+                "semantic": ready,
                 "inspection": False,
-                "snapshot": False,
+                "snapshot": atomic,
             },
         )
 
@@ -273,6 +429,14 @@ class Neo4jGraphBackend:
         return _PROFILE
 
     @property
+    def journal(self):
+        from potpie_context_engine.adapters.outbound.graph.unavailable_journal import (
+            UnavailableJournal,
+        )
+
+        return UnavailableJournal("Neo4j journal and rollback are deferred")
+
+    @property
     def graph_writer(self) -> Any:
         """Compatibility alias for old ingestion paths that seed via writer."""
         return self._mutation._get_writer()
@@ -295,17 +459,19 @@ class Neo4jGraphBackend:
 
     @property
     def analytics(self) -> ClaimQueryAnalytics:
-        # Real: counts/freshness/quality are computed from the canonical
-        # claim store, which this profile already serves.
-        return ClaimQueryAnalytics(
-            self._claim_query,
-            entity_summary_repair=self._repair_entity_summaries,
-            entity_label_repair=self._repair_entity_labels,
+        from potpie_context_engine.adapters.outbound.graph.neo4j_admin import (
+            Neo4jAnalytics,
         )
 
+        return Neo4jAnalytics(self._claim_query, self._mutation, self.definition)
+
     @property
-    def snapshot(self) -> UnimplementedSnapshot:
-        return UnimplementedSnapshot(_PROFILE)
+    def snapshot(self) -> Any:
+        from potpie_context_engine.adapters.outbound.graph.neo4j_snapshot import (
+            Neo4jSnapshot,
+        )
+
+        return Neo4jSnapshot(self.settings, mutation=self._mutation)
 
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
@@ -315,7 +481,7 @@ class Neo4jGraphBackend:
             analytics=True,
             semantic=True,
             inspection=False,
-            snapshot=False,
+            snapshot=self._mutation.atomic_mutations_supported,
         )
 
     def bind_definition(self, definition: GraphDefinition) -> Neo4jGraphBackend:
@@ -341,108 +507,6 @@ class Neo4jGraphBackend:
             detail="neo4j backend ready" if ok else "neo4j index setup failed",
             metadata={"profile": _PROFILE},
         )
-
-    def _repair_entity_summaries(self, pot_id: str) -> int:
-        from neo4j import GraphDatabase
-
-        uri = self.settings.neo4j_uri()
-        user = self.settings.neo4j_user()
-        password = self.settings.neo4j_password()
-        if not uri or user is None or password is None:
-            raise RuntimeError("neo4j_unavailable")
-
-        repaired = 0
-        driver = GraphDatabase.driver(uri, auth=(user, password))
-        try:
-            with driver.session() as session:
-                rows = list(
-                    session.run(
-                        ENTITY_SUMMARY_SCAN_CYPHER,
-                        gid=pot_id,
-                        limit=ENTITY_SUMMARY_REPAIR_LIMIT,
-                    )
-                )
-                for row in rows:
-                    key = str(row.get("key") or "").strip()
-                    if not key:
-                        continue
-                    raw_props = row.get("props")
-                    fixed = repaired_entity_properties(
-                        key, raw_props if isinstance(raw_props, Mapping) else {}
-                    )
-                    if fixed is None:
-                        continue
-                    result = session.run(
-                        ENTITY_SUMMARY_UPDATE_CYPHER,
-                        gid=pot_id,
-                        key=key,
-                        props=_coerce_props_for_neo4j(fixed),
-                    )
-                    rec = result.single()
-                    result.consume()
-                    repaired += int(rec["cnt"]) if rec is not None else 0
-        finally:
-            driver.close()
-        return repaired
-
-    def _repair_entity_labels(self, pot_id: str) -> int:
-        from neo4j import GraphDatabase
-
-        uri = self.settings.neo4j_uri()
-        user = self.settings.neo4j_user()
-        password = self.settings.neo4j_password()
-        if not uri or user is None or password is None:
-            raise RuntimeError("neo4j_unavailable")
-
-        repaired = 0
-        driver = GraphDatabase.driver(uri, auth=(user, password))
-        try:
-            with driver.session() as session:
-                after = ""
-                while True:
-                    rows = list(
-                        session.run(
-                            ENTITY_LABEL_SCAN_CYPHER,
-                            gid=pot_id,
-                            after=after,
-                            limit=ENTITY_LABEL_REPAIR_LIMIT,
-                        )
-                    )
-                    if not rows:
-                        break
-                    for row in rows:
-                        key = str(row.get("key") or "").strip()
-                        labels = tuple(row.get("labels") or ())
-                        fixed = repaired_entity_labels(
-                            key,
-                            labels,
-                            entity_types=self.definition.entity_types,
-                        )
-                        if not key or fixed is None:
-                            continue
-                        remove, add = canonical_label_changes(
-                            labels,
-                            fixed,
-                            entity_types=self.definition.entity_types,
-                        )
-                        clauses = [*(f"REMOVE e:{label}" for label in remove)]
-                        clauses.extend(f"SET e:{label}" for label in add)
-                        if not clauses:
-                            continue
-                        result = session.run(
-                            "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
-                            + " ".join(clauses)
-                            + " RETURN count(e) AS cnt",
-                            gid=pot_id,
-                            key=key,
-                        )
-                        rec = result.single()
-                        result.consume()
-                        repaired += int(rec["cnt"]) if rec is not None else 0
-                    after = str(rows[-1].get("key") or "")
-        finally:
-            driver.close()
-        return repaired
 
 
 __all__ = ["Neo4jGraphBackend"]

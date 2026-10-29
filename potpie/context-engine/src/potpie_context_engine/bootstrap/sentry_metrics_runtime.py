@@ -44,6 +44,30 @@ _configured = False
 _enabled = False
 _sentry_sdk: ModuleType | None = None
 
+
+#: Where a metric goes instead of the SDK, when a process installs a recorder.
+#: Called as ``recorder(kind, name, value, unit, attributes)`` with attributes
+#: that have already been through the allowlist. The CLI installs one that
+#: appends to a spool file shipped later by a detached process; the daemon and
+#: workers install none and emit through the SDK in-process.
+_MetricRecorder = Callable[..., None]
+_recorder: Optional[_MetricRecorder] = None
+
+
+def set_metric_recorder(recorder: Optional[_MetricRecorder]) -> None:
+    global _recorder
+    _recorder = recorder
+
+
+def metric_recorder() -> Optional[_MetricRecorder]:
+    return _recorder
+
+
+#: How long a short-lived process may wait at exit for its one metrics
+#: envelope. The SDK default is 2 s and it is paid on every command that had
+#: something to send; a CLI that runs for 0.3 s cannot spend that on telemetry.
+_SHORT_LIVED_SHUTDOWN_TIMEOUT_SECONDS: Final[float] = 1.0
+
 _MetricValue = Union[int, float]
 _SafeMetricAttribute = Union[str, int, float, bool]
 _MetricAttribute = Union[str, int, float, bool, Sequence[str], Mapping[str, str], None]
@@ -54,7 +78,22 @@ _SentryMetric = Callable[..., object]
 _SentryFlush = Callable[..., object]
 
 
-def configure_metrics(settings: SentrySettings) -> None:
+def configure_metrics(
+    settings: SentrySettings, *, short_lived_process: bool = False
+) -> None:
+    """Initialise the SDK once.
+
+    ``short_lived_process`` is the CLI profile. The SDK's default ``init`` probes
+    forty auto-enabling integrations by importing their target packages
+    (fastapi, starlette, redis, httpx, aiohttp, huggingface_hub, …), which on a
+    fully installed potpie costs ~1,250 extra modules and close to half a second
+    of CPU per command — for integrations a one-shot process never uses. The
+    profile turns the probes off, bounds the exit flush, and silences the
+    SDK's atexit notice ("Sentry is attempting to send N pending events"),
+    which would otherwise print to stderr on every command now that nothing
+    flushes synchronously before exit. Long-lived processes (daemon, workers)
+    keep the SDK defaults.
+    """
     global _configured, _enabled, _sentry_sdk
     if _configured:
         return
@@ -70,17 +109,20 @@ def configure_metrics(settings: SentrySettings) -> None:
         if sentry_init is None:
             _enabled = False
             return
-        _ = sentry_init(
-            dsn=settings.dsn,
-            environment=settings.environment,
-            release=settings.release,
-            dist=settings.dist,
-            send_default_pii=False,
-            include_local_variables=False,
-            max_request_body_size="never",
-            before_send=scrub_sentry_event,
-            before_breadcrumb=scrub_sentry_breadcrumb,
-        )
+        init_options: dict[str, object] = {
+            "dsn": settings.dsn,
+            "environment": settings.environment,
+            "release": settings.release,
+            "dist": settings.dist,
+            "send_default_pii": False,
+            "include_local_variables": False,
+            "max_request_body_size": "never",
+            "before_send": scrub_sentry_event,
+            "before_breadcrumb": scrub_sentry_breadcrumb,
+        }
+        if short_lived_process:
+            init_options.update(_short_lived_process_options())
+        _ = sentry_init(**init_options)
         _sentry_sdk = sentry_sdk
         _configured = True
         _enabled = True
@@ -100,6 +142,8 @@ def count(
     unit: Optional[str] = None,
     attributes: Optional[_MetricAttributes] = None,
 ) -> None:
+    if _route_to_recorder("count", name, value, unit=unit, attributes=attributes):
+        return
     if not _enabled or _sentry_sdk is None:
         return
     safe_attributes = _safe_attributes(attributes)
@@ -119,6 +163,10 @@ def distribution(
     unit: Optional[str] = None,
     attributes: Optional[_MetricAttributes] = None,
 ) -> None:
+    if _route_to_recorder(
+        "distribution", name, value, unit=unit, attributes=attributes
+    ):
+        return
     if not _enabled or _sentry_sdk is None:
         return
     safe_attributes = _safe_attributes(attributes)
@@ -138,6 +186,8 @@ def gauge(
     unit: Optional[str] = None,
     attributes: Optional[_MetricAttributes] = None,
 ) -> None:
+    if _route_to_recorder("gauge", name, value, unit=unit, attributes=attributes):
+        return
     if not _enabled or _sentry_sdk is None:
         return
     safe_attributes = _safe_attributes(attributes)
@@ -150,6 +200,26 @@ def gauge(
         return
 
 
+def _route_to_recorder(
+    kind: str,
+    name: str,
+    value: _MetricValue,
+    *,
+    unit: Optional[str],
+    attributes: Optional[_MetricAttributes],
+) -> bool:
+    """``True`` when an installed recorder took the metric (or failed trying)."""
+    recorder = _recorder
+    if recorder is None:
+        return False
+    try:
+        recorder(kind, name, value, unit, _safe_attributes(attributes))
+    # A recorder failure is a telemetry failure; the caller's work goes on.
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
 def flush(timeout: float = 2.0) -> None:
     if not _enabled or _sentry_sdk is None:
         return
@@ -160,6 +230,40 @@ def flush(timeout: float = 2.0) -> None:
     # Sentry SDK failures must never affect context-engine control flow.
     except Exception:  # noqa: BLE001
         return
+
+
+def _short_lived_process_options() -> dict[str, object]:
+    options: dict[str, object] = {
+        "auto_enabling_integrations": False,
+        "shutdown_timeout": _SHORT_LIVED_SHUTDOWN_TIMEOUT_SECONDS,
+    }
+    quiet_atexit = _quiet_atexit_integration()
+    if quiet_atexit is not None:
+        options["integrations"] = [quiet_atexit]
+    return options
+
+
+def _quiet_atexit_integration() -> object | None:
+    """The SDK's atexit flush with its stderr notice removed, or ``None``.
+
+    Passing an explicit ``AtexitIntegration`` replaces the default one of the
+    same name; the default's callback writes "Sentry is attempting to send …"
+    to stderr whenever an envelope is still pending at exit, which for a CLI
+    that defers its only flush to exit means on every command.
+    """
+    try:
+        atexit_module = importlib.import_module("sentry_sdk.integrations.atexit")
+        integration = getattr(atexit_module, "AtexitIntegration", None)
+        if integration is None:
+            return None
+        return integration(callback=_silent_shutdown_callback)
+    # A missing or reshaped integration module only costs the silence.
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _silent_shutdown_callback(pending: int, timeout: float) -> None:
+    del pending, timeout
 
 
 def _load_sentry_sdk() -> ModuleType | None:

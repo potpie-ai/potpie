@@ -73,7 +73,8 @@ Do not use durable-learning records for PDFs or uploaded files.
 
 ## Deprecated CLI
 
-`potpie resource *` mirrors `potpie document *` but prints a deprecation notice. Prefer `document` commands.
+The typed `resource` subcommands operate on already-staged chunk directories.
+Prefer the `document ingest` command for a one-shot file import.
 
 ## Verification commands
 

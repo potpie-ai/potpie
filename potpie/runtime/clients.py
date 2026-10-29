@@ -2,21 +2,32 @@
 
 from __future__ import annotations
 
+import contextlib
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias, cast
 from uuid import uuid4
 
+from potpie.runtime.commit_access import authorization_scope
 from potpie.runtime.coordinator import OperationCoordinator
+from potpie.runtime.extensions import HostExtension
+from potpie.runtime.host_operations import (
+    HOST_OPERATION_CATALOG,
+    HostOperation,
+    HostOperationHandler,
+)
 from potpie.runtime.operations import (
     ENGINE_OPERATION_CATALOG,
+    DaemonControlOperation,
     EngineOperation,
     SafetyClass,
+    effective_operation_spec,
     operation_capabilities,
     operation_catalog_fingerprint,
 )
 from potpie.runtime.protocol import (
+    CONTROL_TICKET_OPERATIONS,
     PROTOCOL_MAX_VERSION,
     PROTOCOL_MIN_VERSION,
     PROTOCOL_VERSION,
@@ -29,6 +40,7 @@ from potpie.runtime.protocol import (
     HandshakePayload,
     HandshakeRequest,
     HandshakeResult,
+    HostOperationRequest,
     ProtocolError,
     ProtocolRequest,
     ProtocolResponse,
@@ -43,18 +55,31 @@ from potpie.runtime.protocol import (
 )
 from potpie.runtime.resource_manager import (
     AcquisitionRequest,
+    AuthorizationScope,
     ContextResourceManager,
     ContextSelector,
     DestructiveIntent,
 )
-from potpie_context_engine import ContextEngine, Failure, Outcome, Success
+from potpie_context_engine import (
+    ContextEngine,
+    ContextIdentity,
+    Failure,
+    Outcome,
+    Success,
+)
 from potpie_context_engine.requests import (
+    ApplyPreviewRequest,
     CatalogRequest,
     CommitRequest,
+    CommitShowRequest,
+    CommitStatusRequest,
+    CommitsRequest,
     DataPlaneStatusRequest,
     DescribeRequest,
+    DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
+    GraphSliceRequest,
     HistoryRequest,
     ImportSnapshotRequest,
     InboxAddRequest,
@@ -65,6 +90,7 @@ from potpie_context_engine.requests import (
     InboxMarkRejectedRequest,
     InboxShowRequest,
     InspectRequest,
+    JournalStatusRequest,
     MutateRequest,
     NeighborhoodRequest,
     NudgeRequest,
@@ -72,14 +98,26 @@ from potpie_context_engine.requests import (
     ProposeRequest,
     QualityRequest,
     ReadRequest,
+    RebuildCommitsRequest,
     RecordRequest,
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    ResourceGetRequest,
+    ResourceImportRequest,
+    ResourceIndexBuildRequest,
+    ResourceIndexRebuildRequest,
+    ResourceIndexStatusRequest,
+    ResourceListRequest,
+    ResourceRmRequest,
+    ResourceStatusRequest,
+    RevertPreviewRequest,
+    RollbackPreviewRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
+    VerifyCommitRequest,
 )
 
 
@@ -107,7 +145,7 @@ class DaemonTransport(Protocol):
 
 
 class EngineClient(ABC):
-    """Named client surface mirroring the public ContextEngine operation catalog."""
+    """Named client methods for the public ContextEngine operation catalog."""
 
     @abstractmethod
     async def _dispatch(
@@ -149,6 +187,9 @@ class EngineClient(ABC):
 
     async def inspect(self, request: InspectRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.INSPECT, request)
+
+    async def graph_slice(self, request: GraphSliceRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.GRAPH_SLICE, request)
 
     async def export_snapshot(self, request: ExportSnapshotRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.EXPORT_SNAPSHOT, request)
@@ -232,197 +273,209 @@ class EngineClient(ABC):
     async def nudge(self, request: NudgeRequest) -> ClientOutcome:
         return await self._dispatch(EngineOperation.NUDGE, request)
 
+    async def resource_import(self, request: ResourceImportRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_IMPORT, request)
 
-EngineHandler: TypeAlias = Callable[
-    [ContextEngine, EngineRequest], Awaitable[Outcome[object]]
-]
+    async def resource_get(self, request: ResourceGetRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_GET, request)
+
+    async def resource_list(self, request: ResourceListRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_LIST, request)
+
+    async def resource_rm(
+        self,
+        request: ResourceRmRequest,
+        *,
+        confirmation: DestructiveConfirmation | None = None,
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_RM, request, confirmation)
+
+    async def resource_status(self, request: ResourceStatusRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_STATUS, request)
+
+    async def resource_index_status(
+        self, request: ResourceIndexStatusRequest
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_INDEX_STATUS, request)
+
+    async def resource_index_build(
+        self, request: ResourceIndexBuildRequest
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_INDEX_BUILD, request)
+
+    async def resource_index_rebuild(
+        self, request: ResourceIndexRebuildRequest
+    ) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.RESOURCE_INDEX_REBUILD, request)
+
+    async def commit_status(self, request: CommitStatusRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.COMMIT_STATUS, request)
+
+    async def verify_commit(self, request: VerifyCommitRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.VERIFY_COMMIT, request)
+
+    async def journal_status(self, request: JournalStatusRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.JOURNAL_STATUS, request)
+
+    async def commits(self, request: CommitsRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.COMMITS, request)
+
+    async def commit_show(self, request: CommitShowRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.COMMIT_SHOW, request)
+
+    async def revert_preview(self, request: RevertPreviewRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.REVERT_PREVIEW, request)
+
+    async def rollback_preview(self, request: RollbackPreviewRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.ROLLBACK_PREVIEW, request)
+
+    async def apply_preview(
+        self,
+        request: ApplyPreviewRequest,
+        *,
+        confirmation: DestructiveConfirmation | None = None,
+    ) -> ClientOutcome:
+        return await self._dispatch(
+            EngineOperation.APPLY_PREVIEW, request, confirmation
+        )
+
+    async def disable_rollback(self, request: DisableRollbackRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.DISABLE_ROLLBACK, request)
+
+    async def rebuild_commits(self, request: RebuildCommitsRequest) -> ClientOutcome:
+        return await self._dispatch(EngineOperation.REBUILD_COMMITS, request)
 
 
-async def _resolve(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.resolve(cast(ResolveRequest, request))
-
-
-async def _search(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.search(cast(SearchRequest, request))
-
-
-async def _record(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.record(cast(RecordRequest, request))
-
-
-async def _data_plane_status(
-    engine: ContextEngine, request: EngineRequest
+async def _invoke_engine(
+    engine: ContextEngine, operation: EngineOperation, request: EngineRequest
 ) -> Outcome[object]:
-    return await engine.data_plane_status(cast(DataPlaneStatusRequest, request))
+    """Dispatch a typed request to its engine operation."""
+
+    match operation:
+        case EngineOperation.RESOLVE:
+            return await engine.resolve(cast(ResolveRequest, request))
+        case EngineOperation.SEARCH:
+            return await engine.search(cast(SearchRequest, request))
+        case EngineOperation.RECORD:
+            return await engine.record(cast(RecordRequest, request))
+        case EngineOperation.DATA_PLANE_STATUS:
+            return await engine.data_plane_status(cast(DataPlaneStatusRequest, request))
+        case EngineOperation.CATALOG:
+            return await engine.catalog(cast(CatalogRequest, request))
+        case EngineOperation.DESCRIBE:
+            return await engine.describe(cast(DescribeRequest, request))
+        case EngineOperation.READ:
+            return await engine.read(cast(ReadRequest, request))
+        case EngineOperation.SEARCH_ENTITIES:
+            return await engine.search_entities(cast(SearchEntitiesRequest, request))
+        case EngineOperation.MUTATE:
+            return await engine.mutate(cast(MutateRequest, request))
+        case EngineOperation.NEIGHBORHOOD:
+            return await engine.neighborhood(cast(NeighborhoodRequest, request))
+        case EngineOperation.INSPECT:
+            return await engine.inspect(cast(InspectRequest, request))
+        case EngineOperation.GRAPH_SLICE:
+            return await engine.slice(cast(GraphSliceRequest, request))
+        case EngineOperation.EXPORT_SNAPSHOT:
+            return await engine.export_snapshot(cast(ExportSnapshotRequest, request))
+        case EngineOperation.IMPORT_SNAPSHOT:
+            return await engine.import_snapshot(cast(ImportSnapshotRequest, request))
+        case EngineOperation.REPAIR:
+            return await engine.repair(cast(RepairRequest, request))
+        case EngineOperation.RESET_CONTEXT:
+            return await engine.reset_context(cast(ResetContextRequest, request))
+        case EngineOperation.PROPOSE:
+            return await engine.propose(cast(ProposeRequest, request))
+        case EngineOperation.COMMIT:
+            return await engine.commit(cast(CommitRequest, request))
+        case EngineOperation.HISTORY:
+            return await engine.history(cast(HistoryRequest, request))
+        case EngineOperation.QUALITY:
+            return await engine.quality(cast(QualityRequest, request))
+        case EngineOperation.INBOX_ADD:
+            return await engine.inbox_add(cast(InboxAddRequest, request))
+        case EngineOperation.INBOX_LIST:
+            return await engine.inbox_list(cast(InboxListRequest, request))
+        case EngineOperation.INBOX_SHOW:
+            return await engine.inbox_show(cast(InboxShowRequest, request))
+        case EngineOperation.INBOX_CLAIM:
+            return await engine.inbox_claim(cast(InboxClaimRequest, request))
+        case EngineOperation.INBOX_MARK_APPLIED:
+            return await engine.inbox_mark_applied(
+                cast(InboxMarkAppliedRequest, request)
+            )
+        case EngineOperation.INBOX_MARK_REJECTED:
+            return await engine.inbox_mark_rejected(
+                cast(InboxMarkRejectedRequest, request)
+            )
+        case EngineOperation.INBOX_CLOSE:
+            return await engine.inbox_close(cast(InboxCloseRequest, request))
+        case EngineOperation.SUBMIT_EVENT:
+            return await engine.submit_event(cast(SubmitEventRequest, request))
+        case EngineOperation.SUBMIT_ARTIFACT:
+            return await engine.submit_artifact(cast(SubmitArtifactRequest, request))
+        case EngineOperation.PROCESSING_STATUS:
+            return await engine.processing_status(
+                cast(ProcessingStatusRequest, request)
+            )
+        case EngineOperation.NUDGE:
+            return await engine.nudge(cast(NudgeRequest, request))
+        case EngineOperation.RESOURCE_IMPORT:
+            return await engine.resource_import(cast(ResourceImportRequest, request))
+        case EngineOperation.RESOURCE_GET:
+            return await engine.resource_get(cast(ResourceGetRequest, request))
+        case EngineOperation.RESOURCE_LIST:
+            return await engine.resource_list(cast(ResourceListRequest, request))
+        case EngineOperation.RESOURCE_RM:
+            return await engine.resource_rm(cast(ResourceRmRequest, request))
+        case EngineOperation.RESOURCE_STATUS:
+            return await engine.resource_status(cast(ResourceStatusRequest, request))
+        case EngineOperation.RESOURCE_INDEX_STATUS:
+            return await engine.resource_index_status(
+                cast(ResourceIndexStatusRequest, request)
+            )
+        case EngineOperation.RESOURCE_INDEX_BUILD:
+            return await engine.resource_index_build(
+                cast(ResourceIndexBuildRequest, request)
+            )
+        case EngineOperation.RESOURCE_INDEX_REBUILD:
+            return await engine.resource_index_rebuild(
+                cast(ResourceIndexRebuildRequest, request)
+            )
+        case EngineOperation.COMMIT_STATUS:
+            return await engine.commit_status(cast(CommitStatusRequest, request))
+        case EngineOperation.VERIFY_COMMIT:
+            return await engine.verify_commit(cast(VerifyCommitRequest, request))
+        case EngineOperation.JOURNAL_STATUS:
+            return await engine.journal_status(cast(JournalStatusRequest, request))
+        case EngineOperation.COMMITS:
+            return await engine.commits(cast(CommitsRequest, request))
+        case EngineOperation.COMMIT_SHOW:
+            return await engine.commit_show(cast(CommitShowRequest, request))
+        case EngineOperation.REVERT_PREVIEW:
+            return await engine.revert_preview(cast(RevertPreviewRequest, request))
+        case EngineOperation.ROLLBACK_PREVIEW:
+            return await engine.rollback_preview(cast(RollbackPreviewRequest, request))
+        case EngineOperation.APPLY_PREVIEW:
+            return await engine.apply_preview(cast(ApplyPreviewRequest, request))
+        case EngineOperation.DISABLE_ROLLBACK:
+            return await engine.disable_rollback(cast(DisableRollbackRequest, request))
+        case EngineOperation.REBUILD_COMMITS:
+            return await engine.rebuild_commits(cast(RebuildCommitsRequest, request))
+    raise RuntimeError(f"engine operation {operation!r} has no local handler")
 
 
-async def _catalog(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.catalog(cast(CatalogRequest, request))
+class TypedOperationHandler:
+    """Shared transport-neutral handler for every typed operation family.
 
-
-async def _describe(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.describe(cast(DescribeRequest, request))
-
-
-async def _read(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.read(cast(ReadRequest, request))
-
-
-async def _search_entities(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.search_entities(cast(SearchEntitiesRequest, request))
-
-
-async def _mutate(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.mutate(cast(MutateRequest, request))
-
-
-async def _neighborhood(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.neighborhood(cast(NeighborhoodRequest, request))
-
-
-async def _inspect(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.inspect(cast(InspectRequest, request))
-
-
-async def _export_snapshot(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.export_snapshot(cast(ExportSnapshotRequest, request))
-
-
-async def _import_snapshot(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.import_snapshot(cast(ImportSnapshotRequest, request))
-
-
-async def _repair(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.repair(cast(RepairRequest, request))
-
-
-async def _reset_context(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.reset_context(cast(ResetContextRequest, request))
-
-
-async def _propose(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.propose(cast(ProposeRequest, request))
-
-
-async def _commit(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.commit(cast(CommitRequest, request))
-
-
-async def _history(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.history(cast(HistoryRequest, request))
-
-
-async def _quality(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.quality(cast(QualityRequest, request))
-
-
-async def _inbox_add(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.inbox_add(cast(InboxAddRequest, request))
-
-
-async def _inbox_list(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.inbox_list(cast(InboxListRequest, request))
-
-
-async def _inbox_show(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.inbox_show(cast(InboxShowRequest, request))
-
-
-async def _inbox_claim(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.inbox_claim(cast(InboxClaimRequest, request))
-
-
-async def _inbox_mark_applied(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.inbox_mark_applied(cast(InboxMarkAppliedRequest, request))
-
-
-async def _inbox_mark_rejected(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.inbox_mark_rejected(cast(InboxMarkRejectedRequest, request))
-
-
-async def _inbox_close(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.inbox_close(cast(InboxCloseRequest, request))
-
-
-async def _submit_event(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.submit_event(cast(SubmitEventRequest, request))
-
-
-async def _submit_artifact(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.submit_artifact(cast(SubmitArtifactRequest, request))
-
-
-async def _processing_status(
-    engine: ContextEngine, request: EngineRequest
-) -> Outcome[object]:
-    return await engine.processing_status(cast(ProcessingStatusRequest, request))
-
-
-async def _nudge(engine: ContextEngine, request: EngineRequest) -> Outcome[object]:
-    return await engine.nudge(cast(NudgeRequest, request))
-
-
-_ENGINE_HANDLERS: dict[EngineOperation, EngineHandler] = {
-    EngineOperation.RESOLVE: _resolve,
-    EngineOperation.SEARCH: _search,
-    EngineOperation.RECORD: _record,
-    EngineOperation.DATA_PLANE_STATUS: _data_plane_status,
-    EngineOperation.CATALOG: _catalog,
-    EngineOperation.DESCRIBE: _describe,
-    EngineOperation.READ: _read,
-    EngineOperation.SEARCH_ENTITIES: _search_entities,
-    EngineOperation.MUTATE: _mutate,
-    EngineOperation.NEIGHBORHOOD: _neighborhood,
-    EngineOperation.INSPECT: _inspect,
-    EngineOperation.EXPORT_SNAPSHOT: _export_snapshot,
-    EngineOperation.IMPORT_SNAPSHOT: _import_snapshot,
-    EngineOperation.REPAIR: _repair,
-    EngineOperation.RESET_CONTEXT: _reset_context,
-    EngineOperation.PROPOSE: _propose,
-    EngineOperation.COMMIT: _commit,
-    EngineOperation.HISTORY: _history,
-    EngineOperation.QUALITY: _quality,
-    EngineOperation.INBOX_ADD: _inbox_add,
-    EngineOperation.INBOX_LIST: _inbox_list,
-    EngineOperation.INBOX_SHOW: _inbox_show,
-    EngineOperation.INBOX_CLAIM: _inbox_claim,
-    EngineOperation.INBOX_MARK_APPLIED: _inbox_mark_applied,
-    EngineOperation.INBOX_MARK_REJECTED: _inbox_mark_rejected,
-    EngineOperation.INBOX_CLOSE: _inbox_close,
-    EngineOperation.SUBMIT_EVENT: _submit_event,
-    EngineOperation.SUBMIT_ARTIFACT: _submit_artifact,
-    EngineOperation.PROCESSING_STATUS: _processing_status,
-    EngineOperation.NUDGE: _nudge,
-}
-
-if set(_ENGINE_HANDLERS) != set(ENGINE_OPERATION_CATALOG):
-    raise RuntimeError("each engine operation must have exactly one local handler")
-
-
-class TypedEngineOperationHandler:
-    """Shared transport-neutral lease-to-engine operation handler."""
+    Engine operations acquire a lease from the Resource Manager and run on the
+    leased engine under the operation coordinator. Host (``host.*``) and
+    extension (``ext.*``) operations reach the embedding host's handler: one
+    that requires a context is authenticated, resolved and authorized by the
+    same Resource Manager first; one that does not is authenticated only.
+    Every handler call runs with its authorization scope bound, which is where
+    commit access and the acting principal come from.
+    """
 
     def __init__(
         self,
@@ -435,13 +488,28 @@ class TypedEngineOperationHandler:
         self._coordinator = coordinator
         self._context_free_handler = context_free_handler
 
+    @property
+    def resource_manager(self) -> ContextResourceManager:
+        return self._resource_manager
+
     async def handle(
         self,
-        request: EngineOperationRequest,
+        request: EngineOperationRequest | HostOperationRequest,
         *,
         authentication: object,
+        host_handler: HostOperationHandler | None = None,
+        extension: HostExtension | None = None,
     ) -> ClientOutcome:
-        spec = ENGINE_OPERATION_CATALOG[request.operation]
+        if isinstance(request, HostOperationRequest):
+            return await self._handle_host(
+                request,
+                authentication=authentication,
+                host_handler=host_handler,
+                extension=extension,
+            )
+        spec = effective_operation_spec(
+            ENGINE_OPERATION_CATALOG[request.operation], request.payload
+        )
         if not spec.context_required:
             if self._context_free_handler is None:
                 return Failure(
@@ -457,14 +525,7 @@ class TypedEngineOperationHandler:
                     request.operation, request.payload
                 )
             except Exception:
-                return Failure(
-                    DaemonInternalError(
-                        code="operation_handler_failed",
-                        message="the typed operation handler failed",
-                        details={"request_id": request.request_id},
-                        recommended_next_action="retry or inspect runtime logs",
-                    )
-                )
+                return _handler_failed(request.request_id)
         try:
             acquisition = await self._resource_manager.acquire(
                 AcquisitionRequest(
@@ -477,14 +538,7 @@ class TypedEngineOperationHandler:
                 )
             )
         except Exception:
-            return Failure(
-                DaemonInternalError(
-                    code="operation_acquisition_failed",
-                    message="the typed operation could not acquire its context",
-                    details={"request_id": request.request_id},
-                    recommended_next_action="retry or inspect runtime logs",
-                )
-            )
+            return _acquisition_failed(request.request_id)
         if isinstance(acquisition, Failure):
             return acquisition
         lease = acquisition.value
@@ -495,20 +549,121 @@ class TypedEngineOperationHandler:
                     context=lease.context,
                     request=request.payload,
                 ):
-                    return await _ENGINE_HANDLERS[request.operation](
-                        lease.engine, request.payload
-                    )
+                    # Commit access and the acting principal derive from the
+                    # scope this request was authorized under.
+                    with authorization_scope(lease.scope):
+                        return await _invoke_engine(
+                            lease.engine, request.operation, request.payload
+                        )
             except Exception:
-                return Failure(
-                    DaemonInternalError(
-                        code="operation_handler_failed",
-                        message="the typed operation handler failed",
-                        details={"request_id": request.request_id},
-                        recommended_next_action="retry or inspect runtime logs",
-                    )
-                )
+                return _handler_failed(request.request_id)
         finally:
             await lease.release()
+
+    async def _handle_host(
+        self,
+        request: HostOperationRequest,
+        *,
+        authentication: object,
+        host_handler: HostOperationHandler | None,
+        extension: HostExtension | None,
+    ) -> ClientOutcome:
+        operation = str(request.operation)
+        if request.is_extension:
+            if extension is None or extension.name != operation:
+                return _not_served(request)
+            spec = extension.spec
+        else:
+            if host_handler is None:
+                return _not_served(request)
+            spec = HOST_OPERATION_CATALOG[HostOperation(operation)]
+
+        scope: AuthorizationScope | None = None
+        context: ContextIdentity | None = None
+        try:
+            if spec.context_required:
+                authorized = await self._resource_manager.authorize(
+                    AcquisitionRequest(
+                        request_id=request.request_id,
+                        selector=request.selector,
+                        operation=operation,
+                        authentication=authentication,
+                        destructive=spec.destructive,
+                        destructive_intent=request.destructive_intent,
+                    )
+                )
+                if isinstance(authorized, Failure):
+                    return authorized
+                actor = authorized.value.actor
+                context = authorized.value.context
+                scope = authorized.value.scope
+            else:
+                authenticated = await self._resource_manager.authenticate(
+                    authentication
+                )
+                if isinstance(authenticated, Failure):
+                    return authenticated
+                actor = authenticated.value
+        except Exception:
+            return _acquisition_failed(request.request_id)
+
+        try:
+            with contextlib.ExitStack() as stack:
+                if scope is not None:
+                    stack.enter_context(authorization_scope(scope))
+                if extension is not None:
+                    result = await extension.handle(
+                        request.payload, actor=actor, context=context
+                    )
+                else:
+                    assert host_handler is not None
+                    result = await host_handler.handle(
+                        HostOperation(operation),
+                        request.payload,
+                        actor=actor,
+                        context=context,
+                    )
+        except Exception:
+            return _handler_failed(request.request_id)
+        if isinstance(result, (Success, Failure)):
+            return result
+        return Success(result)
+
+
+#: The former name, kept for callers that only route engine operations.
+TypedEngineOperationHandler = TypedOperationHandler
+
+
+def _handler_failed(request_id: str) -> Failure[DaemonInternalError]:
+    return Failure(
+        DaemonInternalError(
+            code="operation_handler_failed",
+            message="the typed operation handler failed",
+            details={"request_id": request_id},
+            recommended_next_action="retry or inspect runtime logs",
+        )
+    )
+
+
+def _acquisition_failed(request_id: str) -> Failure[DaemonInternalError]:
+    return Failure(
+        DaemonInternalError(
+            code="operation_acquisition_failed",
+            message="the typed operation could not acquire its context",
+            details={"request_id": request_id},
+            recommended_next_action="retry or inspect runtime logs",
+        )
+    )
+
+
+def _not_served(request: HostOperationRequest) -> Failure[ProtocolError]:
+    return Failure(
+        ProtocolError(
+            code="operation_unknown",
+            message="the requested operation is not registered",
+            details={"operation": str(request.operation)},
+        )
+    )
 
 
 class LocalEngineClient(EngineClient):
@@ -526,7 +681,7 @@ class LocalEngineClient(EngineClient):
     ) -> None:
         self._selector = selector
         self._authentication = authentication
-        self._handler = TypedEngineOperationHandler(
+        self._handler = TypedOperationHandler(
             resource_manager,
             coordinator=coordinator,
             context_free_handler=context_free_handler,
@@ -637,7 +792,9 @@ class DaemonEngineClient(EngineClient):
         envelope = envelope_or_error.value
         response_or_error = await self._send(
             envelope,
-            safety=ENGINE_OPERATION_CATALOG[operation].safety,
+            safety=effective_operation_spec(
+                ENGINE_OPERATION_CATALOG[operation], request
+            ).safety,
         )
         if isinstance(response_or_error, Failure):
             return response_or_error
@@ -664,7 +821,14 @@ class DaemonEngineClient(EngineClient):
 
 
 class DaemonControlClient:
-    """Finite typed client for live daemon handshake and shutdown control."""
+    """Finite typed client for live daemon handshake and shutdown control.
+
+    :meth:`handshake` establishes full compatibility, which is what readiness
+    means for this client. A daemon whose operation catalog differs still
+    answers with a ticket scoped to daemon control; the client keeps it, so
+    :meth:`status` and :meth:`shutdown` reach a daemon from another build
+    while every context operation stays refused.
+    """
 
     def __init__(
         self,
@@ -677,12 +841,82 @@ class DaemonControlClient:
         self._expected_instance_id = expected_instance_id
         self._request_id_factory = request_id_factory or (lambda: str(uuid4()))
         self._handshake_result: HandshakeResult | None = None
+        self._control_result: HandshakeResult | None = None
 
     @property
     def handshake_result(self) -> HandshakeResult | None:
+        """The fully compatible handshake, if one succeeded."""
         return self._handshake_result
 
+    @property
+    def control_result(self) -> HandshakeResult | None:
+        """The handshake whose ticket reaches status and shutdown, if any."""
+        return self._handshake_result or self._control_result
+
+    @property
+    def catalog_compatible(self) -> bool | None:
+        """Whether the daemon serves this client's operation catalog.
+
+        ``None`` until a handshake has been answered.
+        """
+        if self._handshake_result is not None:
+            return True
+        if self._control_result is not None:
+            return False
+        return None
+
     async def handshake(
+        self,
+    ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
+        exchanged = await self._exchange_handshake()
+        if isinstance(exchanged, Failure):
+            return exchanged
+        result = exchanged.value
+        validation_error = _validate_handshake_result(
+            result,
+            expected_instance_id=self._expected_instance_id,
+        )
+        if validation_error is not None:
+            if (
+                _validate_control_handshake_result(
+                    result, expected_instance_id=self._expected_instance_id
+                )
+                is None
+            ):
+                self._control_result = result
+            return Failure(validation_error)
+        self._handshake_result = result
+        return Success(result)
+
+    async def control_handshake(
+        self,
+    ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
+        """A handshake good enough for status and shutdown, reusing one held."""
+
+        held = self.control_result
+        if held is not None:
+            return Success(held)
+        exchanged = await self._exchange_handshake()
+        if isinstance(exchanged, Failure):
+            return exchanged
+        result = exchanged.value
+        validation_error = _validate_control_handshake_result(
+            result, expected_instance_id=self._expected_instance_id
+        )
+        if validation_error is not None:
+            return Failure(validation_error)
+        if (
+            _validate_handshake_result(
+                result, expected_instance_id=self._expected_instance_id
+            )
+            is None
+        ):
+            self._handshake_result = result
+        else:
+            self._control_result = result
+        return Success(result)
+
+    async def _exchange_handshake(
         self,
     ) -> Success[HandshakeResult] | Failure[RuntimeBoundaryError]:
         request = HandshakeRequest(
@@ -713,19 +947,13 @@ class DaemonControlClient:
                     message="daemon handshake returned an invalid result",
                 )
             )
-        validation_error = _validate_handshake_result(
-            result,
-            expected_instance_id=self._expected_instance_id,
-        )
-        if validation_error is not None:
-            return Failure(validation_error)
-        self._handshake_result = result
         return Success(result)
 
     async def shutdown(
         self, *, reason: str = "client_requested"
     ) -> Success[ShutdownResult] | Failure[RuntimeBoundaryError]:
-        if self._handshake_result is None:
+        handshake = self.control_result
+        if handshake is None:
             return Failure(
                 ProtocolError(
                     code="handshake_required",
@@ -738,7 +966,7 @@ class DaemonControlClient:
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
             payload=ShutdownPayload(reason=reason),
-            compatibility_ticket=self._handshake_result.compatibility_ticket,
+            compatibility_ticket=handshake.compatibility_ticket,
         )
         response_or_error = await _send_protocol_request(
             transport=self._transport,
@@ -763,7 +991,8 @@ class DaemonControlClient:
     async def status(
         self,
     ) -> Success[DaemonStatusResult] | Failure[RuntimeBoundaryError]:
-        if self._handshake_result is None:
+        handshake = self.control_result
+        if handshake is None:
             return Failure(
                 ProtocolError(
                     code="handshake_required",
@@ -776,7 +1005,7 @@ class DaemonControlClient:
             protocol_version=PROTOCOL_VERSION,
             request_id=self._request_id_factory(),
             payload=DaemonStatusPayload(),
-            compatibility_ticket=self._handshake_result.compatibility_ticket,
+            compatibility_ticket=handshake.compatibility_ticket,
         )
         response_or_error = await _send_protocol_request(
             transport=self._transport,
@@ -821,6 +1050,7 @@ def _build_operation_request(
                 },
             )
         )
+    spec = effective_operation_spec(spec, payload)
     if confirmation is not None and not spec.destructive:
         return Failure(
             ProtocolError(
@@ -920,6 +1150,77 @@ def _validate_handshake_result(
     *,
     expected_instance_id: str | None,
 ) -> ProtocolError | None:
+    """Full compatibility: readiness for every operation in this catalog."""
+
+    identity_error = _validate_handshake_identity(
+        result, expected_instance_id=expected_instance_id
+    )
+    if identity_error is not None:
+        return identity_error
+    if result.operation_catalog_fingerprint != operation_catalog_fingerprint():
+        return ProtocolError(
+            code="operation_catalog_mismatch",
+            message="daemon and client operation catalogs do not match",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    if not result.compatibility_ticket:
+        return ProtocolError(
+            code="compatibility_ticket_missing",
+            message="daemon handshake did not return a compatibility ticket",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    missing = sorted(set(operation_capabilities()) - set(result.capabilities))
+    if missing:
+        return ProtocolError(
+            code="daemon_capability_missing",
+            message="daemon does not support the required operation catalog",
+            details={"missing_capabilities": tuple(missing)},
+            recommended_next_action="install compatible Potpie versions",
+        )
+    return None
+
+
+def _validate_control_handshake_result(
+    result: HandshakeResult,
+    *,
+    expected_instance_id: str | None,
+) -> ProtocolError | None:
+    """Enough for daemon status and shutdown, whatever the catalog.
+
+    Those operations' wire semantics follow the protocol version, so a daemon
+    whose catalog differs still answers them under a control-scoped ticket.
+    """
+
+    identity_error = _validate_handshake_identity(
+        result, expected_instance_id=expected_instance_id
+    )
+    if identity_error is not None:
+        return identity_error
+    if not result.compatibility_ticket:
+        return ProtocolError(
+            code="compatibility_ticket_missing",
+            message="daemon handshake did not return a compatibility ticket",
+            recommended_next_action="restart with a compatible Potpie version",
+        )
+    required = {DaemonControlOperation.HANDSHAKE.value} | {
+        operation.value for operation in CONTROL_TICKET_OPERATIONS
+    }
+    missing = sorted(required - set(result.capabilities))
+    if missing:
+        return ProtocolError(
+            code="daemon_capability_missing",
+            message="daemon does not support daemon status and shutdown",
+            details={"missing_capabilities": tuple(missing)},
+            recommended_next_action="install compatible Potpie versions",
+        )
+    return None
+
+
+def _validate_handshake_identity(
+    result: HandshakeResult,
+    *,
+    expected_instance_id: str | None,
+) -> ProtocolError | None:
     if expected_instance_id is not None and result.instance_id != expected_instance_id:
         return ProtocolError(
             code="daemon_instance_mismatch",
@@ -945,26 +1246,6 @@ def _validate_handshake_result(
             },
             recommended_next_action="install compatible Potpie versions",
         )
-    if result.operation_catalog_fingerprint != operation_catalog_fingerprint():
-        return ProtocolError(
-            code="operation_catalog_mismatch",
-            message="daemon and client operation catalogs do not match",
-            recommended_next_action="restart with a compatible Potpie version",
-        )
-    if not result.compatibility_ticket:
-        return ProtocolError(
-            code="compatibility_ticket_missing",
-            message="daemon handshake did not return a compatibility ticket",
-            recommended_next_action="restart with a compatible Potpie version",
-        )
-    missing = sorted(set(operation_capabilities()) - set(result.capabilities))
-    if missing:
-        return ProtocolError(
-            code="daemon_capability_missing",
-            message="daemon does not support the required operation catalog",
-            details={"missing_capabilities": tuple(missing)},
-            recommended_next_action="install compatible Potpie versions",
-        )
     return None
 
 
@@ -978,4 +1259,5 @@ __all__ = [
     "LocalEngineClient",
     "RequestIdFactory",
     "TypedEngineOperationHandler",
+    "TypedOperationHandler",
 ]

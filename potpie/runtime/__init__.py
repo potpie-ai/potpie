@@ -9,6 +9,7 @@ from potpie.runtime.clients import (
     EngineClient,
     LocalEngineClient,
     TypedEngineOperationHandler,
+    TypedOperationHandler,
 )
 from potpie.runtime.codec import (
     decode_request,
@@ -43,6 +44,7 @@ from potpie.runtime.protocol import (
     PROTOCOL_MAX_VERSION,
     PROTOCOL_MIN_VERSION,
     PROTOCOL_VERSION,
+    DaemonBuild,
     DaemonInternalError,
     DaemonStatusPayload,
     DaemonStatusRequest,
@@ -52,6 +54,7 @@ from potpie.runtime.protocol import (
     HandshakePayload,
     HandshakeRequest,
     HandshakeResult,
+    HostOperationRequest,
     ProtocolError,
     ProtocolRequest,
     ProtocolResponse,
@@ -80,6 +83,7 @@ from potpie.runtime.resource_manager import (
     ResourceLifecycleError,
     SelectionError,
 )
+from potpie.runtime.remote import HostConnection, connect
 from potpie.runtime.server import (
     AuthenticatedDaemonCaller,
     CanonicalDaemonRuntime,
@@ -110,6 +114,7 @@ __all__ = [
     "DaemonControlClient",
     "DaemonBootFactory",
     "DaemonBootSpec",
+    "DaemonBuild",
     "DaemonEngineClient",
     "DaemonInternalError",
     "DaemonObserver",
@@ -134,6 +139,8 @@ __all__ = [
     "HandshakePayload",
     "HandshakeRequest",
     "HandshakeResult",
+    "HostConnection",
+    "HostOperationRequest",
     "HostResource",
     "HttpDaemonTransport",
     "LeaseOwnership",
@@ -158,6 +165,8 @@ __all__ = [
     "StopResult",
     "TransportFailure",
     "TypedEngineOperationHandler",
+    "TypedOperationHandler",
+    "connect",
     "decode_request",
     "decode_response",
     "encode_request",

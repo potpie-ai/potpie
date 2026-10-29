@@ -5,8 +5,6 @@ description: How agents and humans read ranked evidence from project memory.
 
 ## Overview
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
-
 This doc owns the **read side** of the Context Graph: how an agent or human pulls
 ranked, sourced evidence out of project memory. Writing is covered in
 [`writing.md`](./writing.md); the static contract those reads are shaped by (entities,
@@ -53,7 +51,7 @@ flowchart LR
   q_in["resolve / search / graph read / nudge"]
   q_orch["ReadOrchestrator.resolve()"]
   q_vocab["includes_for_request<br/>(agent_context_port)"]
-  q_readers["9 P9 readers"]
+  q_readers["10 P9 readers"]
   q_cqp[("ClaimQueryPort.find_claims")]
   q_rank["RankingService (P7)"]
   q_env["EnvelopeBuilder.build()"]
@@ -73,7 +71,7 @@ things:
 
 1. **normalize `intent` → include families** via `includes_for_request`
    (`domain/agent_context_port.py`);
-2. **route each include to its P9 reader** through a `_routing` dict of **9 readers**;
+2. **route each include to its P9 reader** through a `_routing` dict of **10 readers**;
 3. **run each reader over the canonical `ClaimQueryPort`** (no reader touches storage
    directly);
 4. **hand `(include, ReadResponse)` pairs to `EnvelopeBuilder.build()`** → one
@@ -119,9 +117,38 @@ per-claim probability. Per-claim trust is carried on each item as the ranker `sc
 `breakdown`, `truth`, and `evidence_strength`. (When surfaced through `graph read`,
 `overall_confidence` reappears as `quality.confidence`.)
 
+### What an item carries
+
+- **Bounded details.** Items carry authored, kind-specific details: a fix's root
+  cause, remedy and check outcomes; a decision's rationale and rejected
+  alternatives; `EXPOSES` API links in infra neighbourhoods. They survive compact
+  and full reads, JSON and human output. Detail text is capped at 2,000
+  characters and lists at 12 entries, with omission metadata and a quoted,
+  pot-preserving follow-up command that opens the full entity or source text.
+- **Verification outcomes.** Only explicit successful checks add corroboration;
+  failed, partial, unknown and numeric statuses do not. Older `VERIFIED` claims
+  with no outcome are labelled `legacy_verified`.
+- **Identity lookup** distinguishes exact matches, ambiguity across repositories,
+  missing identifiers and approximate candidates. Keep repo scope for a bare PR
+  or issue number.
+- **Time.** A claim is current from its start (inclusive) to its end (exclusive),
+  so an end scheduled for next week leaves it current today; `as_of` evaluates
+  the same interval at another time. An `Activity`'s `occurred_at` is when it
+  happened and `observed_at` when Potpie learned of it, so linking it later does
+  not move it in the timeline. New writes normalize timestamps to UTC; older
+  native records with other offsets need an explicit repair.
+- **Citations are revision-pinned** (`potpie://res/<doc>/<section>/<seq>@rev<N>`)
+  and always open that revision's text. Claims whose evidence changed carry an
+  evidence-review marker in named reads, `resolve`/`search` and
+  `graph quality stale-facts`; the marker says the evidence needs review, not
+  that the conclusion is false.
+
+An empty or sparse result does not prove the source has no relevant fact; read
+`coverage` before concluding.
+
 ---
 
-## 4. Reader pattern and the 9 readers
+## 4. Reader pattern and the 10 readers
 
 Each P9 reader (`application/readers/`) is small and uniform. Shared scaffolding lives
 in `_common.py`: `ReadRequest`/`ReadResponse`, `make_task_context`,
@@ -132,27 +159,28 @@ in `_common.py`: `ReadRequest`/`ReadResponse`, `make_task_context`,
 use-case-specific `scope_overlap` → builds `Candidate`s → delegates ranking to the
 shared `RankingService`.
 
-The 9 readers map one-to-one onto the 9 named views (§8):
+The 10 readers map one-to-one onto the 10 named views (§8):
 
 | Reader (`include`) | Predicates it reads | Notes |
 |---|---|---|
 | `coding_preferences` | `POLICY_APPLIES_TO` | hierarchical/containment overlap over `code_scope`; a hard-zero overlap drops the row |
 | `features` | `PROVIDES`, `IMPLEMENTED_IN` | anchored on service/repo, expands to feature keys (`traversal` view) |
-| `infra_topology` | `DEFINED_IN`, `DEPLOYED_TO`, `DEPENDS_ON`, `USES`, `USES_ADAPTER`, `CONFIGURES`, `DEPLOYED_WITH`, `HOSTED_ON`, `OWNED_BY`, `PROVIDES`, `IMPLEMENTED_IN` | the **in-view Traverse axis**: bounded BFS (`depth` capped at 4, `direction` out/in/both) with environment-qualified edge filtering |
+| `infra_topology` | `DEFINED_IN`, `DEPLOYED_TO`, `DEPENDS_ON`, `USES`, `USES_ADAPTER`, `CONFIGURES`, `DEPLOYED_WITH`, `EXPOSES`, `HOSTED_ON`, `OWNED_BY` | the **in-view Traverse axis**: bounded BFS (`depth` capped at 4, `direction` out/in/both) with environment-qualified edge filtering |
 | `timeline` | `MENTIONS`, `TOUCHED`, `PERFORMED`, `AUTHORED` | `Activity` rows touching scope inside a `since/until` window (`occurred_at`, fallback `valid_at`); dedupes edges per activity into one event |
 | `prior_bugs` | `RESOLVED`, `ATTEMPTED_FIX_FAILED`, `VERIFIED`, `REPRODUCES` | expands the bug/fix neighborhood, folds `VERIFIED` into fix corroboration, labels failed attempts, hides narrower-scope bugs from broader queries |
 | `decisions` | `DECIDED`, `AFFECTS` | active/superseded decisions for a scope |
 | `owners` | `OWNED_BY`, `MEMBER_OF` | ownership by scope/path |
-| `docs` | `Document RELATED_TO scope` | scoped document context |
+| `docs` | `Document\|DocumentSection DOCUMENTS scope` (plus legacy `Document RELATED_TO scope`), expanded one hop over `SECTION_OF` | scoped reference material — see the resource store in [architecture.md](./architecture.md) |
+| `resources` | none — reads the resource index, not the claim store | passages from ingested documents, each with the chunk id `potpie resource get` takes — see the resource store in [architecture.md](./architecture.md) |
 | `raw_graph` | every live `:RELATES_TO` edge (incl. generic `RELATED_TO`) | unscoped, for the explorer UI — **not** an agent retrieval family |
 
-> Known spec/reader drift: the `service_neighborhood` view spec
-> (`domain/graph_views.py` `inline_relations`) advertises `EXPOSES` where the reader
-> actually traverses `IMPLEMENTED_IN` (`application/readers/infra_topology.py`
-> `_INFRA_PREDICATES`). The table above documents what the reader reads.
+> The `service_neighborhood` view spec (`domain/graph_views.py` `inline_relations`)
+> and the reader (`application/readers/infra_topology.py` `_INFRA_PREDICATES`) now
+> agree: both traverse `EXPOSES`, so API links reach the neighbourhood. Feature
+> links (`PROVIDES`, `IMPLEMENTED_IN`) belong to the `features` reader.
 
 The vocabulary single source of truth is `domain/agent_context_port.py`: it owns
-`CONTEXT_INTENTS` (11), `READER_BACKED_INCLUDES` (9), `CONTEXT_INCLUDE_VALUES` (derived
+`CONTEXT_INTENTS` (12), `READER_BACKED_INCLUDES` (10), `CONTEXT_INCLUDE_VALUES` (derived
 from the ontology's `advertised_include_families()`), `PLANNED_INCLUDES`
 (advertised-but-unbacked → surfaced as `not_implemented`), `DEFAULT_INTENT_INCLUDES`, and
 `CONTEXT_RESOLVE_RECIPES`. `context_port_manifest()` is the stable agent-facing
@@ -276,7 +304,7 @@ declarative `<subgraph>.<view>` contract (`GraphViewSpec`, `domain/graph_views.p
 `v1_include ∈ CONTEXT_INCLUDE_VALUES`.
 
 There are **8 subgraphs** (`debugging`, `recent_changes`, `infra_topology`, `decisions`,
-`features`, `code_topology`, `knowledge`, `admin`) and **9 views**:
+`features`, `code_topology`, `knowledge`, `admin`) and **10 views**:
 
 | Subgraph | View | Backing reader | Use when |
 |---|---|---|---|
@@ -288,6 +316,7 @@ There are **8 subgraphs** (`debugging`, `recent_changes`, `infra_topology`, `dec
 | `features` | `feature_context` | `features` | Feature summary, ownership, implementation links. |
 | `code_topology` | `ownership_by_path` | `owners` | Who owns a path/module. |
 | `knowledge` | `document_context` | `docs` | Scoped document/runbook context. |
+| `knowledge` | `document_passages` | `resources` | Which passage of an ingested document says it. |
 | `admin` | `inspection_slice` | `raw_graph` | Operator/explorer raw slice. |
 
 > Note the corrected names: the prior-occurrences view is under subgraph **`debugging`**
@@ -295,6 +324,27 @@ There are **8 subgraphs** (`debugging`, `recent_changes`, `infra_topology`, `dec
 > carrying `did_you_mean` + `recommended_next_action` migration guidance that points
 > at the canonical `debugging.prior_occurrences`), and the only features view is
 > **`features.feature_context`** (there is no `features.implementation_map`).
+
+When the optional protocol ontology is on (`graph.protocols`, off by default;
+see [ontology.md](./ontology.md)), an eleventh view, `protocols.message_context`,
+is backed by the `protocols` reader family:
+
+- It needs `anchor_entity_key` (a `Service`, `Protocol`, `ProtocolMessage` or
+  `ProtocolField` key) and accepts only exact `revision`, `profile` and
+  `field_path` filters plus `--query`, which narrows message discovery. Any
+  other filter (`--environment`, `--repo`, `--depth`, a time window, a
+  threshold) is refused.
+- Default resolve recipes, chat hints and nudges never include it. Ask for it
+  with `potpie resolve "<question>" --include protocols`, then read each
+  returned message by its anchor with `--detail full`.
+- Its responses stay inside the shared 32 KiB agent output budget, less a
+  6 KiB reserve for the result around the items, and one message takes at most
+  half of the budget. The reader drops whole trailing fields and marks the
+  message `partial` and `truncated`, rather than letting the generic bound clip
+  typed values. A discovery read that anchors on a `Service` or `Protocol` and
+  selects several messages therefore returns full layouts for the first ones
+  and compact pointers for the rest. Read each message by its own anchor, and
+  narrow a large layout with `field_path`.
 
 `graph read` resolves the named view, validates `required_any_scope` + `supported_filters`
 against the view's `ViewContract` (returning `missing_required_scope`/`unsupported_filter`
@@ -367,9 +417,8 @@ predicate); normalized relations use `valid_at`/`valid_until`; PRs/commits/issue
 deployments collapse to a single `Activity` entity (key prefix `activity`);
 `coverage` rows are keyed by the requested **view** (`view`, not `include` — a read
 routes exactly one include family, which stays internal to the trunk); and
-optimistic-concurrency versioning is coarse — `subgraph_versions` is only
-`{"_global": <total pot claim count>}`, not per-subgraph counters (see
-[`writing.md`](./writing.md)).
+`subgraph_versions` is only `{"_global": <pot revision>}`, not per-subgraph
+counters (see [`writing.md`](./writing.md) §5.2).
 
 ---
 
@@ -382,7 +431,7 @@ Full flag lists live in [`cli-flow.md`](./cli-flow.md); this is the read-side or
 | `graph status` | data-plane status for the active pot |
 | `graph catalog [--subgraph] [--profile full\|read]` | **contract discovery** — returns `GraphCatalogResult`: versions, commands, truth classes, mutation ops (+ empty review/deferred), source authorities, `match_mode`, views, public entity types & predicates. Derived entirely from the ontology + view map + constants ("no docs needed"). `--task` is **accepted but ignored in V1.5**. |
 | `graph describe [subgraph] [--view] [--examples]` | Context-free typed metadata operation with identical daemon and in-process semantics; returns a subgraph and optionally one view without selecting a pot or acquiring an engine lease. |
-| `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--query-threshold` (default `0.70`; lower is looser), `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. `--detail` and `--relations` affect **both** `--json` and default human output. `--format table` renders markdown pipe tables in human mode; timeline views default to `--format events` (bullets). |
+| `graph read --subgraph <s> --view <v>` | **Retrieve** axis (§7/§8); `--detail compact\|full`, `--relations summary\|full`, `--query`, `--query-threshold` (no default: omitted, the view's own filtering applies; lower is looser), `--scope k:v`, `--since/--until`, `--depth/--direction`, `--limit`, `--sort`, `--format`. `--detail` and `--relations` affect **both** `--json` and default human output. `--format table` renders markdown pipe tables in human mode; timeline views default to `--format events` (bullets). Out-of-range `--depth`, exact case/alias spellings of the selector and presentation flags, and an ignored `--time-window` execute once and are disclosed as `adjustments` (see [cli-flow.md](./cli-flow.md), *Adjusted reads*). |
 | `timeline recent` | sugar for `graph read --subgraph recent_changes --view timeline`. |
 | `graph search-entities` | **Filter** axis (§7); structured typed lookup for identity resolution. |
 | `graph neighborhood --entity <key>` | **Traverse** axis (§7); `graph inspect <key>` is a legacy alias. |
@@ -414,7 +463,7 @@ a live read knob.
 ## See also
 
 - [`ontology.md`](./ontology.md) — entities, predicates, subgraphs/views, truth classes, identity & the environment qualifier.
-- [`writing.md`](./writing.md) — the write stack, propose→commit, coarse `_global` concurrency, the read-back verify path that reuses these readers.
+- [`writing.md`](./writing.md) — the write stack, propose→commit, revision-based concurrency and receipts, the read-back verify path that reuses these readers.
 - [`cli-flow.md`](./cli-flow.md) — full command and flag reference.
 - [`architecture.md`](./architecture.md) — the read trunk's place in the hexagonal layering and composition roots.
 - [`ingestion-nudge.md`](./ingestion-nudge.md) — the zero-token nudge model, which composes this read trunk over named views.

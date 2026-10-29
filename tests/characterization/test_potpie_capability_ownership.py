@@ -39,10 +39,12 @@ EXPECTED_CAPABILITY_SYMBOLS = {
         "PotAggregateStatus",
         "PotInfo",
         "PotManagementService",
+        "PotRepoSource",
         "SourceInfo",
     },
     "potpie/pots/local_service.py": {"LocalPotManagementService"},
     "potpie/pots/local_store.py": {"LocalPotStore"},
+    "potpie/pots/resolution.py": {"match_pot_ref", "repo_source_index"},
     "potpie/setup/contracts.py": {
         "NoOpSetupObserver",
         "SetupObserver",
@@ -64,20 +66,10 @@ EXPECTED_CAPABILITY_SYMBOLS = {
         "SkillStatus",
     },
     "potpie/skills/catalog.py": {"catalog_by_id", "load_bundle_skills"},
-    "potpie/skills/installer.py": {
-        "InstallResult",
-        "install_agent_bundle",
-        "validate_packaged_skill_command_snippets",
-    },
+    "potpie/skills/installer.py": {"InstallResult", "install_agent_bundle"},
+    "potpie/skills/snippets.py": {"validate_packaged_skill_command_snippets"},
     "potpie/skills/manager.py": {"DefaultSkillManager"},
-    "potpie/skills/targets.py": {
-        "ClaudeAgentTarget",
-        "CodexAgentTarget",
-        "CursorAgentTarget",
-        "FileBackedAgentTarget",
-        "OpenCodeAgentTarget",
-        "ProjectAgentTarget",
-    },
+    "potpie/skills/targets.py": {"AgentTarget"},
 }
 
 DOCUMENTATION_ONLY_INITIALIZERS = (
@@ -98,9 +90,6 @@ FORBIDDEN_SOURCE_UMBRELLAS = (
 CONCRETE_ASSEMBLY_TYPES = frozenset(
     {
         "AgentContextService",
-        "ClaudeAgentTarget",
-        "CodexAgentTarget",
-        "CursorAgentTarget",
         "DefaultSetupOrchestrator",
         "DefaultSkillManager",
         "FlatFileMigrator",
@@ -110,7 +99,6 @@ CONCRETE_ASSEMBLY_TYPES = frozenset(
         "LocalInstaller",
         "LocalPotManagementService",
         "LocalPotStore",
-        "OpenCodeAgentTarget",
     }
 )
 
@@ -313,8 +301,6 @@ def test_root_and_engine_service_groups_remain_separated() -> None:
         "ingestion_events",
         "nudge",
         "pots",
-        # Document chunk payload plane (potpie document/resource commands) —
-        # engine-owned: it writes through the graph service and feeds DocsReader.
         "resources",
     }
     assert root_fields.isdisjoint(

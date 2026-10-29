@@ -1,8 +1,15 @@
-"""Authorized context leases and daemon-lifetime engine ownership."""
+"""Authorized context leases and daemon-lifetime engine ownership.
+
+Every acquisition authenticates the caller first, then resolves the selector
+for that actor, then authorizes the operation on the resolved context. An
+unauthenticated caller therefore never learns whether a pot exists, and a
+managed host can resolve the same selector differently for different actors.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, TypeAlias
@@ -69,6 +76,8 @@ LeaseOutcome: TypeAlias = (
 )
 ShutdownOutcome: TypeAlias = Success[None] | Failure[ResourceLifecycleError]
 CacheKey: TypeAlias = tuple[ContextIdentity, "CompositionFingerprint"]
+
+logger = logging.getLogger(__name__)
 
 
 SelectorKind = Literal["explicit", "active", "repository"]
@@ -164,9 +173,18 @@ class LeaseOwnership:
     release_closes_engine: Literal[False] = False
 
 
+@dataclass(frozen=True, slots=True)
+class AuthorizedContext:
+    """An authenticated actor, its resolved context and the authorized scope."""
+
+    actor: AuthenticatedActor
+    context: ContextIdentity
+    scope: AuthorizationScope
+
+
 class ContextSelectorResolver(Protocol):
     async def resolve(
-        self, selector: ContextSelector
+        self, selector: ContextSelector, *, actor: AuthenticatedActor
     ) -> Success[ContextIdentity] | Failure[SelectionError]: ...
 
 
@@ -174,6 +192,27 @@ class ActorAuthenticator(Protocol):
     async def authenticate(
         self, authentication: object
     ) -> Success[AuthenticatedActor] | Failure[AuthenticationError]: ...
+
+
+class PassThroughAuthenticator:
+    """Accept an actor a transport already authenticated, and nothing else.
+
+    A serving endpoint authenticates each request's credential before any
+    decoding and hands the Resource Manager the resulting actor; anything that
+    is not an :class:`AuthenticatedActor` is refused rather than trusted.
+    """
+
+    async def authenticate(
+        self, authentication: object
+    ) -> Success[AuthenticatedActor] | Failure[AuthenticationError]:
+        if isinstance(authentication, AuthenticatedActor):
+            return Success(authentication)
+        return Failure(
+            AuthenticationError(
+                code="actor_unauthenticated",
+                message="the request carries no authenticated actor",
+            )
+        )
 
 
 class OperationAuthorizer(Protocol):
@@ -257,7 +296,13 @@ class AuthorizedContextLease:
 
 
 class ContextResourceManager:
-    """Resolve, authorize, compose, cache, lease, drain, and close engines."""
+    """Authenticate, resolve, authorize, compose, cache, lease, drain, close.
+
+    ``max_idle_engines`` bounds how many cached engines may sit without a
+    lease; past it the least recently used idle ones are closed. ``None``
+    (the default) keeps every engine until shutdown, which suits a local
+    runtime with a handful of pots; a host serving many pots sets a bound.
+    """
 
     def __init__(
         self,
@@ -269,15 +314,23 @@ class ContextResourceManager:
         engine_factory: Callable[
             ..., Awaitable[Outcome[ContextEngine]]
         ] = create_engine,
+        max_idle_engines: int | None = None,
     ) -> None:
+        if max_idle_engines is not None and max_idle_engines < 0:
+            raise ValueError("max_idle_engines must not be negative")
         self._resolver = resolver
         self._authenticator = authenticator
         self._authorizer = authorizer
         self._composer = composer
         self._engine_factory = engine_factory
+        self._max_idle_engines = max_idle_engines
         self._cache: dict[CacheKey, _CachedEngine] = {}
         self._creation_order: list[CacheKey] = []
         self._key_locks: dict[CacheKey, asyncio.Lock] = {}
+        self._last_used: dict[CacheKey, int] = {}
+        self._use_clock = 0
+        self._retired: list[_CachedEngine] = []
+        self._evictions_in_flight = 0
         self._state = asyncio.Condition()
         self._shutdown_lock = asyncio.Lock()
         self._accepting = True
@@ -310,16 +363,44 @@ class ContextResourceManager:
                 self._inflight_acquisitions -= 1
                 self._state.notify_all()
 
-    async def _acquire_started(self, request: AcquisitionRequest) -> LeaseOutcome:
-        selection = await self._resolver.resolve(request.selector)
-        if isinstance(selection, Failure):
-            return selection
-        context = selection.value
+    async def authenticate(
+        self, authentication: object
+    ) -> Success[AuthenticatedActor] | Failure[AuthenticationError]:
+        """Authenticate a caller for an operation that selects no context."""
 
+        return await self._authenticator.authenticate(authentication)
+
+    async def authorize(
+        self, request: AcquisitionRequest
+    ) -> Success[AuthorizedContext] | Failure[ResourceManagerError]:
+        """Authenticate, resolve and authorize a request without an engine.
+
+        The same checks :meth:`acquire` runs before it composes anything, for
+        operations an embedding host serves itself against a selected context.
+        """
+
+        if not self._accepting:
+            return Failure(
+                ResourceLifecycleError(
+                    code="resource_manager_draining",
+                    message="the Context Resource Manager is draining",
+                    retry_posture="safe",
+                )
+            )
+        return await self._authorize(request)
+
+    async def _authorize(
+        self, request: AcquisitionRequest
+    ) -> Success[AuthorizedContext] | Failure[ResourceManagerError]:
         authentication = await self._authenticator.authenticate(request.authentication)
         if isinstance(authentication, Failure):
             return authentication
         actor = authentication.value
+
+        selection = await self._resolver.resolve(request.selector, actor=actor)
+        if isinstance(selection, Failure):
+            return selection
+        context = selection.value
 
         authorization = await self._authorizer.authorize(
             actor, request.operation, context
@@ -342,6 +423,14 @@ class ContextResourceManager:
         intent_failure = self._validate_destructive_intent(request, scope)
         if intent_failure is not None:
             return Failure(intent_failure)
+        return Success(AuthorizedContext(actor=actor, context=context, scope=scope))
+
+    async def _acquire_started(self, request: AcquisitionRequest) -> LeaseOutcome:
+        authorized = await self._authorize(request)
+        if isinstance(authorized, Failure):
+            return authorized
+        context = authorized.value.context
+        scope = authorized.value.scope
 
         fingerprint = await self._composer.fingerprint(context)
         if isinstance(fingerprint, Failure):
@@ -372,6 +461,7 @@ class ContextResourceManager:
                     self._creation_order.append(cache_key)
             async with self._state:
                 cached.active_leases += 1
+                self._touch(cache_key)
 
         return Success(
             AuthorizedContextLease(
@@ -393,6 +483,7 @@ class ContextResourceManager:
                 await self._state.wait_for(
                     lambda: (
                         self._inflight_acquisitions == 0
+                        and self._evictions_in_flight == 0
                         and all(
                             entry.active_leases == 0 for entry in self._cache.values()
                         )
@@ -400,46 +491,18 @@ class ContextResourceManager:
                 )
 
             failures: list[dict[str, str]] = []
+            # Engines an idle eviction could not fully close are retried first.
+            for cached in list(self._retired):
+                failures.extend(await self._close_cached(cached))
             for cache_key in reversed(self._creation_order):
-                cached = self._cache[cache_key]
-                if not cached.engine_closed:
-                    try:
-                        closed = await cached.engine.close()
-                    except Exception as exc:  # host cleanup must still be attempted
-                        failures.append(
-                            {
-                                "kind": "engine",
-                                "context": cached.context.value,
-                                "error_type": type(exc).__name__,
-                            }
-                        )
-                    else:
-                        if isinstance(closed, Failure):
-                            failures.append(
-                                {
-                                    "kind": "engine",
-                                    "context": cached.context.value,
-                                    "code": closed.error.code,
-                                }
-                            )
-                        else:
-                            cached.engine_closed = True
-                pending_resources: list[HostResource] = []
-                for resource in reversed(cached.resources):
-                    try:
-                        await resource.release()
-                    except Exception as exc:  # every resource still gets an attempt
-                        pending_resources.append(resource)
-                        failures.append(
-                            {
-                                "kind": "resource",
-                                "resource": resource.name,
-                                "error_type": type(exc).__name__,
-                            }
-                        )
-                cached.resources = tuple(reversed(pending_resources))
+                failures.extend(await self._close_cached(self._cache[cache_key]))
 
             async with self._state:
+                self._retired = [
+                    cached
+                    for cached in self._retired
+                    if not (cached.engine_closed and not cached.resources)
+                ]
                 completed_keys = {
                     key
                     for key, cached in self._cache.items()
@@ -448,10 +511,11 @@ class ContextResourceManager:
                 for key in completed_keys:
                     del self._cache[key]
                     self._key_locks.pop(key, None)
+                    self._last_used.pop(key, None)
                 self._creation_order = [
                     key for key in self._creation_order if key not in completed_keys
                 ]
-                self._shutdown_complete = not self._cache
+                self._shutdown_complete = not self._cache and not self._retired
                 self._state.notify_all()
 
             if failures:
@@ -467,6 +531,103 @@ class ContextResourceManager:
                     )
                 )
             return Success(None)
+
+    @staticmethod
+    async def _close_cached(cached: _CachedEngine) -> list[dict[str, str]]:
+        """Close one cached engine, then release its retained host resources.
+
+        Every resource gets an attempt even when the engine fails to close;
+        what failed stays on the entry so a later attempt retries only that.
+        """
+
+        failures: list[dict[str, str]] = []
+        if not cached.engine_closed:
+            try:
+                closed = await cached.engine.close()
+            except Exception as exc:  # host cleanup must still be attempted
+                failures.append(
+                    {
+                        "kind": "engine",
+                        "context": cached.context.value,
+                        "error_type": type(exc).__name__,
+                    }
+                )
+            else:
+                if isinstance(closed, Failure):
+                    failures.append(
+                        {
+                            "kind": "engine",
+                            "context": cached.context.value,
+                            "code": closed.error.code,
+                        }
+                    )
+                else:
+                    cached.engine_closed = True
+        pending_resources: list[HostResource] = []
+        for resource in reversed(cached.resources):
+            try:
+                await resource.release()
+            except Exception as exc:  # every resource still gets an attempt
+                pending_resources.append(resource)
+                failures.append(
+                    {
+                        "kind": "resource",
+                        "resource": resource.name,
+                        "error_type": type(exc).__name__,
+                    }
+                )
+        cached.resources = tuple(reversed(pending_resources))
+        return failures
+
+    def _touch(self, cache_key: CacheKey) -> None:
+        """Mark one cache entry as just used; callers hold ``_state``."""
+
+        self._use_clock += 1
+        self._last_used[cache_key] = self._use_clock
+
+    async def _evict_idle_engines(self) -> None:
+        """Close least recently used idle engines past ``max_idle_engines``."""
+
+        if self._max_idle_engines is None:
+            return
+        while True:
+            async with self._state:
+                if not self._accepting:
+                    return  # shutdown closes whatever is left
+                idle = [
+                    key
+                    for key, cached in self._cache.items()
+                    if cached.active_leases == 0
+                ]
+                if len(idle) <= self._max_idle_engines:
+                    return
+                victim = min(idle, key=lambda key: self._last_used.get(key, 0))
+                self._evictions_in_flight += 1
+            try:
+                # Under the entry's own lock, so an acquisition of the same
+                # context waits for the old engine to close before composing a
+                # new one, and never picks up an engine being closed.
+                async with await self._lock_for(victim):
+                    async with self._state:
+                        cached = self._cache.get(victim)
+                        if cached is None or cached.active_leases:
+                            continue
+                        del self._cache[victim]
+                        self._last_used.pop(victim, None)
+                        self._creation_order.remove(victim)
+                    failures = await self._close_cached(cached)
+                    if failures:
+                        logger.warning(
+                            "idle engine for context %s did not close cleanly; "
+                            "shutdown retries it",
+                            cached.context.value,
+                        )
+                        async with self._state:
+                            self._retired.append(cached)
+            finally:
+                async with self._state:
+                    self._evictions_in_flight -= 1
+                    self._state.notify_all()
 
     async def _lock_for(self, cache_key: CacheKey) -> asyncio.Lock:
         async with self._state:
@@ -679,7 +840,9 @@ class ContextResourceManager:
             if cached is None or cached.active_leases == 0:
                 return
             cached.active_leases -= 1
+            self._touch(cache_key)
             self._state.notify_all()
+        await self._evict_idle_engines()
 
     @staticmethod
     def _validate_destructive_intent(
@@ -710,6 +873,7 @@ __all__ = [
     "AuthenticationError",
     "AuthorizationError",
     "AuthorizationScope",
+    "AuthorizedContext",
     "AuthorizedContextLease",
     "CompositionFingerprint",
     "ContextResourceComposer",
@@ -721,6 +885,7 @@ __all__ = [
     "LeaseOwnership",
     "LeaseOutcome",
     "OperationAuthorizer",
+    "PassThroughAuthenticator",
     "ResourceComposition",
     "ResourceLifecycleError",
     "ResourceManagerError",

@@ -7,24 +7,21 @@ description: Run the Potpie setup wizard, open your coding harness, and view the
 
 Complete [Installation](./installation.md).
 
-## Step 2: Run the Potpie setup wizard
+## Step 2: run the Potpie setup wizard
 
 ```bash
 potpie setup
 ```
 
-The setup wizard provisions local config, storage, the daemon, a default pot, and
-agent skills. It also lets you choose integrations and the coding harness Potpie
-should configure.
+The setup wizard creates local config and storage, starts the daemon, and sets
+up a default pot and agent skills. Choose the integrations and coding harness
+Potpie should configure.
 
 ![Potpie setup wizard](https://raw.githubusercontent.com/potpie-ai/potpie/main/assets/wiz_screen.png)
 
-## Step 3: Open your configured harness
+## Step 3: open your configured harness
 
-Potpie is already integrated into your selected harness.
-You can start using Potpie with the repo of your choice.
-
-Open your previously selected harness and ask it to use Potpie for the repo.
+Open the harness you selected during setup and ask it to use Potpie for your repo.
 ![Potpie in OpenAI Codex](https://raw.githubusercontent.com/potpie-ai/potpie/main/assets/codex_potpie.png)
 
 > [!NOTE]
@@ -38,5 +35,5 @@ You can view your context graph in the web UI:
 potpie ui
 ```
 
-This will open a graph explorer in your browser.
+The command opens a graph explorer in your browser.
 ![Potpie web UI](https://raw.githubusercontent.com/potpie-ai/potpie/main/assets/web_ui.png)

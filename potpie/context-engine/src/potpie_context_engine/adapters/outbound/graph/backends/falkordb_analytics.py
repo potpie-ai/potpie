@@ -12,27 +12,32 @@ stub ``query``). ``repair`` always delegates.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timezone
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
+
+from potpie_context_engine.core.ports.graph.analytics import RepairReport
 
 from potpie_context_engine.adapters.outbound.graph.backends.claim_query_analytics import (
     ClaimQueryAnalytics,
 )
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import parse_dt
-from potpie_context_engine.core.ports.graph.analytics import RepairReport
+
 
 logger = logging.getLogger(__name__)
 
 _COUNTS_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
+WHERE coalesce(r.retired,false)=false AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false
 RETURN count(r) AS claims,
        count(DISTINCT r.name) AS predicates,
        count(CASE WHEN r.invalid_at IS NOT NULL THEN 1 END) AS invalidated
 """
 
 _ENTITY_COUNT_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
+MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
+WHERE coalesce(r.retired,false)=false AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false
 WITH collect(DISTINCT r.subject_key) AS subjects, collect(DISTINCT r.object_key) AS objects
 RETURN size(subjects) + size([key IN objects WHERE NOT key IN subjects]) AS entities
 """
@@ -41,8 +46,8 @@ RETURN size(subjects) + size([key IN objects WHERE NOT key IN subjects]) AS enti
 # matches chronological order because the writers stamp zero-padded UTC
 # timestamps.
 _FRESHNESS_CYPHER = """
-MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO {group_id: $gid}]->(b:Entity {group_id: $gid})
-WHERE r.valid_at IS NOT NULL
+MATCH (a:Entity {group_id: $gid})-[r:RELATES_TO]->(b:Entity {group_id: $gid})
+WHERE r.valid_at IS NOT NULL AND coalesce(r.retired,false)=false AND coalesce(a.retired,false)=false AND coalesce(b.retired,false)=false
 RETURN min(r.valid_at) AS oldest, max(r.valid_at) AS newest, count(r) AS stamped
 """
 
@@ -71,7 +76,7 @@ class FalkorDBAnalytics:
         try:
             claims, predicates, invalidated = self._rows(_COUNTS_CYPHER, pot_id)[0]
             (entities,) = self._rows(_ENTITY_COUNT_CYPHER, pot_id)[0]
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.debug("aggregate counts failed; falling back to scan", exc_info=True)
             return self.fallback.counts(pot_id)
         return {
@@ -84,7 +89,7 @@ class FalkorDBAnalytics:
     def freshness(self, pot_id: str) -> Mapping[str, Any]:
         try:
             oldest, newest, stamped = self._rows(_FRESHNESS_CYPHER, pot_id)[0]
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.debug(
                 "aggregate freshness failed; falling back to scan", exc_info=True
             )

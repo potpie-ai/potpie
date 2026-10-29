@@ -19,8 +19,8 @@ When two upserts resolve to the same canonical key:
       planners typically emit the richest record first (repo → PR → commit …).
     * Edge endpoints and invalidation targets are rewritten to the canonical
       key; edges that become self-loops after rewrite are dropped.
-    * Edge upserts are deduped on ``(edge_type, from, to)`` so the merge cannot
-      multiply parallel edges.
+    * Edge upserts preserve distinct claims, environments, and evidence sources
+      when their normalized endpoints coincide.
 
 Plan warnings record how many merges ran so operators can spot an extractor
 regression from the ledger without digging into the diff.
@@ -181,13 +181,14 @@ def _merge_entities(
                 coherent_entity_labels(
                     canonical_key, item.labels, entity_types=entity_types
                 )
-                if enforce_label_coherence
+                if enforce_label_coherence and not item.preserve_labels
                 else tuple(item.labels)
             )
             by_key[canonical_key] = EntityUpsert(
                 entity_key=canonical_key,
                 labels=labels,
                 properties=dict(item.properties),
+                preserve_labels=item.preserve_labels,
             )
             order.append(canonical_key)
             continue
@@ -206,13 +207,14 @@ def _merge_entities(
                 coherent_entity_labels(
                     canonical_key, item.labels, entity_types=entity_types
                 )
-                if enforce_label_coherence
+                if enforce_label_coherence and not item.preserve_labels
                 else tuple(item.labels)
             )
             by_key[canonical_key] = EntityUpsert(
                 entity_key=canonical_key,
                 labels=labels,
                 properties=dict(item.properties),
+                preserve_labels=item.preserve_labels,
             )
             order.append(canonical_key)
     return [by_key[k] for k in order], merges
@@ -232,20 +234,24 @@ def _merge_pair(
             canonical_key, combined_labels, entity_types=entity_types
         )
         if enforce_label_coherence
+        and not (prior.preserve_labels and incoming.preserve_labels)
         else combined_labels
     )
     merged_props = dict(prior.properties)
     for k, v in incoming.properties.items():
         merged_props.setdefault(k, v)
     return EntityUpsert(
-        entity_key=canonical_key, labels=labels, properties=merged_props
+        entity_key=canonical_key,
+        labels=labels,
+        properties=merged_props,
+        preserve_labels=prior.preserve_labels and incoming.preserve_labels,
     )
 
 
 def _rewrite_edges(
     edges: list[EdgeUpsert], rewrite: dict[str, str]
 ) -> list[EdgeUpsert]:
-    out: dict[tuple[str, str, str], EdgeUpsert] = {}
+    out: dict[tuple[str, ...], EdgeUpsert] = {}
     for edge in edges:
         src = _canonical(rewrite, edge.from_entity_key)
         dst = _canonical(rewrite, edge.to_entity_key)
@@ -253,14 +259,27 @@ def _rewrite_edges(
             continue
         edge.from_entity_key = src
         edge.to_entity_key = dst
-        out[(edge.edge_type, src, dst)] = edge
+        props = edge.properties
+        identity = (
+            str(props.get("claim_key") or ""),
+            str(props.get("subgraph") or "").strip().lower(),
+            str(props.get("environment") or "").strip().lower(),
+            str(props.get("source_system") or ""),
+            str(props.get("source_ref") or ""),
+            (
+                edge.resolution.record_id
+                if edge.resolution
+                else edge.metadata_review_record_id or ""
+            ),
+        )
+        out[(edge.edge_type, src, dst, *identity)] = edge
     return list(out.values())
 
 
 def _rewrite_edge_deletes(
     edges: list[EdgeDelete], rewrite: dict[str, str]
 ) -> list[EdgeDelete]:
-    out: dict[tuple[str, str, str], EdgeDelete] = {}
+    out: list[EdgeDelete] = []
     for edge in edges:
         src = _canonical(rewrite, edge.from_entity_key)
         dst = _canonical(rewrite, edge.to_entity_key)
@@ -268,8 +287,8 @@ def _rewrite_edge_deletes(
             continue
         edge.from_entity_key = src
         edge.to_entity_key = dst
-        out[(edge.edge_type, src, dst)] = edge
-    return list(out.values())
+        out.append(edge)
+    return out
 
 
 def _rewrite_invalidations(

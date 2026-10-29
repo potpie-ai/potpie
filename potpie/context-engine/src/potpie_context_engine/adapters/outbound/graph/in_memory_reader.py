@@ -16,18 +16,46 @@ silent stub.
 from __future__ import annotations
 
 import dataclasses
+import threading
+from contextlib import contextmanager
+from functools import wraps
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from datetime import datetime, timezone
+from typing import Any
+
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
 
 from potpie_context_engine.adapters.outbound.graph.canonical_claim_query import (
+    claim_matches_post_filter,
     embedding_score,
 )
-from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
+
 from potpie_context_engine.domain.ports.embedder import EmbedderPort
 from potpie_context_engine.domain.retrieval_card import (
     build_retrieval_card,
     cosine_similarity,
 )
+
+
+def coherent_store_read(method):
+    """Hold one store snapshot throughout a capability read, including nested reads."""
+
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        with self.store.read_guard():
+            return method(self, *args, **kwargs)
+
+    return read
+
+
+def _coherent_read(method):
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        with self.read_guard():
+            return method(self, *args, **kwargs)
+
+    return read
 
 
 @dataclass(slots=True)
@@ -40,6 +68,24 @@ class InMemoryClaimQueryStore:
         default_factory=dict
     )
     embedder: EmbedderPort | None = None
+    state_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    before_read: Callable[[], None] | None = field(default=None, repr=False)
+    _read_context: threading.local = field(default_factory=threading.local, repr=False)
+
+    @contextmanager
+    def read_guard(self) -> Iterator[None]:
+        # Refresh before taking the state lock: embedded writers take the file
+        # lock first. Nested reads already own a coherent snapshot and must not
+        # refresh it halfway through an inspection or bulk property query.
+        nested = getattr(self._read_context, "depth", 0)
+        if not nested and self.before_read is not None:
+            self.before_read()
+        with self.state_lock:
+            self._read_context.depth = nested + 1
+            try:
+                yield
+            finally:
+                self._read_context.depth = nested
 
     @property
     def match_mode(self) -> str:
@@ -69,15 +115,49 @@ class InMemoryClaimQueryStore:
         bucket = self.entity_property_index.setdefault((pot_id, entity_key), {})
         bucket.update({k: v for k, v in properties.items()})
 
+    @_coherent_read
+    def entity_properties_many(
+        self, *, pot_id: str, entity_keys: Iterable[str]
+    ) -> dict[str, dict[str, Any]]:
+        return {
+            key: self.entity_properties(pot_id=pot_id, entity_key=key)
+            for key in entity_keys
+        }
+
+    @_coherent_read
     def entity_properties(self, *, pot_id: str, entity_key: str) -> dict[str, Any]:
-        return dict(self.entity_property_index.get((pot_id, entity_key), {}))
+        properties = self.entity_property_index.get((pot_id, entity_key), {})
+        return {} if properties.get("retired", False) else dict(properties)
 
     # ------------------------------------------------------------------
     # ClaimQueryPort
     # ------------------------------------------------------------------
+    @_coherent_read
     def find_claims(self, filter_: ClaimQueryFilter) -> list[ClaimRow]:
-        candidates = [row for row in self.rows if row.pot_id == filter_.pot_id]
-        candidates = [row for row in candidates if _matches_filter(row, filter_, self)]
+        query_time = filter_.as_of or datetime.now(timezone.utc)
+        candidates = [
+            row
+            for row in self.rows
+            if row.pot_id == filter_.pot_id
+            and (
+                filter_.include_retired
+                or (
+                    not row.retired
+                    and not self.entity_property_index.get(
+                        (row.pot_id, row.subject_key), {}
+                    ).get("retired", False)
+                    and not self.entity_property_index.get(
+                        (row.pot_id, row.object_key), {}
+                    ).get("retired", False)
+                )
+            )
+        ]
+        candidates = [
+            row
+            for row in candidates
+            if _matches_filter(row, filter_, self)
+            and claim_matches_post_filter(row, filter_, query_time=query_time)
+        ]
 
         if filter_.fact_query:
             candidates = self._semantic_rank(candidates, filter_.fact_query)
@@ -86,13 +166,16 @@ class InMemoryClaimQueryStore:
             candidates = candidates[: filter_.limit]
         return candidates
 
+    @_coherent_read
     def entity_labels(
         self, *, pot_id: str, entity_keys: Iterable[str]
     ) -> Mapping[str, tuple[str, ...]]:
         out: dict[str, tuple[str, ...]] = {}
         for key in entity_keys:
             labels = self.entity_label_index.get((pot_id, key))
-            if labels:
+            if labels and not self.entity_property_index.get((pot_id, key), {}).get(
+                "retired", False
+            ):
                 out[key] = labels
         return out
 
@@ -155,7 +238,11 @@ def _matches_filter(
         return False
     if filter_.claim_key_in and row.claim_key not in filter_.claim_key_in:
         return False
+    if filter_.record_id_in and row.record_id not in filter_.record_id_in:
+        return False
     if filter_.subgraph_in and row.subgraph not in filter_.subgraph_in:
+        return False
+    if filter_.subgraph_not_in and row.subgraph in filter_.subgraph_not_in:
         return False
     if filter_.mutation_id_in and row.mutation_id not in filter_.mutation_id_in:
         return False
@@ -165,18 +252,11 @@ def _matches_filter(
         return False
     if filter_.source_system_in and row.source_system not in filter_.source_system_in:
         return False
-    if not filter_.include_invalidated and row.invalid_at is not None:
-        return False
-    if filter_.valid_at_after and (
-        row.valid_at is None or row.valid_at < filter_.valid_at_after
-    ):
-        return False
-    if filter_.valid_at_before and (
-        row.valid_at is not None and row.valid_at > filter_.valid_at_before
-    ):
-        return False
-    if filter_.as_of and row.valid_at is not None and row.valid_at > filter_.as_of:
-        return False
+    if filter_.endpoint_label:
+        subject_labels = store.entity_label_index.get((row.pot_id, row.subject_key), ())
+        object_labels = store.entity_label_index.get((row.pot_id, row.object_key), ())
+        if filter_.endpoint_label not in (*subject_labels, *object_labels):
+            return False
     if filter_.subject_label:
         labels = store.entity_label_index.get((row.pot_id, row.subject_key), ())
         if filter_.subject_label not in labels:

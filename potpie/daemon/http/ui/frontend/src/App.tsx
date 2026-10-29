@@ -4,12 +4,23 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { api } from "./api";
+import { session } from "./session";
 import GraphView from "./GraphView";
 import Timeline from "./Timeline";
+import CommitView from "./CommitView";
+import {
+  initialTarget,
+  isMixed,
+  parsePotKey,
+  potKey,
+  potLabel,
+  type PotTarget,
+} from "./hosts";
 import {
   CATEGORY_ORDER,
   KIND_ORDER,
@@ -36,17 +47,13 @@ const TIMELINE_TYPES = typesInCategory("timeline");
 const SIDEBAR_W_KEY = "potpie-ui:sidebar-w";
 const SIDEBAR_W_DEFAULT = 320;
 const clampSidebarW = (w: number) => Math.min(640, Math.max(240, w));
-const requestedPot = () =>
+const requestedParam = (name: "pot" | "host") =>
   typeof location === "undefined"
     ? null
-    : new URLSearchParams(location.search).get("pot");
+    : new URLSearchParams(location.search).get(name);
 
 function endId(v: string | GraphNode): string {
   return typeof v === "string" ? v : v.id;
-}
-
-function edgeId(e: GraphEdge): string {
-  return `${endId(e.source)}|${e.predicate}|${endId(e.target)}`;
 }
 
 function mergeGraph(a: GraphData, b: GraphData): GraphData {
@@ -55,8 +62,8 @@ function mergeGraph(a: GraphData, b: GraphData): GraphData {
   for (const n of b.nodes) if (!nodes.has(n.id)) nodes.set(n.id, n);
   const edges = new Map<string, GraphEdge>();
   for (const e of [...a.edges, ...b.edges]) {
-    edges.set(edgeId(e), {
-      id: edgeId(e),
+    edges.set(e.id, {
+      id: e.id,
       source: endId(e.source),
       target: endId(e.target),
       predicate: e.predicate,
@@ -66,8 +73,16 @@ function mergeGraph(a: GraphData, b: GraphData): GraphData {
 }
 
 export default function App() {
+  // Once the daemon refuses this page's session, nothing else on it can work.
+  const sessionRequired = useSyncExternalStore(
+    session.subscribe,
+    session.isRequired,
+  );
   const [pots, setPots] = useState<PotRef[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // A pot is its host and its id: the same id may exist on both hosts.
+  const [active, setActive] = useState<PotTarget | null>(null);
+  const activeId = active?.id ?? null;
+  const activeHost = active?.origin;
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [data, setData] = useState<GraphData>(EMPTY);
   const [selected, setSelected] = useState<GraphNode | null>(null);
@@ -77,10 +92,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const loadRequestRef = useRef(0);
 
-  const [view, setViewState] = useState<"graph" | "timeline">(
-    typeof location !== "undefined" && location.hash === "#timeline"
-      ? "timeline"
-      : "graph",
+  const [view, setViewState] = useState<"graph" | "timeline" | "commits">(
+    typeof location !== "undefined" && location.hash === "#commits"
+      ? "commits"
+      : typeof location !== "undefined" && location.hash === "#timeline"
+        ? "timeline"
+        : "graph",
   );
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [showHint, setShowHint] = useState(true);
@@ -95,9 +112,9 @@ export default function App() {
       return changed ? next : prev;
     });
 
-  const setView = (v: "graph" | "timeline") => {
+  const setView = (v: "graph" | "timeline" | "commits") => {
     setViewState(v);
-    if (typeof location !== "undefined") location.hash = v === "timeline" ? "timeline" : "";
+    if (typeof location !== "undefined") location.hash = v === "graph" ? "" : v;
     if (v === "timeline") revealTimelineTypes();
   };
 
@@ -132,7 +149,7 @@ export default function App() {
     localStorage.setItem(SIDEBAR_W_KEY, String(SIDEBAR_W_DEFAULT));
   };
 
-  const loadPot = useCallback(async (potId: string) => {
+  const loadPot = useCallback(async (target: PotTarget): Promise<boolean> => {
     const requestId = ++loadRequestRef.current;
     const isCurrent = () => requestId === loadRequestRef.current;
     setBusy(true);
@@ -140,15 +157,20 @@ export default function App() {
     setSelected(null);
     setResults([]);
     try {
-      const [st, g] = await Promise.all([api.status(potId), api.graph(potId)]);
-      if (!isCurrent()) return;
+      const [st, g] = await Promise.all([
+        api.status(target.id, target.origin),
+        api.graph(target.id, target.origin),
+      ]);
+      if (!isCurrent()) return false;
       setStatus(st);
       setData({ nodes: g.nodes, edges: g.edges });
+      return true;
     } catch (e: any) {
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
       setError(e?.message || String(e));
       setData(EMPTY);
       setStatus(null);
+      return false;
     } finally {
       if (isCurrent()) setBusy(false);
     }
@@ -159,29 +181,44 @@ export default function App() {
       try {
         const p = await api.pots();
         setPots(p.pots);
-        const requested = requestedPot();
-        const requestedRef = requested
-          ? p.pots.find((x) => x.id === requested || x.name === requested)
-          : null;
-        const active =
-          requestedRef?.id || p.active?.id || p.pots.find((x) => x.active)?.id || null;
-        setActiveId(active);
-        if (active) await loadPot(active);
+        const target = initialTarget(
+          p,
+          requestedParam("pot"),
+          requestedParam("host"),
+        );
+        setActive(target);
+        if (target) {
+          const graphOk = await loadPot(target);
+          if (graphOk) api.reportSession(true);
+        } else {
+          api.reportSession(false);
+          const down = Object.entries(p.unavailable ?? {});
+          if (down.length)
+            setError(down.map(([host, why]) => `${host}: ${why}`).join("; "));
+        }
       } catch (e: any) {
         setError(e?.message || String(e));
       }
     })();
   }, [loadPot]);
 
-  const switchPot = async (potId: string) => {
-    const ref = pots.find((p) => p.id === potId);
-    if (!ref) return;
+  const switchPot = async (key: string) => {
+    const target = parsePotKey(key);
+    const ref = target
+      ? pots.find((p) => p.id === target.id && p.origin === target.origin)
+      : undefined;
+    if (!target || !ref) return;
     setBusy(true);
     try {
-      await api.usePot(ref.id);
-      setActiveId(potId);
-      setPots((ps) => ps.map((p) => ({ ...p, active: p.id === potId })));
-      await loadPot(potId);
+      await api.usePot(ref.id, ref.origin);
+      setActive(target);
+      // Each host keeps its own pointer: only this host's pots change.
+      setPots((ps) =>
+        ps.map((p) =>
+          p.origin === target.origin ? { ...p, active: p.id === target.id } : p,
+        ),
+      );
+      await loadPot(target);
     } catch (e: any) {
       setError(e?.message || String(e));
       setBusy(false);
@@ -192,20 +229,20 @@ export default function App() {
     async (node: GraphNode) => {
       if (!activeId) return;
       try {
-        const nb = await api.neighborhood(node.key, 1, activeId);
+        const nb = await api.neighborhood(node.key, 1, activeId, activeHost);
         setData((cur) => mergeGraph(cur, { nodes: nb.nodes, edges: nb.edges }));
       } catch (e: any) {
         setError(e?.message || String(e));
       }
     },
-    [activeId],
+    [activeId, activeHost],
   );
 
   const runSearch = async (e: FormEvent) => {
     e.preventDefault();
     if (!query.trim() || !activeId) return;
     try {
-      const r = await api.search(query.trim(), activeId);
+      const r = await api.search(query.trim(), activeId, activeHost);
       setResults(r.entities || []);
     } catch (err: any) {
       setError(err?.message || String(err));
@@ -217,7 +254,7 @@ export default function App() {
     if (inGraph) {
       setSelected(inGraph);
     } else {
-      api.neighborhood(key, 1, activeId || undefined).then((nb) => {
+      api.neighborhood(key, 1, activeId || undefined, activeHost).then((nb) => {
         setData((cur) => mergeGraph(cur, { nodes: nb.nodes, edges: nb.edges }));
         const found = nb.nodes.find((n) => n.id === key);
         if (found) setSelected(found);
@@ -279,6 +316,8 @@ export default function App() {
   };
 
   const counts = status?.counts || {};
+
+  if (sessionRequired) return <SessionRequired />;
 
   return (
     <div className="app">
@@ -353,19 +392,25 @@ export default function App() {
           >
             Timeline
           </button>
+          <button
+            className={view === "commits" ? "on" : ""}
+            onClick={() => setView("commits")}
+          >
+            Commits
+          </button>
         </div>
 
         <div className="pot-select">
           <label htmlFor="pot-selector">Pot</label>
           <select
             id="pot-selector"
-            value={activeId || ""}
+            value={active ? potKey(active) : ""}
             onChange={(e) => switchPot(e.target.value)}
             disabled={busy}
           >
             {pots.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} - {p.counts?.claims ?? 0} claims
+              <option key={potKey(p)} value={potKey(p)}>
+                {potLabel(p, isMixed(pots))}
               </option>
             ))}
           </select>
@@ -373,7 +418,7 @@ export default function App() {
       </header>
 
       <div className="body">
-        <aside className="sidebar" style={{ width: sidebarW }}>
+        {view !== "commits" && <><aside className="sidebar" style={{ width: sidebarW }}>
           {selected ? (
             <NodePanel node={selected} />
           ) : (
@@ -476,12 +521,12 @@ export default function App() {
           title="Drag to resize · double-click to reset"
           onPointerDown={startSidebarResize}
           onDoubleClick={resetSidebarW}
-        />
+        /></>}
 
         <main className="main">
           {error && <div className="error">{error}</div>}
 
-          <div className="canvas-stats">
+          {view !== "commits" && <><div className="canvas-stats">
             <div className="stat-pill">
               <span className="stat-seg">
                 <b>{counts.entities ?? 0}</b> entities
@@ -527,7 +572,22 @@ export default function App() {
             )}
           </div>
 
-          {view === "graph" ? (
+          </>}
+
+          {view === "commits" ? (
+            active ? (
+              <CommitView
+                key={potKey(active)}
+                pot={active.id}
+                host={active.origin}
+                onApplied={() => {
+                  void loadPot(active);
+                }}
+              />
+            ) : (
+              <div className="empty">Select a pot to view commit history.</div>
+            )
+          ) : view === "graph" ? (
             <GraphView
               data={visible}
               selectedId={selected?.id || null}
@@ -669,6 +729,33 @@ function NodePanel({ node }: { node: GraphNode }) {
             <div className="pv">{formatValue(k, v)}</div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** Shown once the daemon refuses this page's session cookie. Only the CLI can
+ * read the daemon token, so the way back in is a fresh `potpie ui`. */
+function SessionRequired() {
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <img className="logo-img" src={logoUrl} alt="Potpie" />
+          <span className="title">Graph Explorer</span>
+        </div>
+      </header>
+      <div className="session-required" role="alert">
+        <h1>Run <code>potpie ui</code> to open the explorer again</h1>
+        <p>
+          This page no longer has a session with the Potpie daemon. Sessions end
+          when the daemon restarts, after 12 hours, or when the page was opened
+          without the one-time link <code>potpie ui</code> creates.
+        </p>
+        <p>
+          Run <code>potpie ui</code> in your terminal. It opens a new tab with a
+          fresh session; you can close this one.
+        </p>
       </div>
     </div>
   );

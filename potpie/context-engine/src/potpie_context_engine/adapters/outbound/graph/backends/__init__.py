@@ -5,10 +5,11 @@ storage option means adding a profile here and implementing the six capability
 ports behind it — never changing the services that depend on ``GraphBackend``.
 
     in_memory   real, tests + conformance + POC          (InMemoryGraphBackend)
-    embedded    OSS local default (real, JSON-persisted)  (EmbeddedGraphBackend)
+    embedded    JSON-persisted local fallback            (EmbeddedGraphBackend)
     neo4j       shape-first production target            (Neo4jGraphBackend)
     falkordb    lightweight graph profile                (FalkorDBGraphBackend)
-    falkordb_lite embedded FalkorDBLite profile          (FalkorDBLiteGraphBackend)
+    falkordb_lite embedded POSIX local default           (FalkorDBLiteGraphBackend)
+    ladybug     embedded Windows local default          (LadybugGraphBackend)
     postgres    pgvector profile (registered stub)       (StubGraphBackend)
     chroma      vector profile (registered stub)         (StubGraphBackend)
     hosted      managed profile (registered stub)        (StubGraphBackend)
@@ -22,6 +23,7 @@ not-implemented contract, not a crash.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from potpie_context_engine.adapters.outbound.graph.backends.embedded_backend import (
@@ -41,6 +43,7 @@ KNOWN_PROFILES: tuple[str, ...] = (
     "neo4j",
     "falkordb",
     "falkordb_lite",
+    "ladybug",
     "postgres",
     "chroma",
     "hosted",
@@ -56,7 +59,7 @@ def build_backend(
     """Construct the ``GraphBackend`` for a profile name.
 
     ``in_memory`` and ``embedded`` need no settings; ``neo4j`` / ``falkordb`` /
-    ``falkordb_lite`` need engine settings (lazy-imported so the graph drivers are optional).
+    ``falkordb_lite`` / ``ladybug`` need engine settings (lazy-imported so graph drivers are optional).
     ``postgres`` / ``chroma`` / ``hosted`` resolve to a fail-closed
     ``StubGraphBackend``.
     Unknown profiles raise ``ValueError`` — the CLI maps that to a validation error.
@@ -74,6 +77,7 @@ def build_backend(
         "neo4j",
         "falkordb",
         "falkordb_lite",
+        "ladybug",
     ):
         from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
             build_embedder,
@@ -123,6 +127,20 @@ def build_backend(
 
             settings = EnvContextEngineSettings()
         return FalkorDBLiteGraphBackend(settings, embedder=embedder)
+    if name == "ladybug":
+        from potpie_context_engine.adapters.outbound.graph.backends.ladybug_backend import (
+            LadybugGraphBackend,
+        )
+
+        if settings is None:
+            from potpie_context_engine.adapters.outbound.settings_env import (
+                EnvContextEngineSettings,
+            )
+
+            settings = EnvContextEngineSettings()
+        return LadybugGraphBackend(
+            db_path=Path(settings.ladybug_path()), embedder=embedder
+        )
     if name in _STUB_PROFILES:
         return StubGraphBackend(name)
     raise ValueError(

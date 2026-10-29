@@ -24,6 +24,15 @@ _DIAGNOSTIC_COMMANDS = (
     "make cli-install",
 )
 
+# The same questions for a Windows shell, which has neither `which -a` nor
+# POSIX command substitution.
+_DIAGNOSTIC_COMMANDS_WINDOWS = (
+    "uv tool list",
+    "where.exe potpie",
+    "Get-Command potpie -All | Format-List Source,Version",
+    "potpie --version",
+)
+
 _LOCAL_REINSTALL_HINT = (
     "Check with `make cli-status` or `potpie doctor`. "
     "Repo-local reinstall: `make cli-install` "
@@ -86,7 +95,7 @@ def collect_cli_install_status() -> dict[str, Any]:
         "editable": editable if via_uv_tool else None,
         # Only when the active PATH executable is backed by a uv tools env.
         "install_method": "uv_tool" if via_uv_tool else None,
-        "diagnostic_commands": list(_DIAGNOSTIC_COMMANDS),
+        "diagnostic_commands": _diagnostic_commands(),
         "hint": hint,
         "pip_show_note": (
             "Do not use `python -m pip show potpie-context-engine` for local dev "
@@ -156,14 +165,28 @@ def _package_version_via_interpreter(interpreter: str | None) -> str | None:
     return None
 
 
-def _potpie_paths_on_path() -> list[str]:
+def _diagnostic_commands() -> list[str]:
+    if os.name == "nt":
+        return list(_DIAGNOSTIC_COMMANDS_WINDOWS)
+    return list(_DIAGNOSTIC_COMMANDS)
+
+
+def _potpie_paths_on_path(path_env: str | None = None) -> list[str]:
+    """Every ``potpie`` on ``PATH`` in search order, like ``which -a``.
+
+    Each directory is resolved with :func:`shutil.which` rather than by joining
+    the bare name: on Windows the executable is ``potpie.exe`` and ``which``
+    applies ``PATHEXT`` there, while elsewhere it requires the execute bit.
+    """
+
     seen: set[str] = set()
     paths: list[str] = []
-    for directory in os.environ.get("PATH", "").split(os.pathsep):
+    raw = os.environ.get("PATH", "") if path_env is None else path_env
+    for directory in raw.split(os.pathsep):
         if not directory:
             continue
-        candidate = os.path.join(directory, CLI_EXECUTABLE)
-        if not (os.path.isfile(candidate) or os.path.islink(candidate)):
+        candidate = shutil.which(CLI_EXECUTABLE, path=directory)
+        if candidate is None:
             continue
         resolved = os.path.realpath(candidate)
         if resolved in seen:

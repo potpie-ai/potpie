@@ -17,7 +17,9 @@ def document_entity_key(doc_slug: str) -> str:
 
 
 def section_entity_key(doc_slug: str, section_slug: str) -> str:
-    return f"document-section:{doc_slug}/{section_slug}"
+    # Keep resource graph projections on the canonical ontology identity used
+    # by the typed graph/runtime path and resource readers.
+    return f"docsection:{doc_slug}:{section_slug}"
 
 
 def element_entity_key(doc_slug: str, element_id: str) -> str:
@@ -170,6 +172,16 @@ def build_import_mutations(
             "bbox": element.bbox,
             "text_hash": element.text_hash,
         }
+        for key in (
+            "caption",
+            "ocr_text",
+            "visual_caption",
+            "figure_number",
+            "table_number",
+        ):
+            value = getattr(element, key, None)
+            if value not in (None, ""):
+                properties[key] = value
         if element.artifact_ref:
             properties["artifact_ref"] = element.artifact_ref
         operations.append(

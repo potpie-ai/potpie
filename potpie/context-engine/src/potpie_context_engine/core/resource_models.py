@@ -58,6 +58,11 @@ class DocumentElementRecord(BaseModel):
     char_start: int | None = None
     char_end: int | None = None
     text_hash: str = ""
+    caption: str = ""
+    ocr_text: str = ""
+    visual_caption: str = ""
+    figure_number: int | None = None
+    table_number: int | None = None
 
     @field_validator("bbox")
     @classmethod
@@ -99,6 +104,7 @@ class ResourceManifest(BaseModel):
     mime_type: str = ""
     provenance_version: int = 0
     parser_tier: str = ""
+    ingestion_diagnostics: dict[str, Any] = Field(default_factory=dict)
     sections: list[SectionManifest] = Field(min_length=1)
 
     @model_validator(mode="after")

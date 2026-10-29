@@ -5,8 +5,6 @@ description: "Semantic mutations, propose and commit, inbox, and quality checks.
 
 ## Overview
 
-> Status: reflects code on `main` @ `8dd175bc`, last reviewed 2026-06-29.
-
 How facts get *into* the graph. Reads are covered in [querying.md](./querying.md); the
 static contract (entities, predicates, truth classes, ops) lives in [ontology.md](./ontology.md);
 the full command/flag surface is in [cli-flow.md](./cli-flow.md). This doc owns the **write
@@ -19,9 +17,9 @@ Two framing rules up front:
   (`GRAPH_CONTRACT_VERSION="v1.5"`, `ONTOLOGY_VERSION="2026-06-graph"`; the workbench *envelope*
   stamps `graph_contract_version="v2"` only as a transport version string). There is no
   "future Graph V2" write surface — propose/commit are live.
-- **The canonical write door is `graph propose` → `graph commit --verify`.** `graph mutate` is a
-  **legacy wrapper** that internally calls propose+commit; the immediate-apply path
-  (`DefaultGraphService.mutate`) is now reached only through `record` / `context_record`.
+- **The canonical write door is `graph propose` → `graph commit --verify`.**
+  `graph mutate`, direct semantic writes, and `record` / `context_record` use the
+  same persisted preparation and authoritative execution contract.
 
 ---
 
@@ -99,8 +97,10 @@ fictional (it survives only as a stale comment in `domain/reconciliation.py`).
 > are **both empty tuples**. Review/blocking is decided **at runtime** by `MutationRisk`
 > (low/medium/high) — see §3 — not by which op you used. Old docs that called `supersede_claim`
 > or `merge_duplicate_entities` "usually review-required" are wrong: they auto-apply when
-> `--allow-review-required` and `--approved-by` are supplied, otherwise they return
-> `review_required` because of their runtime risk.
+> `graph propose --approved-by <user-ref>` pre-approves the plan (the legacy `graph mutate`
+> spells it `--allow-review-required --approved-by`), otherwise they return `review_required`
+> because of their runtime risk and `graph commit <plan_id> --approved-by <user-ref> --verify`
+> applies them.
 
 ### 2.2 Op fields are FLAT
 
@@ -252,7 +252,7 @@ of `validated | invalid | conflict | review_required`. Returns a `GraphMutationP
 
 **`commit(plan_id, pot_id, approved_by, verify)`** — load by id; reject if not found / terminal /
 expired; **re-check the version conflict**; enforce approval (medium/high risk needs
-`--approved-by`); then call `backend.mutation.apply(record.lowered_batch, …)`. The agent does
+`--approved-by`, on either `propose` or `commit`); then call `backend.mutation.apply(record.lowered_batch, …)`. The agent does
 **not** resend the mutations — commit replays the server-persisted plan. On success it persists
 status `committed` with the `mutation_id` and final versions and emits a `history_pointer` +
 `audit_ref`.
@@ -260,7 +260,9 @@ status `committed` with the `mutation_id` and final versions and emits a `histor
 `--verify` runs `_verify_ingestion_commit`: it reads the committed `claim_keys` back through
 `claim_query.find_claims` (flagging `missing_claim_keys`), takes before/after quality snapshots,
 and **downgrades** the result to `degraded` / `partial` / `watch` on missing readback, an
-unavailable backend, or a quality regression. Skills always commit with `--verify`.
+unavailable backend, or a quality regression. A missing committed claim exits 1; a quality
+regression only lands in `verification.status` and warnings, so read both the exit code and the
+receipt. Skills always commit with `--verify`.
 
 ### 5.1 Plan states
 
@@ -270,15 +272,37 @@ unavailable backend, or a quality regression. Skills always commit with `--verif
 `adapters/outbound/graph/plan_stores/local_json.py` (`~/.potpie/graph_plans.json`, atomic
 tmp-replace, keyed pot → plan_id).
 
-### 5.2 Optimistic concurrency is COARSE
+### 5.2 Optimistic concurrency and receipts
 
-`_subgraph_versions()` returns **`{"_global": <total pot claim count>}` only** — there are **no
-per-subgraph versions** (despite old `affected_subgraphs.{features,bugs,…}` examples). A conflict
-fires only if the pot's *total* claim count changed between propose and commit. The conflict
-result carries `expected_version` / `actual_version` and a "reread and re-propose" recommendation.
+A proposal records the pot's monotonic **revision** (`{"_global": <revision>}`); commit compares
+it while applying and returns `conflict`, without applying the stale plan, if another canonical
+write landed first. Every successful canonical mutation advances the revision, including
+entity-only updates, invalidation, reset and snapshot import. There are no per-subgraph versions,
+so unrelated writes to the same pot still conflict. The conflict result carries
+`expected_version` / `actual_version` and a "reread and re-propose" recommendation.
 
-> **Roadmap (not yet wired):** true per-subgraph version tracking. Today concurrency is a single
-> global counter, so unrelated concurrent writes to the same pot can spuriously conflict.
+| Backend | Compare-and-apply boundary |
+|---|---|
+| `in_memory` | one per-backend lock over revision check, mutation, receipt and increment; process-local by design |
+| `embedded` | a process plus interprocess file lock over reload, check, mutation and atomic `graph.json` replace; revisions and receipts persist there |
+| `ladybug` | a process plus interprocess file lock over reload and check; one native transaction persists graph, revision, receipt, and journal before publication |
+| `neo4j` | one transaction owns the revision, the batch and a durable receipt |
+| `falkordb`, `falkordb_lite` | Redis `WATCH`, then one `GRAPH.QUERY` inside `MULTI`/`EXEC` applies batch, revision and receipt |
+
+- A completed mutation **receipt** is checked before the expected revision, so retrying a
+  known-successful mutation returns its original result even after later writes. A receipt proves
+  the write applied once, not that its values are still current; run `--verify` when that matters.
+- An injected writer without `atomic_mutations_supported` falls back to a claim-content token and
+  a process-local guard. That is not a cross-process or crash-atomic promise.
+- An `idempotency_key` is bound to its request fingerprint: the same request returns the existing
+  plan, different content is rejected.
+- Corrections freeze their exact targets at propose (`retracted_claim_keys`), so apply never
+  re-discovers claims by environment or other identity fields.
+- Reset advances the revision and keeps receipts: retrying an old mutation after reset returns its
+  historical receipt without recreating data. Use a new mutation id to restore on purpose.
+- The CLI never resubmits a commit whose result is uncertain (for example a timeout). Commit
+  recovery (`cli/commit_recovery.py`) polls the plan's durable receipt until it settles.
+- Direct database edits that bypass the mutation port are outside this contract.
 
 ### 5.3 The diff shape
 
@@ -300,10 +324,13 @@ machinery for large baseline/ingestion writes. Full flags in [cli-flow.md](./cli
 ## 6. Spine B — direct mutate (record bridge only)
 
 `DefaultGraphService.mutate(request)` (`application/services/graph_service.py`):
-validate → (reject early) → lower → if `dry_run` return preview counts → if `review_required`
-return without writing → else `backend.mutation.apply(plan.batch, …)` **immediately**. No plan
-persistence, no TTL, no version-conflict guard. Returns a `SemanticMutationResult`
-(`applied | validated | rejected | review_required | error`).
+validates the request, then delegates preparation and execution to the shared
+workbench owner. Dry-run returns a preview. Accepted writes persist a frozen
+preparation, use the atomic request reservation and compare-and-apply contract,
+and recover original receipts on retry. Review-required operations retain their
+approval requirements. A missing atomic capability fails before writing. The
+result retains the public semantic result shape; request/plan/execution identities
+allow recoverable retries.
 
 **What reaches Spine B today:**
 
@@ -327,29 +354,20 @@ The bridge is exposed by the `potpie record` compatibility command.
 
 ## 7. The single backend write door
 
-All applies — from both spines — converge on `apply_mutation_batch`
-(`adapters/outbound/graph/apply_plan.py`, alias `apply_reconciliation_plan`). The sync
-`GraphMutationPort.apply(...)` bridges to this async function via a loop-aware `asyncio.run` in
-each backend. It:
+Direct semantic writes and planned commits share the workbench preparation and
+execution owners. Raw/reconciled batches, invalidation, repair, supported reset,
+snapshot import and journal changes enter their backend's atomic mutation owner.
+Memory/JSON stage coherent state; FalkorDB uses native WATCH and a guarded command;
+Neo4j uses a managed transaction. Graph changes, one revision transition and the
+execution receipt share that boundary. The shared apply-plan writer orchestrates
+canonical verbs where appropriate; it does not replace native atomicity.
 
-1. runs `validate_reconciliation_plan` (the pre-apply gate, §8);
-2. mints a per-apply `mutation_id` (uuid4);
-3. builds a `ProvenanceRef` — for event-less batches it uses
-   `ProvenanceContext.source_event_id` or a **stable blake2b content fingerprint of the whole
-   batch** (`_stable_batch_source_id`), *never* the per-apply uuid, so retries stay idempotent and
-   do not mint duplicate edges;
-4. runs the **four verbs, in order**, on `GraphWriterPort`:
-   `upsert_entities → upsert_edges → delete_edges → invalidate`;
-5. returns a `MutationResult` (ok, `mutation_id`, summary counts, downgrades).
-
-Below this sits the **Position-B canonical writer** shared by both the Neo4j and FalkorDB writers
-(`adapters/outbound/graph/cypher.py`): claims are
-`(:Entity {group_id, entity_key})-[:RELATES_TO {name, source_ref, valid_at, invalid_at, …}]->(:Entity)`.
-The MERGE key *includes* `source_ref` so corroborating writes from different sources don't
-collide; bitemporal stamps separate event time (`valid_at`/`invalid_at`) from system time
-(`created_at`); `_supersede_singleton_predecessors` stamps `invalid_at` on prior disagreeing live
-singleton claims (`OWNED_BY` is the only singleton). Backend coverage and the `GraphWriterPort`
-shape are detailed in [architecture.md](./architecture.md).
+Native relationships use `record_id` for physical identity. `claim_key` remains a
+logical identity across reasserted incarnations. Shared lifecycle policy restricts
+singleton supersession to the same source and environment, while corrections
+carry exact reviewed incarnation targets and dependent effects. Occurrence,
+validity and observation times remain distinct. Receipt replay precedes stale
+revision checks and does not regenerate preparation.
 
 ---
 
@@ -363,7 +381,8 @@ shape are detailed in [architecture.md](./architecture.md).
 - optional canonical-label enrichment; backfill required properties.
 
 With `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL=1` (and not strict) it **downgrades instead of failing**:
-drops unknown labels, falls ADR → Document/Observation, coerces invalid lifecycle to `unknown`,
+drops unknown labels, maps an extractor `ADR` label onto the public `Document` entity and
+falls back to `Observation` otherwise, coerces invalid lifecycle to `unknown`,
 backfills missing edge temporal anchors with `now()`, rewrites unknown edge types → `RELATED_TO`
 (confidence 0.3), and drops endpoint-mismatched edges. Each downgrade is recorded and may attach a
 `QualityIssue` node. A final `validate_structural_mutations` + invalidation check raises
@@ -418,12 +437,13 @@ items. Two layers:
    auto-supersede and conflict findings).
 2. **Workbench read-only** `GraphWorkbenchService.quality(report=…)` scans `ClaimRow`s via
    `backend.claim_query` to emit `GraphQualityFinding`s for `summary | duplicate-candidates |
-   stale-facts | conflicting-claims | orphan-entities | low-confidence | projection-drift`
+   stale-facts | conflicting-claims | orphan-entities | low-confidence | projection-drift |
+   entity-label-drift`
    (status ok/watch/degraded). The same summary snapshot powers `commit --verify` regression
    detection (§5).
 
 CLI: `graph quality <summary|duplicate-candidates|stale-facts|conflicting-claims|orphan-entities|
-low-confidence|projection-drift> [--threshold 0.5] [--subgraph] [--limit]`.
+low-confidence|projection-drift|entity-label-drift> [--threshold 0.5] [--subgraph] [--limit]`.
 
 ---
 

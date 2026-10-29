@@ -67,7 +67,9 @@ class UnimplementedMutation:
     ) -> int:
         return _raise(self.profile, "mutation", "invalidate")
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
         return _raise(self.profile, "mutation", "reset_pot")
 
     def readiness(self, pot_id: str) -> BackendReadiness:
@@ -144,6 +146,14 @@ class UnimplementedAnalytics:
 @dataclass(slots=True)
 class UnimplementedSnapshot:
     profile: str
+
+    def export_data(self, *, pot_id: str) -> Mapping[str, Any]:
+        return _raise(self.profile, "snapshot", "export_data")
+
+    def import_data(
+        self, *, pot_id: str, payload: Mapping[str, Any]
+    ) -> SnapshotManifest:
+        return _raise(self.profile, "snapshot", "import_data")
 
     def export(self, *, pot_id: str, destination: str) -> SnapshotManifest:
         return _raise(self.profile, "snapshot", "export")

@@ -2,31 +2,27 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
-import uuid
-from collections import defaultdict
-from collections.abc import Mapping
-from dataclasses import replace
-from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
+import uuid
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from potpie_context_engine.core.commit_service import GraphCommitSurface
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
 )
-from potpie_context_engine.core.semantic_mutation_lowering import lower_semantic_request
-from potpie_context_engine.core.semantic_mutation_validator import (
-    validate_semantic_request,
-)
+from potpie_context_engine.core.entity_canonicalization import coherent_entity_labels
 from potpie_context_engine.core.errors import CapabilityNotImplemented
 from potpie_context_engine.core.graph_contract import (
-    GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
+    EVIDENCE_REQUIRED_TRUTH_CLASSES,
 )
 from potpie_context_engine.core.graph_contract import (
-    EVIDENCE_REQUIRED_TRUTH_CLASSES,
-    MutationRisk,
+    GRAPH_CONTRACT_VERSION as DATA_PLANE_CONTRACT_VERSION,
 )
 from potpie_context_engine.core.graph_history import (
     GraphHistoryEntry,
@@ -39,27 +35,11 @@ from potpie_context_engine.core.graph_inbox import (
     GraphInboxResult,
     GraphInboxStatus,
 )
-from potpie_context_engine.core.graph_mutations import ProvenanceContext
-from potpie_context_engine.core.mutation_policy import (
-    DEFAULT_MUTATION_POLICY,
-    GraphMutationPolicy,
-)
-from potpie_context_engine.core.reconciliation_config import (
-    ReconciliationConfig,
-    reconciliation_config_scope,
-)
-from potpie_context_engine.core.reconciliation_flags import (
-    reconciliation_config_from_env,
-)
 from potpie_context_engine.core.graph_plans import (
     GraphIngestionVerificationResult,
-    GraphMutationApproval,
     GraphMutationCommitResult,
-    GraphMutationDiff,
     GraphMutationPlanRecord,
-    GraphMutationPlanStatus,
     GraphMutationProposal,
-    TERMINAL_PLAN_STATUSES,
 )
 from potpie_context_engine.core.graph_quality import (
     EpisodicEdgeConflictInput,
@@ -77,25 +57,72 @@ from potpie_context_engine.core.graph_workbench import (
     GraphUnsupported,
     GraphUnsupportedResult,
 )
-from potpie_context_engine.core.entity_canonicalization import coherent_entity_labels
 from potpie_context_engine.core.graph_workbench_ontology import ranked_catalog_views
+from potpie_context_engine.core.mutation_policy import (
+    DEFAULT_MUTATION_POLICY,
+    GraphMutationPolicy,
+)
+from potpie_context_engine.core.ports.claim_query import (
+    ClaimQueryFilter,
+    ClaimRow,
+    entity_properties_many,
+)
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
 from potpie_context_engine.core.ports.graph.inbox_store import GraphInboxStorePort
-from potpie_context_engine.core.ports.graph.mutation import (
-    MutationExecutionLookup,
-    MutationExecutionState,
-)
 from potpie_context_engine.core.ports.graph.plan_store import GraphPlanStorePort
-from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter, ClaimRow
-from potpie_context_engine.core.semantic_mutations import (
-    LoweredOperation,
-    SemanticMutationParseError,
-    SemanticMutationRequest,
-    SemanticMutationValidationIssue,
+from potpie_context_engine.core.reconciliation_config import (
+    ReconciliationConfig,
 )
+from potpie_context_engine.core.reconciliation_flags import (
+    reconciliation_config_from_env,
+)
+from potpie_context_engine.core.semantic_mutation_lowering import lower_semantic_request
+from potpie_context_engine.core.semantic_mutation_validator import (
+    validate_semantic_request,
+)
+from potpie_context_engine.core.semantic_mutations import (
+    SemanticOperationResolver,
+    SemanticMutationRequest,
+)
+
+from .mutation_execution_service import (
+    commit_mutation,
+)
+from .mutation_execution_service import (
+    commit_status as mutation_commit_status,
+    verify_commit as verify_committed_mutation,
+)
+from .mutation_preparation import propose_mutation
+from .mutation_state import (
+    _claim_keys_from_record,
+    _dedupe_claim_rows,
+    _int_map,
+    _mapping_of_ints,
+    _row_claim_key,
+    _safe_int,
+    _subgraph_versions,
+    _unsupported_from_exception,
+)
+from .mutation_execution import request_fingerprint as _request_fingerprint  # noqa: F401
+from .mutation_verification import _verify_ingestion_commit as _verify_prepared_commit
+
+
+def _verify_ingestion_commit(backend, *, pot_id, record, before_quality, definition):
+    return _verify_prepared_commit(
+        backend,
+        pot_id=pot_id,
+        record=record,
+        before_quality=before_quality,
+        definition=definition,
+        quality_snapshot=_verification_quality_snapshot,
+    )
+
 
 _DEFAULT_PLAN_TTL_SECONDS = 3600
 _DEFAULT_COMMIT_CLAIM_TIMEOUT_SECONDS = 300
+# How long one worker owns a claimed inbox item before another may take over.
+_DEFAULT_INBOX_LEASE_SECONDS = 1800
+_MAX_INBOX_LEASE_SECONDS = 86400
 _LOG = logging.getLogger(__name__)
 _QUALITY_SCAN_MAX = 5000
 _DEFAULT_LOW_CONFIDENCE_THRESHOLD = 0.5
@@ -123,7 +150,7 @@ _CROSS_CUTTING_RESULT_KEYS = frozenset(
 )
 
 
-class GraphWorkbenchService:
+class GraphWorkbenchService(GraphCommitSurface):
     """Graph V2 workbench workflow layer above the backend write door."""
 
     def __init__(
@@ -150,12 +177,17 @@ class GraphWorkbenchService:
         )
         self.validator = validator or (
             lambda request: validate_semantic_request(
-                request, definition=self.definition
+                request,
+                definition=self.definition,
+                claim_query=self.backend.claim_query,
             )
         )
         self.lowerer = lowerer or (
             lambda request, plan: lower_semantic_request(
-                request, plan, definition=self.definition
+                request,
+                plan,
+                definition=self.definition,
+                claim_query=self.backend.claim_query,
             )
         )
         self.default_plan_ttl_seconds = (
@@ -171,121 +203,16 @@ class GraphWorkbenchService:
         *,
         pot_id: str,
         ttl_seconds: int | None = None,
+        approved_by: str | None = None,
+        resolve_operations: SemanticOperationResolver | None = None,
     ) -> GraphMutationProposal:
-        """Validate, lower, diff, and persist a mutation plan without writing."""
-        now = datetime.now(timezone.utc)
-        plan_id = f"mutation-plan:{uuid.uuid4().hex[:12]}"
-        current_versions = _subgraph_versions(self.backend, pot_id)
-        expected_versions = _expected_versions(payload, current_versions)
-        conflict = _version_conflict(expected_versions, current_versions)
-        expires_at = now + timedelta(
-            seconds=max(1, int(ttl_seconds or self.default_plan_ttl_seconds))
-        )
-        payload_with_pot = dict(payload)
-        payload_with_pot["pot_id"] = pot_id
-
-        try:
-            request = SemanticMutationRequest.parse(payload, pot_id=pot_id)
-        except SemanticMutationParseError as exc:
-            issue = {
-                "code": "invalid_mutation_payload",
-                "message": str(exc),
-                "severity": "error",
-                "op_index": None,
-            }
-            record = GraphMutationPlanRecord(
-                plan_id=plan_id,
-                pot_id=pot_id,
-                status=GraphMutationPlanStatus.invalid.value,
-                risk=MutationRisk.low.value,
-                created_at=now,
-                expires_at=expires_at,
-                original_payload=payload_with_pot,
-                validation_issues=(issue,),
-                rejected_ops=(issue,),
-                expected_subgraph_versions=expected_versions,
-                current_subgraph_versions=current_versions,
-                detail=str(exc),
-            )
-            self.plan_store.save(record)
-            return _proposal_from_record(
-                record,
-                ok=False,
-                recommended_next_action="Fix the mutation JSON and run graph propose again.",
-            )
-
-        semantic_plan = self.validator(request)
-        status = _status_for_proposal(semantic_plan, conflict=bool(conflict))
-        if (
-            status == GraphMutationPlanStatus.validated.value
-            and not self.policy.allow_auto_commit
-        ):
-            status = GraphMutationPlanStatus.review_required.value
-        if status not in {
-            GraphMutationPlanStatus.invalid.value,
-            GraphMutationPlanStatus.conflict.value,
-        }:
-            self.lowerer(request, semantic_plan)
-
-        claim_keys = tuple(
-            key for op in semantic_plan.accepted_ops for key in op.claim_keys
-        )
-        diff = GraphMutationDiff.from_batch(
-            semantic_plan.batch,
-            claim_keys=claim_keys,
-        )
-        issues = tuple(issue.to_dict() for issue in semantic_plan.issues)
-        rejected = _rejected_operation_summaries(semantic_plan.issues)
-        warnings = tuple(
-            issue.message for issue in semantic_plan.issues if not issue.is_error
-        ) + tuple(semantic_plan.warnings)
-        detail = None
-        recommended = None
-        if conflict:
-            detail = _conflict_message(conflict)
-            recommended = "Reread the affected graph views and propose a new plan."
-        elif status == GraphMutationPlanStatus.invalid.value:
-            detail = "; ".join(i.message for i in semantic_plan.errors) or None
-            recommended = "Fix the validation errors and run graph propose again."
-        elif status == GraphMutationPlanStatus.review_required.value:
-            recommended = "Review the persisted plan, then commit with --approved-by when policy allows."
-        elif status == GraphMutationPlanStatus.validated.value:
-            recommended = f"Commit with `potpie graph commit {plan_id} --json`."
-
-        record = GraphMutationPlanRecord(
-            plan_id=plan_id,
+        return propose_mutation(
+            self,
+            payload,
             pot_id=pot_id,
-            status=status,
-            risk=semantic_plan.risk,
-            created_at=now,
-            expires_at=expires_at,
-            original_payload=payload_with_pot,
-            validation_issues=issues,
-            accepted_ops=tuple(
-                _lowered_operation_summary(op) for op in semantic_plan.accepted_ops
-            ),
-            review_required_ops=tuple(
-                _lowered_operation_summary(op)
-                for op in semantic_plan.review_required_ops
-            ),
-            rejected_ops=rejected,
-            lowered_batch=semantic_plan.batch,
-            provenance=semantic_plan.provenance,
-            expected_subgraph_versions=expected_versions,
-            current_subgraph_versions=current_versions,
-            diff=diff,
-            warnings=warnings,
-            detail=detail,
-        )
-        self.plan_store.save(record)
-        return _proposal_from_record(
-            record,
-            ok=status
-            in {
-                GraphMutationPlanStatus.validated.value,
-                GraphMutationPlanStatus.review_required.value,
-            },
-            recommended_next_action=recommended,
+            ttl_seconds=ttl_seconds,
+            approved_by=approved_by,
+            resolve_operations=resolve_operations,
         )
 
     def commit(
@@ -295,541 +222,90 @@ class GraphWorkbenchService:
         pot_id: str,
         approved_by: str | None = None,
         verify: bool = False,
-        recover_stale: bool = False,
+        recover_stale: bool = True,
+        defer_verification: bool = False,
     ) -> GraphMutationCommitResult:
-        """Apply an unexpired server-created plan by id."""
-        now = datetime.now(timezone.utc)
-        record = self.plan_store.get(pot_id=pot_id, plan_id=plan_id)
-        if record is None:
-            return GraphMutationCommitResult(
-                ok=False,
-                plan_id=plan_id,
-                status="not_found",
-                risk=MutationRisk.low.value,
-                pot_id=pot_id,
-                detail=f"mutation plan {plan_id!r} was not found for this pot",
-                recommended_next_action="Run graph propose and commit the returned plan_id.",
-            )
-
-        if record.status == GraphMutationPlanStatus.committed.value:
-            return _committed_plan_result(record)
-
-        if record.status in TERMINAL_PLAN_STATUSES:
-            return GraphMutationCommitResult(
-                ok=False,
-                plan_id=record.plan_id,
-                status=record.status,
-                risk=record.risk,
-                pot_id=record.pot_id,
-                expected_subgraph_versions=record.expected_subgraph_versions,
-                current_subgraph_versions=record.current_subgraph_versions,
-                diff=record.diff,
-                claim_keys=_claim_keys_from_record(record),
-                approval=record.approval,
-                detail=f"plan is {record.status} and cannot be committed",
-                recommended_next_action="Create a fresh proposal if a write is still needed.",
-            )
-        retrying_execution = (
-            record.status == GraphMutationPlanStatus.error.value
-            and record.mutation_id is not None
-        )
-        recovering_stale = False
-        if record.status == GraphMutationPlanStatus.committing.value:
-            if not recover_stale:
-                return _concurrent_commit_result(record)
-            if not _commit_attempt_is_stale(
-                record,
-                now=now,
-                timeout_seconds=self.commit_claim_timeout_seconds,
-            ):
-                return _concurrent_commit_result(
-                    record,
-                    detail=(
-                        "commit attempt is still active and cannot be recovered yet"
-                    ),
-                )
-            recovering_stale = True
-
-        if retrying_execution or recovering_stale:
-            lookup = _lookup_mutation_execution(self.backend, record)
-            if lookup.state == MutationExecutionState.completed.value:
-                return self._complete_recovered_commit(
-                    record,
-                    lookup=lookup,
-                    now=now,
-                    verify=verify,
-                )
-            if lookup.state == MutationExecutionState.in_flight.value:
-                return _concurrent_commit_result(
-                    record,
-                    detail="the backend mutation is still in flight",
-                )
-            if lookup.state != MutationExecutionState.absent.value:
-                return self._fail_unsafe_recovery(record, lookup=lookup)
-
-        if record.is_expired(now=now):
-            expired = replace(
-                record,
-                status=GraphMutationPlanStatus.expired.value,
-                detail="plan expired before commit",
-            )
-            if not self.plan_store.compare_and_set(
-                expected=record,
-                replacement=expired,
-            ):
-                return _commit_state_changed_result(
-                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-                )
-            return GraphMutationCommitResult(
-                ok=False,
-                plan_id=expired.plan_id,
-                status=expired.status,
-                risk=expired.risk,
-                pot_id=expired.pot_id,
-                expected_subgraph_versions=expired.expected_subgraph_versions,
-                current_subgraph_versions=_subgraph_versions(self.backend, pot_id),
-                diff=expired.diff,
-                claim_keys=_claim_keys_from_record(expired),
-                detail="plan expired before commit",
-                recommended_next_action="Reread current graph state and propose a new plan.",
-            )
-
-        current_versions = _subgraph_versions(self.backend, pot_id)
-        conflict = _version_conflict(
-            record.expected_subgraph_versions,
-            current_versions,
-        )
-        if conflict:
-            conflicted = replace(
-                record,
-                status=GraphMutationPlanStatus.conflict.value,
-                current_subgraph_versions=current_versions,
-                detail=_conflict_message(conflict),
-            )
-            if not self.plan_store.compare_and_set(
-                expected=record,
-                replacement=conflicted,
-            ):
-                return _commit_state_changed_result(
-                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-                )
-            return GraphMutationCommitResult(
-                ok=False,
-                plan_id=conflicted.plan_id,
-                status=conflicted.status,
-                risk=conflicted.risk,
-                pot_id=conflicted.pot_id,
-                expected_subgraph_versions=conflicted.expected_subgraph_versions,
-                current_subgraph_versions=current_versions,
-                diff=conflicted.diff,
-                claim_keys=_claim_keys_from_record(conflicted),
-                detail=conflicted.detail,
-                recommended_next_action="Reread current graph state and propose a new plan.",
-            )
-
-        approval = record.approval
-        approval_error = _approval_error(
-            record,
+        return commit_mutation(
+            self,
+            plan_id,
+            pot_id=pot_id,
             approved_by=approved_by,
-            require_approval=self.policy.require_approval_for_review,
+            verify=verify,
+            recover_stale=recover_stale,
+            defer_verification=defer_verification,
+            verify_receipt=_verify_ingestion_commit,
+            quality_snapshot=_verification_quality_snapshot,
         )
-        if approval_error:
-            return GraphMutationCommitResult(
-                ok=False,
-                plan_id=record.plan_id,
-                status=record.status,
-                risk=record.risk,
-                pot_id=record.pot_id,
-                expected_subgraph_versions=record.expected_subgraph_versions,
-                current_subgraph_versions=current_versions,
-                diff=record.diff,
-                claim_keys=_claim_keys_from_record(record),
-                approval=approval,
-                detail=approval_error,
-                recommended_next_action=(
-                    f"Review the plan, then run `potpie graph commit {plan_id} "
-                    "--approved-by <user-ref> --json` when policy allows."
-                ),
+
+    def commit_status(self, plan_id: str, *, pot_id: str) -> GraphMutationCommitResult:
+        return mutation_commit_status(self, plan_id, pot_id=pot_id)
+
+    def repair_legacy(self, *, pot_id: str, mode: str, repair_id: str | None = None):
+        from .runtime import run_async_from_sync
+
+        return run_async_from_sync(
+            self.repair_legacy_async, pot_id=pot_id, mode=mode, repair_id=repair_id
+        )
+
+    def _repair_legacy(
+        self,
+        *,
+        pot_id: str,
+        mode: str,
+        repair_id: str | None = None,
+        approved_by: str | None = None,
+    ):
+        from .legacy_repair_service import prepare_legacy_repair, apply_legacy_repair
+
+        if mode == "dry_run":
+            return prepare_legacy_repair(
+                self.backend, self.plan_store, pot_id=pot_id, repair_id=repair_id
             )
-        if approved_by and approval is None:
-            approval = GraphMutationApproval(
+        if mode != "apply" or not repair_id or not approved_by:
+            raise ValueError(
+                "repair apply requires a reviewed identity and administrative approval"
+            )
+
+        def execute(run, child):
+            return commit_mutation(
+                self,
+                child.plan_id,
+                pot_id=pot_id,
                 approved_by=approved_by,
-                approved_at=now,
+                verify_receipt=_verify_ingestion_commit,
+                quality_snapshot=_verification_quality_snapshot,
+                _repair_run=run,
             )
 
-        quality_before = (
-            _verification_quality_snapshot(
-                self.backend,
-                pot_id=pot_id,
-                definition=self.definition,
-            )
-            if verify
-            else None
-        )
-        execution_mutation_id = record.mutation_id or uuid.uuid4().hex
-        attempt_started_at = datetime.now(timezone.utc)
-        reserved = replace(
-            record,
-            status=GraphMutationPlanStatus.committing.value,
-            approval=approval,
-            mutation_id=execution_mutation_id,
-            commit_attempt_id=uuid.uuid4().hex,
-            commit_attempt_started_at=attempt_started_at,
-            detail=None,
-        )
-        if not self.plan_store.compare_and_set(
-            expected=record,
-            replacement=reserved,
-        ):
-            return _commit_state_changed_result(
-                self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-            )
-        record = reserved
-
-        if record.lowered_batch is None or not _batch_has_work(record.lowered_batch):
-            committed = replace(
-                record,
-                status=GraphMutationPlanStatus.committed.value,
-                commit_attempt_id=None,
-                commit_attempt_started_at=None,
-                committed_at=now,
-                final_subgraph_versions=current_versions,
-                approval=approval,
-            )
-            if not self.plan_store.compare_and_set(
-                expected=record,
-                replacement=committed,
-            ):
-                return _commit_state_changed_result(
-                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-                )
-            verification = (
-                _verify_ingestion_commit(
-                    self.backend,
-                    pot_id=pot_id,
-                    record=committed,
-                    before_quality=quality_before,
-                    definition=self.definition,
-                )
-                if verify
-                else None
-            )
-            return GraphMutationCommitResult(
-                ok=True,
-                plan_id=committed.plan_id,
-                status=committed.status,
-                risk=committed.risk,
-                pot_id=committed.pot_id,
-                mutation_id=execution_mutation_id,
-                applied_at=now,
-                expected_subgraph_versions=committed.expected_subgraph_versions,
-                current_subgraph_versions=current_versions,
-                new_subgraph_versions=current_versions,
-                diff=committed.diff,
-                claim_keys=_claim_keys_from_record(committed),
-                approval=approval,
-                verification=verification,
-                detail="plan had no structural mutations to apply",
-                recommended_next_action=_verification_next_action(verification),
-            )
-
-        commit_actor = approved_by or (
-            approval.approved_by if approval is not None else None
-        )
-        try:
-            with reconciliation_config_scope(self.reconciliation_config):
-                result = self.backend.mutation.apply(
-                    deepcopy(record.lowered_batch),
-                    expected_pot_id=pot_id,
-                    provenance_context=_provenance_for_commit(
-                        record.provenance,
-                        approved_by=commit_actor,
-                        mutation_id=execution_mutation_id,
-                    ),
-                )
-            final_versions = (
-                _subgraph_versions(self.backend, pot_id) if result.ok else None
-            )
-        except Exception:
-            _LOG.exception(
-                "graph backend mutation failed unexpectedly "
-                "(pot_id=%s, plan_id=%s, mutation_id=%s)",
-                pot_id,
-                plan_id,
-                execution_mutation_id,
-            )
-            detail = "backend_exception: backend mutation failed unexpectedly"
-            errored = replace(
-                record,
-                status=GraphMutationPlanStatus.error.value,
-                current_subgraph_versions=current_versions,
-                commit_attempt_id=None,
-                commit_attempt_started_at=None,
-                approval=approval,
-                detail=detail,
-            )
-            if not self.plan_store.compare_and_set(
-                expected=record,
-                replacement=errored,
-            ):
-                return _commit_state_changed_result(
-                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-                )
-            return _errored_commit_result(
-                errored,
-                current_subgraph_versions=current_versions,
-                detail=detail,
-                recommended_next_action=(
-                    "Retry this plan_id. Recovery will replay only when the "
-                    "backend can prove the mutation is absent or completed. If "
-                    "a worker crashed, wait for the claim timeout and retry with "
-                    "recover_stale=True."
-                ),
-            )
-
-        if not result.ok:
-            errored = replace(
-                record,
-                status=GraphMutationPlanStatus.error.value,
-                current_subgraph_versions=current_versions,
-                commit_attempt_id=None,
-                commit_attempt_started_at=None,
-                approval=approval,
-                detail=result.error,
-            )
-            if not self.plan_store.compare_and_set(
-                expected=record,
-                replacement=errored,
-            ):
-                return _commit_state_changed_result(
-                    self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-                )
-            return _errored_commit_result(
-                errored,
-                current_subgraph_versions=current_versions,
-                detail=result.error,
-                recommended_next_action="Inspect backend readiness with `potpie graph status --json`.",
-            )
-
-        assert final_versions is not None
-        committed = replace(
-            record,
-            status=GraphMutationPlanStatus.committed.value,
-            mutation_id=execution_mutation_id,
-            commit_attempt_id=None,
-            commit_attempt_started_at=None,
-            committed_at=now,
-            final_subgraph_versions=final_versions,
-            approval=approval,
-        )
-        if not self.plan_store.compare_and_set(
-            expected=record,
-            replacement=committed,
-        ):
-            current = self.plan_store.get(pot_id=pot_id, plan_id=plan_id) or record
-            return GraphMutationCommitResult(
-                ok=False,
-                plan_id=plan_id,
-                status=current.status,
-                risk=current.risk,
-                pot_id=pot_id,
-                mutation_id=execution_mutation_id,
-                applied_at=now,
-                expected_subgraph_versions=current.expected_subgraph_versions,
-                current_subgraph_versions=final_versions,
-                new_subgraph_versions=final_versions,
-                diff=current.diff,
-                claim_keys=_claim_keys_from_record(current),
-                approval=approval,
-                detail=(
-                    "backend mutation completed, but the plan store rejected the "
-                    "final compare-and-set; the stable mutation_id is recoverable"
-                ),
-                recommended_next_action=(
-                    "Inspect the stored plan. If it remains committing after the "
-                    "claim timeout, retry with recover_stale=True."
-                ),
-            )
-        verification = (
-            _verify_ingestion_commit(
-                self.backend,
-                pot_id=pot_id,
-                record=committed,
-                before_quality=quality_before,
-                definition=self.definition,
-            )
-            if verify
-            else None
-        )
-        return GraphMutationCommitResult(
-            ok=True,
-            plan_id=committed.plan_id,
-            status=committed.status,
-            risk=committed.risk,
-            pot_id=committed.pot_id,
-            mutation_id=execution_mutation_id,
-            applied_at=now,
-            expected_subgraph_versions=committed.expected_subgraph_versions,
-            current_subgraph_versions=current_versions,
-            new_subgraph_versions=final_versions,
-            diff=committed.diff,
-            claim_keys=_claim_keys_from_record(committed),
-            approval=approval,
-            verification=verification,
-            recommended_next_action=_verification_next_action(verification),
+        return apply_legacy_repair(
+            self.plan_store, pot_id=pot_id, repair_id=repair_id, commit_child=execute
         )
 
-    def _complete_recovered_commit(
-        self,
-        record: GraphMutationPlanRecord,
-        *,
-        lookup: MutationExecutionLookup,
-        now: datetime,
-        verify: bool,
-    ) -> GraphMutationCommitResult:
-        """Finalize a plan from a backend-proven completed execution receipt."""
+    async def repair_legacy_async(
+        self, *, pot_id: str, mode: str, repair_id: str | None = None
+    ):
+        from .runtime import run_in_worker_thread
 
-        result = lookup.result
-        if (
-            result is None
-            or not record.mutation_id
-            or result.mutation_id != record.mutation_id
-        ):
-            invalid_lookup = replace(
-                lookup,
-                state=MutationExecutionState.ambiguous.value,
-                detail=None,
-            )
-            return self._fail_unsafe_recovery(record, lookup=invalid_lookup)
-
-        current_versions = _subgraph_versions(self.backend, record.pot_id)
-        if not result.ok:
-            errored = replace(
-                record,
-                status=GraphMutationPlanStatus.error.value,
-                current_subgraph_versions=current_versions,
-                commit_attempt_id=None,
-                commit_attempt_started_at=None,
-                detail=result.error,
-            )
-            if not self.plan_store.compare_and_set(
-                expected=record,
-                replacement=errored,
-            ):
-                return _commit_state_changed_result(
-                    self.plan_store.get(
-                        pot_id=record.pot_id,
-                        plan_id=record.plan_id,
-                    )
-                    or record
-                )
-            return _errored_commit_result(
-                errored,
-                current_subgraph_versions=current_versions,
-                detail=result.error,
-                recommended_next_action=(
-                    "Inspect backend readiness before creating a fresh proposal."
-                ),
-            )
-
-        committed = replace(
-            record,
-            status=GraphMutationPlanStatus.committed.value,
-            mutation_id=result.mutation_id,
-            commit_attempt_id=None,
-            commit_attempt_started_at=None,
-            committed_at=now,
-            final_subgraph_versions=current_versions,
-            detail=None,
+        await self.commit_service.authorize(
+            pot_id, "read" if mode == "dry_run" else "admin"
         )
-        if not self.plan_store.compare_and_set(
-            expected=record,
-            replacement=committed,
-        ):
-            return _commit_state_changed_result(
-                self.plan_store.get(
-                    pot_id=record.pot_id,
-                    plan_id=record.plan_id,
-                )
-                or record
-            )
-        verification = (
-            _verify_ingestion_commit(
-                self.backend,
-                pot_id=record.pot_id,
-                record=committed,
-                before_quality=None,
-                definition=self.definition,
-            )
-            if verify
-            else None
-        )
-        return GraphMutationCommitResult(
-            ok=True,
-            plan_id=committed.plan_id,
-            status=committed.status,
-            risk=committed.risk,
-            pot_id=committed.pot_id,
-            mutation_id=committed.mutation_id,
-            applied_at=committed.committed_at,
-            expected_subgraph_versions=committed.expected_subgraph_versions,
-            current_subgraph_versions=current_versions,
-            new_subgraph_versions=current_versions,
-            diff=committed.diff,
-            claim_keys=_claim_keys_from_record(committed),
-            approval=committed.approval,
-            verification=verification,
-            detail="recovered the backend's persisted mutation receipt",
-            recommended_next_action=_verification_next_action(verification),
+        return await run_in_worker_thread(
+            self._repair_legacy,
+            pot_id=pot_id,
+            mode=mode,
+            repair_id=repair_id,
+            approved_by=self.commit_service.actor() if mode == "apply" else None,
         )
 
-    def _fail_unsafe_recovery(
-        self,
-        record: GraphMutationPlanRecord,
-        *,
-        lookup: MutationExecutionLookup,
-    ) -> GraphMutationCommitResult:
-        """Refuse to execute again when the backend cannot prove it is safe."""
-
-        state = str(lookup.state)
-        detail = (
-            "mutation_recovery_unsupported: the backend cannot prove whether "
-            "the reserved mutation executed"
-            if state == MutationExecutionState.unsupported.value
-            else "mutation_recovery_ambiguous: backend execution state is uncertain"
-        )
-        current = record
-        if record.status == GraphMutationPlanStatus.committing.value:
-            errored = replace(
-                record,
-                status=GraphMutationPlanStatus.error.value,
-                commit_attempt_id=None,
-                commit_attempt_started_at=None,
-                detail=detail,
-            )
-            if not self.plan_store.compare_and_set(
-                expected=record,
-                replacement=errored,
-            ):
-                return _commit_state_changed_result(
-                    self.plan_store.get(
-                        pot_id=record.pot_id,
-                        plan_id=record.plan_id,
-                    )
-                    or record
-                )
-            current = errored
-        return _errored_commit_result(
-            current,
-            current_subgraph_versions=_subgraph_versions(
-                self.backend,
-                record.pot_id,
-            ),
-            detail=detail,
-            recommended_next_action=(
-                "Inspect graph history using the mutation_id. Create a fresh "
-                "proposal only after reconciling whether the mutation landed."
-            ),
+    def verify_commit(
+        self, plan_id: str, *, pot_id: str
+    ) -> GraphIngestionVerificationResult:
+        """Verify a committed plan without applying its mutations again."""
+        return verify_committed_mutation(
+            self,
+            plan_id,
+            pot_id=pot_id,
+            verify_receipt=_verify_ingestion_commit,
         )
 
     def history(
@@ -844,6 +320,7 @@ class GraphWorkbenchService:
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 50,
+        include_claims: bool = True,
     ) -> GraphHistoryResult:
         """Return read-only plan and claim history for a bounded filter."""
         request = GraphHistoryRequest(
@@ -872,7 +349,11 @@ class GraphWorkbenchService:
         )
         entries = [_history_entry_from_plan(record) for record in records]
 
-        rows, unsupported = _history_claim_rows(self.backend, request, records)
+        rows, unsupported = (
+            _history_claim_rows(self.backend, request, records)
+            if include_claims
+            else ((), ())
+        )
         entries.extend(_history_entry_from_claim(row) for row in rows)
         entries = _dedupe_history_entries(entries)
         entries.sort(key=_history_sort_key, reverse=True)
@@ -1062,9 +543,20 @@ class GraphWorkbenchService:
         pot_id: str,
         item_id: str,
         claimed_by: str,
+        lease_seconds: int | None = None,
     ) -> GraphInboxResult:
-        """Claim a pending inbox item for processing."""
+        """Take an exclusive, time-boxed lease on a pending inbox item.
+
+        A claim only means something if it excludes: the previous read-then-save
+        let two agents claim the same item and do the same work twice, each
+        believing it owned the item. The claim is now a lease — held by one
+        actor until ``claim_expires_at``, refreshable by that actor, and
+        reclaimable by anyone once it lapses so a dead worker cannot strand the
+        item — and it is taken with an atomic swap, so the loser of a race is
+        told it lost instead of overwriting the winner.
+        """
         store = self._inbox_store()
+        actor = _required_clean(claimed_by, "claimed_by")
         item = store.get(
             pot_id=pot_id,
             item_id=_required_clean(item_id, "item_id"),
@@ -1075,18 +567,40 @@ class GraphWorkbenchService:
         if terminal is not None:
             return terminal
         now = datetime.now(timezone.utc)
+        holder = _active_inbox_claim_holder(item, now=now)
+        if holder is not None and holder != actor:
+            return _inbox_claim_conflict_result(item)
+        lease = _inbox_lease_seconds(lease_seconds)
         claimed = replace(
             item,
             status=GraphInboxStatus.claimed.value,
-            claimed_by=_required_clean(claimed_by, "claimed_by"),
+            claimed_by=actor,
             claimed_at=now,
+            claim_expires_at=now + timedelta(seconds=lease),
         )
-        store.save(claimed)
+        if not store.compare_and_set(expected=item, replacement=claimed):
+            return GraphInboxResult(
+                ok=False,
+                pot_id=pot_id,
+                action="claim",
+                item=store.get(pot_id=pot_id, item_id=item.item_id) or item,
+                detail=(
+                    "inbox item changed while the claim was being taken; "
+                    "another worker got there first"
+                ),
+                recommended_next_action=(
+                    "Re-read the item with graph inbox show --json, or pick another "
+                    "pending item with graph inbox list --status pending --json."
+                ),
+            )
         return GraphInboxResult(
             ok=True,
             pot_id=pot_id,
             action="claim",
             item=claimed,
+            detail=(
+                f"claim leased to {actor} until {_dt_iso(claimed.claim_expires_at)}"
+            ),
             recommended_next_action=(
                 "Use graph catalog/describe/read/search-entities before proposing a write."
             ),
@@ -1224,6 +738,7 @@ def graph_success_envelope(
     warnings: tuple[str, ...] | list[str] = (),
     unsupported: tuple[GraphUnsupported, ...] | list[GraphUnsupported] = (),
     recommended_next_action: str | Mapping[str, Any] | None = None,
+    adjustments: Sequence[Mapping[str, Any]] = (),
 ) -> GraphCommandEnvelope:
     return GraphCommandEnvelope(
         ok=True,
@@ -1235,6 +750,7 @@ def graph_success_envelope(
         warnings=tuple(warnings),
         unsupported=tuple(unsupported),
         recommended_next_action=recommended_next_action,
+        adjustments=tuple(dict(item) for item in adjustments),
     )
 
 
@@ -1349,18 +865,6 @@ def normalize_catalog_result(
     return result
 
 
-def _mapping_of_ints(value: Any) -> dict[str, int]:
-    if not isinstance(value, Mapping):
-        return {}
-    out: dict[str, int] = {}
-    for key, raw in value.items():
-        try:
-            out[str(key)] = int(raw)
-        except (TypeError, ValueError):
-            continue
-    return out
-
-
 def _string_tuple(value: Any) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -1398,415 +902,7 @@ def _unsupported_tuple(value: Any) -> tuple[GraphUnsupported, ...]:
     return tuple(out)
 
 
-def _subgraph_versions(backend: GraphBackend, pot_id: str) -> dict[str, int]:
-    try:
-        counts = dict(backend.analytics.counts(pot_id))
-    except Exception:
-        counts = {}
-    try:
-        return {"_global": int(counts.get("claims", 0))}
-    except (TypeError, ValueError):
-        return {"_global": 0}
-
-
-def _expected_versions(
-    payload: Mapping[str, Any],
-    current_versions: Mapping[str, int],
-) -> dict[str, int]:
-    provided = _mapping_of_ints(payload.get("expected_subgraph_versions"))
-    if "_global" not in provided and "_global" in current_versions:
-        provided["_global"] = int(current_versions["_global"])
-    return provided
-
-
-def _version_conflict(
-    expected: Mapping[str, int],
-    current: Mapping[str, int],
-) -> dict[str, Any] | None:
-    for key, expected_value in expected.items():
-        if key not in current:
-            continue
-        actual = int(current[key])
-        if int(expected_value) != actual:
-            return {
-                "subgraph": key,
-                "expected_version": int(expected_value),
-                "actual_version": actual,
-            }
-    return None
-
-
-def _conflict_message(conflict: Mapping[str, Any]) -> str:
-    return (
-        f"{conflict.get('subgraph')} changed after the plan was proposed "
-        f"(expected {conflict.get('expected_version')}, "
-        f"actual {conflict.get('actual_version')})"
-    )
-
-
-def _status_for_proposal(semantic_plan, *, conflict: bool) -> str:
-    if conflict:
-        return GraphMutationPlanStatus.conflict.value
-    if semantic_plan.errors or semantic_plan.decision == "rejected":
-        return GraphMutationPlanStatus.invalid.value
-    if semantic_plan.decision == "review_required":
-        return GraphMutationPlanStatus.review_required.value
-    return GraphMutationPlanStatus.validated.value
-
-
-def _lowered_operation_summary(op: LoweredOperation) -> dict[str, Any]:
-    out: dict[str, Any] = {
-        "op_index": op.op_index,
-        "op": op.op,
-        "risk": op.risk,
-        "status": op.status,
-        "claim_keys": list(op.claim_keys),
-    }
-    if op.subgraph:
-        out["subgraph"] = op.subgraph
-    if op.truth:
-        out["truth"] = op.truth
-    return out
-
-
-def _rejected_operation_summaries(
-    issues: tuple[SemanticMutationValidationIssue, ...],
-) -> tuple[Mapping[str, Any], ...]:
-    return tuple(
-        {
-            "op_index": issue.op_index,
-            "code": issue.code,
-            "message": issue.message,
-        }
-        for issue in issues
-        if issue.is_error
-    )
-
-
-def _proposal_from_record(
-    record: GraphMutationPlanRecord,
-    *,
-    ok: bool,
-    recommended_next_action: str | None = None,
-) -> GraphMutationProposal:
-    claim_keys = _claim_keys_from_record(record)
-    return GraphMutationProposal(
-        ok=ok,
-        plan_id=record.plan_id,
-        status=record.status,
-        risk=record.risk,
-        pot_id=record.pot_id,
-        auto_applicable=(
-            record.status == GraphMutationPlanStatus.validated.value
-            and record.risk == MutationRisk.low.value
-        ),
-        expires_at=record.expires_at,
-        expected_subgraph_versions=record.expected_subgraph_versions,
-        current_subgraph_versions=record.current_subgraph_versions,
-        diff=record.diff,
-        warnings=record.warnings,
-        issues=record.validation_issues,
-        rejected_operations=record.rejected_ops,
-        review_required_operations=record.review_required_ops,
-        claim_keys=claim_keys,
-        recommended_next_action=recommended_next_action,
-        detail=record.detail,
-    )
-
-
-def _lookup_mutation_execution(
-    backend: GraphBackend,
-    record: GraphMutationPlanRecord,
-) -> MutationExecutionLookup:
-    """Query optional backend apply-once state without assuming support."""
-
-    mutation_id = record.mutation_id or ""
-    unsupported = MutationExecutionLookup(
-        state=MutationExecutionState.unsupported.value,
-        mutation_id=mutation_id,
-        batch_fingerprint="",
-    )
-    if not mutation_id or record.lowered_batch is None:
-        return unsupported
-    lookup_method = getattr(backend.mutation, "lookup_execution", None)
-    if not callable(lookup_method):
-        return unsupported
-    try:
-        lookup = lookup_method(
-            record.lowered_batch,
-            expected_pot_id=record.pot_id,
-            mutation_id=mutation_id,
-        )
-    except (AttributeError, CapabilityNotImplemented):
-        return unsupported
-    except Exception:
-        _LOG.exception(
-            "graph backend execution lookup failed "
-            "(pot_id=%s, plan_id=%s, mutation_id=%s)",
-            record.pot_id,
-            record.plan_id,
-            mutation_id,
-        )
-        return MutationExecutionLookup(
-            state=MutationExecutionState.ambiguous.value,
-            mutation_id=mutation_id,
-            batch_fingerprint="",
-        )
-    if not isinstance(lookup, MutationExecutionLookup):
-        return MutationExecutionLookup(
-            state=MutationExecutionState.ambiguous.value,
-            mutation_id=mutation_id,
-            batch_fingerprint="",
-        )
-    if lookup.mutation_id != mutation_id:
-        return replace(
-            lookup,
-            state=MutationExecutionState.ambiguous.value,
-            result=None,
-            detail=None,
-        )
-    return lookup
-
-
-def _committed_plan_result(
-    record: GraphMutationPlanRecord,
-) -> GraphMutationCommitResult:
-    """Reconstruct an idempotent commit receipt from the persisted plan."""
-
-    return GraphMutationCommitResult(
-        ok=True,
-        plan_id=record.plan_id,
-        status=record.status,
-        risk=record.risk,
-        pot_id=record.pot_id,
-        mutation_id=record.mutation_id,
-        applied_at=record.committed_at,
-        expected_subgraph_versions=record.expected_subgraph_versions,
-        current_subgraph_versions=record.current_subgraph_versions,
-        new_subgraph_versions=record.final_subgraph_versions,
-        diff=record.diff,
-        claim_keys=_claim_keys_from_record(record),
-        approval=record.approval,
-        detail="plan was already committed; returning persisted mutation receipt",
-    )
-
-
-def _errored_commit_result(
-    record: GraphMutationPlanRecord,
-    *,
-    current_subgraph_versions: Mapping[str, int],
-    detail: str | None,
-    recommended_next_action: str,
-) -> GraphMutationCommitResult:
-    return GraphMutationCommitResult(
-        ok=False,
-        plan_id=record.plan_id,
-        status=record.status,
-        risk=record.risk,
-        pot_id=record.pot_id,
-        mutation_id=record.mutation_id,
-        expected_subgraph_versions=record.expected_subgraph_versions,
-        current_subgraph_versions=current_subgraph_versions,
-        diff=record.diff,
-        claim_keys=_claim_keys_from_record(record),
-        approval=record.approval,
-        detail=detail,
-        recommended_next_action=recommended_next_action,
-    )
-
-
-def _commit_state_changed_result(
-    record: GraphMutationPlanRecord,
-) -> GraphMutationCommitResult:
-    if record.status == GraphMutationPlanStatus.committed.value:
-        return _committed_plan_result(record)
-    return _concurrent_commit_result(record)
-
-
-def _concurrent_commit_result(
-    record: GraphMutationPlanRecord,
-    *,
-    detail: str | None = None,
-) -> GraphMutationCommitResult:
-    if detail is None:
-        detail = (
-            "plan is already being committed concurrently by another caller"
-            if record.status == GraphMutationPlanStatus.committing.value
-            else f"plan state changed concurrently to {record.status!r}"
-        )
-    return GraphMutationCommitResult(
-        ok=False,
-        plan_id=record.plan_id,
-        status=record.status,
-        risk=record.risk,
-        pot_id=record.pot_id,
-        mutation_id=record.mutation_id,
-        applied_at=record.committed_at,
-        expected_subgraph_versions=record.expected_subgraph_versions,
-        current_subgraph_versions=record.current_subgraph_versions,
-        new_subgraph_versions=record.final_subgraph_versions,
-        diff=record.diff,
-        claim_keys=_claim_keys_from_record(record),
-        approval=record.approval,
-        detail=detail,
-        recommended_next_action=(
-            "Inspect the stored plan state. Recover a stale committing attempt "
-            "with recover_stale=True after the configured claim timeout."
-        ),
-    )
-
-
-def _commit_attempt_is_stale(
-    record: GraphMutationPlanRecord,
-    *,
-    now: datetime,
-    timeout_seconds: int,
-) -> bool:
-    started_at = record.commit_attempt_started_at
-    if started_at is None:
-        return True
-    try:
-        return now - started_at >= timedelta(seconds=timeout_seconds)
-    except TypeError:
-        return True
-
-
-def _claim_keys_from_record(record: GraphMutationPlanRecord) -> tuple[str, ...]:
-    keys: list[str] = []
-    for op in record.accepted_ops:
-        raw = op.get("claim_keys") if isinstance(op, Mapping) else None
-        if isinstance(raw, (list, tuple)):
-            keys.extend(str(key) for key in raw if key)
-    return tuple(dict.fromkeys(keys))
-
-
-def _verify_ingestion_commit(
-    backend: GraphBackend,
-    *,
-    pot_id: str,
-    record: GraphMutationPlanRecord,
-    before_quality: Mapping[str, Any] | None,
-    definition: GraphDefinition,
-) -> GraphIngestionVerificationResult:
-    claim_keys = _claim_keys_from_record(record)
-    readback = _verification_readback(backend, pot_id=pot_id, claim_keys=claim_keys)
-    after_quality = _verification_quality_snapshot(
-        backend,
-        pot_id=pot_id,
-        definition=definition,
-    )
-    before_counts = _quality_count_map(before_quality)
-    after_counts = _quality_count_map(after_quality)
-    deltas = _quality_count_delta(before_counts, after_counts)
-    regressions = _quality_regressions(
-        before_quality=before_quality,
-        after_quality=after_quality,
-        deltas=deltas,
-    )
-    unsupported = tuple(readback["unsupported"]) + tuple(after_quality["unsupported"])
-    warnings: list[str] = []
-    status = "ok"
-    ok = True
-    detail = None
-    recommended = None
-
-    if readback["missing_claim_keys"]:
-        ok = False
-        status = "degraded"
-        detail = "committed plan did not read back all expected claim keys"
-        recommended = (
-            "Inspect graph history for the plan and rerun graph commit verification "
-            "after backend repair if the mutation was applied."
-        )
-    elif readback["unsupported"]:
-        ok = False
-        status = "partial"
-        detail = "claim readback is unavailable for the active backend"
-        recommended = "Use graph status to inspect backend claim-query support."
-    elif regressions:
-        ok = False
-        status = "degraded"
-        detail = "quality findings increased after commit"
-        recommended = (
-            "Run the affected graph quality reports, then correct facts with "
-            "graph propose/commit or add a graph inbox item for uncertain work."
-        )
-    elif unsupported:
-        status = "partial"
-        warnings.append("some verification checks are unavailable for this backend")
-        recommended = "Use graph status to inspect backend capabilities."
-    elif after_quality["status"] not in {"ok", "empty"}:
-        status = "watch"
-        warnings.append(f"graph quality status is {after_quality['status']}")
-        recommended = (
-            "Review graph quality summary before relying on newly committed memory."
-        )
-
-    return GraphIngestionVerificationResult(
-        ok=ok,
-        status=status,
-        plan_id=record.plan_id,
-        pot_id=pot_id,
-        claim_keys=claim_keys,
-        readback_claim_keys=tuple(readback["readback_claim_keys"]),
-        missing_claim_keys=tuple(readback["missing_claim_keys"]),
-        readback_count=int(readback["readback_count"]),
-        quality_status=str(after_quality["status"]),
-        quality_counts=after_counts,
-        quality_delta=deltas,
-        quality_regressions=regressions,
-        checked_reports=tuple(after_quality["checked_reports"]),
-        warnings=tuple(warnings),
-        unsupported=unsupported,
-        detail=detail,
-        recommended_next_action=recommended,
-        subgraph_versions=_subgraph_versions(backend, pot_id),
-    )
-
-
-def _verification_readback(
-    backend: GraphBackend,
-    *,
-    pot_id: str,
-    claim_keys: tuple[str, ...],
-) -> dict[str, Any]:
-    if not claim_keys:
-        return {
-            "readback_claim_keys": (),
-            "missing_claim_keys": (),
-            "readback_count": 0,
-            "unsupported": (),
-        }
-    try:
-        rows = backend.claim_query.find_claims(
-            ClaimQueryFilter(
-                pot_id=pot_id,
-                claim_key_in=claim_keys,
-                include_invalidated=False,
-                limit=max(len(claim_keys) * 2, 20),
-            )
-        )
-    except CapabilityNotImplemented as exc:
-        return {
-            "readback_claim_keys": (),
-            "missing_claim_keys": (),
-            "readback_count": 0,
-            "unsupported": (
-                _unsupported_from_exception(exc, fallback="claim_query.find_claims"),
-            ),
-        }
-    readback_keys = tuple(
-        dict.fromkeys(_row_claim_key(row) for row in _dedupe_claim_rows(list(rows)))
-    )
-    readback_set = set(readback_keys)
-    return {
-        "readback_claim_keys": readback_keys,
-        "missing_claim_keys": tuple(
-            key for key in claim_keys if key not in readback_set
-        ),
-        "readback_count": len(readback_keys),
-        "unsupported": (),
-    }
+#: How many intervening plan ids a conflict message spells out.
 
 
 def _verification_quality_snapshot(
@@ -1850,86 +946,6 @@ def _verification_quality_snapshot(
         "checked_reports": checked_reports,
         "unsupported": tuple(result.unsupported),
     }
-
-
-def _quality_count_map(snapshot: Mapping[str, Any] | None) -> dict[str, int]:
-    if not snapshot:
-        return {}
-    counts = _int_map(snapshot.get("quality_counts"))
-    if "total_findings" not in counts:
-        counts["total_findings"] = _safe_int(snapshot.get("total_findings"))
-    return counts
-
-
-def _quality_count_delta(
-    before: Mapping[str, int],
-    after: Mapping[str, int],
-) -> dict[str, int]:
-    keys = sorted(set(before) | set(after))
-    return {key: int(after.get(key, 0)) - int(before.get(key, 0)) for key in keys}
-
-
-def _quality_regressions(
-    *,
-    before_quality: Mapping[str, Any] | None,
-    after_quality: Mapping[str, Any],
-    deltas: Mapping[str, int],
-) -> dict[str, Mapping[str, int]]:
-    if not before_quality:
-        return {}
-    regressions = {
-        key: {
-            "before": _safe_int(_quality_count_map(before_quality).get(key)),
-            "after": _safe_int(_quality_count_map(after_quality).get(key)),
-            "delta": int(delta),
-        }
-        for key, delta in deltas.items()
-        if delta > 0
-    }
-    before_rank = _quality_status_rank(str(before_quality.get("status") or "unknown"))
-    after_rank = _quality_status_rank(str(after_quality.get("status") or "unknown"))
-    if after_rank > before_rank:
-        regressions["health_status"] = {
-            "before": before_rank,
-            "after": after_rank,
-            "delta": after_rank - before_rank,
-        }
-    return regressions
-
-
-def _quality_status_rank(status: str) -> int:
-    return {
-        "ok": 0,
-        "empty": 0,
-        "watch": 1,
-        "partial": 1,
-        "unavailable": 1,
-        "unknown": 1,
-        "degraded": 2,
-    }.get(status, 1)
-
-
-def _verification_next_action(
-    verification: GraphIngestionVerificationResult | None,
-) -> str | None:
-    if verification is None:
-        return None
-    if not verification.ok or verification.status != "ok":
-        return verification.recommended_next_action
-    return None
-
-
-def _int_map(value: Any) -> dict[str, int]:
-    if not isinstance(value, Mapping):
-        return {}
-    return {str(key): _safe_int(raw) for key, raw in value.items()}
-
-
-def _safe_int(value: Any) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _record_matches_history_filter(
@@ -2056,6 +1072,7 @@ def _history_claim_rows(
 def _history_entry_from_claim(row: ClaimRow) -> GraphHistoryEntry:
     source_refs = row.source_refs or ((row.source_ref,) if row.source_ref else ())
     payload = {
+        "record_id": row.record_id,
         "predicate": row.predicate,
         "subject_key": row.subject_key,
         "object_key": row.object_key,
@@ -2074,7 +1091,8 @@ def _history_entry_from_claim(row: ClaimRow) -> GraphHistoryEntry:
     }
     return GraphHistoryEntry(
         kind="claim",
-        id=row.claim_key
+        id=row.record_id
+        or row.claim_key
         or f"{row.predicate}:{row.subject_key}:{row.object_key}:{row.mutation_id or ''}",
         status="invalidated" if row.invalid_at else "current",
         occurred_at=row.invalid_at or row.valid_at or row.observed_at,
@@ -2406,7 +1424,11 @@ def _quality_stale_facts(
     tuple[GraphQualityFinding, ...], dict[str, Any], tuple[Mapping[str, Any], ...]
 ]:
     rows, unsupported = _quality_claim_rows(
-        backend, pot_id=pot_id, subgraph=subgraph, limit=limit
+        backend,
+        pot_id=pot_id,
+        subgraph=subgraph,
+        limit=limit,
+        include_invalidated=True,
     )
     if unsupported:
         return (), {"scanned_claims": 0}, unsupported
@@ -2812,18 +1834,20 @@ def _quality_entity_metadata(
         )
     props: dict[str, Mapping[str, Any]] = {}
     if properties:
-        for key in entity_keys:
-            try:
-                props[key] = dict(
-                    backend.claim_query.entity_properties(pot_id=pot_id, entity_key=key)
+        try:
+            # A default quality scan can reach 2,000 entities. Use the same
+            # bulk capability as graph readers instead of one query per entity.
+            props = dict(
+                entity_properties_many(
+                    backend.claim_query, pot_id=pot_id, entity_keys=entity_keys
                 )
-            except CapabilityNotImplemented as exc:
-                unsupported.append(
-                    _unsupported_from_exception(
-                        exc, fallback="claim_query.entity_properties"
-                    )
+            )
+        except CapabilityNotImplemented as exc:
+            unsupported.append(
+                _unsupported_from_exception(
+                    exc, fallback="claim_query.entity_properties"
                 )
-                break
+            )
     return labels, props, tuple(unsupported)
 
 
@@ -2842,18 +1866,6 @@ def _quality_status(
     if unsupported:
         return "partial"
     return "ok"
-
-
-def _unsupported_from_exception(
-    exc: CapabilityNotImplemented,
-    *,
-    fallback: str,
-) -> Mapping[str, Any]:
-    return {
-        "name": getattr(exc, "capability", fallback) or fallback,
-        "reason": "not_implemented",
-        "detail": getattr(exc, "detail", str(exc)),
-    }
 
 
 def _quality_finding(
@@ -2908,12 +1920,23 @@ def _quality_finding_id(kind: str, *parts: str) -> str:
 
 def _stale_reasons(row: ClaimRow, *, now: datetime) -> list[str]:
     reasons: list[str] = []
-    if row.valid_until is not None and row.valid_until < now:
+    valid_until = row.valid_until
+    if valid_until is not None and valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=timezone.utc)
+    if valid_until is not None and valid_until <= now:
         reasons.append(f"valid_until elapsed at {row.valid_until.isoformat()}")
     freshness = str(row.properties.get("freshness") or "").lower()
     sync_status = str(row.properties.get("sync_status") or "").lower()
     if freshness == "stale" or sync_status == "stale":
         reasons.append("source reference is marked stale")
+    if row.properties.get("evidence_review_required"):
+        reasons.append(
+            "evidence needs review: "
+            + str(
+                row.properties.get("evidence_review_reason")
+                or "source changed or disappeared"
+            )
+        )
     return reasons
 
 
@@ -2933,12 +1956,25 @@ def _singleton_conflict_findings(
     limit: int,
     definition: GraphDefinition,
 ) -> tuple[GraphQualityFinding, ...]:
-    buckets: dict[tuple[str, str], list[ClaimRow]] = defaultdict(list)
+    from .claim_codec import _as_utc
+    from .claim_lifecycle import claim_scope, interval_end
+
+    now = datetime.now(timezone.utc)
+    buckets: dict[tuple[str | None, ...], list[ClaimRow]] = defaultdict(list)
     for row in rows:
-        if row.invalid_at is None and row.predicate in definition.singleton_predicates:
-            buckets[(row.subject_key, row.predicate)].append(row)
+        end = interval_end(row)
+        if (
+            not row.retired
+            and row.predicate in definition.singleton_predicates
+            and (row.valid_at is None or _as_utc(row.valid_at) <= now)
+            and (end is None or now < end)
+        ):
+            buckets[claim_scope(row)[:5]].append(row)
     findings: list[GraphQualityFinding] = []
-    for (subject, predicate), group in sorted(buckets.items()):
+    for scope, group in sorted(
+        buckets.items(), key=lambda item: tuple(value or "" for value in item[0])
+    ):
+        subject, predicate = group[0].subject_key, group[0].predicate
         objects = {row.object_key for row in group}
         if len(objects) < 2:
             continue
@@ -2961,7 +1997,18 @@ def _singleton_conflict_findings(
                     "command": "graph propose",
                     "reason": "Supersede or retract the incorrect singleton claim.",
                 },
-                payload={"object_keys": sorted(objects)},
+                payload={
+                    "object_keys": sorted(objects),
+                    "environment": scope[4],
+                    "record_ids": [row.record_id for row in group],
+                    "source_identities": [
+                        {
+                            "source_system": row.source_system,
+                            "source_ref": row.source_ref,
+                        }
+                        for row in group
+                    ],
+                },
             )
         )
         if len(findings) >= limit:
@@ -3090,12 +2137,6 @@ def _invalid_endpoint_findings(
         if len(findings) >= limit:
             break
     return tuple(findings)
-
-
-def _row_claim_key(row: ClaimRow) -> str:
-    return row.claim_key or (
-        f"{row.predicate}:{row.subject_key}:{row.object_key}:{row.mutation_id or ''}"
-    )
 
 
 def _row_source_refs(row: ClaimRow) -> tuple[str, ...]:
@@ -3235,24 +2276,6 @@ def _payload_source_refs(value: Any) -> tuple[str, ...]:
     return tuple(refs)
 
 
-def _dedupe_claim_rows(rows: list[ClaimRow]) -> tuple[ClaimRow, ...]:
-    out: list[ClaimRow] = []
-    seen: set[tuple[str | None, str, str, str, str | None]] = set()
-    for row in rows:
-        key = (
-            row.claim_key,
-            row.predicate,
-            row.subject_key,
-            row.object_key,
-            row.mutation_id,
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(row)
-    return tuple(out)
-
-
 def _dedupe_history_entries(
     entries: list[GraphHistoryEntry],
 ) -> list[GraphHistoryEntry]:
@@ -3334,6 +2357,45 @@ def _inbox_missing_result(
     )
 
 
+def _inbox_lease_seconds(lease_seconds: int | None) -> int:
+    if lease_seconds is None:
+        return _DEFAULT_INBOX_LEASE_SECONDS
+    seconds = int(lease_seconds)
+    if seconds <= 0:
+        raise ValueError("inbox claim lease must be positive")
+    return min(seconds, _MAX_INBOX_LEASE_SECONDS)
+
+
+def _active_inbox_claim_holder(item: GraphInboxItem, *, now: datetime) -> str | None:
+    """Return the actor whose claim lease is still running, if any."""
+    if item.status != GraphInboxStatus.claimed.value or not item.claimed_by:
+        return None
+    expires_at = item.claim_expires_at
+    if expires_at is None:
+        # Claims taken before leases existed never expire on their own; treat
+        # them as held so an in-flight worker is not undercut, and let the
+        # holder or an explicit close release them.
+        return item.claimed_by
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return item.claimed_by if expires_at > now else None
+
+
+def _inbox_claim_conflict_result(item: GraphInboxItem) -> GraphInboxResult:
+    until = _dt_iso(item.claim_expires_at) or "an unbounded lease"
+    return GraphInboxResult(
+        ok=False,
+        pot_id=item.pot_id,
+        action="claim",
+        item=item,
+        detail=(f"inbox item is already claimed by {item.claimed_by!r} until {until}"),
+        recommended_next_action=(
+            "Pick another pending item with graph inbox list --status pending --json, "
+            "or wait for the lease to expire."
+        ),
+    )
+
+
 def _terminal_inbox_result(
     item: GraphInboxItem,
     *,
@@ -3353,53 +2415,6 @@ def _terminal_inbox_result(
 
 def _dt_iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
-
-
-def _approval_error(
-    record: GraphMutationPlanRecord,
-    *,
-    approved_by: str | None,
-    require_approval: bool = True,
-) -> str | None:
-    if record.review_required_ops:
-        return (
-            "plan contains review-required operations that the local commit path "
-            "does not apply yet"
-        )
-    if require_approval and (
-        record.status == GraphMutationPlanStatus.review_required.value
-        or record.risk in {MutationRisk.medium.value, MutationRisk.high.value}
-    ):
-        if not (record.approval or (approved_by and approved_by.strip())):
-            return "approval required for medium- or high-risk plan"
-    return None
-
-
-def _batch_has_work(batch) -> bool:
-    return bool(
-        batch.entity_upserts
-        or batch.edge_upserts
-        or batch.edge_deletes
-        or batch.invalidations
-    )
-
-
-def _provenance_for_commit(
-    provenance: ProvenanceContext | None,
-    *,
-    approved_by: str | None,
-    mutation_id: str,
-) -> ProvenanceContext:
-    if provenance is None:
-        return ProvenanceContext(
-            actor_user_id=approved_by,
-            mutation_id=mutation_id,
-        )
-    return replace(
-        provenance,
-        actor_user_id=provenance.actor_user_id or approved_by,
-        mutation_id=mutation_id,
-    )
 
 
 __all__ = [

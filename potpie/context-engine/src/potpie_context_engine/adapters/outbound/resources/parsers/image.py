@@ -76,6 +76,22 @@ def parse_image(
     manifest = ResourceManifest(
         source_ref=f"file://{path.resolve()}",
         source_kind="image",
+        ingestion_diagnostics={
+            "image_enrichment": {
+                "ocr_observed": bool(ocr_text.strip()),
+                "visual_caption_observed": bool(caption.strip()),
+                "vision_provider": (vision_provider or "local").strip().lower()
+                or "local",
+                "warnings": [
+                    warning
+                    for warning, missing in (
+                        ("no_image_ocr_observed", not ocr_text.strip()),
+                        ("no_image_visual_caption_observed", not caption.strip()),
+                    )
+                    if missing
+                ],
+            }
+        },
         sections=[section],
     )
     section_texts = {_SECTION_SLUG: [content]}

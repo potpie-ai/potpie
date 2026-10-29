@@ -11,6 +11,7 @@ from potpie.cli.read_presenter import (
     _escape_table_cell,
     _format_relations_summary,
     prepare_items,
+    render_items_bullets,
     render_items_table,
     render_timeline_table,
 )
@@ -127,3 +128,102 @@ def test_render_items_table_handles_empty_rows() -> None:
     output = render_items_table([], ctx)
     assert "score | type | entity_key | summary | relations" in output
     assert "(no rows)" in output
+
+
+class _DetailedResult:
+    view = "debugging.prior_occurrences"
+    backed = True
+    unsupported = ()
+    coverage = ()
+    quality = {"status": "ok", "confidence": "high"}
+
+    def to_dict(self):
+        return {
+            "view": self.view,
+            "backed": self.backed,
+            "unsupported": [],
+            "coverage": [],
+            "quality": self.quality,
+        }
+
+
+def test_text_modes_render_details_and_omitted_item_guidance() -> None:
+    ctx = ReadPresentationContext(
+        view="debugging.prior_occurrences",
+        detail="full",
+        relations="summary",
+        format_mode="bullets",
+        sort="score",
+        dedupe="auto",
+        event_limit=1,
+    )
+    items = [
+        {
+            "entity_key": "fix:pool",
+            "entity_type": "Fix",
+            "summary": "Close leaked connections",
+            "details": {
+                "root_cause": "connections leaked on cancellation",
+                "fix_steps": ["close in finally"],
+                "verification_outcomes": [{"succeeded": False, "outcome": "failed"}],
+            },
+        },
+        {"entity_key": "fix:other", "entity_type": "Fix", "summary": "Other"},
+    ]
+
+    for output in (
+        render_items_bullets(_DetailedResult(), items, ctx),
+        render_items_table(items, ctx, result=_DetailedResult()),
+    ):
+        assert "root_cause: connections leaked on cancellation" in output
+        assert '"succeeded": false' in output
+        assert "omitted_items=1" in output
+        assert "larger --limit" in output
+
+
+def test_protocol_human_output_preserves_layout_values_and_coverage() -> None:
+    from potpie.cli.read_presenter import build_presentation_context
+
+    result = GraphReadResult(
+        view="protocols.message_context",
+        subgraph="protocols",
+        detail="full",
+        items=(
+            {
+                "kind": "protocol_message",
+                "entity_key": "protocol_message:example",
+                "entity_type": "ProtocolMessage",
+                "summary": "Synthetic request",
+                "coverage": {"status": "partial", "truncated": True},
+                "fields": [
+                    {
+                        "path": "header.Status",
+                        "ordinal": 0,
+                        "byte_offset": 0,
+                        "allowed_values": [
+                            {"raw_value": 2, "symbol": "BUSY"},
+                            {"raw_value": "2", "symbol": "TEXT"},
+                        ],
+                    },
+                    {"path": "payload.status", "ordinal": 1},
+                ],
+                "retrieval": {
+                    "subgraph": "protocols",
+                    "view": "message_context",
+                    "scope": {"anchor_entity_key": "protocol_message:example"},
+                },
+            },
+        ),
+    )
+    ctx = build_presentation_context(
+        result, format_="bullets", sort="score", dedupe="none", event_limit=None
+    )
+    items = prepare_items(result)
+    for text in (
+        render_items_bullets(result, items, ctx),
+        render_items_table(items, ctx, result=result),
+    ):
+        assert text.index("header.Status") < text.index("payload.status")
+        assert '"raw_value": 2' in text and '"raw_value": "2"' in text
+        assert '"truncated": true' in text
+        assert "read details:" in text

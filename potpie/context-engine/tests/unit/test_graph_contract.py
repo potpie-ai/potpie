@@ -46,8 +46,11 @@ def test_ontology_version_mirrors_contract() -> None:
 def test_supported_contract_version() -> None:
     assert is_supported_contract_version("v1.5")
     assert is_supported_contract_version(None)  # convenience for hand-written payloads
-    assert not is_supported_contract_version("v2")
+    # ``v2`` is what ``graph catalog`` prints for the workbench; it names the
+    # same data-plane contract and is accepted as an alias of ``v1.5``.
+    assert is_supported_contract_version("v2")
     assert not is_supported_contract_version("v1")
+    assert not is_supported_contract_version("v9")
 
 
 def test_truth_classes_match_plan() -> None:

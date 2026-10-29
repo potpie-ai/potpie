@@ -18,6 +18,7 @@ from potpie_context_engine.core.ports.resource_index import (
     ChunkHit,
     IndexCapabilities,
     ResourceIndexStatus,
+    ResourceSearchFilters,
 )
 from potpie_context_engine.core.ports.resource_store import (
     RESOURCE_CHUNK_TOO_LARGE,
@@ -182,6 +183,12 @@ class InMemoryResourceStore:
                 f"chunk not found: {chunk_uri(doc_slug, section_slug, seq)}",
             )
         text, ocr = entry
+        manifest = self._manifests.get((pot_id, doc_slug))
+        section_info = (
+            next((row for row in manifest.sections if row.slug == section_slug), None)
+            if manifest is not None
+            else None
+        )
         neighbors: list[dict[str, Any]] | None = None
         if with_neighbors:
             neighbors = []
@@ -206,6 +213,10 @@ class InMemoryResourceStore:
             content=text,
             ocr_text=ocr,
             provenance=None,
+            source_ref=(manifest.source_ref or None) if manifest else None,
+            source_kind=manifest.source_kind if manifest else None,
+            section_title=section_info.title if section_info else None,
+            parser_tier=(manifest.parser_tier or None) if manifest else None,
             neighbors=neighbors,
         )
 
@@ -326,9 +337,7 @@ _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 class InMemoryResourceIndex:
     """Token-overlap ResourceIndexPort implementation."""
 
-    _docs: dict[tuple[str, str], list[tuple[str, int, set[str]]]] = field(
-        default_factory=dict
-    )
+    _docs: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
 
     def capabilities(self) -> IndexCapabilities:
         return IndexCapabilities(lexical=True, semantic=False)
@@ -336,37 +345,67 @@ class InMemoryResourceIndex:
     def index_document(
         self, *, pot_id: str, doc_slug: str, chunks: Iterable[Chunk]
     ) -> int:
-        rows: list[tuple[str, int, set[str]]] = []
+        rows: list[dict[str, Any]] = []
         for chunk in chunks:
             tokens = {
                 t.lower()
-                for t in _TOKEN_RE.findall(f"{chunk.content} {chunk.ocr_text}")
+                for t in _TOKEN_RE.findall(
+                    f"{chunk.section_title or ''} {chunk.content} {chunk.ocr_text}"
+                )
             }
-            rows.append((chunk.section_slug, chunk.seq, tokens))
+            rows.append(
+                {
+                    "section_slug": chunk.section_slug,
+                    "seq": chunk.seq,
+                    "tokens": tokens,
+                    "source_kind": chunk.source_kind,
+                    "page_numbers": set(chunk.page_numbers),
+                }
+            )
         self._docs[(pot_id, doc_slug)] = rows
         return len(rows)
 
     def remove_document(self, *, pot_id: str, doc_slug: str) -> None:
         self._docs.pop((pot_id, doc_slug), None)
 
-    def search(self, *, pot_id: str, query: str, limit: int = 20) -> list[ChunkHit]:
+    def search(
+        self,
+        *,
+        pot_id: str,
+        query: str,
+        limit: int = 20,
+        filters: ResourceSearchFilters | None = None,
+    ) -> list[ChunkHit]:
         terms = {t.lower() for t in _TOKEN_RE.findall(query)}
         if not terms:
             return []
+        active = filters or ResourceSearchFilters()
         scored: list[tuple[float, ChunkHit]] = []
         for (pid, doc_slug), rows in self._docs.items():
             if pid != pot_id:
                 continue
-            for section_slug, seq, tokens in rows:
-                overlap = len(terms & tokens)
+            if active.doc_slug is not None and doc_slug != active.doc_slug:
+                continue
+            for row in rows:
+                if (
+                    active.source_kind is not None
+                    and row["source_kind"] != active.source_kind
+                ):
+                    continue
+                if (
+                    active.page_number is not None
+                    and active.page_number not in row["page_numbers"]
+                ):
+                    continue
+                overlap = len(terms & row["tokens"])
                 if overlap:
                     scored.append(
                         (
                             -overlap,
                             ChunkHit(
                                 doc_slug=doc_slug,
-                                section_slug=section_slug,
-                                seq=seq,
+                                section_slug=row["section_slug"],
+                                seq=row["seq"],
                                 score=float(overlap),
                             ),
                         )

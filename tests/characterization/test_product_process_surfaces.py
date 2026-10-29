@@ -32,6 +32,7 @@ EXPECTED_CLI_COMMANDS = {
     "gitbucket",
     "gitlab",
     "graph",
+    "host",
     "jira",
     "ledger",
     "linear",

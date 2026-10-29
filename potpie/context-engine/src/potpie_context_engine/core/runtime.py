@@ -1,15 +1,30 @@
-"""Public graph runtime composition and async-safe service facade."""
+"""Graph runtime composition and async-safe service facade.
+
+``build_graph_runtime`` and ``GraphRuntime`` are the supported composition
+surface for an embedding host: a process that brings its own graph backend
+and plan/inbox stores and serves many pots from one runtime. Import them from
+``potpie_context_engine.api``; this module path is an implementation detail.
+The bridges below are internal; ``run_in_worker_thread`` is how a host that
+drives the sync operations from its event loop keeps async-only ports working.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
 import importlib
 import inspect
 import logging
+from collections.abc import Awaitable, Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from potpie_context_engine.core.commit_service import (
+    UNNAMED_COMMIT_ACTOR,
+    GraphCommitService,
+    GraphCommitSurface,
+    deny_commit_access,
+)
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
     GraphDefinition,
@@ -18,6 +33,7 @@ from potpie_context_engine.core.mutation_policy import (
     DEFAULT_MUTATION_POLICY,
     GraphMutationPolicy,
 )
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
 from potpie_context_engine.core.ports.graph.backend import GraphBackend
 from potpie_context_engine.core.ports.graph.inbox_store import GraphInboxStorePort
 from potpie_context_engine.core.ports.graph.plan_store import GraphPlanStorePort
@@ -28,6 +44,13 @@ from potpie_context_engine.core.reconciliation_flags import (
     reconciliation_config_from_env,
 )
 from potpie_context_engine.core.workbench_service import GraphWorkbenchService
+
+if TYPE_CHECKING:
+    from potpie_context_engine.core.ports.graph.preview_store import (
+        RollbackPreviewStorePort,
+    )
+    from potpie_context_engine.core.ports.resource_index import ResourceIndexPort
+    from potpie_context_engine.core.ports.resource_store import ResourceStorePort
 
 
 class RuntimeCompositionError(TypeError):
@@ -46,6 +69,17 @@ class _SyncAsyncBridge:
     def __init__(self, target: Any) -> None:
         self._target = target
 
+    def require(self, name: str) -> None:
+        if not any(
+            callable(getattr(self._target, candidate, None))
+            for candidate in (name, f"{name}_async")
+        ):
+            from .errors import CapabilityNotImplemented
+
+            raise CapabilityNotImplemented(
+                "graph.legacy_repair", detail=f"adapter does not implement {name}"
+            )
+
     def call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         sync_method = getattr(self._target, name, None)
         if callable(sync_method):
@@ -57,7 +91,8 @@ class _SyncAsyncBridge:
         if loop is None or not loop.is_running():
             raise RuntimeCompositionError(
                 f"async-only port method {name!r} requires the GraphRuntime "
-                "async service path"
+                "async service path (an *_async operation, or a sync call made "
+                "through run_in_worker_thread)"
             )
         future = asyncio.run_coroutine_threadsafe(async_method(*args, **kwargs), loop)
         return future.result()
@@ -82,11 +117,51 @@ class _SyncAsyncBridge:
         return await asyncio.to_thread(sync_method, *args, **kwargs)
 
 
+def run_async_from_sync(operation, *args, **kwargs):
+    """Enter one authorized async service without crossing an active driver loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop = _BRIDGE_LOOP.get()
+        if loop is not None and loop.is_running():
+            return asyncio.run_coroutine_threadsafe(
+                operation(*args, **kwargs), loop
+            ).result()
+        return asyncio.run(operation(*args, **kwargs))
+    raise RuntimeCompositionError("use the async operation inside a running event loop")
+
+
 class _MutationPortBridge:
     """Protocol-visible facade for a sync or async mutation port."""
 
     def __init__(self, target: Any) -> None:
+        self._target = target
         self._bridge = _SyncAsyncBridge(target)
+
+    @property
+    def capabilities(self) -> MutationCapabilities:
+        declared = getattr(self._target, "capabilities", None)
+        return (
+            declared
+            if isinstance(declared, MutationCapabilities)
+            else MutationCapabilities()
+        )
+
+    @property
+    def atomic_mutations_supported(self) -> bool:
+        return self.capabilities.atomic_writes and self.capabilities.revision_check
+
+    def current_version(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("current_version", *args, **kwargs)
+
+    async def current_version_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("current_version", *args, **kwargs)
+
+    def compare_and_apply(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("compare_and_apply", *args, **kwargs)
+
+    async def compare_and_apply_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("compare_and_apply", *args, **kwargs)
 
     def apply(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("apply", *args, **kwargs)
@@ -115,6 +190,14 @@ class _MutationPortBridge:
     def readiness(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("readiness", *args, **kwargs)
 
+    def legacy_inventory(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("legacy_inventory")
+        return self._bridge.call("legacy_inventory", *args, **kwargs)
+
+    async def legacy_inventory_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("legacy_inventory")
+        return await self._bridge.call_async("legacy_inventory", *args, **kwargs)
+
     async def readiness_async(self, *args: Any, **kwargs: Any) -> Any:
         return await self._bridge.call_async("readiness", *args, **kwargs)
 
@@ -141,6 +224,18 @@ class _ClaimQueryPortBridge:
 
     async def entity_labels_async(self, *args: Any, **kwargs: Any) -> Any:
         return await self._bridge.call_async("entity_labels", *args, **kwargs)
+
+    def entity_properties_many(self, *, pot_id, entity_keys):
+        if callable(getattr(self._target, "entity_properties_many", None)) or callable(
+            getattr(self._target, "entity_properties_many_async", None)
+        ):
+            return self._bridge.call(
+                "entity_properties_many", pot_id=pot_id, entity_keys=entity_keys
+            )
+        return {
+            key: self.entity_properties(pot_id=pot_id, entity_key=key)
+            for key in entity_keys
+        }
 
     def entity_properties(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("entity_properties", *args, **kwargs)
@@ -222,6 +317,18 @@ class _SnapshotPortBridge:
     def __init__(self, target: Any) -> None:
         self._bridge = _SyncAsyncBridge(target)
 
+    def export_data(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("export_data", *args, **kwargs)
+
+    async def export_data_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("export_data", *args, **kwargs)
+
+    def import_data(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("import_data", *args, **kwargs)
+
+    async def import_data_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("import_data", *args, **kwargs)
+
     def export(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("export", *args, **kwargs)
 
@@ -264,6 +371,47 @@ class _StoreBridge:
 
 class _PlanStoreBridge(_StoreBridge):
     """Plan-store facade including the atomic commit-state transition."""
+
+    def reserve_repair_run(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("reserve_repair_run")
+        return self._bridge.call("reserve_repair_run", *args, **kwargs)
+
+    async def reserve_repair_run_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("reserve_repair_run")
+        return await self._bridge.call_async("reserve_repair_run", *args, **kwargs)
+
+    def get_repair_run(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("get_repair_run")
+        return self._bridge.call("get_repair_run", *args, **kwargs)
+
+    async def get_repair_run_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._bridge.require("get_repair_run")
+        return await self._bridge.call_async("get_repair_run", *args, **kwargs)
+
+    def reserve_idempotency(self, *args: Any, **kwargs: Any) -> Any:
+        self._require_reservation()
+        return self._bridge.call("reserve_idempotency", *args, **kwargs)
+
+    async def reserve_idempotency_async(self, *args: Any, **kwargs: Any) -> Any:
+        self._require_reservation()
+        return await self._bridge.call_async("reserve_idempotency", *args, **kwargs)
+
+    def _require_reservation(self) -> None:
+        if not any(
+            callable(getattr(self._bridge._target, name, None))
+            for name in ("reserve_idempotency", "reserve_idempotency_async")
+        ):
+            raise ValueError("plan store does not support atomic request reservation")
+
+    def compare_and_set(self, *args: Any, **kwargs: Any) -> Any:
+        return self._bridge.call("compare_and_set", *args, **kwargs)
+
+    async def compare_and_set_async(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._bridge.call_async("compare_and_set", *args, **kwargs)
+
+
+class _InboxStoreBridge(_StoreBridge):
+    """Inbox-store facade including the atomic claim transition."""
 
     def compare_and_set(self, *args: Any, **kwargs: Any) -> Any:
         return self._bridge.call("compare_and_set", *args, **kwargs)
@@ -317,10 +465,14 @@ class _BackendBridge:
     def snapshot(self) -> _SnapshotPortBridge:
         return self._snapshot
 
+    @property
+    def journal(self):
+        return getattr(self._backend, "journal", None)
+
     def capabilities(self) -> Any:
         return self._backend.capabilities()
 
-    def bind_definition(self, definition: GraphDefinition) -> "_BackendBridge":
+    def bind_definition(self, definition: GraphDefinition) -> _BackendBridge:
         return _BackendBridge(self._backend.bind_definition(definition))
 
 
@@ -336,8 +488,36 @@ class NoOpGraphObserver:
 
 
 @dataclass(frozen=True, slots=True)
-class GraphRuntime:
-    """One fully wired graph runtime sharing one definition and policy."""
+class GraphRuntime(GraphCommitSurface):
+    """One fully wired graph runtime sharing one definition and policy.
+
+    Build it with :func:`build_graph_runtime`; do not construct or
+    ``dataclasses.replace`` it directly. A runtime is not bound to a pot: every
+    operation that touches context data takes the pot explicitly, and the host
+    authenticates the caller and authorizes that pot before calling.
+
+    Stable for embedding hosts:
+
+    * attributes ``backend`` (the definition-bound, sync/async-bridged view of
+      the supplied backend, satisfying ``GraphBackend``), ``plan_store``,
+      ``inbox_store``, ``definition``, ``policy``, ``reconciliation_config``,
+      ``observability`` and ``graph`` (a ``GraphService``);
+    * the operations ``status``, ``catalog``, ``resolve``, ``describe``,
+      ``read``, ``search``, ``record``, ``search_entities``, ``mutate``,
+      ``propose``, ``commit``, ``commit_status``, ``verify_commit``,
+      ``history``, ``quality`` and the ``inbox_*`` family;
+    * the commit-history operations ``journal_status``, ``commits``,
+      ``commit_show``, ``revert_preview``, ``rollback_preview``,
+      ``apply_preview``, ``disable_rollback`` and ``rebuild_commits``.
+
+    Every operation has an ``*_async`` twin; use the twin from inside a running
+    event loop. A host that calls the sync operations, or the services built
+    over this runtime (``graph``, ``workbench``), from a coroutine runs them
+    through :func:`run_in_worker_thread`, never a bare ``asyncio.to_thread``,
+    so async-only ports still run on its loop. ``workbench``,
+    ``commit_service``, ``commit_mirror`` and underscore members are
+    composition details with no stability promise.
+    """
 
     backend: GraphBackend
     plan_store: GraphPlanStorePort
@@ -348,6 +528,8 @@ class GraphRuntime:
     observability: GraphObserver
     graph: Any
     workbench: GraphWorkbenchService
+    commit_mirror: Any = None
+    commit_service: Any = None
 
     def _notify(self, event: str, fields: Mapping[str, Any]) -> None:
         try:
@@ -415,8 +597,20 @@ class GraphRuntime:
         )
         return result
 
-    def propose(self, payload, *, pot_id: str, ttl_seconds: int | None = None):
-        result = self.workbench.propose(payload, pot_id=pot_id, ttl_seconds=ttl_seconds)
+    def propose(
+        self,
+        payload,
+        *,
+        pot_id: str,
+        ttl_seconds: int | None = None,
+        approved_by: str | None = None,
+    ):
+        result = self.workbench.propose(
+            payload,
+            pot_id=pot_id,
+            ttl_seconds=ttl_seconds,
+            approved_by=approved_by,
+        )
         self._notify(
             "graph.propose",
             {
@@ -435,7 +629,8 @@ class GraphRuntime:
         pot_id: str,
         approved_by: str | None = None,
         verify: bool = False,
-        recover_stale: bool = False,
+        recover_stale: bool = True,
+        defer_verification: bool = False,
     ):
         result = self.workbench.commit(
             plan_id,
@@ -443,6 +638,7 @@ class GraphRuntime:
             approved_by=approved_by,
             verify=verify,
             recover_stale=recover_stale,
+            defer_verification=defer_verification,
         )
         self._notify(
             "graph.commit",
@@ -455,6 +651,15 @@ class GraphRuntime:
             },
         )
         return result
+
+    def commit_status(self, plan_id: str, *, pot_id: str):
+        return self.workbench.commit_status(plan_id, pot_id=pot_id)
+
+    def repair_legacy(self, **kwargs):
+        return self.workbench.repair_legacy(**kwargs)
+
+    def verify_commit(self, plan_id: str, *, pot_id: str):
+        return self.workbench.verify_commit(plan_id, pot_id=pot_id)
 
     def history(self, **kwargs):
         return self.workbench.history(**kwargs)
@@ -484,7 +689,7 @@ class GraphRuntime:
         return self.workbench.inbox_close(**kwargs)
 
     async def status_async(self, pot_id: str) -> dict[str, Any]:
-        return await _to_thread_with_bridge(self.status, pot_id)
+        return await run_in_worker_thread(self.status, pot_id)
 
     async def catalog_async(self, request):
         return await _async_call(self.graph, "catalog", request)
@@ -530,7 +735,12 @@ class GraphRuntime:
         return result
 
     async def propose_async(
-        self, payload, *, pot_id: str, ttl_seconds: int | None = None
+        self,
+        payload,
+        *,
+        pot_id: str,
+        ttl_seconds: int | None = None,
+        approved_by: str | None = None,
     ):
         result = await _async_call(
             self.workbench,
@@ -538,6 +748,7 @@ class GraphRuntime:
             payload,
             pot_id=pot_id,
             ttl_seconds=ttl_seconds,
+            approved_by=approved_by,
         )
         self._notify(
             "graph.propose",
@@ -557,7 +768,8 @@ class GraphRuntime:
         pot_id: str,
         approved_by: str | None = None,
         verify: bool = False,
-        recover_stale: bool = False,
+        recover_stale: bool = True,
+        defer_verification: bool = False,
     ):
         result = await _async_call(
             self.workbench,
@@ -567,6 +779,7 @@ class GraphRuntime:
             approved_by=approved_by,
             verify=verify,
             recover_stale=recover_stale,
+            defer_verification=defer_verification,
         )
         self._notify(
             "graph.commit",
@@ -579,6 +792,19 @@ class GraphRuntime:
             },
         )
         return result
+
+    async def commit_status_async(self, plan_id: str, *, pot_id: str):
+        return await _async_call(
+            self.workbench, "commit_status", plan_id, pot_id=pot_id
+        )
+
+    async def repair_legacy_async(self, **kwargs):
+        return await self.workbench.repair_legacy_async(**kwargs)
+
+    async def verify_commit_async(self, plan_id: str, *, pot_id: str):
+        return await _async_call(
+            self.workbench, "verify_commit", plan_id, pot_id=pot_id
+        )
 
     async def history_async(self, **kwargs):
         return await _async_call(self.workbench, "history", **kwargs)
@@ -620,7 +846,23 @@ async def _async_call(target: Any, method: str, *args: Any, **kwargs: Any) -> An
         _BRIDGE_LOOP.reset(token)
 
 
-async def _to_thread_with_bridge(function: Any, *args: Any, **kwargs: Any) -> Any:
+async def run_in_worker_thread(
+    function: Callable[..., Any], /, *args: Any, **kwargs: Any
+) -> Any:
+    """Run one sync runtime call in a worker thread, bridged to this loop.
+
+    Use it instead of ``asyncio.to_thread`` for any sync call that reaches a
+    runtime's ports: the runtime's own sync operations and the services built
+    over it (the graph service, the workbench, an agent door over them). A
+    port that only implements ``*_async`` methods, such as a plan or inbox
+    store over an async database pool, then runs on the calling event loop
+    while the worker thread waits for it. A bare ``asyncio.to_thread`` call
+    reaching such a port raises :class:`RuntimeCompositionError`.
+
+    Must be awaited from a running event loop, which must stay free to run
+    those port calls while the worker waits.
+    """
+
     token = _BRIDGE_LOOP.set(asyncio.get_running_loop())
     try:
         return await asyncio.to_thread(function, *args, **kwargs)
@@ -633,11 +875,57 @@ def build_graph_runtime(
     plan_store: GraphPlanStorePort,
     inbox_store: GraphInboxStorePort | None = None,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
+    *,
     policy: GraphMutationPolicy = DEFAULT_MUTATION_POLICY,
     observability: GraphObserver | None = None,
     reconciliation_config: ReconciliationConfig | None = None,
+    resource_index: ResourceIndexPort | None = None,
+    resource_store: ResourceStorePort | None = None,
+    commit_mirror: Any = None,
+    preview_store: RollbackPreviewStorePort | None = None,
+    commit_host: str = "local",
+    commit_actor: Callable[[], str] | None = None,
+    commit_authorize: Callable[[str, str], Awaitable[object]] | None = None,
 ) -> GraphRuntime:
-    """Validate composition and return the single supported graph runtime."""
+    """Validate composition and return the single supported graph runtime.
+
+    This is the supported builder for an embedding host. Every dependency and
+    wiring choice is a construction argument, so a host never patches the
+    returned runtime or its collaborators. Supplied dependencies are borrowed:
+    the runtime never closes them.
+
+    Stable parameters:
+
+    * ``backend``, ``plan_store``, ``inbox_store`` and ``definition`` may be
+      passed by position or keyword. Ports may implement each method as a
+      sync method, an ``*_async`` coroutine, or both.
+    * Everything else is keyword-only: ``policy``, ``observability`` (a
+      ``GraphObserver``; observer failures never hide results),
+      ``reconciliation_config`` (read once from the environment when omitted),
+      ``resource_index`` and ``resource_store`` (the document store behind the
+      ``resources`` include family), and the commit-history wiring:
+      ``commit_mirror`` (the rebuildable commit listing index),
+      ``preview_store`` (a ``RollbackPreviewStorePort``), ``commit_host`` and
+      ``commit_actor`` (the host label and a callable returning the acting
+      principal; a rollback preview can only be applied by the host and actor
+      that created it) and ``commit_authorize`` (an async ``(pot_id, access)``
+      check that raises to deny, where access is ``"read"``, ``"write"`` or
+      ``"admin"``).
+
+    Both belong to the host. When ``commit_authorize`` is omitted, commit
+    history and rollback are refused; when ``commit_actor`` is omitted, restore
+    receipts and previews record an anonymous ``"unnamed"`` actor, never the
+    account that owns the process.
+
+    ``resource_index`` is optional and unvalidated on purpose: a runtime
+    composed without a document store (an ingestion pipeline, a test) is a
+    legitimate deployment, and the read trunk substitutes a fail-closed profile
+    that answers ``match_mode="disabled"`` rather than dropping the family from
+    the advertised contract.
+
+    Raises ``RuntimeCompositionError`` when a dependency does not implement
+    its documented contract.
+    """
 
     if not isinstance(definition, GraphDefinition):
         raise RuntimeCompositionError("definition must be a GraphDefinition")
@@ -692,10 +980,21 @@ def build_graph_runtime(
     )
     if inbox_store is not None:
         _require_sync_or_async_methods(
-            inbox_store, "inbox_store", ("save", "get", "list")
+            inbox_store,
+            "inbox_store",
+            # ``compare_and_set`` backs the claim lease: without it two workers
+            # can hold the same inbox item, so a store that cannot swap
+            # atomically is rejected at build rather than at claim time.
+            ("save", "get", "compare_and_set", "list"),
         )
     observer = observability or NoOpGraphObserver()
     _require_methods(observer, "observability", ("observe",))
+    for name, value in (
+        ("commit_actor", commit_actor),
+        ("commit_authorize", commit_authorize),
+    ):
+        if value is not None and not callable(value):
+            raise RuntimeCompositionError(f"{name} must be callable")
 
     try:
         composition = importlib.import_module("potpie_context_engine.composition")
@@ -704,14 +1003,26 @@ def build_graph_runtime(
             "potpie-context-engine is required to build the default graph "
             "implementation"
         ) from exc
+    if resource_store is not None and hasattr(backend, "resource_exists"):
+        from potpie_context_engine.core.ports.resource_store import ResourceStoreError
+
+        def resource_exists(pot_id: str, ref: str) -> bool:
+            try:
+                return (
+                    len(resource_store.get_many(pot_id=pot_id, resource_ids=(ref,)))
+                    == 1
+                )
+            except ResourceStoreError:
+                return False
+
+        backend.resource_exists = resource_exists
+        # The reference mutation adapter holds its own injected callback.
+        if hasattr(backend.mutation, "resource_exists"):
+            backend.mutation.resource_exists = resource_exists
     runtime_backend = _BackendBridge(backend)
     runtime_plan_store = _PlanStoreBridge(plan_store)
-    runtime_inbox_store = _StoreBridge(inbox_store) if inbox_store is not None else None
-    graph = composition.build_graph_service(
-        backend=runtime_backend,
-        definition=definition,
-        policy=policy,
-        reconciliation_config=reconciliation,
+    runtime_inbox_store = (
+        _InboxStoreBridge(inbox_store) if inbox_store is not None else None
     )
     workbench = GraphWorkbenchService(
         backend=runtime_backend,
@@ -721,6 +1032,27 @@ def build_graph_runtime(
         policy=policy,
         reconciliation_config=reconciliation,
     )
+    graph = composition.build_graph_service(
+        backend=runtime_backend,
+        record_workbench=workbench,
+        definition=definition,
+        policy=policy,
+        reconciliation_config=reconciliation,
+        resource_index=resource_index,
+        **({"resource_store": resource_store} if resource_store is not None else {}),
+    )
+    # Fail closed: a runtime composed without an explicit authorization serves
+    # no commit history and applies no rollback, and an unnamed actor is
+    # recorded as such rather than as whoever owns the process.
+    commits = GraphCommitService(
+        journal=runtime_backend.journal,
+        mirror=commit_mirror,
+        previews=preview_store,
+        host=commit_host,
+        actor=commit_actor or (lambda: UNNAMED_COMMIT_ACTOR),
+        authorize=commit_authorize or deny_commit_access,
+    )
+    workbench.commit_service = commits
     return GraphRuntime(
         backend=runtime_backend,
         plan_store=runtime_plan_store,
@@ -731,6 +1063,8 @@ def build_graph_runtime(
         observability=observer,
         graph=graph,
         workbench=workbench,
+        commit_mirror=commit_mirror,
+        commit_service=commits,
     )
 
 
@@ -783,4 +1117,5 @@ __all__ = [
     "NoOpGraphObserver",
     "RuntimeCompositionError",
     "build_graph_runtime",
+    "run_in_worker_thread",
 ]

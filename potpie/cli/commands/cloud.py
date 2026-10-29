@@ -1,11 +1,8 @@
-"""Cloud / managed-profile commands — skeleton (TODO).
+"""Reserved cloud login, status, push, pull and skill-sync commands.
 
-Cloud is opt-in and visibly scoped (cli-flow.md). Managed routing is not built;
-these commands return the structured not-implemented contract so the command
-surface is complete and honest.
-
-    TODO(stage-N): managed API routing for the shared command groups, plus
-    cloud login/status/push/pull and skill sync.
+These commands return structured not-implemented errors. Managed-host routing
+for engine operations and pot management is implemented separately through
+``potpie host`` and the shared command groups.
 """
 
 from __future__ import annotations

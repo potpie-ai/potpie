@@ -16,6 +16,18 @@ from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
+from potpie_context_engine.core.mutation_execution import MutationCapabilities
+from potpie_context_engine.core.legacy_records import LegacyInventory
+
+
+@runtime_checkable
+class LegacyInventoryPort(Protocol):
+    def legacy_inventory(self, pot_id: str) -> LegacyInventory: ...
+
+
+@runtime_checkable
+class AsyncLegacyInventoryPort(Protocol):
+    async def legacy_inventory_async(self, pot_id: str) -> LegacyInventory: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +59,63 @@ class MutationExecutionLookup:
     batch_fingerprint: str
     result: MutationResult | None = None
     detail: str | None = None
+
+
+@runtime_checkable
+class AtomicGraphMutationPort(Protocol):
+    """Optional datastore-wide optimistic concurrency capability.
+
+    The version check, canonical batch, next version and durable receipt must
+    share one atomic boundary. Completed retries return the original receipt
+    before checking the now-outdated expected version. A different body using
+    that mutation ID is rejected. A stale new write raises
+    ``GraphMutationVersionConflict`` without applying any of its operations.
+    """
+
+    def current_version(self, pot_id: str) -> int: ...
+
+    def compare_and_apply(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> MutationResult: ...
+
+
+@runtime_checkable
+class AsyncAtomicGraphMutationPort(Protocol):
+    async def current_version_async(self, pot_id: str) -> int: ...
+
+    async def compare_and_apply_async(
+        self,
+        plan: MutationBatch,
+        *,
+        expected_pot_id: str,
+        expected_version: int,
+        provenance_context: ProvenanceContext | None = None,
+    ) -> MutationResult: ...
+
+
+@runtime_checkable
+class RecoverableGraphMutationPort(Protocol):
+    @property
+    def capabilities(self) -> MutationCapabilities: ...
+
+    def lookup_execution(
+        self, plan: MutationBatch, *, expected_pot_id: str, mutation_id: str
+    ) -> MutationExecutionLookup: ...
+
+
+@runtime_checkable
+class AsyncRecoverableGraphMutationPort(Protocol):
+    @property
+    def capabilities(self) -> MutationCapabilities: ...
+
+    async def lookup_execution_async(
+        self, plan: MutationBatch, *, expected_pot_id: str, mutation_id: str
+    ) -> MutationExecutionLookup: ...
 
 
 @runtime_checkable
@@ -95,9 +164,11 @@ class GraphMutationPort(Protocol):
         number of claims invalidated."""
         ...
 
-    def reset_pot(self, pot_id: str) -> dict[str, Any]:
+    def reset_pot(
+        self, pot_id: str, *, mutation_id: str | None = None
+    ) -> dict[str, Any]:
         """Hard-reset all graph state for a pot. Returns a summary of what was
-        removed."""
+        removed and its execution identity for recoverable retries."""
         ...
 
     def readiness(self, pot_id: str) -> BackendReadiness:
@@ -106,6 +177,10 @@ class GraphMutationPort(Protocol):
 
 
 __all__ = [
+    "AtomicGraphMutationPort",
+    "AsyncAtomicGraphMutationPort",
+    "RecoverableGraphMutationPort",
+    "AsyncRecoverableGraphMutationPort",
     "BackendReadiness",
     "GraphMutationPort",
     "MutationExecutionLookup",

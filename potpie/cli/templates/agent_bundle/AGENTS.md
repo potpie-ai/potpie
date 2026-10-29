@@ -15,7 +15,7 @@ for you.
 potpie doctor
 potpie pot list
 potpie graph status
-potpie graph catalog --task "<task>"
+potpie graph catalog
 ```
 
 ## Surfaces
@@ -24,8 +24,8 @@ Prefer the graph CLI when shell is available:
 
 ```bash
 potpie graph status
-potpie graph catalog --task "<task>" --profile read
-potpie graph describe <subgraph> --view <view> --examples
+potpie graph catalog --profile read
+potpie graph describe <subgraph> --view <view>
 potpie graph read --subgraph <subgraph> --view <view> [--query "..."] [--scope key:value] [--limit N]
 potpie graph search-entities "text" [--type Service] [--predicate DEPENDS_ON] [--environment prod] [--limit N]
 potpie --json graph propose --file mutation.json
@@ -79,7 +79,6 @@ Example infra write:
 
 ```json
 {
-  "graph_contract_version": "v1.5",
   "pot_id": "local/default",
   "idempotency_key": "mutation:infra:payments-ledger-prod",
   "created_by": {"surface": "cli", "harness": "codex"},
@@ -116,7 +115,7 @@ alone.
 For explicit repository ingestion, use a todo-driven workflow:
 
 1. Run pot/source/graph preflight (`pot info`, `source list`, `graph status`,
-   `graph catalog --task`, and relevant `graph describe ... --examples`).
+   `graph catalog`, and relevant `graph describe ... --examples`).
 2. Create discovery todos for docs/product, local repo map, runtime/deploy,
    API/data/integrations, GitHub history, preferences/workflows, synthesis,
    write, and verification.

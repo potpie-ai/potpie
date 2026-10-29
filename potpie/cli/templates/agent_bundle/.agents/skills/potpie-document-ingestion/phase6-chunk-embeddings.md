@@ -19,6 +19,6 @@
 - [ ] Graph bridge: optional `CHUNK_EMBEDDED` or vector metadata on DocumentSection/chunk URI claims
 - [ ] DocsReader: wire chunk vector search when embedder + vectors present
 - [ ] Doctor gate: `chunk_embeddings_ready`
-- [ ] Backfill command: `potpie document reindex-embeddings --doc <slug>`
+- [ ] Backfill command: `potpie resource index build --wait`
 
 Do not add LanceDB/Kuzu parallel indexes.

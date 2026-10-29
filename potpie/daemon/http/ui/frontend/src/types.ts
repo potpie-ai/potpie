@@ -6,6 +6,8 @@ export interface GraphNode {
   caption: string;
   summary?: string;
   properties: Record<string, unknown>;
+  diff_status?: string;
+  ghost?: boolean;
   // runtime-only (added client-side for layout/sizing)
   degree?: number;
   x?: number;
@@ -14,9 +16,11 @@ export interface GraphNode {
 
 export interface GraphEdge {
   id: string;
+  record_id?: string;
   source: string | GraphNode;
   target: string | GraphNode;
   predicate: string;
+  diff_status?: string;
 }
 
 export interface GraphData {
@@ -25,9 +29,14 @@ export interface GraphData {
   truncated?: boolean;
 }
 
+/** Which host a pot lives on. Pot ids are unique per host, not globally, so
+ *  nothing may be keyed on `id` alone. */
+export type Origin = "local" | "managed";
+
 export interface PotRef {
   id: string;
   name: string;
+  origin: Origin;
   active?: boolean;
   source_count?: number;
   counts?: Record<string, number>;
@@ -35,11 +44,17 @@ export interface PotRef {
 
 export interface PotsResponse {
   pots: PotRef[];
-  active: { id: string; name: string } | null;
+  active: { id: string; name: string; origin: Origin } | null;
+  active_origin: Origin;
+  /** origin -> why it could not be listed; the other host's pots still load. */
+  unavailable?: Record<string, string>;
+  /** False when some pots arrived without `counts`, which is not zero. */
+  counts_complete?: boolean;
 }
 
 export interface StatusResponse {
   pot_id: string;
+  origin?: Origin;
   backend_profile: string;
   backend_ready: boolean;
   counts: Record<string, number>;

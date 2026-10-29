@@ -26,8 +26,22 @@ def _resource_service() -> ResourceService:
     runtime = get_runtime()
     resources = getattr(getattr(runtime, "engine", None), "resources", None)
     if resources is None:
-        fail("document service is not available on this host")
-    return resources
+        fail(
+            code="resource_service_unavailable",
+            message="document service is not available on this host",
+            next_action="run the command with the context engine available",
+            exit_code=2,
+        )
+    if isinstance(resources, ResourceService):
+        return resources
+    # The current engine boundary exposes ResourceFacade.  Keep the older
+    # parser-oriented document commands working by adapting its explicit
+    # store/index/graph ports instead of replacing the facade in composition.
+    return ResourceService(
+        store=resources.store,
+        index=resources.index,
+        graph=resources.graph,
+    )
 
 
 @document_app.command("ingest")
@@ -61,7 +75,7 @@ def document_ingest(
             vision_provider=vision_provider,
             allow_degraded=allow_degraded,
         )
-        emit(report.model_dump(), human=_format_import_report(report))
+        _emit_import_report(report)
 
 
 @document_app.command("show")
@@ -127,6 +141,21 @@ def _format_import_report(report) -> str:
         for err in report.errors:
             lines.append(f"  {err.get('code')}: {err.get('message')}")
     return "\n".join(lines)
+
+
+def _emit_import_report(report) -> None:
+    if report.errors or not report.graph_written:
+        first = report.errors[0] if report.errors else {}
+        code = first.get("code") or "resource_graph_write_failed"
+        message = first.get("message") or "document ingest did not complete"
+        fail(
+            code=code,
+            message=message,
+            detail=report.model_dump(),
+            next_action=report.recommended_next_action,
+            exit_code=2 if code.startswith("resource_graph") else 1,
+        )
+    emit(report.model_dump(), human=_format_import_report(report))
 
 
 def _format_show(payload: dict) -> str:

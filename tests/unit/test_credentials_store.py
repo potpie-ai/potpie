@@ -216,11 +216,12 @@ def test_secure_secret_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch) -> No
         cs.store_secure_secret("example_token", "secret", label="Example token")
 
 
+@pytest.mark.parametrize("label", [None, "Example token"])
 def test_secure_secret_missing_read_returns_empty(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, label: str | None
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    assert cs.load_secure_secret("example_token", label="Example token") == ""
+    assert cs.load_secure_secret("example_token", label=label) == ""
 
 
 def test_secure_secret_delete_unexpected_errors_are_wrapped(
@@ -782,3 +783,72 @@ def test_delete_integration_secret_surfaces_provider_error(
         cs.clear_provider_credentials("github")
 
     assert "Failed to remove GitHub token from local credentials file" in str(exc.value)
+
+
+def test_resolve_cli_pot_ref_invalid_stored_uuid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    payload = {"pot_aliases": {"broken": "not-a-uuid"}}
+    path = cs.credentials_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    got, err = cs.resolve_cli_pot_ref("broken")
+    assert got is None
+    assert "not a valid UUID" in err
+
+
+def test_readable_credentials_path_prefers_legacy_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    cfg = tmp_path / "xdg"
+    legacy_cfg = tmp_path / "legacy-xdg"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg))
+    monkeypatch.setattr(cs, "legacy_config_dir", lambda: legacy_cfg)
+    legacy_cfg.mkdir(parents=True)
+    legacy_file = legacy_cfg / "credentials.json"
+    legacy_file.write_text('{"api_key": "from-legacy"}', encoding="utf-8")
+
+    assert cs.readable_credentials_path() == legacy_file
+    assert cs.read_credentials().get("api_key") == "from-legacy"
+
+
+def test_read_credentials_invalid_json_returns_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
+    path = tmp_path / "credentials.json"
+    path.write_text("{not json", encoding="utf-8")
+    assert cs.read_credentials() == {}
+
+
+def test_get_integration_status_unknown_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(cs, "credentials_path", lambda: tmp_path / "credentials.json")
+    with pytest.raises(ValueError, match="Unknown integration provider"):
+        cs.get_integration_status("slack")
+
+
+def test_get_integration_status_github_unauthenticated(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    status = cs.get_integration_status("github")
+    assert status == {
+        "provider": "github",
+        "authenticated": False,
+        "auth_type": "oauth",
+    }
+
+
+def test_store_secure_secret_generic_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_write(_secrets: dict[str, str]) -> None:
+        raise OSError("unexpected")
+
+    monkeypatch.setattr(cs, "_write_integration_secrets_file", fail_write)
+    with pytest.raises(cs.CredentialStoreError, match="local credentials file"):
+        cs.store_secure_secret("name", "secret")

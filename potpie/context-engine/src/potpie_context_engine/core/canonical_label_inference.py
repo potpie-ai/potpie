@@ -73,6 +73,8 @@ def enrich_reconciliation_plan_entity_labels(
         incoming[edge.to_entity_key].add(edge.edge_type)
 
     for ent in plan.entity_upserts:
+        if ent.preserve_labels:
+            continue
         signals = build_signals(
             labels=ent.labels,
             properties=ent.properties,

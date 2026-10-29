@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,6 +70,107 @@ class LocalResourceStore:
         data = json.loads(meta_path.read_text(encoding="utf-8"))
         return ResourceManifest.model_validate(data)
 
+    def _validate_staging_tree(
+        self, staging_dir: Path, manifest: ResourceManifest
+    ) -> list[dict[str, Any]]:
+        """Validate every promoted file before replacing an existing revision."""
+        errors: list[dict[str, Any]] = []
+        for section in manifest.sections:
+            section_dir = staging_dir / section.slug
+            if not section_dir.is_dir():
+                errors.append(
+                    {
+                        "code": "resource_manifest_invalid",
+                        "message": f"missing section directory: {section.slug}",
+                    }
+                )
+                continue
+            for chunk_ref in section.chunks:
+                chunk_path = section_dir / f"{chunk_ref.seq:04d}.txt"
+                if not chunk_path.is_file():
+                    errors.append(
+                        {
+                            "code": "resource_manifest_invalid",
+                            "message": f"missing chunk file: {chunk_path.name}",
+                        }
+                    )
+                    continue
+                if len(chunk_path.read_text(encoding="utf-8")) > CHUNK_HARD_CAP:
+                    errors.append(
+                        {
+                            "code": "resource_chunk_too_large",
+                            "message": (
+                                f"chunk exceeds {CHUNK_HARD_CAP} chars: "
+                                f"{section.slug}/{chunk_ref.seq}"
+                            ),
+                        }
+                    )
+                prov_path = section_dir / f"{chunk_ref.seq:04d}.prov.json"
+                if prov_path.is_file():
+                    try:
+                        ChunkProvenanceSidecar.model_validate(
+                            json.loads(prov_path.read_text(encoding="utf-8"))
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(
+                            {
+                                "code": "resource_manifest_invalid",
+                                "message": f"invalid provenance sidecar {prov_path.name}: {exc}",
+                            }
+                        )
+
+        elements_path = staging_dir / "elements.jsonl"
+        if elements_path.is_file():
+            for line_number, line in enumerate(
+                elements_path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if not line.strip():
+                    continue
+                try:
+                    DocumentElementRecord.model_validate(json.loads(line))
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(
+                        {
+                            "code": "resource_manifest_invalid",
+                            "message": f"invalid element record on line {line_number}: {exc}",
+                        }
+                    )
+        return errors
+
+    def snapshot_document(self, *, pot_id: str, doc_slug: str) -> Path:
+        """Capture local bytes and catalog so an index failure can roll back."""
+        snapshot = Path(tempfile.mkdtemp(prefix="potpie-resource-rollback-"))
+        dest = self.doc_root(pot_id, doc_slug)
+        if dest.exists():
+            shutil.copytree(dest, snapshot / "document")
+        db_path = self.registry(pot_id).db_path
+        if db_path.exists():
+            shutil.copy2(db_path, snapshot / "registry.db")
+        return snapshot
+
+    def restore_document_snapshot(
+        self, *, pot_id: str, doc_slug: str, snapshot: Path
+    ) -> None:
+        dest = self.doc_root(pot_id, doc_slug)
+        if dest.exists():
+            shutil.rmtree(dest)
+        prior = snapshot / "document"
+        if prior.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(prior, dest)
+        db_path = self.registry(pot_id).db_path
+        prior_db = snapshot / "registry.db"
+        if prior_db.exists():
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(prior_db, db_path)
+        elif db_path.exists():
+            db_path.unlink()
+        shutil.rmtree(snapshot, ignore_errors=True)
+
+    @staticmethod
+    def discard_document_snapshot(snapshot: Path) -> None:
+        shutil.rmtree(snapshot, ignore_errors=True)
+
     def read_elements(
         self, *, pot_id: str, doc_slug: str
     ) -> list[DocumentElementRecord]:
@@ -109,9 +211,18 @@ class LocalResourceStore:
             raise ValueError(f"staging directory not found: {stage}")
 
         meta = manifest or self.read_manifest(stage)
+        validation_errors = self._validate_staging_tree(stage, meta)
+        if validation_errors:
+            return ResourceImportReport(
+                pot_id=pot_id,
+                doc_slug=doc_slug,
+                errors=validation_errors,
+                recommended_next_action="fix staging directory and re-import",
+            )
         registry = self.registry(pot_id)
         dest = self.doc_root(pot_id, doc_slug)
         backup: Path | None = None
+        snapshot = self.snapshot_document(pot_id=pot_id, doc_slug=doc_slug)
 
         if dest.exists() and not force:
             # atomic: only proceed if content differs; caller handles dedup at file level
@@ -123,20 +234,36 @@ class LocalResourceStore:
 
         try:
             shutil.copytree(stage, dest, dirs_exist_ok=False)
+            # Persist the effective manifest (including a caller-supplied
+            # source_ref), so get/show/search citations agree with the catalog.
+            (dest / "meta.json").write_text(
+                json.dumps(meta.model_dump(), indent=2), encoding="utf-8"
+            )
             report = self._import_from_stored_tree(
                 pot_id=pot_id,
                 doc_slug=doc_slug,
                 meta=meta,
                 registry=registry,
             )
+            if report.errors:
+                self.restore_document_snapshot(
+                    pot_id=pot_id, doc_slug=doc_slug, snapshot=snapshot
+                )
+                if backup and backup.exists():
+                    shutil.rmtree(backup, ignore_errors=True)
+                return report
             if backup and backup.exists():
                 shutil.rmtree(backup, ignore_errors=True)
+            self.discard_document_snapshot(snapshot)
             return report
         except Exception:
             if dest.exists():
                 shutil.rmtree(dest, ignore_errors=True)
             if backup and backup.exists():
                 shutil.move(backup, dest)
+            self.restore_document_snapshot(
+                pot_id=pot_id, doc_slug=doc_slug, snapshot=snapshot
+            )
             raise
 
     def _import_from_stored_tree(
@@ -319,6 +446,26 @@ class LocalResourceStore:
                 provenance = [row.model_dump() for row in sidecar.provenance]
             else:
                 provenance = None
+        meta_path = self.doc_root(pot_id, doc_slug) / "meta.json"
+        manifest = (
+            ResourceManifest.model_validate(
+                json.loads(meta_path.read_text(encoding="utf-8"))
+            )
+            if meta_path.is_file()
+            else None
+        )
+        section = (
+            next((row for row in manifest.sections if row.slug == section_slug), None)
+            if manifest is not None
+            else None
+        )
+        page_numbers = sorted(
+            {
+                int(row["page_number"])
+                for row in provenance or []
+                if row.get("page_number") is not None
+            }
+        )
         neighbors: list[dict[str, Any]] | None = None
         if with_neighbors:
             neighbors = []
@@ -347,6 +494,11 @@ class LocalResourceStore:
             content=text,
             ocr_text=ocr_text,
             provenance=provenance,
+            source_ref=(manifest.source_ref or None) if manifest else None,
+            source_kind=manifest.source_kind if manifest else None,
+            section_title=section.title if section else None,
+            parser_tier=(manifest.parser_tier or None) if manifest else None,
+            page_numbers=page_numbers,
             neighbors=neighbors,
         )
 
@@ -465,8 +617,11 @@ class LocalResourceStore:
         from potpie_context_engine.adapters.outbound.resources.fts_index import (
             SqliteFtsResourceIndex,
         )
+        from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
+            build_embedder,
+        )
 
-        return SqliteFtsResourceIndex(home=self.home)
+        return SqliteFtsResourceIndex(home=self.home, embedder=build_embedder())
 
     def delete(self, *, pot_id: str, doc_slug: str) -> dict[str, Any]:
         return self.remove_document(pot_id=pot_id, doc_slug=doc_slug)

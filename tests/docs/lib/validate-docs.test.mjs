@@ -35,6 +35,22 @@ See [home](./index.md).
 const cleanSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>`;
 
 describe('parseFrontmatter', () => {
+  for (const newline of ['\n', '\r\n']) {
+    for (const body of ['', `${newline}## Body${newline}`]) {
+      test(`parses a final quoted value with ${JSON.stringify(newline)} and ${body ? 'a body' : 'an EOF delimiter'}`, () => {
+        const block = ['title: Hello', 'description: "Install: first run"'].join(newline);
+        const content = `---${newline}${block}${newline}---${body}`;
+        assert.deepEqual(splitFrontmatter(content), {
+          block,
+          body: body ? `## Body${newline}` : '',
+        });
+        const parsed = parseFrontmatter(content);
+        assert.equal(parsed.error, null);
+        assert.equal(parsed.data.description, 'Install: first run');
+      });
+    }
+  }
+
   test('parses quoted values with colons', () => {
     const { data, error } = parseFrontmatter(`---
 title: "Install: first run"

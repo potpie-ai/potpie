@@ -10,6 +10,9 @@ from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
     _section_from_body,
     write_staging_from_parsed,
 )
+from potpie_context_engine.adapters.outbound.resources.parsers.cleaning import (
+    normalize_extracted_text,
+)
 from potpie_context_engine.domain.resource_models import (
     CHUNK_TARGET_DEFAULT,
     ResourceManifest,
@@ -42,7 +45,7 @@ def parse_pdf_pypdf(
     parsed_sections: list[ParsedSection] = []
 
     for page_index, page in enumerate(reader.pages):
-        text = (page.extract_text() or "").strip()
+        text = normalize_extracted_text(page.extract_text() or "")
         if not text:
             continue
         page_num = page_index + 1

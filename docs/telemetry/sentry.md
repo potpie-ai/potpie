@@ -5,7 +5,7 @@ description: How the Potpie CLI reports unexpected failures to Sentry.
 
 ## Overview
 
-Sentry is used only for unexpected Potpie CLI failures. The CLI-owned
+The CLI uses Sentry only for unexpected failures. The CLI-owned
 integration lives under `potpie/cli`; engine-side metrics wiring remains under
 `potpie/context-engine`.
 
@@ -50,16 +50,43 @@ Sentry initializes directly through `sentry-sdk` with:
 
 The CLI never calls `sentry_sdk.set_user()`.
 
-## Identity State
+## Delivery
 
-Reusable non-secret telemetry identity is stored globally:
+A CLI command never waits on the network for telemetry. It appends its
+metrics and analytics events to a local spool:
+
+```text
+$XDG_CONFIG_HOME/potpie/telemetry/spool.jsonl
+~/.config/potpie/telemetry/spool.jsonl
+```
+
+When the command exits, it starts a detached flusher
+(`python -m potpie.cli.telemetry.flush`) that sends the spool and then exits.
+The daemon starts the flusher right after it spools an event. Only one flusher
+runs at a time. The spool file has `0600` permissions and never holds a DSN or
+an API key. It is capped at 512 KiB, and a failed send drops its records
+instead of retrying them.
+
+The CLI process initializes `sentry-sdk` only to report an unexpected failure.
+The flusher initializes it to send metrics. Both use a short-lived profile: no
+auto-enabling integrations and a one-second shutdown timeout. The daemon keeps
+the SDK defaults.
+
+When telemetry is disabled, by preference or with
+`POTPIE_TELEMETRY_DISABLED=1`, nothing is spooled. The flusher also checks the
+settings again and drops anything already spooled. `potpie telemetry disable`
+deletes the pending spool.
+
+## Identity state
+
+Potpie stores non-secret telemetry identity globally:
 
 ```text
 $XDG_CONFIG_HOME/potpie/telemetry/identity.json
 ~/.config/potpie/telemetry/identity.json
 ```
 
-The file is written with `0600` permissions through an atomic temp-file replace.
+Potpie writes the file with `0600` permissions through an atomic temp-file replace.
 It contains:
 
 - `schema_version`
@@ -73,7 +100,7 @@ repo names, prompts, code, paths, headers, or request bodies. The
 run also gets an in-memory `invocation_id`; each process gets an in-memory
 `daemon_session_id`.
 
-## Captured Errors
+## Captured errors
 
 Captured:
 
@@ -113,7 +140,7 @@ Allowed event context:
 - `invocation_id`
 - `daemon_session_id`
 
-## Privacy Scrubbing
+## Privacy scrubbing
 
 Telemetry code avoids attaching sensitive data in the first place. The generic
 scrubber is owned alongside the Context Engine metrics adapter and re-exported
@@ -154,9 +181,9 @@ Sentry events must not contain:
 - raw exception messages or values
 - raw CLI command arguments
 
-## Local Verification
+## Local verification
 
-Default tests use fake or in-memory Sentry surfaces and do not call the network.
+Default tests use fake or in-memory Sentry clients and do not call the network.
 
 ```bash
 UV_CACHE_DIR=/private/tmp/uv-cache uv run pytest tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py -q
@@ -172,5 +199,6 @@ UV_CACHE_DIR=/private/tmp/uv-cache \
 uv run potpie --json daemon status
 ```
 
-Expected result: command exits `0`, prints daemon status JSON, and creates
+Expected result: the command prints daemon status JSON (exit `2` with
+`daemon_unavailable` when no daemon is running, `0` when one is serving) and creates
 `/tmp/potpie-xdg/potpie/telemetry/identity.json` without requiring a Sentry DSN.

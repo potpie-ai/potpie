@@ -12,6 +12,13 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from uuid import uuid4
+from copy import deepcopy
+from potpie_context_engine.core.claim_corrections import (
+    SupersessionBinding,
+    prepare_claim_closures,
+)
+from potpie_context_engine.core.claim_preparation import prepare_assertions_from_rows
+from .claim_reads import candidate_scope
 
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_engine.core.reconciliation_validation import (
@@ -114,11 +121,18 @@ async def apply_mutation_batch(
     Returns a :class:`MutationResult` carrying the caller-reserved mutation id,
     or a generated UUID when no reservation was supplied.
     """
+    graph_updated_at = datetime.now(timezone.utc)
     validate_reconciliation_plan(
         plan,
         expected_pot_id,
         definition=definition,
         config=reconciliation_config,
+        anchor=(
+            provenance_context.prepared.prepared_at
+            if provenance_context and provenance_context.prepared
+            else graph_updated_at
+        ),
+        provenance=provenance_context,
     )
 
     mutation_id = (
@@ -126,7 +140,6 @@ async def apply_mutation_batch(
         if provenance_context is not None and provenance_context.mutation_id
         else str(uuid4())
     )
-    graph_updated_at = datetime.now(timezone.utc)
     prov = _build_provenance(
         plan,
         pot_id=expected_pot_id,
@@ -137,17 +150,70 @@ async def apply_mutation_batch(
 
     summary = MutationSummary()
     try:
+        plan = deepcopy(plan)
+        if plan.edge_upserts or plan.edge_deletes or plan.invalidations:
+            bindings: list[SupersessionBinding] = []
+            read = getattr(graph_writer, "claim_rows", None)
+            if not callable(read):
+                raise TypeError(
+                    "graph writer requires scoped claim_rows for edge mutations"
+                )
+            candidates = candidate_scope(plan)
+            rows = await read(expected_pot_id, **candidates)
+            # Closures validate the complete history of each selected candidate.
+            scopes = set(candidates["history_scopes"])
+            candidate_histories = {
+                (row.subject_key, row.predicate) for row in rows
+            } - scopes
+            histories = (
+                await read(expected_pot_id, history_scopes=candidate_histories)
+                if candidate_histories
+                else []
+            )
+            scopes.update(candidate_histories)
+            seen = {row.record_id for row in rows}
+            rows.extend(row for row in histories if row.record_id not in seen)
+            rows = prepare_claim_closures(
+                plan,
+                rows,
+                anchor=graph_updated_at,
+                bindings=bindings,
+                effective_at=prov.event_occurred_at or prov.valid_from,
+                singleton_predicates=definition.singleton_predicates,
+            )
+            # Invalidation may add system assertions. Fetch their histories
+            # without replacing the virtual post-closure rows already staged.
+            extra_scopes = {
+                (edge.from_entity_key, edge.edge_type) for edge in plan.edge_upserts
+            } - scopes
+            histories = (
+                await read(expected_pot_id, history_scopes=extra_scopes)
+                if extra_scopes
+                else []
+            )
+            seen = {row.record_id for row in rows}
+            rows.extend(row for row in histories if row.record_id not in seen)
+            prepare_assertions_from_rows(
+                plan,
+                rows,
+                pot_id=expected_pot_id,
+                mutation_id=mutation_id,
+                anchor=graph_updated_at,
+                definition=definition,
+                provenance=prov,
+                bindings=bindings,
+            )
         summary.entity_upserts_applied = await graph_writer.upsert_entities(
             expected_pot_id, plan.entity_upserts, prov
-        )
-        summary.edge_upserts_applied = await graph_writer.upsert_edges(
-            expected_pot_id, plan.edge_upserts, prov
         )
         summary.edge_deletes_applied = await graph_writer.delete_edges(
             expected_pot_id, plan.edge_deletes, prov
         )
         summary.invalidations_applied = await graph_writer.invalidate(
             expected_pot_id, plan.invalidations, prov
+        )
+        summary.edge_upserts_applied = await graph_writer.upsert_edges(
+            expected_pot_id, plan.edge_upserts, prov
         )
     except Exception as exc:
         raise ReconciliationApplyError(str(exc)) from exc

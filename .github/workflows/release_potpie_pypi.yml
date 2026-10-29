@@ -216,7 +216,13 @@ jobs:
             test -n "$engine_wheel"
             find_links+=(--find-links dist/context-engine)
             local_specs+=("potpie-context-engine==${CONTEXT_ENGINE_VERSION}")
-            install_targets+=("${engine_wheel}[all]")
+            if [[ "$RELEASE_SCOPE" == "context-engine" ]]; then
+              install_targets+=("${engine_wheel}[all]")
+            else
+              # The root wheel asks for the engine extras its base install
+              # needs; the smoke below runs on that base, without embeddings.
+              install_targets+=("${engine_wheel}")
+            fi
           fi
 
           if [[ "$RELEASE_SCOPE" == "all" || "$RELEASE_SCOPE" == "potpie" ]]; then
@@ -366,7 +372,7 @@ jobs:
           path: release-bundle
 
       - name: Publish potpie-context-engine
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: release-bundle/dist/context-engine/
 
@@ -401,7 +407,7 @@ jobs:
           path: release-bundle
 
       - name: Publish potpie
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: release-bundle/dist/potpie/
 

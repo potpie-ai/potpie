@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
+import sys
 import threading
 from contextlib import contextmanager
 from typing import Any, Iterator, Mapping, Sequence
@@ -71,35 +73,85 @@ def _instrument_openai_sdk() -> None:
         logger.debug("observability: OpenAI instrumentation skipped: %r", exc)
 
 
+def _otlp_protocol(signal: str) -> tuple[str, bool]:
+    """Respect signal-specific OTLP configuration and the installed transport.
+
+    Windows ARM uses HTTP because grpcio has no native wheel. Other platforms
+    keep their existing gRPC default. Endpoints remain SDK configuration:
+    HTTP defaults to 4318 and gRPC to 4317; an operator's URL is never rewritten.
+    """
+    configured = (
+        (
+            os.getenv(f"OTEL_EXPORTER_OTLP_{signal}_PROTOCOL")
+            or os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    if configured:
+        if configured not in {"grpc", "http/protobuf"}:
+            message = (
+                f"unsupported OTLP protocol {configured!r}; use grpc or http/protobuf"
+            )
+            logger.warning("observability: %s", message)
+            raise ValueError(message)
+        return configured, True
+    windows_arm = sys.platform == "win32" and platform.machine().lower() in {
+        "arm64",
+        "aarch64",
+    }
+    return ("http/protobuf" if windows_arm else "grpc"), False
+
+
+def _explicit_transport_failure(signal: str, exc: Exception) -> None:
+    message = (
+        f"configured OTLP {signal.lower()} gRPC exporter could not start; "
+        f"on Windows ARM set OTEL_EXPORTER_OTLP_{signal}_PROTOCOL=http/protobuf "
+        "or remove that signal-specific setting and set "
+        "OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf; use "
+        "the collector's HTTP endpoint (usually port 4318)"
+    )
+    logger.warning("observability: %s", message)
+    raise RuntimeError(message) from exc
+
+
 def _otlp_span_exporter():
-    """Best-effort OTLP span exporter: gRPC first, HTTP fallback."""
-    try:
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-            OTLPSpanExporter,
-        )
+    protocol, explicit = _otlp_protocol("TRACES")
+    if protocol == "grpc":
+        try:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                OTLPSpanExporter,
+            )
 
-        return OTLPSpanExporter()
-    except Exception:  # noqa: BLE001 — grpc variant may be absent
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter as HttpSpanExporter,
-        )
+            return OTLPSpanExporter()
+        except Exception as exc:  # noqa: BLE001 — retain the optional-transport fallback
+            if explicit:
+                _explicit_transport_failure("TRACES", exc)
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        OTLPSpanExporter as HttpSpanExporter,
+    )
 
-        return HttpSpanExporter()
+    return HttpSpanExporter()
 
 
 def _otlp_metric_exporter():
-    try:
-        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
-            OTLPMetricExporter,
-        )
+    protocol, explicit = _otlp_protocol("METRICS")
+    if protocol == "grpc":
+        try:
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+                OTLPMetricExporter,
+            )
 
-        return OTLPMetricExporter()
-    except Exception:  # noqa: BLE001
-        from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
-            OTLPMetricExporter as HttpMetricExporter,
-        )
+            return OTLPMetricExporter()
+        except Exception as exc:  # noqa: BLE001 — retain the optional-transport fallback
+            if explicit:
+                _explicit_transport_failure("METRICS", exc)
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+        OTLPMetricExporter as HttpMetricExporter,
+    )
 
-        return HttpMetricExporter()
+    return HttpMetricExporter()
 
 
 class OtelObservability:

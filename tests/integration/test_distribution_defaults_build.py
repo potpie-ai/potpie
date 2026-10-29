@@ -72,6 +72,7 @@ def _build_smoke_env() -> dict[str, str]:
             "LINEAR_CLIENT_ID": "linear-smoke-client",
             "POTPIE_GITHUB_CLIENT_ID": "github-smoke-client",
             "POTPIE_BUILD_GIT_SHA": "smoke-sha",
+            "POTPIE_BUILD_DIRTY": "false",
             "POTPIE_BUILD_TIME": "2026-06-28T00:00:00Z",
         }
     )
@@ -108,6 +109,7 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
     for artifact in (wheel, sdist):
         names = _archive_names(artifact)
         assert EXPECTED_CAPABILITY_MEMBERS <= names
+        assert "potpie/build_info.py" in names
         assert not any(
             name == "potpie/product" or name.startswith("potpie/product/")
             for name in names
@@ -128,6 +130,7 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
         assert "'linear_client_id': 'linear-smoke-client'" in distribution_defaults
         assert "'github_client_id': 'github-smoke-client'" in distribution_defaults
         assert "GIT_SHA = 'smoke-sha'" in build_info
+        assert "DIRTY = 'false'" in build_info
         assert "BUILD_TIME = '2026-06-28T00:00:00Z'" in build_info
     generated_dir = product_root / "potpie" / "runtime"
     assert not (generated_dir / "_distribution_defaults.py").exists()

@@ -19,7 +19,10 @@ including supersession (T6), point-in-time queries (T4), corroboration
 
 from __future__ import annotations
 
-import hashlib
+from potpie_context_engine.core.claim_preparation import (
+    stable_source_ref as _stable_source_ref,  # noqa: F401 - compatibility export
+)
+
 import json
 import logging
 import re
@@ -39,7 +42,6 @@ from potpie_context_engine.core.graph_mutations import (
 )
 from potpie_context_engine.core.entity_canonicalization import coherent_entity_labels
 from potpie_context_engine.core.graph_entity_summary import compact_entity_summary
-from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
 from potpie_context_engine.domain.retrieval_card import build_retrieval_card
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,40 @@ _RESERVED_EDGE_PROPERTY_KEYS: frozenset[str] = frozenset(
         "valid_at",
     }
 )
+
+# Properties that mark an edge dead. Re-asserting a claim must clear *all* of
+# them, not just ``invalid_at``: a row revived with a stale
+# ``superseded_by_object`` still reads live everywhere but explains itself as
+# superseded, and ``expired_at`` left set makes system-time queries disagree
+# with event-time ones. Written as one Cypher fragment so the assert path and
+# the SUPERSEDES path cannot drift apart.
+_REVIVE_CLAUSE = """
+                    r.invalid_at = null,
+                    r.expired_at = null,
+                    r.invalidation_reason = null,
+                    r.invalidated_by = null,
+                    r.superseded_by_object = null,
+                    r.supersession_reason = null,
+                    r.deleted_by = null"""
+
+
+def _conditional_revive_clause(*, alias: str, preserve_param: str) -> str:
+    """Preserve invalidation lifecycle for metadata-only evidence markers."""
+    preserve = f"${preserve_param} AND {alias}.invalid_at IS NOT NULL"
+    fields = (
+        "invalid_at",
+        "expired_at",
+        "invalidation_reason",
+        "invalidated_by",
+        "superseded_by_object",
+        "supersession_reason",
+        "deleted_by",
+    )
+    return ",\n                    ".join(
+        f"{alias}.{field} = CASE WHEN {preserve} THEN {alias}.{field} ELSE null END"
+        for field in fields
+    )
+
 
 _POT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _PREDICATE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -101,7 +137,9 @@ def _is_valid_predicate(
     """
     if not isinstance(name, str) or not _PREDICATE_RE.match(name):
         return False
-    return name in definition.edge_types
+    from potpie_context_engine.core.ontology import SYSTEM_EDGE_TYPES
+
+    return name in definition.edge_types or name in SYSTEM_EDGE_TYPES
 
 
 def _clean_entity_text(value: Any) -> str:
@@ -110,38 +148,6 @@ def _clean_entity_text(value: Any) -> str:
         return ""
     text = value if isinstance(value, str) else str(value)
     return " ".join(text.strip().split())
-
-
-def _stable_source_ref(
-    *,
-    predicate: str,
-    from_key: str,
-    to_key: str,
-    provenance: ProvenanceRef,
-) -> str:
-    """Derive a deterministic ``source_ref`` when the caller did not supply one.
-
-    The MERGE key includes ``source_ref`` so corroborating writes from
-    different sources stay distinct; without it every claim from the
-    same predicate triple would collide and look like a single source.
-    When the caller provides ``source_ref`` explicitly via
-    ``EdgeUpsert.properties``, we honor that.
-
-    The fallback is ``provenance.source_ref`` if set, else a hash over the
-    source_event_id + the edge triple. This stays stable across re-scans
-    of the same event and stays unique across distinct events.
-    """
-    if provenance.source_ref:
-        return provenance.source_ref
-    digest = hashlib.sha256()
-    digest.update(provenance.source_event_id.encode())
-    digest.update(b"\x00")
-    digest.update(predicate.encode())
-    digest.update(b"\x00")
-    digest.update(from_key.encode())
-    digest.update(b"\x00")
-    digest.update(to_key.encode())
-    return f"event:{provenance.source_event_id}:{digest.hexdigest()[:12]}"
 
 
 def _render_fact(
@@ -285,6 +291,25 @@ async def upsert_entities_async(
     prov_props = provenance.to_properties()
     async with driver.session() as session:
         for item in items:
+            if item.preserve_labels:
+                result = await session.run(
+                    "MATCH (e:Entity {group_id:$gid,entity_key:$key}) SET e += $props RETURN count(e) AS cnt",
+                    gid=pot_id,
+                    key=item.entity_key,
+                    props=_coerce_props_for_neo4j({**item.properties, **prov_props}),
+                )
+                record = await result.single()
+                await result.consume()
+                if record is None or int(record["cnt"]) != 1:
+                    from potpie_context_engine.core.claim_lifecycle import (
+                        ClaimLifecycleConflict,
+                    )
+
+                    raise ClaimLifecycleConflict(
+                        "entity projection target is missing or ambiguous"
+                    )
+                count += 1
+                continue
             labels = coherent_entity_labels(
                 item.entity_key,
                 item.labels,
@@ -361,204 +386,26 @@ async def upsert_edges_async(
     embedder: Any | None = None,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
-    """Upsert every edge as a ``:RELATES_TO {name: <predicate>, ...}`` claim.
+    """Persist physical incarnations using the canonical lifecycle policy."""
 
-    Each call produces a single MERGE keyed on
-    ``(group_id, name, subject_key, object_key, source_ref)`` so re-scans
-    update in place and corroborating writes from distinct sources land
-    as distinct edges.
+    from .cypher_claim_writes import write_claim
 
-    Properties set on the edge:
-
-    - **Identity / MERGE key:** ``group_id``, ``name``, ``subject_key``,
-      ``object_key``, ``source_ref``.
-    - **System time:** ``uuid``, ``created_at`` (ON CREATE only),
-      ``expired_at`` (set to null ON CREATE).
-    - **Event time:** ``valid_at`` (per-claim, from provenance or
-      explicit), ``invalid_at`` (null until supersession).
-    - **Provenance:** ``source_system``, ``evidence_strength``, ``fact``,
-      ``confidence`` (optional), ``observed_at`` (write time).
-    - **Ontology extras:** whatever else the caller put on
-      ``EdgeUpsert.properties`` (e.g. ``environment``, ``code_scope``).
-    """
     _require_valid_pot_id(pot_id)
-    if not items:
-        return 0
-    now = _utc_now()
     count = 0
     async with driver.session() as session:
         for item in items:
-            predicate = item.edge_type
-            if not _is_valid_predicate(predicate, definition=definition):
-                logger.warning(
-                    "skipping edge with unknown predicate name=%r "
-                    "(must be an uppercase identifier in the active definition)",
-                    predicate,
-                )
+            if not _is_valid_predicate(item.edge_type, definition=definition):
                 continue
-
-            reserved, extras = _split_edge_properties(item.properties)
-
-            source_ref = _stable_source_ref(
-                predicate=predicate,
-                from_key=item.from_entity_key,
-                to_key=item.to_entity_key,
+            await write_claim(
+                session,
+                pot_id=pot_id,
+                edge=item,
                 provenance=provenance,
+                definition=definition,
+                embedder=embedder,
             )
-            if isinstance(reserved.get("source_ref"), str) and reserved["source_ref"]:
-                source_ref = reserved["source_ref"]
-
-            valid_at = (
-                _iso(reserved.get("valid_at"))
-                or _iso(provenance.event_occurred_at)
-                or _iso(provenance.valid_from)
-                or now.isoformat()
-            )
-
-            source_system = (
-                reserved.get("source_system") or provenance.source_system or "agent"
-            )
-
-            truth = (
-                extras.get("truth") if isinstance(extras.get("truth"), str) else None
-            )
-            evidence_strength = evidence_strength_for_truth(truth)
-
-            fact = _render_fact(
-                predicate=predicate,
-                from_key=item.from_entity_key,
-                to_key=item.to_entity_key,
-                extra=reserved,
-            )
-
-            confidence_raw = reserved.get("confidence")
-            if confidence_raw is None:
-                confidence_raw = provenance.confidence
-            confidence = float(confidence_raw) if confidence_raw is not None else None
-
-            edge_props: dict[str, Any] = {
-                "valid_at": valid_at,
-                "source_system": source_system,
-                "evidence_strength": evidence_strength,
-                "fact": fact,
-                "observed_at": now.isoformat(),
-            }
-            if confidence is not None:
-                edge_props["confidence"] = confidence
-            # Carry the ontology-specific extras alongside POC fields.
-            for k, v in extras.items():
-                edge_props[k] = v
-            edge_props.update(
-                _embedding_props(
-                    embedder=embedder,
-                    predicate=predicate,
-                    from_key=item.from_entity_key,
-                    to_key=item.to_entity_key,
-                    edge_props=edge_props,
-                )
-            )
-            # Stamp a compact provenance pointer; full provenance is on
-            # the source event that source_ref references.
-            edge_props["provenance_source_event"] = provenance.source_event_id
-            if provenance.mutation_id:
-                edge_props["mutation_id"] = provenance.mutation_id
-
-            await session.run(
-                """
-                MATCH (a:Entity {group_id: $gid, entity_key: $from_key})
-                MATCH (b:Entity {group_id: $gid, entity_key: $to_key})
-                MERGE (a)-[r:RELATES_TO {
-                    group_id: $gid,
-                    name: $predicate,
-                    subject_key: $from_key,
-                    object_key: $to_key,
-                    source_ref: $source_ref
-                }]->(b)
-                ON CREATE SET
-                    r.uuid = randomUUID(),
-                    r.created_at = $now,
-                    r.expired_at = null,
-                    r.invalid_at = null
-                SET r += $props
-                """,
-                gid=pot_id,
-                predicate=predicate,
-                from_key=item.from_entity_key,
-                to_key=item.to_entity_key,
-                source_ref=source_ref,
-                now=now.isoformat(),
-                props=_coerce_props_for_neo4j(edge_props),
-            )
-            # F3 deterministic supersession: when a singleton-predicate
-            # claim from a deterministic-strength source lands, invalidate
-            # all prior live claims for the same subject+predicate that
-            # point at a *different* object. Multi-source corroboration on
-            # the same object is preserved (different source_ref, same
-            # object → no supersession trigger).
-            if (
-                predicate in definition.singleton_predicates
-                and evidence_strength == "deterministic"
-            ):
-                await _supersede_singleton_predecessors(
-                    session,
-                    pot_id=pot_id,
-                    predicate=predicate,
-                    from_key=item.from_entity_key,
-                    winning_to_key=item.to_entity_key,
-                    valid_at=valid_at,
-                    now=now,
-                )
             count += 1
     return count
-
-
-async def _supersede_singleton_predecessors(
-    session: Any,
-    *,
-    pot_id: str,
-    predicate: str,
-    from_key: str,
-    winning_to_key: str,
-    valid_at: str,
-    now: datetime,
-) -> int:
-    """Stamp ``invalid_at`` on prior live singleton claims that disagree.
-
-    Cypher matches every live ``:RELATES_TO`` edge from ``from_key`` with
-    predicate ``name`` whose object is *not* the new winner; stamps
-    them with ``invalid_at = $new_valid_at`` (event time of the new
-    claim) and ``expired_at = $now`` (system time of the supersession).
-
-    Note: this does NOT remove the prior edges — point-in-time queries
-    still see them as live for ``as_of < invalid_at``. The bitemporal
-    history stays intact.
-    """
-    result = await session.run(
-        """
-        MATCH (a:Entity {group_id: $gid, entity_key: $from_key})
-              -[r:RELATES_TO {
-                   group_id: $gid,
-                   name: $predicate,
-                   subject_key: $from_key
-              }]->(b:Entity)
-        WHERE b.entity_key <> $winning_to_key
-          AND r.invalid_at IS NULL
-        SET r.invalid_at = $new_valid_at,
-            r.expired_at = $now,
-            r.superseded_by_object = $winning_to_key,
-            r.supersession_reason = 'singleton_predicate'
-        RETURN count(r) AS cnt
-        """,
-        gid=pot_id,
-        predicate=predicate,
-        from_key=from_key,
-        winning_to_key=winning_to_key,
-        new_valid_at=valid_at,
-        now=now.isoformat(),
-    )
-    rec = await result.single()
-    await result.consume()
-    return int(rec["cnt"]) if rec is not None else 0
 
 
 # ----------------------------------------------------------------------
@@ -574,62 +421,24 @@ async def delete_edges_async(
     *,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
-    """Logically delete a claim by stamping ``invalid_at`` + ``expired_at``.
+    from .cypher_claim_writes import close_claims
 
-    P0 changes the semantics: claims are append-only, point-in-time
-    queries depend on the bitemporal predicate; an actual DELETE would
-    destroy history. The lifecycle machinery (auto-supersede + conflict
-    detection) operates on the same ``invalid_at`` property, so this
-    matches their model.
-
-    Note: this matches *every* live claim for the (subject, predicate,
-    object) triple across all source_refs — that's the closest equivalent
-    to the old hard-delete semantics. Single-source invalidation should
-    go through ``apply_invalidations_async`` with a target_edge that
-    carries the source_ref.
-    """
     _require_valid_pot_id(pot_id)
-    if not items:
-        return 0
-    now = _utc_now()
+    anchor = provenance.graph_updated_at or _utc_now()
     count = 0
     async with driver.session() as session:
         for item in items:
-            predicate = item.edge_type
-            if not _is_valid_predicate(predicate, definition=definition):
-                continue
-            res = await session.run(
-                """
-                MATCH (a:Entity {group_id: $gid, entity_key: $from_key})
-                       -[r:RELATES_TO {
-                            group_id: $gid,
-                            name: $predicate,
-                            subject_key: $from_key,
-                            object_key: $to_key
-                       }]->
-                       (b:Entity {group_id: $gid, entity_key: $to_key})
-                WHERE r.invalid_at IS NULL
-                SET r.invalid_at = $now,
-                    r.expired_at = $now,
-                    r.deleted_by = $deleted_by
-                RETURN count(r) AS cnt
-                """,
-                gid=pot_id,
-                predicate=predicate,
-                from_key=item.from_entity_key,
-                to_key=item.to_entity_key,
-                now=now.isoformat(),
-                deleted_by=provenance.source_event_id,
+            count += await close_claims(
+                session,
+                pot_id=pot_id,
+                closures=item.closures,
+                properties={
+                    "expired_at": anchor.isoformat(),
+                    "deleted_by": provenance.source_event_id,
+                    "last_mutation_id": provenance.mutation_id,
+                },
             )
-            rec = await res.single()
-            await res.consume()
-            count += int(rec["cnt"]) if rec is not None else 0
     return count
-
-
-# ----------------------------------------------------------------------
-# Invalidations — entity and edge with bitemporal stamps + SUPERSEDES
-# ----------------------------------------------------------------------
 
 
 async def apply_invalidations_async(
@@ -640,145 +449,26 @@ async def apply_invalidations_async(
     *,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> int:
-    """Stamp ``invalid_at`` on entities/edges, optionally with a SUPERSEDES claim.
+    """Apply frozen claim intervals. Derived effects are ordinary batch writes."""
+    from .cypher_claim_writes import close_claims
 
-    Unifies on the bitemporal naming (``invalid_at`` / ``expired_at``).
-    When ``superseded_by_key`` is set, also writes a ``:RELATES_TO
-    {name: 'SUPERSEDES'}`` claim from the new entity to the invalidated
-    one so the supersession relationship is itself a queryable claim.
-    """
     _require_valid_pot_id(pot_id)
-    if not items:
-        return 0
-    now = _utc_now()
+    anchor = provenance.graph_updated_at or _utc_now()
     count = 0
     async with driver.session() as session:
         for item in items:
-            valid_to = _iso(item.valid_to) or now.isoformat()
-            invalidation_props: dict[str, Any] = {
-                "invalid_at": valid_to,
-                "expired_at": now.isoformat(),
-                "invalidation_reason": item.reason,
-                "invalidated_by": provenance.source_event_id,
-            }
-
-            if item.target_entity_key:
-                res = await session.run(
-                    "MATCH (e:Entity {group_id: $gid, entity_key: $key}) "
-                    "SET e += $props "
-                    "RETURN count(e) AS cnt",
-                    gid=pot_id,
-                    key=item.target_entity_key,
-                    props=invalidation_props,
-                )
-                rec = await res.single()
-                await res.consume()
-                matched = int(rec["cnt"]) if rec is not None else 0
-                if matched and item.superseded_by_key:
-                    await _write_supersedes_claim(
-                        session,
-                        pot_id=pot_id,
-                        new_key=item.superseded_by_key,
-                        old_key=item.target_entity_key,
-                        reason=item.reason,
-                        now=now,
-                        provenance=provenance,
-                    )
-                count += matched
-            elif item.target_edge:
-                edge_type, from_key, to_key = item.target_edge
-                if not _is_valid_predicate(edge_type, definition=definition):
-                    continue
-                res = await session.run(
-                    """
-                    MATCH (a:Entity {group_id: $gid, entity_key: $from_key})
-                           -[r:RELATES_TO {
-                                group_id: $gid,
-                                name: $predicate,
-                                subject_key: $from_key,
-                                object_key: $to_key
-                           }]->
-                           (b:Entity {group_id: $gid, entity_key: $to_key})
-                    WHERE r.invalid_at IS NULL
-                    SET r += $props
-                    RETURN count(r) AS cnt
-                    """,
-                    gid=pot_id,
-                    predicate=edge_type,
-                    from_key=from_key,
-                    to_key=to_key,
-                    props=invalidation_props,
-                )
-                rec = await res.single()
-                await res.consume()
-                matched = int(rec["cnt"]) if rec is not None else 0
-                if matched and item.superseded_by_key:
-                    await _write_supersedes_claim(
-                        session,
-                        pot_id=pot_id,
-                        new_key=item.superseded_by_key,
-                        old_key=to_key,
-                        reason=item.reason,
-                        now=now,
-                        provenance=provenance,
-                    )
-                count += matched
+            count += await close_claims(
+                session,
+                pot_id=pot_id,
+                closures=item.closures,
+                properties={
+                    "expired_at": anchor.isoformat(),
+                    "invalidation_reason": item.reason,
+                    "invalidated_by": provenance.source_event_id,
+                    "last_mutation_id": provenance.mutation_id,
+                },
+            )
     return count
-
-
-async def _write_supersedes_claim(
-    session: Any,
-    *,
-    pot_id: str,
-    new_key: str,
-    old_key: str,
-    reason: str,
-    now: datetime,
-    provenance: ProvenanceRef,
-) -> None:
-    """Write ``SUPERSEDES`` as a normal :RELATES_TO claim so it follows the same
-    audit + bitemporal rules as every other edge.
-    """
-    source_ref = _stable_source_ref(
-        predicate="SUPERSEDES",
-        from_key=new_key,
-        to_key=old_key,
-        provenance=provenance,
-    )
-    fact = f"{new_key} supersedes {old_key}: {reason}"
-    await session.run(
-        """
-        MATCH (a:Entity {group_id: $gid, entity_key: $new_key})
-        MATCH (b:Entity {group_id: $gid, entity_key: $old_key})
-        MERGE (a)-[r:RELATES_TO {
-            group_id: $gid,
-            name: 'SUPERSEDES',
-            subject_key: $new_key,
-            object_key: $old_key,
-            source_ref: $source_ref
-        }]->(b)
-        ON CREATE SET
-            r.uuid = randomUUID(),
-            r.created_at = $now_iso,
-            r.expired_at = null,
-            r.invalid_at = null
-        SET
-            r.valid_at = $now_iso,
-            r.source_system = $source_system,
-            r.evidence_strength = 'deterministic',
-            r.fact = $fact,
-            r.observed_at = $now_iso,
-            r.reason = $reason
-        """,
-        gid=pot_id,
-        new_key=new_key,
-        old_key=old_key,
-        source_ref=source_ref,
-        now_iso=now.isoformat(),
-        source_system=provenance.source_system or "agent",
-        fact=fact,
-        reason=reason,
-    )
 
 
 # ----------------------------------------------------------------------

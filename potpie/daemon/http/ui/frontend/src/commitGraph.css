@@ -1,0 +1,293 @@
+.mutation-context {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.mutation-context-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border);
+}
+.mutation-context-heading h3 {
+  font-size: 14px;
+  font-weight: 500;
+}
+.mutation-context-heading p {
+  color: var(--muted-2);
+  font-size: 11px;
+  margin-top: 5px;
+}
+.mutation-context-heading > span {
+  flex: none;
+  color: var(--muted-2);
+  font: 11px var(--font-mono);
+}
+.mutation-context-stage {
+  position: relative;
+  height: clamp(460px, 65vh, 720px);
+  min-width: 0;
+}
+.mutation-context-stage .graph-canvas {
+  width: 100%;
+  height: 100%;
+}
+.mutation-context-stage:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.mutation-context-legend {
+  position: absolute;
+  top: 18px;
+  left: 20px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  pointer-events: none;
+}
+.mutation-context-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--muted-2);
+}
+.mutation-context-legend i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.mutation-context-hint {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  font-size: 10px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.mutation-context-empty {
+  position: absolute;
+  top: 45%;
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted-2);
+  padding: 24px;
+  box-sizing: border-box;
+}
+.mutation-context-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 20px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+.mutation-selection {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 320px;
+  max-height: calc(100% - 28px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(20, 22, 20, 0.97);
+  border: 1px solid #343a30;
+  border-radius: 8px;
+  box-shadow: 0 12px 40px #0007;
+  overflow: hidden;
+}
+.mutation-selection header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.mutation-selection header button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--muted-2);
+  font: 20px var(--font-sans);
+}
+.mutation-selection-body {
+  padding: 16px;
+  overflow: auto;
+  min-height: 0;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.mutation-selection-body h3 {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  margin-bottom: 12px;
+}
+.mutation-selection-body > p {
+  color: var(--muted-2);
+  margin-bottom: 14px;
+  overflow-wrap: anywhere;
+}
+.mutation-selection-endpoints {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg);
+  border-radius: 5px;
+}
+.mutation-selection-endpoints span {
+  font: 10px var(--font-mono);
+  color: var(--accent);
+}
+.mutation-value-diffs > div {
+  margin: 14px 0;
+}
+.mutation-value-diffs strong {
+  display: block;
+  color: var(--muted-2);
+  font: 10px var(--font-mono);
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+.mutation-value-diffs pre {
+  padding: 9px 10px;
+  margin: 2px 0;
+  border-radius: 3px;
+  font: 11px/1.7 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 150px;
+  overflow: auto;
+}
+.mutation-value-diffs .before {
+  background: #f15b5b0c;
+  color: #d3aba6;
+}
+.mutation-value-diffs .after {
+  background: #b6e3430c;
+  color: #cddbad;
+}
+.mutation-value-diffs pre > span {
+  opacity: 0.6;
+}
+.mutation-selection-full {
+  margin: 16px 0;
+  color: var(--muted-2);
+}
+.mutation-selection-full summary {
+  cursor: pointer;
+  font-size: 11px;
+  padding: 5px 0;
+}
+.mutation-selection-full .change-fields {
+  margin-top: 12px;
+}
+.mutation-selection .change-record > summary {
+  padding: 10px;
+  flex-wrap: wrap;
+}
+.mutation-selection .change-record-title {
+  flex-basis: calc(100% - 42px);
+}
+.mutation-selection .change-fields table,
+.mutation-selection .change-fields tbody {
+  display: block;
+}
+.mutation-selection .change-fields thead {
+  display: none;
+}
+.mutation-selection .change-fields tr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.mutation-selection .change-fields th:first-child {
+  grid-column: 1/-1;
+  width: auto;
+  padding: 8px;
+}
+.mutation-selection .change-fields td {
+  padding: 8px;
+}
+.mutation-selection .change-fields td::before {
+  display: block;
+  font-size: 9px;
+  margin-bottom: 6px;
+  opacity: 0.65;
+}
+.mutation-selection .field-before::before {
+  content: "Before";
+}
+.mutation-selection .field-after::before {
+  content: "After";
+}
+.commit-secondary {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.commit-secondary > summary {
+  color: var(--muted-2);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 5px 0;
+}
+.commit-secondary .commit-overview {
+  margin-top: 20px;
+}
+.commit-secondary .commit-recovery {
+  margin-top: 16px;
+}
+.commit-context-byline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.commit-context-byline .commit-origin {
+  margin-left: auto;
+  color: var(--muted);
+}
+@media (max-width: 760px) {
+  .mutation-context-heading {
+    padding: 15px;
+  }
+  .mutation-context-heading p {
+    max-width: 250px;
+  }
+  .mutation-context-heading > span {
+    display: none;
+  }
+  .mutation-context-stage {
+    height: 500px;
+  }
+  .mutation-context-hint {
+    bottom: 18px;
+    max-width: 200px;
+  }
+  .mutation-selection {
+    top: auto;
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: 55%;
+  }
+  .mutation-context-legend {
+    gap: 10px;
+    left: 14px;
+    right: 14px;
+  }
+}

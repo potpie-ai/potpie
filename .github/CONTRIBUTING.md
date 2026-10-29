@@ -1,124 +1,267 @@
 # Contributing to Potpie
 
-Thank you for your interest in contributing to Potpie! We welcome and appreciate all contributions, whether you’re fixing bugs, improving documentation, or adding new features. This guide will help you get started.
+This guide covers development of the Potpie CLI, local daemon, and workspace
+packages. Run the commands from the repository root unless a step changes
+directories.
 
-## Table of Contents
+## Table of contents
 
-1. [Code of Conduct](#code-of-conduct)
-2. [How to Contribute](#how-to-contribute)
-3. [Getting Started](#getting-started)
-4. [Development Workflow](#development-workflow)
-5. [Submitting Pull Requests](#submitting-pull-requests)
-6. [Documentation](#documentation)
-7. [Community and Support](#community-and-support)
+1. [Code of conduct](#code-of-conduct)
+2. [How to contribute](#how-to-contribute)
+3. [Getting started](#getting-started)
+4. [Development workflow](#development-workflow)
+5. [Testing](#testing)
+6. [Submitting pull requests](#submitting-pull-requests)
+7. [Documentation](#documentation)
+8. [Community and support](#community-and-support)
 
----
+## Code of conduct
 
-## Code of Conduct
+Follow the [code of conduct](./CODE_OF_CONDUCT.md) when participating in the
+project.
 
-Please note that by participating in the Potpie project, you agree to abide by our [Code of Conduct](./CODE_OF_CONDUCT.md). This is to ensure a positive, welcoming environment for all contributors.
+## How to contribute
 
-## How to Contribute
+Open an issue for a bug or proposed feature, improve documentation, review a pull
+request, or contribute a fix. Include reproduction steps and the affected command
+when reporting a bug. Discuss changes that affect multiple packages or public
+behavior in an issue before starting a large implementation.
 
-There are several ways you can contribute to Potpie:
-
-- Reporting bugs or suggesting improvements.
-- Submitting feature requests.
-- Adding documentation and improving existing content.
-- Reviewing pull requests.
-- Writing code and fixing issues.
-
-If you’re unsure about how to get started, feel free to browse our issues labeled `good first issue` and `help wanted`. We also welcome you to join our discussions to understand the project better.
-
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
-Ensure you have the following software installed:
+Install these tools for a full development checkout:
 
-- [Git](https://git-scm.com/)
-- [Python 3.12+](https://www.python.org/)
-- [uv](https://docs.astral.sh/uv/) - Fast Python package installer (install via `curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- [Docker](https://www.docker.com/) (if applicable)
+- [Git](https://git-scm.com/).
+- Python 3.12 or 3.13. The root package supports Python 3.12 through 3.14, but
+  the global CLI installation target currently defaults to 3.12 or 3.13.
+- [uv](https://docs.astral.sh/uv/) to manage Python environments and dependencies.
+- Node.js 24 and npm to build and test the graph explorer UI.
+- Stable Rust, Cargo, and system C/C++ build tools to compile the native parsing
+  package.
 
-### Fork and Clone the Repository
+Docker is optional for local CLI development and root unit tests. Context Engine
+recovery tests use database containers. See
+[database recovery tests](#database-recovery-tests).
 
-1. **Fork** the repository on GitHub.
-2. **Clone** your forked repository:
+### Fork and clone the repository
 
-   ```bash
-   git clone https://github.com/your-username/potpie.git
-   cd potpie
-   ```
+Fork the repository on GitHub, then clone your fork and add the upstream remote:
 
-3. Add the main repository as a remote:
+```bash
+git clone https://github.com/your-username/potpie.git
+cd potpie
+git remote add upstream https://github.com/potpie-ai/potpie.git
+```
 
-   ```bash
-   git remote add upstream https://github.com/potpie-ai/potpie.git
-   ```
+### Set up your environment
 
-### Set Up Your Environment
+Install the workspace packages and development dependencies using the same sync
+command as the regression workflow. This includes optional features and their ML
+dependencies.
 
-Follow the project’s installation and setup instructions in the [README.md](./README.md) file to prepare your local environment.
+```bash
+uv sync --frozen --all-packages --all-extras
+uv run pre-commit install
+```
 
-## Development Workflow
+Build the graph explorer assets:
 
-To ensure consistency and quality in the codebase, please adhere to the following workflow:
+```bash
+(
+  cd potpie/daemon/http/ui/frontend
+  npm ci
+  npm run build
+)
+```
 
-1. **Create a Branch**:
-   - Branches should be named according to the feature or bug fix. For example:
+Run the CLI from the checkout:
 
-     ```bash
-     git checkout -b feature/your-feature-name
-     ```
+```bash
+uv run potpie --help
+uv run potpie setup
+uv run potpie doctor
+```
 
-2. **Make Changes**: Write clear, concise code and ensure that you follow any established coding conventions.
+Local state defaults to `~/.potpie`. Set `CONTEXT_ENGINE_HOME` to use a separate
+directory for development. You do not need a `.env` file or a Potpie account for
+the local CLI. Operations that call external providers need that provider's
+credentials.
 
-3. **Commit Your Changes**:
-   - Write descriptive commit messages. Use imperative mood and provide context if necessary:
+The default local graph backend uses FalkorDBLite without a Docker server.
+FalkorDBLite has no Windows build, and its Linux wheels require glibc 2.39 or
+newer. On those unsupported systems, set `CONTEXT_ENGINE_BACKEND=embedded` to use
+the file-backed local backend, or configure a FalkorDB server.
 
-     ```bash
-     git commit -m "Add feature to handle XYZ"
-     ```
+### Install the development CLI globally
 
-4. **Push to Your Fork**:
+To use this checkout's `potpie` command outside the repository, use the optional
+Make targets:
 
-   ```bash
-   git push origin feature/your-feature-name
-   ```
+```bash
+make cli-install
+make cli-status
+```
+
+`make cli-install` builds the UI, stops an existing detached Potpie daemon, and
+replaces the global `uv` tool installation with an editable install of this
+checkout. It includes all optional features. Use `make cli-install CLI_EXTRAS=`
+for a base installation without those extras. The root package is editable; use
+the checkout environment above when changing workspace packages. Rerun the target
+after dependency or entrypoint changes.
+
+## Development workflow
+
+Create a branch for your change:
+
+```bash
+git switch -c feature/your-feature-name
+```
+
+Restart a running daemon after changing daemon or runtime code:
+
+```bash
+uv run potpie daemon restart
+```
+
+Keep related behavior and its tests in the same change. The main development
+locations are:
+
+| Area | Location |
+| --- | --- |
+| CLI and local daemon | [`potpie/cli/`](../potpie/cli/) and [`potpie/daemon/`](../potpie/daemon/) |
+| Context Engine | [`potpie/context-engine/`](../potpie/context-engine/) |
+| Native parser | [`potpie/parsing/`](../potpie/parsing/) |
+| Graph explorer UI | [`potpie/daemon/http/ui/frontend/`](../potpie/daemon/http/ui/frontend/) |
+| Root Python tests | [`tests/`](../tests/) |
+
+Run the relevant tests below, then run the repository checks:
+
+```bash
+uv run pre-commit run --all-files --show-diff-on-failure
+```
+
+The hooks run Ruff linting and formatting, validate the lockfile and configuration
+files, and check workflows. Rust changes also trigger `cargo fmt`. If a hook edits
+a file, review the edit and rerun the checks.
+
+Update the lockfile when changing dependency manifests. For changes to specified
+behavior, follow the [specification change process](../spec/process.md).
 
 ## Testing
 
-Testing is essential for maintaining the stability of Potpie. We encourage you to:
+Run tests for the code you changed. Root pytest configuration collects `tests/`;
+it does not collect every workspace package's suite.
 
-- Write unit tests for new features.
-- Update existing tests when modifying functionality.
-- Ensure all tests pass before submitting a pull request.
+### CLI and daemon
 
-## Submitting Pull Requests
+Run the root unit tests without Docker or external database services:
 
-When you’re ready to submit your changes:
+```bash
+uv run pytest tests/unit
+```
 
-1. **Open a Pull Request (PR)**:
-   - Go to the Potpie repository and select **New Pull Request**.
-   - Choose your branch and provide a meaningful title and description.
+Run the root suite used by the regression workflow:
 
-2. **Describe Your Changes**:
-   - Include a detailed description of what you have done and why.
-   - Link related issues (e.g., `Closes #123`).
+```bash
+uv run pytest tests -m "not premerge_journey"
+```
 
-3. **Request a Review**:
-   - After submitting your PR, request a review from a project maintainer.
+Live authentication tests are opt-in and need `RUN_CLI_AUTH_E2E=1` plus the
+provider credentials described in their test files. The `premerge_journey` tests
+run separately in CI. Check the [regression workflow](workflows/test.yml) for
+their setup.
 
-4. **Respond to Feedback**:
-   - Be responsive to any feedback you receive. Once changes are approved, a maintainer will merge your PR.
+### Workspace packages
+
+Change into a package directory before running pytest so it loads the package's
+test configuration. For Context Engine:
+
+```bash
+(
+  cd potpie/context-engine
+  uv run --project . pytest tests -m "not premerge_journey"
+)
+```
+
+Backend and recovery tests may need external services. Read the relevant fixtures
+and [regression workflow](workflows/test.yml) for service configuration and
+environment variables.
+
+For the parser, run both the Rust and Python tests:
+
+```bash
+cargo test --manifest-path potpie/parsing/Cargo.toml --no-default-features
+(
+  cd potpie/parsing
+  uv run --project . pytest tests
+)
+```
+
+### Database recovery tests
+
+Context Engine recovery tests kill and restart a disposable FalkorDB container.
+Install Docker and start its daemon before running these tests:
+
+```bash
+docker info
+```
+
+The [regression workflow](workflows/test.yml) creates the container and passes its
+name to the tests. Follow that workflow for the service configuration, environment
+variables, and test commands. The [journal crash tests](../potpie/context-engine/tests/conformance/test_journal_crash.py)
+exercise this recovery path.
+
+### Graph explorer UI
+
+```bash
+(
+  cd potpie/daemon/http/ui/frontend
+  npm ci
+  npm test
+  npm run build
+)
+```
+
+### Documentation tooling
+
+```bash
+(
+  cd tests/docs
+  npm ci
+  npm test
+)
+```
+
+The documentation content checks cover the published `docs/` tree and its
+configuration. Check links and commands in other Markdown files yourself.
+
+## Submitting pull requests
+
+Commit your changes and push your branch to your fork:
+
+```bash
+git add path/to/changed-file
+git commit -m "Describe the change"
+git push origin feature/your-feature-name
+```
+
+Open a pull request against `potpie-ai/potpie` with `main` as the base branch.
+Describe the problem, the resulting behavior, and the tests you ran. Note any
+relevant checks you could not run, including tests skipped for missing services
+or credentials. Link related issues with text such as `Closes #123`.
+
+Keep unrelated edits out of the pull request. Address review feedback and wait
+for a maintainer to approve and merge it.
 
 ## Documentation
 
-User-facing docs live under [`docs/`](../docs/). If your change affects a command, setup step, or integration that users see, update the matching page there.
+User-facing docs live under [`docs/`](../docs/). Update the matching page when a
+change affects a command, setup step, or integration. Keep examples consistent
+with the implemented behavior and check any commands you change.
 
-## Community and Support
+## Community and support
 
-Open a Github issue to connect with other contributors, ask questions, and get support.
-
-Thank you for your contribution to Potpie! 🥧
+Open a [GitHub issue](https://github.com/potpie-ai/potpie/issues) to ask questions,
+report bugs, or propose changes.

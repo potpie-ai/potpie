@@ -85,3 +85,62 @@ def test_hard_reset_with_reconciliation_ledger() -> None:
     i_led = parent.mock_calls.index(call.ledger.delete_all_for_pot("pot-1"))
     i_reset = parent.mock_calls.index(call.context_graph.reset_pot("pot-1"))
     assert i_reco < i_led < i_reset
+
+
+def test_hard_reset_purges_resources_after_successful_graph_reset():
+    parent = MagicMock()
+    context_graph = MagicMock()
+    context_graph.reset_pot.return_value = {"pot_id": "pot-1", "ok": True}
+    parent.attach_mock(context_graph, "context_graph")
+    resources = MagicMock()
+    resources.purge_pot.return_value = True
+    parent.attach_mock(resources, "resources")
+
+    out = hard_reset_pot(context_graph, "pot-1", resources=resources)
+
+    assert out["ok"] is True
+    assert out["resources_purged"] is True
+    assert parent.mock_calls.index(
+        call.context_graph.reset_pot("pot-1")
+    ) < parent.mock_calls.index(call.resources.purge_pot("pot-1"))
+
+
+def test_hard_reset_skips_resource_purge_when_graph_reset_fails():
+    context_graph = MagicMock()
+    context_graph.reset_pot.return_value = {
+        "pot_id": "pot-1",
+        "ok": False,
+        "error": "bad",
+    }
+    resources = MagicMock()
+
+    out = hard_reset_pot(context_graph, "pot-1", resources=resources)
+
+    assert out["ok"] is False
+    resources.purge_pot.assert_not_called()
+    assert "resources_purged" not in out
+
+
+def test_hard_reset_is_refused_before_any_ledger_row_while_journaling() -> None:
+    """The graph reset refuses a pot whose journal is capturing; checking first
+    keeps the ledgers from being cleared under a graph that stays."""
+    context_graph = MagicMock()
+    context_graph.journal_capture_active.return_value = True
+    ledger = MagicMock()
+    reconciliation_ledger = MagicMock()
+    resources = MagicMock()
+
+    out = hard_reset_pot(
+        context_graph,
+        "pot-1",
+        ledger=ledger,
+        reconciliation_ledger=reconciliation_ledger,
+        resources=resources,
+    )
+
+    assert out["ok"] is False
+    assert out["error"] == "journal_capture_active"
+    ledger.delete_all_for_pot.assert_not_called()
+    reconciliation_ledger.delete_all_for_pot.assert_not_called()
+    context_graph.reset_pot.assert_not_called()
+    resources.purge_pot.assert_not_called()

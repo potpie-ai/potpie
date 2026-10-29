@@ -13,10 +13,13 @@ from potpie.cli.commands import (
     bootstrap,
     cloud,
     daemon,
+    document,
     graph,
+    host,
     ledger,
     pots,
     query,
+    resource,
     skills,
 )
 
@@ -25,9 +28,12 @@ __all__ = [
     "bootstrap",
     "cloud",
     "daemon",
+    "document",
     "graph",
+    "host",
     "ledger",
     "pots",
     "query",
+    "resource",
     "skills",
 ]

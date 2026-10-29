@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.hooks.custom]
@@ -33,17 +33,33 @@ dependencies = [
     "click>=8.1.8",
     "fastapi>=0.115.0",
     "httpx>=0.28.0",
-    "keyring>=25.0.0",
-    "pillow>=12.3.0",
-    "potpie-context-engine[all]==0.2.0",
-    "pydantic-ai-slim>=1.106.0",
-    "pydantic-settings>=2.14.2",
-    "pyjwt>=2.13.0",
+    "potpie-context-engine[http,local]==0.2.0",
     "rich>=13.0",
-    "sentry-sdk>=2.61.1,<3.0.0",
     "starlette>=1.3.1",
     "typer>=0.15.0",
     "uvicorn[standard]>=0.32.0",
+]
+
+[project.optional-dependencies]
+daemon = ["potpie-context-engine[http]"]
+documents = ["potpie-context-engine[documents]==0.2.0"]
+local = ["potpie-context-engine[local]"]
+auth = ["keyring>=25.0.0"]
+embeddings = ["potpie-context-engine[embeddings]"]
+ingest = [
+    "potpie-context-engine[github,reconciliation-agent]",
+    "pydantic-ai-slim>=2.53.0",
+    "pyjwt>=2.15.0",
+]
+telemetry = [
+    "potpie-context-engine[observability]",
+    "sentry-sdk>=2.61.1,<3.0.0",
+]
+ui = ["pillow>=12.3.0"]
+all = [
+    "potpie[daemon,documents,local,auth,embeddings,ingest,telemetry,ui]",
+    "potpie-context-engine[all]",
+    "pydantic-settings>=2.14.2",
 ]
 
 [project.scripts]
@@ -64,17 +80,14 @@ include = [
     "potpie/daemon/http/ui/frontend/dist/**/*",
 ]
 exclude = [
+    "**/tests/**",
     "/potpie/context-engine",
-    "/potpie/daemon/http/ui/frontend/node_modules",
+    "/potpie/daemon/http/ui/frontend/*",
+    "!/potpie/daemon/http/ui/frontend/dist",
     "/potpie/integrations",
     "/potpie/parsing",
-    "/potpie/sandbox",
 ]
-
-[tool.hatch.build.force-include]
-"potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/marketplace.json"
-"potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json" = "potpie/cli/templates/claude_plugin/.claude-plugin/plugin.json"
-"potpie/cli/templates/claude_plugin/hooks/hooks.json" = "potpie/cli/templates/claude_plugin/hooks/hooks.json"
+skip-excluded-dirs = true
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -88,6 +101,7 @@ include = [
     "/potpie/__init__.py",
     "/potpie/agent_context.py",
     "/potpie/auth",
+    "/potpie/build_info.py",
     "/potpie/cli",
     "/potpie/config",
     "/potpie/daemon",
@@ -102,30 +116,29 @@ exclude = [
     "/potpie/daemon/http/ui/frontend/node_modules",
     "/potpie/integrations",
     "/potpie/parsing",
-    "/potpie/sandbox",
 ]
 
 [tool.uv]
-# litellm>=1.83.10 clears CVE-2026-40217 (<1.83.10) but pins openai==2.24.0, which conflicts with
-# pydantic-ai + context-engine; override to the root stack.
 override-dependencies = [
     "python-dotenv>=1.2.2",
     "openai>=2.7.1",
     "idna>=3.15",
-    # CVE-2026-69247: floor at 50.0.0 (vulnerable: >=44.0.0, <50.0.0).
     "cryptography>=50.0.0",
-    # CVE-2026-59881 / CVE-2026-69243 / CVE-2026-69244: floor at 3.14.3.
     "aiohttp>=3.14.3",
-    # GitPython GHSA-3f7w-8rr8-f37f / GHSA-539m-9xh6-q6rr (<=3.1.56) and
-    # GHSA-wvpp-8hx9-p66j / related Highs (<=3.1.57): floor at 3.1.58.
     "gitpython>=3.1.58",
     "starlette>=1.3.1",
-    "pyjwt>=2.13.0",
+    "pyjwt>=2.15.0",
+    "urllib3>=2.8.0",
+    "virtualenv>=21.7.13",
     "pydantic-settings>=2.14.2",
-    # CVE-2026-54249: floor at 1.106.0 (vulnerable: >=1.65.0, <1.106.0).
-    "pydantic-ai-slim>=1.106.0",
-    # CVE-2025-3000: torch <= 2.12.1; 2.13.0 is the first patched release on PyPI.
+    "pydantic-ai-slim>=2.53.0",
     "torch>=2.13.0",
+    "httpx2>=2.12.0",
+    "httpcore2>=2.10.0",
+    "anyio>=4.14.2",
+    "soupsieve>=2.9.0",
+    "multidict>=6.9.1",
+    "fsspec>=2026.6.0",
 ]
 
 [tool.uv.workspace]
@@ -133,16 +146,12 @@ members = [
     "potpie/context-engine",
     "potpie/integrations",
     "potpie/parsing",
-    "potpie/sandbox",
 ]
+exclude = ["scripts/packaging/falkordblite"]
 
 [tool.uv.sources]
 potpie-context-engine = { workspace = true, editable = true }
-
-[project.optional-dependencies]
-documents = [
-    "potpie-context-engine[documents]==0.1.0",
-]
+potpie-falkordblite = { path = "scripts/packaging/falkordblite" }
 
 [dependency-groups]
 dev = [
@@ -176,8 +185,10 @@ extend-select = ["S"]
 "potpie/cli/commands/_common.py" = ["S112"]
 "potpie/cli/ui/setup_ux.py" = ["S112"]
 "tests/_auth_fakes.py" = ["S108"]
+"tests/characterization/test_documents_extra_metadata.py" = ["S101"]
 "tests/unit/test_cli_linear.py" = ["S310"]
 "tests/unit/test_build_hook_config.py" = ["S101"]
 "tests/unit/test_nudge_adapter.py" = ["S102"]
+"tests/unit/test_query_search_scope.py" = ["S101"]
 "tests/unit/test_validate_python_release.py" = ["S101"]
 "tests/unit/test_verify_pypi_release.py" = ["S101"]

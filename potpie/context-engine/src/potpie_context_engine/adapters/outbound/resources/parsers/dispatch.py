@@ -108,6 +108,7 @@ def _parse_pdf_to_staging(
     *,
     chunk_target: int,
     allow_degraded: bool,
+    vision_provider: str,
 ) -> ResourceManifest:
     caps = documents_capabilities()
 
@@ -116,9 +117,26 @@ def _parse_pdf_to_staging(
             parse_pdf_docling_provenance_to_staging,
         )
 
-        return parse_pdf_docling_provenance_to_staging(
-            source, out_dir, chunk_target=chunk_target
-        )
+        try:
+            return parse_pdf_docling_provenance_to_staging(
+                source,
+                out_dir,
+                chunk_target=chunk_target,
+                vision_provider=vision_provider,
+            )
+        except Exception as exc:
+            if allow_degraded:
+                logger.warning(
+                    "Docling structured PDF extraction failed; using explicit "
+                    "degraded text fallback: %s",
+                    exc,
+                )
+                return _parse_pdf_degraded(source, out_dir, chunk_target=chunk_target)
+            raise RuntimeError(
+                "Docling structured extraction failed. Fix the extraction error "
+                "or pass --allow-degraded for clearly marked text-only parsing: "
+                f"{exc}"
+            ) from exc
 
     if allow_degraded:
         return _parse_pdf_degraded(source, out_dir, chunk_target=chunk_target)
@@ -174,6 +192,10 @@ def parse_file_to_staging(
     opts = options or ParseOptions(
         chunk_target=chunk_target, vision_provider=vision_provider
     )
+    if opts.chunk_target <= 0:
+        raise ValueError(
+            f"chunk target must be a positive integer; got {opts.chunk_target}"
+        )
     suffix = source.suffix.lower()
 
     if suffix in {".md", ".markdown", ".txt", ".text"}:
@@ -185,6 +207,7 @@ def parse_file_to_staging(
             out_dir,
             chunk_target=opts.chunk_target,
             allow_degraded=opts.allow_degraded,
+            vision_provider=opts.vision_provider,
         )
 
     if suffix in _OFFICE_SUFFIXES:

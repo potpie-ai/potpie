@@ -12,7 +12,7 @@ repository or decide what prose means for you.
 potpie doctor
 potpie pot list
 potpie graph status
-potpie graph catalog --task "<task>"
+potpie graph catalog
 ```
 
 ## Graph Surface
@@ -21,8 +21,8 @@ Use the CLI when available:
 
 ```bash
 potpie graph status
-potpie graph catalog --task "<task>" --profile read
-potpie graph describe <subgraph> --view <view> --examples
+potpie graph catalog --profile read
+potpie graph describe <subgraph> --view <view>
 potpie graph read --subgraph <subgraph> --view <view> [--query "..."] [--scope key:value] [--limit N]
 potpie graph search-entities "text" [--type Service] [--environment prod]
 potpie --json graph propose --file mutation.json

@@ -16,6 +16,7 @@ cannot mask a regression.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -50,7 +51,9 @@ from potpie_context_engine.api import (
     GraphBackend,
     GraphInboxStorePort,
     GraphPlanStorePort,
+    GraphRuntime,
     GraphService,
+    build_graph_runtime,
 )
 
 print(json.dumps(sorted({module.split(".")[0] for module in sys.modules})))
@@ -58,11 +61,17 @@ print(json.dumps(sorted({module.split(".")[0] for module in sys.modules})))
 
 
 def test_supported_imports_do_not_load_optional_dependencies() -> None:
+    env = os.environ.copy()
+    # Pydantic discovers installed plugins at import time.  Keep this
+    # packaging contract focused on the context-engine imports themselves,
+    # independent of optional plugins installed in the developer environment.
+    env["PYDANTIC_DISABLE_PLUGINS"] = "__all__"
     result = subprocess.run(
         [sys.executable, "-c", _IMPORT_SNIPPET],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     assert result.returncode == 0, result.stderr
     loaded = set(json.loads(result.stdout))
@@ -94,11 +103,52 @@ def test_api_reexports_are_the_internal_contracts() -> None:
         "GraphService",
     } <= set(api.__all__)
     assert {"DEFAULT_GRAPH_DEFINITION", "GraphDefinition"} <= set(api.__all__)
+
+
+def test_api_exports_the_embedding_host_runtime_builder() -> None:
+    from potpie_context_engine import api
+    from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
+
+    assert api.build_graph_runtime is build_graph_runtime
+    assert api.GraphRuntime is GraphRuntime
     assert {
-        "GraphExtension",
+        "GraphObserver",
         "GraphRuntime",
+        "NoOpGraphObserver",
+        "RuntimeCompositionError",
         "build_graph_runtime",
-    }.isdisjoint(api.__all__)
+        "run_in_worker_thread",
+    } <= set(api.__all__)
+
+
+def test_api_exports_the_opt_in_protocols_definition_and_identity_helpers() -> None:
+    from potpie_context_engine import api
+    from potpie_context_engine.core.protocols import (
+        protocol_entity,
+        protocol_entity_key,
+    )
+
+    assert {
+        "protocols_definition",
+        "protocol_entity",
+        "protocol_entity_key",
+    } <= set(api.__all__)
+    assert api.protocol_entity is protocol_entity
+    assert api.protocol_entity_key is protocol_entity_key
+    definition = api.protocols_definition()
+    assert isinstance(definition, api.GraphDefinition)
+    assert definition.extensions == {"protocols": "1"}
+    assert "protocols" in definition.readers
+    # The factory returns a new value; the default definition stays base-only.
+    assert api.DEFAULT_GRAPH_DEFINITION.extensions == {}
+    assert "protocols" not in api.DEFAULT_GRAPH_DEFINITION.readers
+
+
+def test_api_does_not_publish_graph_extension_registration() -> None:
+    from potpie_context_engine import api
+
+    assert "GraphExtension" not in api.__all__
+    assert not hasattr(api, "GraphExtension")
 
 
 def test_package_root_exports_the_context_engine_surface() -> None:
@@ -146,10 +196,15 @@ def test_public_distributions_package_pep561_markers() -> None:
 
 
 def test_legacy_top_level_packages_are_gone() -> None:
-    import importlib.util
+    from importlib.machinery import PathFinder
+
+    package_root = Path(__file__).resolve().parents[2] / "src"
 
     for legacy in ("domain", "application", "adapters", "bootstrap", "host"):
-        spec = importlib.util.find_spec(legacy)
+        # Limit discovery to the source root that is packaged into the wheel.
+        # A checkout may contain ignored/generated directories with legacy
+        # names; those must not affect the distribution namespace contract.
+        spec = PathFinder.find_spec(legacy, [str(package_root)])
         assert spec is None, (
             f"legacy top-level package {legacy!r} is still importable; the "
             "wheel must ship only the potpie_context_engine namespace"

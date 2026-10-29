@@ -10,6 +10,9 @@ from potpie_context_engine.adapters.outbound.resources.parsers.markdown import (
     _section_from_body,
     write_staging_from_parsed,
 )
+from potpie_context_engine.adapters.outbound.resources.parsers.cleaning import (
+    normalize_extracted_text,
+)
 from potpie_context_engine.domain.resource_models import (
     CHUNK_TARGET_DEFAULT,
     ResourceManifest,
@@ -40,7 +43,7 @@ def parse_pdf_pypdfium2(
     for page_index in range(len(document)):
         page = document[page_index]
         textpage = page.get_textpage()
-        text = (textpage.get_text_range() or "").strip()
+        text = normalize_extracted_text(textpage.get_text_range() or "")
         if not text:
             continue
         page_num = page_index + 1

@@ -15,11 +15,17 @@ from potpie_context_engine.outcomes import (
     Success,
 )
 from potpie_context_engine.results import (
+    ApplyPreviewResult,
     CatalogResult,
     CommitResult,
+    CommitShowResult,
+    CommitStatusResult,
+    CommitsResult,
     DataPlaneStatusResult,
     DescribeResult,
+    DisableRollbackResult,
     ExportSnapshotResult,
+    GraphSliceResult,
     HistoryResult,
     ImportSnapshotResult,
     InboxAddResult,
@@ -30,6 +36,7 @@ from potpie_context_engine.results import (
     InboxMarkRejectedResult,
     InboxShowResult,
     InspectResult,
+    JournalStatusResult,
     MutateResult,
     NeighborhoodResult,
     NudgeResult,
@@ -37,22 +44,40 @@ from potpie_context_engine.results import (
     ProposeResult,
     QualityResult,
     ReadResult,
+    RebuildCommitsResult,
     RecordResult,
     RepairResult,
     ResetContextResult,
     ResolveResult,
+    ResourceGetResult,
+    ResourceImportResult,
+    ResourceIndexBuildResult,
+    ResourceIndexRebuildResult,
+    ResourceIndexStatusResult,
+    ResourceListResult,
+    ResourceRmResult,
+    ResourceStatusResult,
+    RevertPreviewResult,
+    RollbackPreviewResult,
     SearchEntitiesResult,
     SearchResult,
     SubmitArtifactResult,
     SubmitEventResult,
+    VerifyCommitResult,
 )
 from potpie_context_engine.requests import (
+    ApplyPreviewRequest,
     CatalogRequest,
     CommitRequest,
+    CommitShowRequest,
+    CommitStatusRequest,
+    CommitsRequest,
     DataPlaneStatusRequest,
     DescribeRequest,
+    DisableRollbackRequest,
     EngineRequest,
     ExportSnapshotRequest,
+    GraphSliceRequest,
     HistoryRequest,
     ImportSnapshotRequest,
     InboxAddRequest,
@@ -63,6 +88,7 @@ from potpie_context_engine.requests import (
     InboxMarkRejectedRequest,
     InboxShowRequest,
     InspectRequest,
+    JournalStatusRequest,
     MutateRequest,
     NeighborhoodRequest,
     NudgeRequest,
@@ -70,14 +96,26 @@ from potpie_context_engine.requests import (
     ProposeRequest,
     QualityRequest,
     ReadRequest,
+    RebuildCommitsRequest,
     RecordRequest,
     RepairRequest,
     ResetContextRequest,
     ResolveRequest,
+    ResourceGetRequest,
+    ResourceImportRequest,
+    ResourceIndexBuildRequest,
+    ResourceIndexRebuildRequest,
+    ResourceIndexStatusRequest,
+    ResourceListRequest,
+    ResourceRmRequest,
+    ResourceStatusRequest,
+    RevertPreviewRequest,
+    RollbackPreviewRequest,
     SearchEntitiesRequest,
     SearchRequest,
     SubmitArtifactRequest,
     SubmitEventRequest,
+    VerifyCommitRequest,
 )
 
 
@@ -163,6 +201,10 @@ class GraphOperations(Protocol):
         self, context: ContextIdentity, request: InspectRequest
     ) -> InspectResult | Outcome[InspectResult]: ...
 
+    async def slice(
+        self, context: ContextIdentity, request: GraphSliceRequest
+    ) -> GraphSliceResult | Outcome[GraphSliceResult]: ...
+
     async def export_snapshot(
         self, context: ContextIdentity, request: ExportSnapshotRequest
     ) -> ExportSnapshotResult | Outcome[ExportSnapshotResult]: ...
@@ -225,6 +267,46 @@ class WorkbenchOperations(Protocol):
         self, context: ContextIdentity, request: InboxCloseRequest
     ) -> InboxCloseResult | Outcome[InboxCloseResult]: ...
 
+    async def commit_status(
+        self, context: ContextIdentity, request: CommitStatusRequest
+    ) -> CommitStatusResult | Outcome[CommitStatusResult]: ...
+
+    async def verify_commit(
+        self, context: ContextIdentity, request: VerifyCommitRequest
+    ) -> VerifyCommitResult | Outcome[VerifyCommitResult]: ...
+
+    async def journal_status(
+        self, context: ContextIdentity, request: JournalStatusRequest
+    ) -> JournalStatusResult | Outcome[JournalStatusResult]: ...
+
+    async def commits(
+        self, context: ContextIdentity, request: CommitsRequest
+    ) -> CommitsResult | Outcome[CommitsResult]: ...
+
+    async def commit_show(
+        self, context: ContextIdentity, request: CommitShowRequest
+    ) -> CommitShowResult | Outcome[CommitShowResult]: ...
+
+    async def revert_preview(
+        self, context: ContextIdentity, request: RevertPreviewRequest
+    ) -> RevertPreviewResult | Outcome[RevertPreviewResult]: ...
+
+    async def rollback_preview(
+        self, context: ContextIdentity, request: RollbackPreviewRequest
+    ) -> RollbackPreviewResult | Outcome[RollbackPreviewResult]: ...
+
+    async def apply_preview(
+        self, context: ContextIdentity, request: ApplyPreviewRequest
+    ) -> ApplyPreviewResult | Outcome[ApplyPreviewResult]: ...
+
+    async def disable_rollback(
+        self, context: ContextIdentity, request: DisableRollbackRequest
+    ) -> DisableRollbackResult | Outcome[DisableRollbackResult]: ...
+
+    async def rebuild_commits(
+        self, context: ContextIdentity, request: RebuildCommitsRequest
+    ) -> RebuildCommitsResult | Outcome[RebuildCommitsResult]: ...
+
 
 class IngestionOperations(Protocol):
     async def submit_event(
@@ -246,9 +328,51 @@ class NudgeOperations(Protocol):
     ) -> NudgeResult | Outcome[NudgeResult]: ...
 
 
+class ResourceOperations(Protocol):
+    """Document payloads (chunk text the graph points at) and their index."""
+
+    async def resource_import(
+        self, context: ContextIdentity, request: ResourceImportRequest
+    ) -> ResourceImportResult | Outcome[ResourceImportResult]: ...
+
+    async def resource_get(
+        self, context: ContextIdentity, request: ResourceGetRequest
+    ) -> ResourceGetResult | Outcome[ResourceGetResult]: ...
+
+    async def resource_list(
+        self, context: ContextIdentity, request: ResourceListRequest
+    ) -> ResourceListResult | Outcome[ResourceListResult]: ...
+
+    async def resource_rm(
+        self, context: ContextIdentity, request: ResourceRmRequest
+    ) -> ResourceRmResult | Outcome[ResourceRmResult]: ...
+
+    async def resource_status(
+        self, context: ContextIdentity, request: ResourceStatusRequest
+    ) -> ResourceStatusResult | Outcome[ResourceStatusResult]: ...
+
+    async def resource_index_status(
+        self, context: ContextIdentity, request: ResourceIndexStatusRequest
+    ) -> ResourceIndexStatusResult | Outcome[ResourceIndexStatusResult]: ...
+
+    async def resource_index_build(
+        self, context: ContextIdentity, request: ResourceIndexBuildRequest
+    ) -> ResourceIndexBuildResult | Outcome[ResourceIndexBuildResult]: ...
+
+    async def resource_index_rebuild(
+        self, context: ContextIdentity, request: ResourceIndexRebuildRequest
+    ) -> ResourceIndexRebuildResult | Outcome[ResourceIndexRebuildResult]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class EngineDependencies:
-    """Focused engine-owned operation groups and resource ownership metadata."""
+    """Focused engine-owned operation groups and resource ownership metadata.
+
+    ``documents`` is optional: an engine composed without a document resource
+    store answers every ``resource_*`` operation with a typed ``not_implemented``
+    dependency failure instead of failing construction. ``resources`` is the
+    lifecycle list of resource-bearing dependencies, unrelated to documents.
+    """
 
     context: ContextOperations
     graph: GraphOperations
@@ -256,6 +380,7 @@ class EngineDependencies:
     ingestion: IngestionOperations
     nudge: NudgeOperations
     resources: tuple[EngineResource, ...] = ()
+    documents: ResourceOperations | None = None
 
 
 RequestT = TypeVar("RequestT", bound=EngineRequest)
@@ -425,6 +550,16 @@ class ContextEngine:
     async def inspect(self, request: InspectRequest) -> Outcome[InspectResult]:
         return await self._invoke("inspect", self._dependencies.graph.inspect, request)
 
+    async def slice(self, request: GraphSliceRequest) -> Outcome[GraphSliceResult]:
+        """The pot's whole graph, as the ``graph_slice`` operation."""
+
+        handler = getattr(self._dependencies.graph, "slice", None)
+        if handler is None:
+            return await self._invoke(
+                "graph_slice", _not_composed("graph_slice"), request
+            )
+        return await self._invoke("graph_slice", handler, request)
+
     async def export_snapshot(
         self, request: ExportSnapshotRequest
     ) -> Outcome[ExportSnapshotResult]:
@@ -516,6 +651,74 @@ class ContextEngine:
             "inbox_close", self._dependencies.workbench.inbox_close, request
         )
 
+    async def commit_status(
+        self, request: CommitStatusRequest
+    ) -> Outcome[CommitStatusResult]:
+        return await self._invoke(
+            "commit_status", self._dependencies.workbench.commit_status, request
+        )
+
+    async def verify_commit(
+        self, request: VerifyCommitRequest
+    ) -> Outcome[VerifyCommitResult]:
+        return await self._invoke(
+            "verify_commit", self._dependencies.workbench.verify_commit, request
+        )
+
+    async def journal_status(
+        self, request: JournalStatusRequest
+    ) -> Outcome[JournalStatusResult]:
+        return await self._invoke(
+            "journal_status", self._dependencies.workbench.journal_status, request
+        )
+
+    async def commits(self, request: CommitsRequest) -> Outcome[CommitsResult]:
+        return await self._invoke(
+            "commits", self._dependencies.workbench.commits, request
+        )
+
+    async def commit_show(
+        self, request: CommitShowRequest
+    ) -> Outcome[CommitShowResult]:
+        return await self._invoke(
+            "commit_show", self._dependencies.workbench.commit_show, request
+        )
+
+    async def revert_preview(
+        self, request: RevertPreviewRequest
+    ) -> Outcome[RevertPreviewResult]:
+        return await self._invoke(
+            "revert_preview", self._dependencies.workbench.revert_preview, request
+        )
+
+    async def rollback_preview(
+        self, request: RollbackPreviewRequest
+    ) -> Outcome[RollbackPreviewResult]:
+        return await self._invoke(
+            "rollback_preview", self._dependencies.workbench.rollback_preview, request
+        )
+
+    async def apply_preview(
+        self, request: ApplyPreviewRequest
+    ) -> Outcome[ApplyPreviewResult]:
+        return await self._invoke(
+            "apply_preview", self._dependencies.workbench.apply_preview, request
+        )
+
+    async def disable_rollback(
+        self, request: DisableRollbackRequest
+    ) -> Outcome[DisableRollbackResult]:
+        return await self._invoke(
+            "disable_rollback", self._dependencies.workbench.disable_rollback, request
+        )
+
+    async def rebuild_commits(
+        self, request: RebuildCommitsRequest
+    ) -> Outcome[RebuildCommitsResult]:
+        return await self._invoke(
+            "rebuild_commits", self._dependencies.workbench.rebuild_commits, request
+        )
+
     async def submit_event(
         self, request: SubmitEventRequest
     ) -> Outcome[SubmitEventResult]:
@@ -541,6 +744,87 @@ class ContextEngine:
 
     async def nudge(self, request: NudgeRequest) -> Outcome[NudgeResult]:
         return await self._invoke("nudge", self._dependencies.nudge.nudge, request)
+
+    async def resource_import(
+        self, request: ResourceImportRequest
+    ) -> Outcome[ResourceImportResult]:
+        return await self._invoke_documents("resource_import", request)
+
+    async def resource_get(
+        self, request: ResourceGetRequest
+    ) -> Outcome[ResourceGetResult]:
+        return await self._invoke_documents("resource_get", request)
+
+    async def resource_list(
+        self, request: ResourceListRequest
+    ) -> Outcome[ResourceListResult]:
+        return await self._invoke_documents("resource_list", request)
+
+    async def resource_rm(
+        self, request: ResourceRmRequest
+    ) -> Outcome[ResourceRmResult]:
+        return await self._invoke_documents("resource_rm", request)
+
+    async def resource_status(
+        self, request: ResourceStatusRequest
+    ) -> Outcome[ResourceStatusResult]:
+        return await self._invoke_documents("resource_status", request)
+
+    async def resource_index_status(
+        self, request: ResourceIndexStatusRequest
+    ) -> Outcome[ResourceIndexStatusResult]:
+        return await self._invoke_documents("resource_index_status", request)
+
+    async def resource_index_build(
+        self, request: ResourceIndexBuildRequest
+    ) -> Outcome[ResourceIndexBuildResult]:
+        return await self._invoke_documents("resource_index_build", request)
+
+    async def resource_index_rebuild(
+        self, request: ResourceIndexRebuildRequest
+    ) -> Outcome[ResourceIndexRebuildResult]:
+        return await self._invoke_documents("resource_index_rebuild", request)
+
+    async def _invoke_documents(self, operation: str, request: RequestT) -> Outcome:
+        documents = self._dependencies.documents
+
+        async def uncomposed(
+            context: ContextIdentity, request: RequestT
+        ) -> Outcome[object]:
+            del context, request
+            return Failure(
+                DependencyError(
+                    code="not_implemented",
+                    message="this engine was composed without a document resource store",
+                    details={"operation": operation},
+                    recommended_next_action=(
+                        "compose the engine with a ResourceOperations dependency"
+                    ),
+                    retry_posture="safe",
+                )
+            )
+
+        handler = getattr(documents, operation) if documents is not None else uncomposed
+        return await self._invoke(operation, handler, request)
+
+
+def _not_composed(operation: str) -> Operation:
+    """A handler for an operation the composed dependency does not provide."""
+
+    async def refuse(context: ContextIdentity, request: object) -> Outcome[object]:
+        del context, request
+        return Failure(
+            DependencyError(
+                code="not_implemented",
+                message=f"this engine's graph dependency does not serve {operation}",
+                details={"operation": operation},
+                recommended_next_action="compose the engine with a graph dependency "
+                "that implements it",
+                retry_posture="safe",
+            )
+        )
+
+    return refuse
 
 
 async def create_engine(
@@ -579,6 +863,7 @@ __all__ = [
     "GraphOperations",
     "IngestionOperations",
     "NudgeOperations",
+    "ResourceOperations",
     "ResourceOwnership",
     "WorkbenchOperations",
     "create_engine",

@@ -8,7 +8,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Protocol, TypeAlias
+from typing import Final, Literal, Protocol, TypeAlias
 
 from potpie.runtime.clients import DaemonControlClient
 from potpie.runtime.protocol import ProtocolTransportError, RuntimeBoundaryError
@@ -17,16 +17,46 @@ from potpie.runtime.transport import HttpDaemonTransport, RuntimeEndpoint
 from potpie_context_engine import Failure, Success
 
 
+#: ``CreateProcess`` flags by value. ``subprocess`` defines the names only on
+#: Windows, and the launch decisions below must be testable on every host.
+WINDOWS_CREATE_NEW_PROCESS_GROUP: Final[int] = 0x00000200
+WINDOWS_CREATE_BREAKAWAY_FROM_JOB: Final[int] = 0x01000000
+WINDOWS_CREATE_NO_WINDOW: Final[int] = 0x08000000
+
+#: How a Windows daemon is created: in its own process group so a console
+#: Ctrl+C aimed at the launching shell does not reach it, outside the
+#: launcher's job object so it outlives the terminal or editor that started
+#: it, and with a windowless console. ``CREATE_NO_WINDOW`` rather than
+#: ``DETACHED_PROCESS``: a detached venv redirector or daemon spawns console
+#: children that allocate a new, visible console, while ``CREATE_NO_WINDOW``
+#: lets them inherit a hidden one. Windows ignores ``CREATE_NO_WINDOW`` when it
+#: is combined with ``DETACHED_PROCESS``, so the two are never mixed.
+WINDOWS_DAEMON_CREATIONFLAGS: Final[int] = (
+    WINDOWS_CREATE_NO_WINDOW
+    | WINDOWS_CREATE_NEW_PROCESS_GROUP
+    | WINDOWS_CREATE_BREAKAWAY_FROM_JOB
+)
+
+#: ``CreateProcess`` fails with this when the caller's job object does not
+#: permit ``CREATE_BREAKAWAY_FROM_JOB``.
+_WINDOWS_ERROR_ACCESS_DENIED: Final[int] = 5
+
+
 @dataclass(frozen=True, slots=True)
 class DaemonLaunchSpec:
     command: tuple[str, ...]
     cwd: Path | None = None
     environment: Mapping[str, str] = field(default_factory=dict)
     log_path: Path | None = None
+    #: Windows ``CreateProcess`` flags. Ignored on POSIX, where the child
+    #: always starts in a new session instead.
+    creationflags: int = 0
 
     def __post_init__(self) -> None:
         if not self.command or not self.command[0].strip():
             raise ValueError("daemon launch command must not be empty")
+        if self.creationflags < 0:
+            raise ValueError("daemon creation flags must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +121,12 @@ class DaemonBootSpec:
 
 DaemonBootFactory: TypeAlias = Callable[[], DaemonBootSpec]
 
+#: Handshake refusals that waiting cannot change: a daemon serving another
+#: catalog or protocol stays that way, so readiness polling stops at once.
+_SETTLED_HANDSHAKE_REFUSALS: Final = frozenset(
+    {"operation_catalog_mismatch", "protocol_version_incompatible"}
+)
+
 
 class DaemonObserver:
     """Observe readiness and stop through the authenticated typed protocol."""
@@ -120,6 +156,14 @@ class DaemonObserver:
     def instance_id(self) -> str:
         return self._instance_id
 
+    @property
+    def catalog_compatible(self) -> bool | None:
+        """Whether the daemon serves this build's operation catalog.
+
+        ``None`` until the daemon has answered a handshake.
+        """
+        return self._client.catalog_compatible
+
     async def wait_ready(
         self, process: DaemonProcessHandle, *, timeout_s: float
     ) -> Success[None] | Failure[RuntimeBoundaryError]:
@@ -146,6 +190,8 @@ class DaemonObserver:
             if isinstance(handshake, Success):
                 return Success(None)
             last_failure = handshake
+            if handshake.error.code in _SETTLED_HANDSHAKE_REFUSALS:
+                break
             await asyncio.sleep(
                 min(self._poll_interval_s, max(0.0, deadline - loop.time()))
             )
@@ -162,17 +208,18 @@ class DaemonObserver:
     async def request_stop(
         self,
     ) -> Success[object] | Failure[RuntimeBoundaryError]:
-        if self._client.handshake_result is None:
-            handshake = await self._client.handshake()
-            if isinstance(handshake, Failure):
-                return handshake
+        # Shutdown needs only a control-scoped ticket, which a daemon from
+        # another build still issues, so an attached older daemon stays
+        # stoppable without a signal.
+        handshake = await self._client.control_handshake()
+        if isinstance(handshake, Failure):
+            return handshake
         return await self._client.shutdown(reason="controller_requested")
 
     async def status(self):
-        if self._client.handshake_result is None:
-            handshake = await self._client.handshake()
-            if isinstance(handshake, Failure):
-                return handshake
+        handshake = await self._client.control_handshake()
+        if isinstance(handshake, Failure):
+            return handshake
         return await self._client.status()
 
     async def close(self) -> None:
@@ -256,14 +303,10 @@ class DaemonController:
             environment = dict(os.environ)
             environment.update(boot.launch.environment)
             try:
-                process = await asyncio.create_subprocess_exec(
-                    *boot.launch.command,
-                    cwd=boot.launch.cwd,
-                    env=environment,
-                    stdin=asyncio.subprocess.DEVNULL,
+                process = await spawn_daemon_process(
+                    boot.launch,
+                    environment=environment,
                     stdout=log_target,
-                    stderr=asyncio.subprocess.STDOUT,
-                    start_new_session=True,
                 )
             except (OSError, ValueError) as exc:
                 await self._close_observer(boot.observer)
@@ -445,6 +488,7 @@ class DaemonController:
         cause: RuntimeBoundaryError | None = None,
     ) -> Failure[ResourceLifecycleError]:
         details: dict[str, object] = {"pid": process.pid}
+        next_action = "inspect daemon status and runtime records before manual recovery"
         if cause is not None:
             details.update(
                 {
@@ -452,14 +496,20 @@ class DaemonController:
                     "cause_code": cause.code,
                 }
             )
+            if cause.code == "operation_catalog_mismatch":
+                # A daemon from another Potpie version refuses this client's
+                # handshake, so authenticated shutdown cannot reach it either.
+                next_action = (
+                    f"the daemon (pid {process.pid}) was started by a different "
+                    "Potpie version and refuses this one's shutdown; end that "
+                    "process yourself, then run 'potpie daemon start'"
+                )
         return Failure(
             ResourceLifecycleError(
                 code=code,
                 message=message,
                 details=details,
-                recommended_next_action=(
-                    "inspect daemon status and runtime records before manual recovery"
-                ),
+                recommended_next_action=next_action,
                 retry_posture="safe",
             )
         )
@@ -538,6 +588,57 @@ class DaemonController:
             await observer.close()
 
 
+async def spawn_daemon_process(
+    launch: DaemonLaunchSpec,
+    *,
+    environment: Mapping[str, str],
+    stdout: object,
+) -> asyncio.subprocess.Process:
+    """Create the daemon child detached from the launching terminal.
+
+    POSIX starts it in a new session. Windows has no sessions; it uses
+    ``launch.creationflags`` instead. A job object that forbids breakaway
+    refuses the whole ``CreateProcess`` with ``ERROR_ACCESS_DENIED``, which is
+    how some IDE and managed-shell launches failed outright. The fallback
+    drops only ``CREATE_BREAKAWAY_FROM_JOB``: the daemon then shares the job's
+    lifetime, which still serves for as long as the host that started it runs.
+    """
+
+    common: dict[str, object] = {
+        "cwd": launch.cwd,
+        "env": dict(environment),
+        "stdin": asyncio.subprocess.DEVNULL,
+        "stdout": stdout,
+        "stderr": asyncio.subprocess.STDOUT,
+    }
+    if not _windows():
+        return await asyncio.create_subprocess_exec(
+            *launch.command, start_new_session=True, **common
+        )
+    flags = launch.creationflags
+    try:
+        return await asyncio.create_subprocess_exec(
+            *launch.command, creationflags=flags, **common
+        )
+    except OSError as exc:
+        if not (
+            flags & WINDOWS_CREATE_BREAKAWAY_FROM_JOB
+            and getattr(exc, "winerror", None) == _WINDOWS_ERROR_ACCESS_DENIED
+        ):
+            raise
+    return await asyncio.create_subprocess_exec(
+        *launch.command,
+        creationflags=flags & ~WINDOWS_CREATE_BREAKAWAY_FROM_JOB,
+        **common,
+    )
+
+
+def _windows() -> bool:
+    """Read at call time so tests can take the Windows branch on any host."""
+
+    return os.name == "nt"
+
+
 __all__ = [
     "ControllerStartOutcome",
     "ControllerStatus",
@@ -550,4 +651,6 @@ __all__ = [
     "DaemonProcessObserver",
     "StopResult",
     "DaemonObserver",
+    "WINDOWS_DAEMON_CREATIONFLAGS",
+    "spawn_daemon_process",
 ]
