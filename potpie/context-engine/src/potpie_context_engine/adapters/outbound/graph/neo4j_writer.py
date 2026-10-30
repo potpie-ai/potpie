@@ -22,6 +22,9 @@ from potpie_context_engine.adapters.outbound.graph.cypher import (
     upsert_edges_async,
     upsert_entities_async,
 )
+from potpie_context_engine.adapters.outbound.graph.embedding_dim import (
+    resolve_embedding_dim,
+)
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_engine.core.definition import (
     DEFAULT_GRAPH_DEFINITION,
@@ -111,7 +114,7 @@ class Neo4jGraphWriter(GraphWriterPort):
     async def ensure_indexes(self) -> bool:
         if not self.enabled:
             return False
-        embedding_dim = int(getattr(self._embedder, "dimensions", 1536))
+        embedding_dim = resolve_embedding_dim(self._embedder)
         await self._with_driver(
             lambda d: ensure_canonical_indexes(d, embedding_dim=embedding_dim)
         )

@@ -58,6 +58,9 @@ from potpie_context_engine.adapters.outbound.graph.cypher import (
     upsert_edges_async,
     upsert_entities_async,
 )
+from potpie_context_engine.adapters.outbound.graph.embedding_dim import (
+    resolve_embedding_dim,
+)
 from potpie_context_engine.adapters.outbound.graph.writer_port import GraphWriterPort
 from potpie_context_engine.adapters.outbound.graph.falkordb_native import (
     validate_falkordb_lite_binaries,
@@ -107,7 +110,12 @@ _INDEX_STATEMENTS = (
 _RESET_BATCH = 500
 
 
-def _index_statements(embedding_dim: int) -> tuple[str, ...]:
+def _index_statements(embedding_dim: int | None) -> tuple[str, ...]:
+    if embedding_dim is None:
+        # No embedder wired: skip the vector index rather than guess a width.
+        # A wrong-width index silently degrades semantic reads; without one
+        # they take the labeled lexical fallback.
+        return tuple(_INDEX_STATEMENTS)
     return (
         *_INDEX_STATEMENTS,
         "CREATE VECTOR INDEX FOR ()-[r:RELATES_TO]->() ON (r.fact_embedding) "
@@ -678,7 +686,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
         if not self.enabled:
             return False
         graph = self._get_graph()
-        embedding_dim = int(getattr(self._embedder, "dimensions", 1536))
+        embedding_dim = resolve_embedding_dim(self._embedder)
         await asyncio.to_thread(self._ensure_indexes_sync, graph, embedding_dim)
         return True
 
@@ -712,7 +720,7 @@ class FalkorDBGraphWriter(GraphWriterPort):
         return await self._with_driver(read)
 
     @staticmethod
-    def _ensure_indexes_sync(graph: Any, embedding_dim: int = 1536) -> None:
+    def _ensure_indexes_sync(graph: Any, embedding_dim: int | None = None) -> None:
         for stmt in _index_statements(embedding_dim):
             try:
                 graph.query(stmt)
