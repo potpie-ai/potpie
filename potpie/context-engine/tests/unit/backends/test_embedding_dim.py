@@ -22,12 +22,26 @@ from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
     FalkorDBGraphWriter,
     _index_statements,
 )
+from potpie_context_engine.adapters.outbound.intelligence import local_embedder
 from potpie_context_engine.adapters.outbound.intelligence.local_embedder import (
     HashingEmbedder,
     SentenceTransformerEmbedder,
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _isolate_embedding_config(monkeypatch):
+    """Pin width resolution to the model lookup table.
+
+    ``SentenceTransformerEmbedder.dimensions`` honours the
+    ``CONTEXT_ENGINE_EMBEDDING_DIMENSIONS`` env var and the local config
+    before consulting the known-model table, so a configured developer
+    machine would resolve a different width and break these assertions.
+    """
+    monkeypatch.delenv("CONTEXT_ENGINE_EMBEDDING_DIMENSIONS", raising=False)
+    monkeypatch.setattr(local_embedder, "_local_config", lambda: {})
 
 
 class _FakeResult:
@@ -124,6 +138,18 @@ def test_resolve_rejects_embedder_without_declared_width() -> None:
 
     with pytest.raises(ValueError, match="does not declare"):
         resolve_embedding_dim(_NoDims())
+
+
+def test_resolve_rejects_non_integer_width() -> None:
+    class _FloatDims:
+        dimensions = 256.5
+
+    class _BoolDims:
+        dimensions = True
+
+    for embedder in (_FloatDims(), _BoolDims()):
+        with pytest.raises(ValueError, match="non-integer"):
+            resolve_embedding_dim(embedder)
 
 
 def test_resolve_rejects_non_positive_width() -> None:

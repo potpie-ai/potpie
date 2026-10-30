@@ -10,6 +10,7 @@ guessed when there is no embedder to ask.
 
 from __future__ import annotations
 
+from numbers import Integral
 from typing import Any
 
 
@@ -31,6 +32,11 @@ def resolve_embedding_dim(embedder: Any | None) -> int | None:
         raise ValueError(
             "wired embedder does not declare `dimensions`; refusing to guess "
             "a vector index width"
+        )
+    if isinstance(dim, bool) or not isinstance(dim, Integral):
+        raise ValueError(
+            f"wired embedder declares non-integer dimensions ({dim!r}); "
+            "refusing to create a vector index at a truncated width"
         )
     dim = int(dim)
     if dim <= 0:
