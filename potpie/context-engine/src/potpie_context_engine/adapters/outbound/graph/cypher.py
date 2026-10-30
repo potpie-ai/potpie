@@ -476,7 +476,9 @@ async def apply_invalidations_async(
 # ----------------------------------------------------------------------
 
 
-async def ensure_canonical_indexes(driver: Any, *, embedding_dim: int = 1536) -> None:
+async def ensure_canonical_indexes(
+    driver: Any, *, embedding_dim: int | None = None
+) -> None:
     """Create the indexes the Position B traversal patterns rely on.
 
     - ``entity_group_key``: pot-scoped entity lookup by deterministic key.
@@ -487,8 +489,12 @@ async def ensure_canonical_indexes(driver: Any, *, embedding_dim: int = 1536) ->
     - ``claim_fact_embeddings``: native Neo4j 5.x relationship vector
       index on ``r.fact_embedding``. Idempotent — re-runs are no-ops.
 
-    Embedding dimension defaults to 1536 (OpenAI text-embedding-3-small);
-    callers may pass an alternative via ``embedding_dim``.
+    ``embedding_dim`` is the width declared by the configured embedder
+    (resolved via ``resolve_embedding_dim`` — never a guessed default).
+    When it is ``None`` (no embedder wired), the vector index is skipped:
+    creating one at a guessed width would silently mismatch the stored
+    embeddings, while without it semantic reads take the labeled lexical
+    fallback.
     """
     async with driver.session() as session:
         await session.run(
@@ -510,9 +516,16 @@ async def ensure_canonical_indexes(driver: Any, *, embedding_dim: int = 1536) ->
             "FOR ()-[r:RELATES_TO]-() ON (r.group_id, r.name, r.valid_at)"
         )
         # Vector index for semantic search over claim facts (UC4).
+        # Skipped when no embedder is wired (no width to derive it from).
         # Wrapped because some Neo4j editions / community versions don't
         # support relationship vector indexes; the rest of the system
         # still works without it (read paths fall back to non-vector).
+        if embedding_dim is None:
+            logger.info(
+                "claim_fact_embeddings vector index skipped: no embedder "
+                "wired, so there is no width to create it at"
+            )
+            return
         try:
             await session.run(
                 """
