@@ -31,3 +31,8 @@ dev = [
 
 [tool.basedpyright]
 pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = ["source_contract: inspect package source and release metadata"]

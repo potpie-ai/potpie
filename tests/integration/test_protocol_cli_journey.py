@@ -204,3 +204,6 @@ def test_protocols_stay_off_until_the_config_key_turns_them_on(cli, tmp_path):
     again = cli(*_read_args())
     assert again["items"][0]["entity_key"] == FIXTURE["names"]["request"]
     assert again["items"][0]["coverage"]["status"] == "complete"
+
+
+pytestmark = [pytestmark, pytest.mark.source_contract]

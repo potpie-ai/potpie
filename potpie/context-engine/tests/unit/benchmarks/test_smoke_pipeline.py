@@ -19,6 +19,7 @@ _CORPUS_SHIPPED = _UNIVERSE_ROOT.is_dir()
     not _CORPUS_SHIPPED,
     reason="Benchmark fixture corpus is not shipped in this checkout",
 )
+@pytest.mark.source_contract
 def test_smoke_passes_for_authored_corpus() -> None:
     """All currently-authored scenarios load, resolve their fixtures, and
     run through the in-process evaluator pipeline without raising."""

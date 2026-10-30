@@ -145,7 +145,20 @@ def _no_real_telemetry_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _reset_cli_state():
+def _native_graph_servers_lifetime(monkeypatch):
+    """Release test-owned native clients before environment/storage teardown."""
+    from tests.support.native_graph import EmbeddedServerLease
+
+    del monkeypatch  # the dependency keeps environment restoration after cleanup
+    lease = EmbeddedServerLease()
+    try:
+        yield
+    finally:
+        lease.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_cli_state(_native_graph_servers_lifetime):
     """Reset process-wide injected CLI state after each test."""
     yield
     from tests.support.cli_state import reset_cli_state

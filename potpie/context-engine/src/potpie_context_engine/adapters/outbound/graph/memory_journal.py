@@ -37,9 +37,9 @@ from potpie_context_engine.adapters.outbound.graph._mutation_execution import (
 
 def validate_ids(store, pot_id: str) -> None:
     """Journal activation validates existing identity without migrating data."""
-    from potpie_context_engine.core.legacy_records import validate_alias_ownership
+    from potpie_context_engine.core.record_identity import validate_alias_ownership
 
-    from .memory_legacy import _inventory_entries
+    from .memory_inventory import _inventory_entries
 
     records = tuple(record for record, _ in _inventory_entries(store, pot_id))
     try:
@@ -312,12 +312,6 @@ class MemoryJournal:
                 else "system"
             ),
             message=plan.summary,
-            origin="repair" if plan.record_repairs else None,
-            unsupported_reason=(
-                "raw legacy repair cannot be restored by the typed journal schema"
-                if plan.record_repairs
-                else None
-            ),
         )
         self._append(state, receipt)
         return result

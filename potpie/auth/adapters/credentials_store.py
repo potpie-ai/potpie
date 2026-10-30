@@ -15,19 +15,14 @@ from potpie.auth.adapters.errors import CliAuthError
 _CREDENTIALS_FILENAME = "credentials.json"
 _INTEGRATION_SECRETS_FILENAME = "integration_secrets.json"
 _CONFIG_DIR_NAME = "potpie"
-_LEGACY_CONFIG_DIR_NAME = "context-engine"
 _POTPIE_API_KEY_SECRET = "potpie_api_key"
 _POTPIE_FIREBASE_ID_TOKEN_SECRET = "potpie_firebase_id_token"
 _POTPIE_FIREBASE_REFRESH_TOKEN_SECRET = "potpie_firebase_refresh_token"
 _POTPIE_FIREBASE_API_KEY_SECRET = "potpie_firebase_api_key"
 _GITHUB_TOKEN_SECRET = "github_token"
-_LINEAR_ACCESS_TOKEN_SECRET = "linear_access_token"
-_LINEAR_REFRESH_TOKEN_SECRET = "linear_refresh_token"
 _LINEAR_CREDENTIALS_KEY = "linear"
-_ATLASSIAN_LEGACY_TOKEN_SECRET = "atlassian_api_token"
 _JIRA_TOKEN_SECRET = "jira_api_token"
 _CONFLUENCE_TOKEN_SECRET = "confluence_api_token"
-_ATLASSIAN_CREDENTIALS_KEY = "atlassian"
 _JIRA_CREDENTIALS_KEY = "jira"
 _CONFLUENCE_CREDENTIALS_KEY = "confluence"
 _GITBUCKET_TOKEN_SECRET = "gitbucket_token"
@@ -48,13 +43,6 @@ def config_dir() -> Path:
     if base:
         return Path(base) / _CONFIG_DIR_NAME
     return Path.home() / ".config" / _CONFIG_DIR_NAME
-
-
-def legacy_config_dir() -> Path:
-    base = os.getenv("XDG_CONFIG_HOME")
-    if base:
-        return Path(base) / _LEGACY_CONFIG_DIR_NAME
-    return Path.home() / ".config" / _LEGACY_CONFIG_DIR_NAME
 
 
 def credentials_path() -> Path:
@@ -79,23 +67,9 @@ def _integration_secret_store_label() -> str:
     return _storage_label(integration_token_storage())
 
 
-def legacy_credentials_path() -> Path:
-    return legacy_config_dir() / _CREDENTIALS_FILENAME
-
-
-def readable_credentials_path() -> Path:
-    path = credentials_path()
-    if path.is_file():
-        return path
-    legacy = legacy_credentials_path()
-    if legacy.is_file():
-        return legacy
-    return path
-
-
 def read_credentials() -> dict[str, Any]:
     """Return parsed JSON or empty dict if missing/invalid."""
-    path = readable_credentials_path()
+    path = credentials_path()
     if not path.is_file():
         return {}
     try:
@@ -296,17 +270,7 @@ def list_integration_metadata() -> dict[str, dict[str, Any]]:
 
 
 def get_stored_api_key() -> str:
-    try:
-        from_secret_store = load_secure_secret(
-            _POTPIE_API_KEY_SECRET,
-            label="Potpie API key",
-        )
-        if from_secret_store.strip():
-            return from_secret_store.strip()
-    except CredentialStoreError:
-        pass
-    v = read_credentials().get("api_key")
-    return str(v).strip() if v else ""
+    return load_secure_secret(_POTPIE_API_KEY_SECRET, label="Potpie API key").strip()
 
 
 def get_stored_api_base_url() -> str:
@@ -319,23 +283,6 @@ def get_stored_api_base_url() -> str:
 def write_api_base_url(api_base_url: Optional[str]) -> None:
     """Persist non-secret Potpie API base URL without touching stored secrets."""
     payload: dict[str, Any] = dict(read_credentials())
-    if api_base_url is not None:
-        u = api_base_url.strip().rstrip("/")
-        if u:
-            payload["api_base_url"] = u
-        else:
-            payload.pop("api_base_url", None)
-    _write_payload(payload)
-
-
-def write_credentials(*, api_key: str, api_base_url: Optional[str] = None) -> None:
-    """Write credentials file with mode 0o600.
-
-    Merges with existing file: if ``api_base_url`` is ``None``, any stored ``api_base_url`` is kept.
-    Pass ``api_base_url=""`` to clear the stored base URL.
-    """
-    payload: dict[str, Any] = dict(read_credentials())
-    payload["api_key"] = api_key.strip()
     if api_base_url is not None:
         u = api_base_url.strip().rstrip("/")
         if u:
@@ -441,33 +388,15 @@ def get_potpie_firebase_id_token() -> str:
 
 
 def get_potpie_firebase_api_key() -> str:
-    from_secret_store = load_secure_secret(
-        _POTPIE_FIREBASE_API_KEY_SECRET,
-        label="Potpie Firebase API key",
-    )
-    if from_secret_store.strip():
-        return from_secret_store.strip()
-    metadata = get_integration_metadata("potpie")
-    return str(metadata.get("firebase_api_key") or "").strip()
+    return load_secure_secret(
+        _POTPIE_FIREBASE_API_KEY_SECRET, label="Potpie Firebase API key"
+    ).strip()
 
 
 def clear_potpie_auth(*, clear_api_key: bool = False) -> None:
     """Remove Potpie session secrets and drop integrations.potpie metadata."""
     if clear_api_key:
         delete_secure_secret(_POTPIE_API_KEY_SECRET, label="Potpie API key")
-    path = readable_credentials_path()
-    if path.is_file():
-        payload: dict[str, Any] = dict(read_credentials())
-        removed = payload.pop("api_key", None) is not None
-        if removed:
-            if payload:
-                _write_payload_to_path(path, payload)
-            else:
-                try:
-                    path.unlink(missing_ok=True)
-                except TypeError:
-                    if path.is_file():
-                        path.unlink()
     delete_secure_secret(
         _POTPIE_FIREBASE_ID_TOKEN_SECRET,
         label="Potpie Firebase ID token",
@@ -641,40 +570,12 @@ def _linear_refresh_token_secret(org_id: str) -> str:
     return f"linear_refresh_token_{org_id}"
 
 
-def _normalize_linear_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Ensure multi-workspace ``organizations`` map exists; migrate legacy shape."""
-    if not metadata:
-        return {}
-    meta = dict(metadata)
-    orgs = meta.get("organizations")
-    if isinstance(orgs, dict) and orgs:
-        if not meta.get("active_organization_id"):
-            meta["active_organization_id"] = next(iter(orgs.keys()))
-        return meta
-
-    org = meta.get("organization")
-    if not isinstance(org, dict) or not org.get("id"):
-        return meta
-
-    org_id = str(org["id"])
-    org_entry: dict[str, Any] = {
-        "id": org_id,
-        "name": org.get("name"),
-        "url_key": org.get("url_key") or org.get("urlKey"),
-        "account": meta.get("account"),
-        "expires_at": meta.get("expires_at"),
-        "scopes": meta.get("scopes") or meta.get("scope"),
-        "stored_at": meta.get("stored_at"),
-    }
-    meta["organizations"] = {org_id: org_entry}
-    meta["active_organization_id"] = org_id
-    return meta
-
-
 def _read_linear_metadata() -> dict[str, Any]:
-    return _normalize_linear_metadata(
-        _read_metadata_entry(_LINEAR_CREDENTIALS_KEY) or {}
-    )
+    metadata = _read_metadata_entry(_LINEAR_CREDENTIALS_KEY)
+    organizations = metadata.get("organizations")
+    if not isinstance(organizations, dict):
+        return {}
+    return metadata
 
 
 def get_active_linear_organization_id() -> str | None:
@@ -702,7 +603,7 @@ def list_linear_organizations() -> list[dict[str, Any]]:
         row = dict(entry)
         row["id"] = str(org_id)
         row["active"] = str(org_id) == active
-        url_key = str(row.get("url_key") or row.get("urlKey") or "").strip()
+        url_key = str(row.get("url_key") or "").strip()
         row["key"] = url_key or str(row.get("name") or org_id)
         rows.append(row)
     rows.sort(key=lambda item: str(item.get("name") or item.get("key") or ""))
@@ -717,21 +618,8 @@ def set_active_linear_organization(org_id: str) -> None:
             f"Linear workspace {org_id!r} is not connected. "
             "Run: potpie linear login --add"
         )
-    org_entry = orgs[org_id]
     _write_metadata_entry(
-        _LINEAR_CREDENTIALS_KEY,
-        {
-            **meta,
-            "active_organization_id": org_id,
-            "organization": {
-                "id": org_id,
-                "name": org_entry.get("name"),
-                "url_key": org_entry.get("url_key") or org_entry.get("urlKey"),
-            },
-            "account": org_entry.get("account"),
-            "expires_at": org_entry.get("expires_at"),
-            "scopes": org_entry.get("scopes"),
-        },
+        _LINEAR_CREDENTIALS_KEY, {**meta, "active_organization_id": org_id}
     )
 
 
@@ -766,15 +654,22 @@ def save_linear_organization_tokens(
         if refresh_token_storage == "file":
             token_storage = "file"
 
-    scopes = tokens.get("scope") or tokens.get("scopes") or prior.get("scopes")
+    previous_org = orgs.get(org_id, {})
+    scopes = (
+        tokens.get("scope") or tokens.get("scopes") or previous_org.get("scopes") or []
+    )
+    if isinstance(scopes, str):
+        scopes = [scope.strip() for scope in scopes.split(",") if scope.strip()]
     org_entry: dict[str, Any] = {
         "id": org_id,
         "name": organization.get("name"),
         "url_key": organization.get("url_key") or organization.get("urlKey"),
-        "account": account or organization.get("account"),
+        "account": account
+        or organization.get("account")
+        or previous_org.get("account"),
         "expires_at": tokens.get("expires_at"),
         "scopes": scopes,
-        "stored_at": tokens.get("stored_at") or prior.get("stored_at"),
+        "stored_at": tokens.get("stored_at") or previous_org.get("stored_at"),
     }
     orgs[org_id] = org_entry
     now = utc_now_iso()
@@ -786,15 +681,6 @@ def save_linear_organization_tokens(
         "token_type": tokens.get("token_type") or prior.get("token_type") or "Bearer",
         "organizations": orgs,
         "active_organization_id": org_id,
-        "organization": {
-            "id": org_id,
-            "name": org_entry.get("name"),
-            "url_key": org_entry.get("url_key"),
-        },
-        "account": org_entry.get("account"),
-        "expires_at": org_entry.get("expires_at"),
-        "scopes": org_entry.get("scopes"),
-        "stored_at": org_entry.get("stored_at"),
         "created_at": prior.get("created_at") or now,
         "updated_at": now,
         "metadata": {"auth_flow": "pkce"},
@@ -823,21 +709,11 @@ def get_linear_tokens(organization_id: str | None = None) -> dict[str, Any]:
         _linear_access_token_secret(org_id),
     )
     if not access_token:
-        access_token = _load_file_secret(
-            "Linear access token",
-            _LINEAR_ACCESS_TOKEN_SECRET,
-        )
-    if not access_token:
         return {}
     refresh_token = _load_file_secret(
         "Linear refresh token",
         _linear_refresh_token_secret(org_id),
     )
-    if not refresh_token:
-        refresh_token = _load_file_secret(
-            "Linear refresh token",
-            _LINEAR_REFRESH_TOKEN_SECRET,
-        )
     payload: dict[str, Any] = {
         **meta,
         **org_entry,
@@ -845,7 +721,7 @@ def get_linear_tokens(organization_id: str | None = None) -> dict[str, Any]:
         "organization": {
             "id": org_id,
             "name": org_entry.get("name"),
-            "url_key": org_entry.get("url_key") or org_entry.get("urlKey"),
+            "url_key": org_entry.get("url_key"),
         },
         "access_token": access_token,
     }
@@ -883,23 +759,13 @@ def save_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
     )
 
 
-def write_integration_tokens(provider: str, tokens: dict[str, Any]) -> None:
-    save_integration_tokens(provider, tokens)
-
-
 def _norm_atlassian_product(product: str) -> str:
     key = str(product or "").strip().lower()
-    if key in {"wiki", "conf"}:
-        return "confluence"
     if key not in {"jira", "confluence"}:
         raise ValueError(
             f"Unknown Atlassian product {product!r} (expected 'jira' or 'confluence')."
         )
     return key
-
-
-def _legacy_atlassian_metadata() -> dict[str, Any]:
-    return _read_metadata_entry(_ATLASSIAN_CREDENTIALS_KEY)
 
 
 def _product_metadata_key(product: str) -> str:
@@ -966,29 +832,19 @@ def _save_atlassian_product_credentials(
 def _get_atlassian_product_credentials(product: str) -> dict[str, Any]:
     key = _norm_atlassian_product(product)
     metadata = _read_metadata_entry(_product_metadata_key(key))
-    if not metadata:
-        legacy = _legacy_atlassian_metadata()
-        if legacy:
-            metadata = dict(legacy)
-    if not metadata:
+    if metadata.get("provider") != key or not isinstance(metadata.get("site"), dict):
         return {}
-
     secret_name, label = _product_secret_name(key)
     api_token = _load_file_secret(label, secret_name)
     if not api_token:
-        api_token = _load_file_secret(
-            "Atlassian API token",
-            _ATLASSIAN_LEGACY_TOKEN_SECRET,
-        )
-    if not api_token:
         return {}
-    return {**metadata, "api_token": api_token}
-
-
-def _clear_shared_atlassian_legacy_credentials() -> None:
-    """Remove legacy shared Atlassian secret and metadata (both products)."""
-    _delete_file_secret("Atlassian API token", _ATLASSIAN_LEGACY_TOKEN_SECRET)
-    _clear_metadata_entries(_ATLASSIAN_CREDENTIALS_KEY)
+    account = metadata.get("account") or {}
+    return {
+        **metadata,
+        **metadata["site"],
+        "email": account.get("email"),
+        "api_token": api_token,
+    }
 
 
 def _clear_atlassian_product_credentials(product: str) -> None:
@@ -996,61 +852,6 @@ def _clear_atlassian_product_credentials(product: str) -> None:
     secret_name, label = _product_secret_name(key)
     _delete_file_secret(label, secret_name)
     _clear_metadata_entries(_product_metadata_key(key))
-
-
-def save_atlassian_credentials(credentials: dict[str, Any]) -> None:
-    """Legacy combined Atlassian record retained for compatibility."""
-    from potpie.auth.adapters.integration_profile import (
-        atlassian_site_from_entry,
-        build_atlassian_integration_record,
-    )
-
-    api_token = str(credentials.get("api_token") or "").strip()
-    if not api_token:
-        raise ProviderCredentialError("Atlassian API token is required.")
-    token_storage = _store_file_secret(
-        "Atlassian API token",
-        _ATLASSIAN_LEGACY_TOKEN_SECRET,
-        api_token,
-    )
-    prior = _legacy_atlassian_metadata()
-    merged = {**prior, **credentials}
-    site = atlassian_site_from_entry(merged)
-    if site.get("site_url") and not merged.get("site_url"):
-        merged["site_url"] = site["site_url"]
-    record = build_atlassian_integration_record(merged)
-    record["token_storage"] = token_storage
-    _write_metadata_entry(_ATLASSIAN_CREDENTIALS_KEY, record)
-
-
-def get_atlassian_credentials() -> dict[str, Any]:
-    jira = get_jira_credentials()
-    if jira:
-        return jira
-    confluence = get_confluence_credentials()
-    if confluence:
-        return confluence
-
-    metadata = _legacy_atlassian_metadata()
-    if not metadata:
-        return {}
-    api_token = _load_file_secret(
-        "Atlassian API token",
-        _ATLASSIAN_LEGACY_TOKEN_SECRET,
-    )
-    if not api_token:
-        return {}
-    return {**metadata, "api_token": api_token}
-
-
-def clear_atlassian_credentials() -> None:
-    _clear_shared_atlassian_legacy_credentials()
-    _delete_file_secret("Jira API token", _JIRA_TOKEN_SECRET)
-    _delete_file_secret("Confluence API token", _CONFLUENCE_TOKEN_SECRET)
-    _clear_metadata_entries(
-        _JIRA_CREDENTIALS_KEY,
-        _CONFLUENCE_CREDENTIALS_KEY,
-    )
 
 
 def save_jira_workspace_prefs(*, project_key: str) -> None:
@@ -1277,17 +1078,6 @@ def save_gitlab_workspace_prefs(
     _write_metadata_entry(_GITLAB_CREDENTIALS_KEY, meta)
 
 
-def save_atlassian_workspace_prefs(
-    *,
-    jira_project: str | None = None,
-    confluence_space: str | None = None,
-) -> None:
-    if jira_project:
-        save_jira_workspace_prefs(project_key=jira_project)
-    if confluence_space:
-        save_confluence_workspace_prefs(space_key=confluence_space)
-
-
 def save_gitbucket_credentials(credentials: dict[str, Any]) -> None:
     """Store a GitBucket personal access token and metadata."""
     from potpie.auth.adapters.integration_profile import (
@@ -1336,17 +1126,12 @@ def get_integration_tokens(provider: str) -> dict[str, Any]:
     key = _norm_integration_key(provider)
     if key == _LINEAR_CREDENTIALS_KEY:
         return get_linear_tokens()
-    if key in {
-        _ATLASSIAN_CREDENTIALS_KEY,
-        _JIRA_CREDENTIALS_KEY,
-        _CONFLUENCE_CREDENTIALS_KEY,
-    }:
-        if key == _ATLASSIAN_CREDENTIALS_KEY:
-            creds = get_atlassian_credentials()
-        elif key == _JIRA_CREDENTIALS_KEY:
-            creds = get_jira_credentials()
-        else:
-            creds = get_confluence_credentials()
+    if key in {_JIRA_CREDENTIALS_KEY, _CONFLUENCE_CREDENTIALS_KEY}:
+        creds = (
+            get_jira_credentials()
+            if key == _JIRA_CREDENTIALS_KEY
+            else get_confluence_credentials()
+        )
         return {"auth_type": "api_token", **creds} if creds else {}
     if key == _GITBUCKET_CREDENTIALS_KEY:
         creds = get_gitbucket_credentials()
@@ -1374,8 +1159,6 @@ def clear_integration_tokens(provider: str) -> None:
                     "Linear refresh token",
                     _linear_refresh_token_secret(org_id),
                 )
-        _delete_file_secret("Linear access token", _LINEAR_ACCESS_TOKEN_SECRET)
-        _delete_file_secret("Linear refresh token", _LINEAR_REFRESH_TOKEN_SECRET)
         _clear_metadata_entries(_LINEAR_CREDENTIALS_KEY)
         return
     if key == _JIRA_CREDENTIALS_KEY:
@@ -1383,9 +1166,6 @@ def clear_integration_tokens(provider: str) -> None:
         return
     if key == _CONFLUENCE_CREDENTIALS_KEY:
         clear_confluence_credentials()
-        return
-    if key == _ATLASSIAN_CREDENTIALS_KEY:
-        clear_atlassian_credentials()
         return
     if key == _GITBUCKET_CREDENTIALS_KEY:
         clear_gitbucket_credentials()
@@ -1403,7 +1183,6 @@ def list_integration_providers() -> list[str]:
         _LINEAR_CREDENTIALS_KEY,
         _JIRA_CREDENTIALS_KEY,
         _CONFLUENCE_CREDENTIALS_KEY,
-        _ATLASSIAN_CREDENTIALS_KEY,
         _GITBUCKET_CREDENTIALS_KEY,
         _GITLAB_CREDENTIALS_KEY,
     ):
@@ -1425,22 +1204,15 @@ def get_integration_status(provider: str) -> dict[str, Any]:
     if key == _LINEAR_CREDENTIALS_KEY:
         meta = _read_linear_metadata()
         orgs = meta.get("organizations")
-        if not isinstance(orgs, dict) or not orgs:
-            legacy = _load_file_secret(
-                "Linear access token",
-                _LINEAR_ACCESS_TOKEN_SECRET,
-            )
-            if not legacy:
-                return {"provider": key, "authenticated": False, "auth_type": "oauth"}
-        elif not any(
-            get_linear_tokens(org_id).get("access_token") for org_id in orgs.keys()
+        if not isinstance(orgs, dict) or not any(
+            get_linear_tokens(org_id).get("access_token") for org_id in orgs
         ):
             return {"provider": key, "authenticated": False, "auth_type": "oauth"}
 
         tokens = get_linear_tokens()
         if not tokens.get("access_token"):
             return {"provider": key, "authenticated": False, "auth_type": "oauth"}
-        entry = _read_linear_metadata()
+        entry = tokens
         account = linear_account_from_entry(entry)
         organization = entry.get("organization")
         org_name = organization.get("name") if isinstance(organization, dict) else None
@@ -1486,26 +1258,13 @@ def get_integration_status(provider: str) -> dict[str, Any]:
             "provider_host": entry.get("provider_host"),
         }
 
-    if key in {
-        _ATLASSIAN_CREDENTIALS_KEY,
-        _JIRA_CREDENTIALS_KEY,
-        _CONFLUENCE_CREDENTIALS_KEY,
-    }:
-        if key == _ATLASSIAN_CREDENTIALS_KEY:
-            creds = get_atlassian_credentials()
-            entry = _legacy_atlassian_metadata() or creds
-        elif key == _JIRA_CREDENTIALS_KEY:
-            creds = get_jira_credentials()
-            entry = (
-                _read_metadata_entry(_JIRA_CREDENTIALS_KEY)
-                or _legacy_atlassian_metadata()
-            )
-        else:
-            creds = get_confluence_credentials()
-            entry = (
-                _read_metadata_entry(_CONFLUENCE_CREDENTIALS_KEY)
-                or _legacy_atlassian_metadata()
-            )
+    if key in {_JIRA_CREDENTIALS_KEY, _CONFLUENCE_CREDENTIALS_KEY}:
+        creds = (
+            get_jira_credentials()
+            if key == _JIRA_CREDENTIALS_KEY
+            else get_confluence_credentials()
+        )
+        entry = _read_metadata_entry(key)
 
         site = atlassian_site_from_entry(entry or creds)
         if not creds or not site.get("site_url"):

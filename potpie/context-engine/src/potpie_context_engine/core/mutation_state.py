@@ -366,7 +366,6 @@ def _execution_matches_record(
             pot_id=record.pot_id,
             mutation_id=record.mutation_id or "",
             prepared=record.prepared,
-            allow_legacy=record.execution is None,
         )
         and (record.execution is None or record.execution == result.execution)
     )

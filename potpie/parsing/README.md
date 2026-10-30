@@ -68,7 +68,7 @@ assert!(!files.is_empty());
 ```
 
 ```python
-import parsing_rs
+from parsing import parsing_rs
 
 index = parsing_rs.build_workspace_index("/path/to/workspace")
 print(index.file_count(), index.content_file_count())

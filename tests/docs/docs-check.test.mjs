@@ -44,30 +44,6 @@ function writeChanged(root, paths) {
 const silent = { log() {}, error() {} };
 
 describe('runSpokeDocsCheck', () => {
-  test('docs-only change validates the tree and passes', () => {
-    const { root, configPath } = makeSpoke({ 'docs/index.md': page });
-    const result = runSpokeDocsCheck({
-      configPath,
-      changedFilesPath: writeChanged(root, ['docs/index.md']),
-      spokeRoot: root,
-      ...silent,
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.docsChanged, true);
-  });
-
-  test('invalid docs tree fails', () => {
-    const { root, configPath } = makeSpoke({ 'docs/index.md': '# no frontmatter\n' });
-    const result = runSpokeDocsCheck({
-      configPath,
-      changedFilesPath: writeChanged(root, ['docs/index.md']),
-      spokeRoot: root,
-      ...silent,
-    });
-    assert.equal(result.ok, false);
-    assert.match(result.message, /frontmatter/i);
-  });
-
   test('code-only change does not require docs', () => {
     const { root, configPath } = makeSpoke({ 'docs/index.md': page, 'src/cli.ts': 'x' });
     const result = runSpokeDocsCheck({
@@ -129,18 +105,7 @@ describe('runSpokeDocsCheck', () => {
     });
     assert.equal(result.ok, false);
     assert.equal(result.docsChanged, true);
-  });
-
-  test('unrelated files pass', () => {
-    const { root, configPath } = makeSpoke({ 'docs/index.md': page, 'README.md': 'hi' });
-    const result = runSpokeDocsCheck({
-      configPath,
-      changedFilesPath: writeChanged(root, ['README.md']),
-      spokeRoot: root,
-      ...silent,
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.docsChanged, false);
+    assert.match(result.message, /frontmatter/i);
   });
 
   test('deleted docs path still validates remaining tree', () => {

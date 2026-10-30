@@ -427,7 +427,7 @@ def run_resource_index_conformance(index_factory: Callable[[], object]) -> None:
     backend suite gates on ``caps.inspection`` and friends. That is what makes
     the suite meaningful for a profile that implements one arm and not the
     other: ``none`` must pass it by honestly answering nothing, and
-    ``sqlite_hybrid`` must pass it by actually retrieving — and neither is
+    ``qdrant_hybrid`` must pass it by actually retrieving — and neither is
     allowed to claim a capability it does not answer.
     """
 

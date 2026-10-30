@@ -14,7 +14,7 @@ import sys
 import time
 from contextlib import contextmanager
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -130,7 +130,6 @@ from potpie_context_engine.requests import (
     InboxMarkAppliedRequest as EngineInboxMarkAppliedRequest,
     InboxMarkRejectedRequest as EngineInboxMarkRejectedRequest,
     InboxShowRequest as EngineInboxShowRequest,
-    InspectRequest as EngineInspectRequest,
     NeighborhoodRequest as EngineNeighborhoodRequest,
     NudgeRequest as EngineNudgeRequest,
     ProposeRequest as EngineProposeRequest,
@@ -562,12 +561,6 @@ def _error_message_from_result(payload: Mapping[str, Any]) -> str:
     return f"Graph command failed with status {status!r}."
 
 
-def _legacy_warning(command: str, replacement: str) -> tuple[str, ...]:
-    return (
-        f"{command} is a legacy transition command and is not part of the canonical V2 workbench command set; use {replacement}.",
-    )
-
-
 # --- Graph Surface Lite (V1.5) ----------------------------------------------
 
 
@@ -977,87 +970,12 @@ def graph_search_entities(
         )
 
 
-@graph_app.command("mutate")
-def graph_mutate(
-    file: str = typer.Option(
-        None, "--file", help="mutation JSON path; omit to read stdin"
-    ),
-    dry_run: bool = typer.Option(False, "--dry-run"),
-    allow_review_required: bool = typer.Option(False, "--allow-review-required"),
-    approved_by: str = typer.Option(
-        None, "--approved-by", help="user-ref for medium-risk approval"
-    ),
-    pot: str = typer.Option(None, "--pot"),
-) -> None:
-    """Legacy transition wrapper over graph propose + commit."""
-    with _graph_command("graph.mutate") as ctx:
-        host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
-        ctx.set_pot_id(pot_id)
-        payload = _load_json(file)
-        client = get_engine_client(pot)
-        proposal = run_engine_operation(
-            client.propose(
-                EngineProposeRequest(mutation=_context_bound_mutation(payload))
-            )
-        )
-        legacy_warning = _legacy_warning(
-            "graph.mutate", "graph.propose and graph.commit"
-        )
-        if dry_run or not proposal.ok:
-            _emit_graph_result(
-                ctx,
-                proposal.to_dict(),
-                human=_proposal_human(proposal),
-                warnings=legacy_warning,
-            )
-            if not proposal.ok:
-                raise typer.Exit(code=EXIT_VALIDATION)
-            return
-        if proposal.status == "review_required" and not (
-            allow_review_required and approved_by
-        ):
-            _emit_graph_result(
-                ctx,
-                proposal.to_dict(),
-                human=_proposal_human(proposal),
-                warnings=legacy_warning,
-                recommended_next_action=(
-                    f"Review the plan, then run `potpie graph commit {proposal.plan_id} "
-                    "--approved-by <user-ref> --json` when policy allows."
-                ),
-            )
-            return
-
-        result = run_engine_operation(
-            client.commit(
-                EngineCommitRequest(
-                    plan_id=proposal.plan_id,
-                    approved_by=(approved_by if allow_review_required else None),
-                )
-            )
-        )
-        _emit_graph_result(
-            ctx,
-            result.to_dict(),
-            human=_commit_human(result),
-            warnings=legacy_warning,
-            recommended_next_action=(
-                "Use `potpie graph propose --file <mutation.json> --json` followed "
-                "by `potpie graph commit <plan_id> --json`."
-            ),
-        )
-        if not result.ok:
-            raise typer.Exit(code=EXIT_VALIDATION)
-
-
 # Static, schema-only mutation skeletons (Stage 5 ergonomics). These are
 # helpers for harnesses writing mutation JSON by hand — placeholders only,
 # never values read from the repo. Keys reference the canonical ontology so
 # the contract tests can pin them against ENTITY_TYPES / EDGE_TYPES.
 _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
     "repo-baseline": {
-        "pot_id": "<pot-id>",
         "idempotency_key": "baseline:<owner>/<repo>:v1",
         "created_by": {"surface": "cli", "harness": "<harness>"},
         "operations": [
@@ -1110,7 +1028,6 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
         ],
     },
     "feature": {
-        "pot_id": "<pot-id>",
         "operations": [
             {
                 "op": "assert_claim",
@@ -1133,7 +1050,6 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
         ],
     },
     "preference": {
-        "pot_id": "<pot-id>",
         "idempotency_key": "preference:<owner>/<repo>:<preference-slug>",
         "created_by": {"surface": "cli", "harness": "<harness>"},
         "operations": [
@@ -1168,7 +1084,6 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
         ],
     },
     "preference-policy": {
-        "pot_id": "<pot-id>",
         "idempotency_key": "preference:<owner>/<repo>:<preference-slug>",
         "created_by": {"surface": "cli", "harness": "<harness>"},
         "operations": [
@@ -1206,7 +1121,6 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
         ],
     },
     "infra-snapshot": {
-        "pot_id": "<pot-id>",
         "idempotency_key": "infra:<owner>/<repo>:<service-slug>:<environment>",
         "created_by": {"surface": "cli", "harness": "<harness>"},
         "operations": [
@@ -1280,7 +1194,6 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
         ],
     },
     "bug-fix": {
-        "pot_id": "<pot-id>",
         "idempotency_key": "bug-fix:<bug-slug>:<fix-hash>",
         "created_by": {"surface": "cli", "harness": "<harness>"},
         "operations": [
@@ -1335,7 +1248,6 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
         ],
     },
     "decision": {
-        "pot_id": "<pot-id>",
         "operations": [
             {
                 "op": "assert_claim",
@@ -1356,7 +1268,6 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
         ],
     },
     "timeline-event": {
-        "pot_id": "<pot-id>",
         "operations": [
             {
                 "op": "append_event",
@@ -1370,7 +1281,6 @@ _MUTATION_TEMPLATES: dict[str, dict[str, Any]] = {
         ],
     },
     "timeline-change": {
-        "pot_id": "<pot-id>",
         "idempotency_key": "timeline:<source>:<id>",
         "created_by": {"surface": "cli", "harness": "<harness>"},
         "operations": [
@@ -1431,11 +1341,9 @@ def graph_mutation_template(
                 request_id=ctx.request_id,
                 pot_id=ctx.pot_id,
                 result={"kind": kind, "template": template},
-                # No legacy warning: describe --examples renders *read*
-                # commands, and this skeleton is the only offline write shape.
                 recommended_next_action=(
                     "Fill the placeholders from sources you have read, then "
-                    "`potpie graph propose --file <mutation.json> --json`; "
+                    "`potpie graph propose --file <mutation.json> --pot <pot> --json`; "
                     "`potpie graph describe <subgraph> --json` shows the entity "
                     "types and predicates the payload must use."
                 ),
@@ -2411,36 +2319,6 @@ def _run_quality_report(
         _emit_quality_result(ctx, result)
 
 
-@graph_app.command("inspect")
-def graph_inspect(
-    entity_key: str = typer.Argument(...),
-    depth: int = typer.Option(2, "--depth"),
-    pot: str = typer.Option(None, "--pot"),
-) -> None:
-    with _graph_command("graph.inspect") as ctx:
-        host = get_root_runtime()
-        pot_id = resolve_pot_id(host, pot)
-        ctx.set_pot_id(pot_id)
-        sl = run_engine_operation(
-            get_engine_client(pot).inspect(
-                EngineInspectRequest(entity_key=entity_key, depth=depth)
-            )
-        )
-        _emit_graph_result(
-            ctx,
-            {
-                "nodes": [{"key": n.key, "labels": list(n.labels)} for n in sl.nodes],
-                "edges": [
-                    {"predicate": e.predicate, "from": e.from_key, "to": e.to_key}
-                    for e in sl.edges
-                ],
-            },
-            human=f"{len(sl.nodes)} nodes, {len(sl.edges)} edges around {entity_key}",
-            warnings=_legacy_warning("graph.inspect", "graph.neighborhood"),
-            recommended_next_action="Use `potpie graph neighborhood --entity <key> --json` once implemented.",
-        )
-
-
 @graph_app.command("export")
 def graph_export(
     file: str = typer.Argument(...),
@@ -2633,14 +2511,6 @@ def graph_repair(
     entity_summaries: bool = typer.Option(False, "--entity-summaries"),
     entity_labels: bool = typer.Option(False, "--entity-labels"),
     all_: bool = typer.Option(False, "--all"),
-    legacy: bool = typer.Option(
-        False,
-        "--legacy",
-        help="Review or apply timestamp and physical identity repair.",
-    ),
-    dry_run: bool = typer.Option(False, "--dry-run"),
-    apply: bool = typer.Option(False, "--apply"),
-    repair_id: str = typer.Option(None, "--repair-id"),
     pot: str = typer.Option(None, "--pot"),
     yes: bool = typer.Option(
         False,
@@ -2653,26 +2523,6 @@ def graph_repair(
         host = get_root_runtime()
         pot_id = resolve_pot_id(host, pot)
         ctx.set_pot_id(pot_id)
-        if legacy:
-            from potpie.cli.legacy_repair import format_legacy_repair, run_legacy_repair
-
-            if all_ or semantic_index or entity_summaries or entity_labels:
-                raise typer.BadParameter(
-                    "--legacy cannot be combined with other repair targets."
-                )
-            report = run_legacy_repair(
-                pot_id=pot_id,
-                dry_run=dry_run,
-                apply=apply,
-                repair_id=repair_id,
-                yes=yes,
-            )
-            _emit_graph_result(ctx, asdict(report), human=format_legacy_repair(report))
-            return
-        if dry_run or apply or repair_id:
-            raise typer.BadParameter(
-                "--dry-run, --apply and --repair-id require --legacy."
-            )
         targets = []
         if not all_:
             if semantic_index:
@@ -3674,7 +3524,6 @@ def _catalog_payload_for_profile(
         ]
     for key in (
         "admin_commands",
-        "legacy_commands",
         "mutation_operations",
         "review_required_operations",
         "deferred_operations",
@@ -4207,8 +4056,12 @@ def _read_payload(
 
 
 def _context_bound_mutation(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Remove the legacy selector field before crossing the engine boundary."""
-    return {key: value for key, value in payload.items() if key != "pot_id"}
+    """Require mutation bodies to use the operation context for their selector."""
+    if "pot_id" in payload:
+        raise ValueError(
+            "Select the context with --pot; mutation bodies cannot contain pot_id."
+        )
+    return dict(payload)
 
 
 def _read_human(

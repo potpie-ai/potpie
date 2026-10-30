@@ -112,7 +112,7 @@ def container(settings, pot_id, repo_name):
     )
     yield c
     try:
-        asyncio.run(c.graph_writer.reset_pot(pot_id))
+        asyncio.run(c.backend.writer.reset_pot(pot_id))
     except Exception:
         pass
 
@@ -301,7 +301,7 @@ def pipeline_container(
     )
     yield c
     try:
-        asyncio.run(c.graph_writer.reset_pot(pot_id))
+        asyncio.run(c.backend.writer.reset_pot(pot_id))
     except Exception:
         pass
 
@@ -331,6 +331,6 @@ def db_container(settings, pg_test_db, pot_id, repo_name):
     )
     yield c
     try:
-        asyncio.run(c.graph_writer.reset_pot(pot_id))
+        asyncio.run(c.backend.writer.reset_pot(pot_id))
     except Exception:
         pass

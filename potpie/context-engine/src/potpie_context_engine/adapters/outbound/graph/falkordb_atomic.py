@@ -19,7 +19,7 @@ from potpie_context_engine.core.ports.graph.mutation import (
 )
 from potpie_context_engine.core.reconciliation import MutationResult, MutationSummary
 from potpie_context_engine.core.reconciliation_validation import (
-    validate_reconciliation_plan,
+    validate_mutation_batch,
 )
 from redis.exceptions import WatchError
 
@@ -310,7 +310,7 @@ def _apply_watched(
                 expected=expected_version, current=int(current)
             )
         graph_updated_at = datetime.now(timezone.utc)
-        validate_reconciliation_plan(
+        validate_mutation_batch(
             plan,
             expected_pot_id,
             definition=definition,
@@ -343,21 +343,8 @@ def _apply_watched(
                 expected=expected_version,
                 provenance_context=provenance_context,
             )
-        elif plan.record_repairs:
-            from .falkordb_legacy import compile_repairs
-
-            query, params, result = compile_repairs(
-                graph,
-                pipe,
-                plan,
-                pot_id=expected_pot_id,
-                expected=expected_version,
-                provenance_context=provenance_context,
-                state=state,
-                definition=definition,
-            )
         else:
-            from .falkordb_legacy import prepare_entities, validate_final_aliases
+            from .falkordb_inventory import prepare_entities, validate_final_aliases
 
             inventory = prepare_entities(
                 graph, pipe, plan, pot_id=expected_pot_id, mutation_id=mutation_id

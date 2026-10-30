@@ -1,0 +1,202 @@
+"""Packaging gates for the supported import surface.
+
+Two invariants from the modularization plan:
+
+1. The supported imports (``potpie_context_engine`` and
+   ``potpie_context_engine.api``) resolve.
+2. Importing them does not load any optional delivery-surface or backend
+   third-party dependency — consumers on the base install must be able to
+   import the graph API without FastAPI, Typer, MCP, FalkorDB, Neo4j,
+   SQLAlchemy, Hatchet, OpenTelemetry, or Sentry installed.
+
+The isolation check runs in a subprocess so modules imported by other tests
+cannot mask a regression.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tomllib
+
+import pytest
+
+_FORBIDDEN_TOP_LEVEL = (
+    "fastapi",
+    "typer",
+    "mcp",
+    "uvicorn",
+    "rich",
+    "keyring",
+    "PIL",
+    "falkordb",
+    "falkordblite",
+    "redis",
+    "neo4j",
+    "sqlalchemy",
+    "psycopg",
+    "hatchet_sdk",
+    "opentelemetry",
+    "sentry_sdk",
+    "sentence_transformers",
+)
+
+_IMPORT_SNIPPET = """
+import json
+import sys
+
+import potpie_context_engine
+from potpie_context_engine.api import (
+    GraphBackend,
+    GraphInboxStorePort,
+    GraphPlanStorePort,
+    GraphRuntime,
+    GraphService,
+    build_graph_runtime,
+)
+
+print(json.dumps(sorted({module.split(".")[0] for module in sys.modules})))
+"""
+
+
+def test_supported_imports_do_not_load_optional_dependencies() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", _IMPORT_SNIPPET],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    loaded = set(json.loads(result.stdout))
+    offending = sorted(loaded & set(_FORBIDDEN_TOP_LEVEL))
+    assert not offending, (
+        f"importing the public API surface loaded optional dependencies: {offending}"
+    )
+
+
+def test_api_reexports_are_the_internal_contracts() -> None:
+    from potpie_context_engine import api
+    from potpie_context_engine.core.ports.graph.backend import GraphBackend
+    from potpie_context_engine.core.ports.graph.inbox_store import (
+        GraphInboxStorePort,
+    )
+    from potpie_context_engine.core.ports.graph.plan_store import GraphPlanStorePort
+    from potpie_context_engine.core.ports.graph_service import GraphService
+    from potpie_context_engine.requests import ReadRequest
+
+    assert api.GraphBackend is GraphBackend
+    assert api.GraphInboxStorePort is GraphInboxStorePort
+    assert api.GraphPlanStorePort is GraphPlanStorePort
+    assert api.GraphService is GraphService
+    assert api.ReadRequest is ReadRequest
+    assert {
+        "GraphBackend",
+        "GraphInboxStorePort",
+        "GraphPlanStorePort",
+        "GraphService",
+    } <= set(api.__all__)
+    assert {"DEFAULT_GRAPH_DEFINITION", "GraphDefinition"} <= set(api.__all__)
+
+
+def test_api_exports_the_embedding_host_runtime_builder() -> None:
+    from potpie_context_engine import api
+    from potpie_context_engine.core.runtime import GraphRuntime, build_graph_runtime
+
+    assert api.build_graph_runtime is build_graph_runtime
+    assert api.GraphRuntime is GraphRuntime
+    assert {
+        "GraphObserver",
+        "GraphRuntime",
+        "NoOpGraphObserver",
+        "RuntimeCompositionError",
+        "build_graph_runtime",
+        "run_in_worker_thread",
+    } <= set(api.__all__)
+
+
+def test_api_exports_the_opt_in_protocols_definition_and_identity_helpers() -> None:
+    from potpie_context_engine import api
+    from potpie_context_engine.core.protocols import (
+        protocol_entity,
+        protocol_entity_key,
+    )
+
+    assert {
+        "protocols_definition",
+        "protocol_entity",
+        "protocol_entity_key",
+    } <= set(api.__all__)
+    assert api.protocol_entity is protocol_entity
+    assert api.protocol_entity_key is protocol_entity_key
+    definition = api.protocols_definition()
+    assert isinstance(definition, api.GraphDefinition)
+    assert definition.extensions == {"protocols": "1"}
+    assert "protocols" in definition.readers
+    # The factory returns a new value; the default definition stays base-only.
+    assert api.DEFAULT_GRAPH_DEFINITION.extensions == {}
+    assert "protocols" not in api.DEFAULT_GRAPH_DEFINITION.readers
+
+
+def test_api_does_not_publish_graph_extension_registration() -> None:
+    from potpie_context_engine import api
+
+    assert "GraphExtension" not in api.__all__
+    assert not hasattr(api, "GraphExtension")
+
+
+def test_package_root_exports_the_context_engine_surface() -> None:
+    import potpie_context_engine
+    from potpie_context_engine.core.definition import (
+        DEFAULT_GRAPH_DEFINITION,
+        GraphDefinition,
+    )
+
+    assert potpie_context_engine.DEFAULT_GRAPH_DEFINITION is DEFAULT_GRAPH_DEFINITION
+    assert potpie_context_engine.GraphDefinition is GraphDefinition
+    assert not hasattr(potpie_context_engine, "GraphExtension")
+    assert not hasattr(potpie_context_engine, "GraphRuntime")
+    assert not hasattr(potpie_context_engine, "build_graph_runtime")
+    assert set(potpie_context_engine.__all__) == {
+        "DEFAULT_GRAPH_DEFINITION",
+        "ContextEngine",
+        "ContextIdentity",
+        "DependencyError",
+        "DomainError",
+        "EngineConfig",
+        "EngineDependencies",
+        "EngineError",
+        "EngineLifecycleError",
+        "EngineResource",
+        "Failure",
+        "GraphDefinition",
+        "Outcome",
+        "Success",
+        "create_engine",
+    }
+
+
+@pytest.mark.source_contract
+def test_public_distributions_package_pep561_markers() -> None:
+    engine_root = Path(__file__).resolve().parents[3]
+    marker = engine_root / "src" / "potpie_context_engine" / "py.typed"
+    config = tomllib.loads((engine_root / "pyproject.toml").read_text(encoding="utf-8"))
+    wheel_include = config["tool"]["hatch"]["build"]["targets"]["wheel"]["include"]
+
+    assert marker.is_file()
+    assert "src/potpie_context_engine/py.typed" in wheel_include
+    assert "Typing :: Typed" in config["project"]["classifiers"]
+
+    assert (engine_root / "src/potpie_context_engine/core/py.typed").is_file()
+
+
+def test_legacy_top_level_packages_are_gone() -> None:
+    import importlib.util
+
+    for legacy in ("domain", "application", "adapters", "bootstrap", "host"):
+        spec = importlib.util.find_spec(legacy)
+        assert spec is None, (
+            f"legacy top-level package {legacy!r} is still importable; the "
+            "wheel must ship only the potpie_context_engine namespace"
+        )

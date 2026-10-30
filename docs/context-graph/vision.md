@@ -147,7 +147,7 @@ local `default` pot. **Cross-pot federation is an explicit anti-goal.**
 ## What's shipped now (V1.5)
 
 The `potpie graph …` workbench ships as V1.5. `main.py` registers the workbench
-and the legacy `resolve`, `search`, and `record` commands.
+and the `resolve`, `search`, and `record` commands.
 
 Concretely, the live contract constants are:
 
@@ -164,8 +164,7 @@ The `v2` string identifies the workbench response envelope. Available operations
   (an `AgentEnvelope`) — **there is no server-side answer synthesis**, the agent
   reasons over the evidence ([querying.md](./querying.md)).
 - **Writes:** the canonical write door is **`graph propose` → `graph commit
-  --verify`**. `graph mutate` is a **legacy wrapper** that internally calls
-  propose+commit; `potpie record` remains the compatibility write path
+  --verify`**. `potpie record` writes a single authored record
   ([writing.md](./writing.md)).
 - **Defaults:** `ladybug` on Windows and `falkordb_lite` on macOS/Linux, a detached `daemon` host mode, the
   bundled local embedder, installed skills, and the zero-token `graph nudge` a
@@ -205,7 +204,7 @@ facts (`graph propose` → `graph commit --verify`). See
 - [architecture.md](./architecture.md) — hexagonal layers, composition roots, the daemon, backends.
 - [ontology.md](./ontology.md) — the 24 entities / 26 predicate keys / truth classes / contract constants.
 - [querying.md](./querying.md) — the two read altitudes, the read trunk, ranking, retrieval cards.
-- [writing.md](./writing.md) — the semantic DSL, propose→commit, the legacy `mutate` wrapper, inbox.
+- [writing.md](./writing.md) — the semantic DSL, propose→commit, record, and inbox.
 - [ingestion-nudge.md](./ingestion-nudge.md) — how raw events arrive, the two ledgers, the nudge model.
 - [skills.md](./skills.md) — harness-owned intelligence and the skill read/write loop.
 - [cli-flow.md](./cli-flow.md) — the full `potpie` command reference.

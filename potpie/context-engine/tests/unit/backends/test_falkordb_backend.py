@@ -1,0 +1,387 @@
+"""FalkorDB GraphBackend wiring tests."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+
+import pytest
+
+from potpie_context_engine.adapters.outbound.graph.backends import (
+    KNOWN_PROFILES,
+    build_backend,
+)
+from potpie_context_engine.adapters.outbound.graph.backends.falkordb_backend import (
+    FalkorDBGraphBackend,
+)
+from potpie_context_engine.adapters.outbound.graph.entity_label_repair import (
+    canonical_label_changes,
+    repaired_entity_labels,
+)
+from potpie_context_engine.bootstrap.ingestion_server import build_ingestion_server
+from potpie_context_engine.core.context_events import EventRef
+from potpie_context_engine.core.definition import (
+    DEFAULT_GRAPH_DEFINITION,
+    GraphExtension,
+)
+from potpie_context_engine.core.graph_mutations import (
+    EdgeUpsert,
+    EntityUpsert,
+    ProvenanceRef,
+)
+from potpie_context_engine.core.identity import IdentityClass
+from potpie_context_engine.core.ontology import EntityTypeSpec
+from potpie_context_engine.core.ports.graph.backend import GraphBackend
+from potpie_context_engine.core.reconciliation import MutationBatch
+from potpie_context_engine.core.errors import ReconciliationApplyError
+
+pytestmark = pytest.mark.unit
+
+
+class _Settings:
+    def __init__(self, *, backend: str = "falkordb", mode: str = "lite") -> None:
+        self._backend = backend
+        self._mode = mode
+
+    def is_enabled(self) -> bool:
+        return True
+
+    def graph_db_backend(self) -> str:
+        return self._backend
+
+    def falkordb_url(self) -> str | None:
+        return None
+
+    def falkordb_graph_name(self) -> str:
+        return "context_graph"
+
+    def falkordb_mode(self) -> str:
+        return self._mode
+
+    def falkordb_lite_path(self) -> str:
+        return ".potpie/test/falkordb.db"
+
+
+class _Writer:
+    enabled = True
+
+    def __init__(self) -> None:
+        self.entities = []
+        self.edges = []
+
+    async def ensure_indexes(self) -> bool:
+        return True
+
+    async def claim_rows(self, pot_id, **scope):
+        return []
+
+    async def upsert_entities(self, pot_id, items, provenance: ProvenanceRef) -> int:
+        self.entities.extend(items)
+        return len(items)
+
+    async def upsert_edges(self, pot_id, items, provenance: ProvenanceRef) -> int:
+        self.edges.extend(items)
+        return len(items)
+
+    async def delete_edges(self, pot_id, items, provenance: ProvenanceRef) -> int:
+        return len(items)
+
+    async def invalidate(self, pot_id, items, provenance: ProvenanceRef) -> int:
+        return len(items)
+
+    async def reset_pot(self, pot_id: str) -> dict:
+        return {"ok": True, "group_id_nodes_before": 0, "group_id_nodes_remaining": 0}
+
+
+class _FakeResult:
+    def __init__(self, names, rows):
+        self.header = [[1, name] for name in names]
+        self.result_set = rows
+
+
+@pytest.mark.asyncio
+async def test_injected_writer_requires_claim_reads_before_any_write():
+    writer = SimpleNamespace(
+        enabled=True,
+        upsert_entities=AsyncMock(),
+        upsert_edges=AsyncMock(),
+        delete_edges=AsyncMock(),
+        invalidate=AsyncMock(),
+    )
+    backend = FalkorDBGraphBackend(_Settings(), writer=writer)
+    plan = MutationBatch(
+        entity_upserts=[
+            EntityUpsert("service:a", ("Service",)),
+            EntityUpsert("service:b", ("Service",)),
+        ],
+        edge_upserts=[EdgeUpsert("DEPENDS_ON", "service:a", "service:b")],
+    )
+    with pytest.raises(ReconciliationApplyError, match="scoped claim_rows"):
+        await backend.mutation.apply_async(plan, expected_pot_id="p")
+    writer.upsert_entities.assert_not_awaited()
+    writer.upsert_edges.assert_not_awaited()
+    writer.delete_edges.assert_not_awaited()
+    writer.invalidate.assert_not_awaited()
+
+
+class _RepairGraph:
+    def ro_query(self, cypher: str, params: dict | None = None) -> _FakeResult:
+        params = params or {}
+        if params.get("after"):
+            return _FakeResult([], [])
+        return _FakeResult(
+            ["key", "labels", "props"],
+            [
+                [
+                    "service:web",
+                    ["Entity", "Service"],
+                    {"description": "Web frontend service."},
+                ],
+                [
+                    "service:auth",
+                    ["Entity", "Service"],
+                    {"name": "auth", "summary": ""},
+                ],
+            ],
+        )
+
+    def query(self, cypher: str, params: dict | None = None) -> _FakeResult:
+        params = params or {}
+        if "labels(e) AS labels" in cypher:
+            return _FakeResult(
+                ["key", "labels"],
+                [[key, ["Entity", "Service"]] for key in params["keys"]],
+            )
+        if "RETURN e.entity_key AS key" in cypher:
+            return _FakeResult(
+                ["key", "props"],
+                [
+                    ["service:web", {"description": "Web frontend service."}],
+                    ["service:auth", {"name": "auth", "summary": ""}],
+                ],
+            )
+        return _FakeResult([], [])
+
+
+def _record_repair_batches(monkeypatch) -> list:
+    """Repairs write through the journal-aware mutation; record the batches."""
+    from types import SimpleNamespace
+
+    from potpie_context_engine.adapters.outbound.graph.backends import (
+        falkordb_backend,
+    )
+
+    batches: list = []
+
+    def compare_and_apply(
+        self, batch, *, expected_pot_id, expected_version, provenance_context=None
+    ):
+        batches.append(batch)
+        return SimpleNamespace(
+            mutation_summary=SimpleNamespace(
+                entity_upserts_applied=len(batch.entity_upserts)
+            )
+        )
+
+    monkeypatch.setattr(
+        falkordb_backend._FalkorDBMutation, "compare_and_apply", compare_and_apply
+    )
+    monkeypatch.setattr(
+        falkordb_backend._FalkorDBMutation, "current_version", lambda self, pot_id: 0
+    )
+    return batches
+
+
+class _PagedLabelRepairGraph:
+    def __init__(self) -> None:
+        self.scan_cursors: list[str] = []
+
+    def query(self, cypher: str, params: dict | None = None) -> _FakeResult:
+        params = params or {}
+        if "labels(e) AS labels" in cypher:
+            after = str(params["after"])
+            self.scan_cursors.append(after)
+            pages = {
+                "": [
+                    [
+                        "environment:a",
+                        ["Entity", "Activity", "Environment"],
+                    ]
+                ],
+                "environment:a": [
+                    [
+                        "environment:b",
+                        ["Entity", "DeploymentTarget", "Environment"],
+                    ]
+                ],
+                "environment:b": [],
+            }
+            return _FakeResult(["key", "labels"], pages[after])
+        return _FakeResult([], [])
+
+    def ro_query(self, cypher: str, params: dict | None = None) -> _FakeResult:
+        result = self.query(cypher, params)
+        return _FakeResult(
+            ["key", "labels", "props"], [[*row, {}] for row in result.result_set]
+        )
+
+
+def test_build_backend_registers_falkordb_without_connecting() -> None:
+    assert "falkordb" in KNOWN_PROFILES
+    backend = build_backend("falkordb", settings=_Settings(mode="server"))
+    assert isinstance(backend, GraphBackend)
+    assert backend.profile == "falkordb"
+    assert backend.capabilities().implemented() == (
+        "mutation",
+        "claim_query",
+        "semantic",
+        "inspection",
+        "analytics",
+        "snapshot",
+    )
+
+
+@pytest.mark.parametrize("profile", ["falkordb_lite", "falkordblite", "falkordb-lite"])
+def test_build_backend_registers_falkordb_lite_without_connecting(profile) -> None:
+    assert "falkordb_lite" in KNOWN_PROFILES
+    # Mode is intentionally set to server here; the explicit Lite profile pins
+    # the runtime to embedded Lite and therefore needs no server URL.
+    backend = build_backend(profile, settings=_Settings(mode="server"))
+    assert isinstance(backend, GraphBackend)
+    assert backend.profile == "falkordb_lite"
+    assert backend.writer.enabled is True
+    assert backend.capabilities().implemented() == (
+        "mutation",
+        "claim_query",
+        "semantic",
+        "inspection",
+        "analytics",
+        "snapshot",
+    )
+
+
+async def test_falkordb_backend_apply_uses_writer() -> None:
+    writer = _Writer()
+    backend = FalkorDBGraphBackend(_Settings(), writer=writer)
+    plan = MutationBatch(
+        event_ref=EventRef(event_id="e1", source_system="agent", pot_id="p1"),
+        entity_upserts=[
+            EntityUpsert(entity_key="service:web", labels=("Entity", "Service"))
+        ],
+        edge_upserts=[
+            EdgeUpsert(
+                edge_type="DEPENDS_ON",
+                from_entity_key="service:web",
+                to_entity_key="service:auth",
+                properties={"fact": "web depends on auth"},
+            )
+        ],
+    )
+
+    result = await backend.mutation.apply_async(plan, expected_pot_id="p1")
+
+    assert result.ok
+    assert len(writer.entities) == 1
+    assert len(writer.edges) == 1
+
+
+@pytest.fixture
+def composition_graph_provider(monkeypatch):
+    from potpie_context_engine.adapters.outbound.graph.falkordb_writer import (
+        FalkorDBGraphProvider,
+    )
+
+    graph = _RepairGraph()
+    monkeypatch.setattr(FalkorDBGraphProvider, "__call__", lambda self: graph)
+
+
+def test_ingestion_server_accepts_falkordb_backend(composition_graph_provider) -> None:
+    container = build_ingestion_server(settings=_Settings(), pots=MagicMock())
+
+    assert container.backend is not None
+    assert container.backend.profile == "falkordb"
+    assert container.graph is not None
+    assert container.backend.writer is not None
+
+
+def test_ingestion_server_accepts_falkordb_lite_backend(
+    composition_graph_provider,
+) -> None:
+    container = build_ingestion_server(
+        settings=_Settings(backend="falkordb_lite", mode="server"),
+        pots=MagicMock(),
+    )
+
+    assert container.backend is not None
+    assert container.backend.profile == "falkordb_lite"
+    assert container.graph is not None
+    assert container.backend.writer is not None
+
+
+def test_falkordb_repair_backfills_entity_summaries(monkeypatch) -> None:
+    graph = _RepairGraph()
+    batches = _record_repair_batches(monkeypatch)
+    backend = FalkorDBGraphBackend(
+        _Settings(),
+        graph_provider=lambda: graph,
+    )
+
+    report = backend.analytics.repair("p1", targets=["entity_summaries"])
+
+    assert report.repaired == {"entity_summaries": 2}
+    updates = [upsert for batch in batches for upsert in batch.entity_upserts]
+    assert [u.entity_key for u in updates] == ["service:web", "service:auth"]
+    assert updates[0].labels == ("Entity", "Service")
+    assert updates[0].properties["summary"] == "Web frontend service."
+    assert updates[0].properties["description"] == "Web frontend service."
+    assert updates[1].properties["summary"] == "auth"
+    assert updates[1].properties["description"] == "auth"
+
+
+def test_falkordb_entity_label_repair_scans_every_page(monkeypatch) -> None:
+    graph = _PagedLabelRepairGraph()
+    batches = _record_repair_batches(monkeypatch)
+    backend = FalkorDBGraphBackend(
+        _Settings(),
+        graph_provider=lambda: graph,
+    )
+
+    report = backend.analytics.repair("p1", targets=["entity_labels"])
+
+    assert report.repaired == {"entity_labels": 2}
+    assert graph.scan_cursors == ["", "environment:a", "environment:b"]
+    updates = [upsert for batch in batches for upsert in batch.entity_upserts]
+    assert [u.entity_key for u in updates] == ["environment:a", "environment:b"]
+
+
+def test_entity_label_repair_uses_bound_graph_definition() -> None:
+    definition = DEFAULT_GRAPH_DEFINITION.extend(
+        GraphExtension(
+            name="widgets",
+            version="1",
+            entity_types={
+                "Widget": EntityTypeSpec(
+                    label="Widget",
+                    category="topology",
+                    description="Widget.",
+                    identity_class=IdentityClass.SLUG_ALIAS,
+                    key_prefix="widget",
+                    identity_policy="widget:<slug>",
+                )
+            },
+        )
+    )
+    current = ("Entity", "Service", "Widget")
+
+    fixed = repaired_entity_labels(
+        "widget:a",
+        current,
+        entity_types=definition.entity_types,
+    )
+
+    assert fixed == ("Entity", "Widget")
+    assert canonical_label_changes(
+        current,
+        fixed,
+        entity_types=definition.entity_types,
+    ) == (("Service",), ())

@@ -87,116 +87,11 @@ def fetch_linear_viewer(
     return out
 
 
-def _normalize_scopes(scope: Any) -> list[str]:
-    if isinstance(scope, list):
-        return [str(s).strip() for s in scope if str(s).strip()]
-    if isinstance(scope, str) and scope.strip():
-        return [part.strip() for part in scope.split(",") if part.strip()]
-    return []
-
-
-def _profile_section(
-    profile: dict[str, Any],
-    prior: dict[str, Any],
-    key: str,
-) -> dict[str, Any]:
-    """Prefer a profile subsection, then fall back to prior stored metadata."""
-    section = profile.get(key)
-    if isinstance(section, dict) and section:
-        return dict(section)
-    prior_section = prior.get(key)
-    if isinstance(prior_section, dict):
-        return dict(prior_section)
-    return {}
-
-
-def _resolve_stored_at(tokens: dict[str, Any], prior: dict[str, Any]) -> Any:
-    stored_at = tokens.get("stored_at")
-    if stored_at is None:
-        stored_at = prior.get("stored_at")
-    if stored_at is None:
-        stored_at = time.time()
-    return stored_at
-
-
-def _apply_optional_fields(
-    record: dict[str, Any],
-    tokens: dict[str, Any],
-    prior: dict[str, Any],
-    fields: tuple[str, ...],
-) -> None:
-    for field in fields:
-        value = tokens.get(field)
-        if value is None:
-            value = prior.get(field)
-        if value is not None:
-            record[field] = value
-
-
-def build_linear_integration_record(
-    tokens: dict[str, Any],
-    *,
-    existing: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Build non-secret Linear metadata aligned with GitHub's credentials shape."""
-    prior = dict(existing or {})
-    now = utc_now_iso()
-    access_token = str(tokens.get("access_token") or "").strip()
-
-    profile = fetch_linear_viewer(access_token) if access_token else {}
-    account = _profile_section(profile, prior, "account")
-    organization = _profile_section(profile, prior, "organization")
-    scopes = _normalize_scopes(
-        tokens.get("scope") or prior.get("scopes") or prior.get("scope")
-    )
-    stored_at = _resolve_stored_at(tokens, prior)
-
-    record: dict[str, Any] = {
-        "provider": "linear",
-        "provider_host": "linear.app",
-        "auth_type": "oauth",
-        "token_storage": "file",
-        "token_type": tokens.get("token_type") or prior.get("token_type") or "Bearer",
-        "stored_at": stored_at,
-        "created_at": prior.get("created_at") or now,
-        "updated_at": now,
-        "metadata": {"auth_flow": "pkce"},
-    }
-    if account:
-        record["account"] = account
-    if organization:
-        record["organization"] = organization
-    if scopes:
-        record["scopes"] = scopes
-    _apply_optional_fields(
-        record, tokens, prior, ("expires_at", "expires_in", "cloud_id")
-    )
-    workspaces = prior.get("workspaces")
-    if isinstance(workspaces, dict) and workspaces:
-        record["workspaces"] = workspaces
-    organizations = prior.get("organizations")
-    if isinstance(organizations, dict) and organizations:
-        record["organizations"] = organizations
-    active_org = prior.get("active_organization_id")
-    if active_org:
-        record["active_organization_id"] = active_org
-    return record
-
-
 def linear_workspaces_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
     workspaces = entry.get("workspaces")
     if isinstance(workspaces, dict):
         return workspaces
     return {}
-
-
-def build_product_integration_record(
-    product: str, credentials: dict[str, Any]
-) -> dict[str, Any]:
-    """Build metadata for a single Atlassian product (jira or confluence)."""
-    record = build_atlassian_integration_record(credentials)
-    record["provider"] = product.strip().lower()
-    return record
 
 
 def _stored_at_from_credentials(credentials: dict[str, Any]) -> Any:
@@ -233,18 +128,15 @@ def _apply_atlassian_identity_fields(
         record["account"] = account
     if site:
         record["site"] = site
-    for key, value in (
-        ("email", email),
-        ("cloud_id", cloud_id),
-        ("site_url", site_url),
-        ("site_name", site_name),
-    ):
-        if value:
-            record[key] = value
 
 
-def build_atlassian_integration_record(credentials: dict[str, Any]) -> dict[str, Any]:
-    """Build non-secret Atlassian metadata with nested account/site plus flat fields."""
+def build_product_integration_record(
+    product: str, credentials: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the canonical non-secret record for Jira or Confluence."""
+    provider = product.strip().lower()
+    if provider not in {"jira", "confluence"}:
+        raise ValueError("Choose Jira or Confluence for integration credentials.")
     now = utc_now_iso()
     email = str(credentials.get("email") or "").strip()
     cloud_id = str(credentials.get("cloud_id") or "").strip()
@@ -255,7 +147,7 @@ def build_atlassian_integration_record(credentials: dict[str, Any]) -> dict[str,
     token_style = str(credentials.get("token_style") or "classic").strip() or "classic"
 
     record: dict[str, Any] = {
-        "provider": "atlassian",
+        "provider": provider,
         "provider_host": "atlassian.net",
         "auth_type": "api_token",
         "token_style": token_style,
@@ -298,9 +190,6 @@ def atlassian_account_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
     account = entry.get("account")
     if isinstance(account, dict):
         return account
-    email = entry.get("email")
-    if email:
-        return {"email": email}
     return {}
 
 
@@ -345,12 +234,7 @@ def atlassian_site_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
     site = entry.get("site")
     if isinstance(site, dict):
         return site
-    out: dict[str, Any] = {}
-    for key in ("cloud_id", "site_url", "site_name"):
-        value = entry.get(key)
-        if value:
-            out[key] = value
-    return out
+    return {}
 
 
 def build_gitbucket_integration_record(credentials: dict[str, Any]) -> dict[str, Any]:

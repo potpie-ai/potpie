@@ -51,37 +51,17 @@ def exact_identity(query: str | None) -> ExactIdentity | None:
     return None
 
 
-def identity_matches(identity: ExactIdentity, *values: Any) -> bool:
-    text = " ".join(_strings(values))
-    if identity.kind == "pull_request":
-        number = re.escape(identity.value)
-        patterns = (
-            rf"(?i)\b(?:pr|pull\s+request)\s*#?\s*{number}\b",
-            rf"(?i)(?:/pull/|#pr/|:pr[/:\-]){number}(?:\b|$)",
-        )
-    elif identity.kind == "issue":
-        number = re.escape(identity.value)
-        patterns = (
-            rf"(?i)\b(?:issue|bug)\s*#?\s*{number}\b",
-            rf"(?i)(?:/issues/|#issue/|:issue[/:\-]){number}(?:\b|$)",
-        )
-    else:
-        patterns = (rf"(?i)(?<![A-Z0-9]){re.escape(identity.value)}(?![A-Z0-9])",)
-    return any(re.search(pattern, text) for pattern in patterns)
-
-
 def record_identity_matches(
     identity: ExactIdentity,
     *,
     canonical_key: Any = None,
     explicit_identity: Any = None,
-    description: Any = None,
 ) -> bool:
     """Match with identity precedence, rejecting incidental cross-references.
 
     A canonical ``...:pr-1073`` key wins over a title saying "Revert PR
     #1074". Opaque keys have no such identity, so an external id or permalink
-    can establish it; prose is only the final compatibility fallback.
+    can establish it. Prose alone does not establish an exact identity.
     """
     canonical_values = _identities_of_kind(identity.kind, canonical_key)
     if canonical_values:
@@ -89,7 +69,7 @@ def record_identity_matches(
     explicit_values = _identities_of_kind(identity.kind, explicit_identity)
     if explicit_values:
         return identity.value.lower() in explicit_values
-    return identity_matches(identity, description)
+    return False
 
 
 def _identities_of_kind(kind: str, values: Any) -> set[str]:
@@ -189,7 +169,6 @@ __all__ = [
     "exact_identity",
     "exact_text_needles",
     "exact_text_pattern",
-    "identity_matches",
     "record_identity_matches",
     "repositories_in",
 ]

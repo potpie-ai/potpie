@@ -25,8 +25,6 @@ from potpie_context_engine.core.reconciliation import (
     MutationSummary,
 )
 
-from .document_key_repair import document_key_finding, wants_document_key_repair
-
 
 if TYPE_CHECKING:
     from .backends.embedded_backend import _EmbeddedMutation
@@ -63,9 +61,7 @@ def repair_entities(
             targets=targets,
         )
         expected_version = mutation.current_version(pot_id)
-        findings = (
-            (document_key_finding(keys),) if wants_document_key_repair(targets) else ()
-        )
+        findings = ()
     if batch.entity_upserts:
         with journal_write_context(
             JournalWriteContext(origin="repair", required_access="admin")

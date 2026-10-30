@@ -182,9 +182,7 @@ def test_e2e_linear_oauth_login_interactive(isolated_cli_env: dict[str, str]) ->
     if not _env("LINEAR_CLIENT_ID"):
         pytest.skip("LINEAR_CLIENT_ID not set")
 
-    proc = _run_potpie(
-        "auth", "linear", "login", "--force", env=isolated_cli_env, timeout=300
-    )
+    proc = _run_potpie("linear", "login", "--force", env=isolated_cli_env, timeout=300)
     assert proc.returncode == 0, proc.stderr or proc.stdout
 
     verify = _run_potpie("--json", "auth", "status", "--verify", env=isolated_cli_env)
@@ -199,3 +197,6 @@ def test_e2e_linear_oauth_login_interactive(isolated_cli_env: dict[str, str]) ->
     )
     assert linear is not None
     assert linear.get("authenticated") is True
+
+
+pytestmark = [*pytestmark, pytest.mark.source_contract]

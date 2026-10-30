@@ -198,24 +198,6 @@ class ImportSnapshotRequest(EngineRequest):
 @dataclass(frozen=True, slots=True)
 class RepairRequest(EngineRequest):
     targets: tuple[str, ...] = ()
-    legacy_mode: str | None = None
-    repair_id: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.legacy_mode not in {None, "dry_run", "apply"}:
-            raise ValueError("legacy_mode must be dry_run or apply")
-        if self.legacy_mode is not None and self.targets:
-            raise ValueError(
-                "legacy repair cannot be combined with derived repair targets"
-            )
-        if self.legacy_mode == "apply" and not self.repair_id:
-            raise ValueError("legacy apply requires the reviewed repair_id")
-        if self.legacy_mode is None and self.repair_id is not None:
-            raise ValueError("repair_id requires legacy repair mode")
-        if self.repair_id is not None and (
-            not isinstance(self.repair_id, str) or not self.repair_id.strip()
-        ):
-            raise ValueError("repair_id must be a nonempty string")
 
 
 @dataclass(frozen=True, slots=True)

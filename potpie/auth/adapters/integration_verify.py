@@ -40,17 +40,6 @@ def verify_integration_access(
         return _verify_linear(access_token, http=http)
     if provider == "github":
         return _verify_github(credentials, http=http)
-    if provider == "atlassian":
-        jira_ok, jira_message = _verify_atlassian_product("jira", credentials)
-        if jira_ok:
-            return jira_ok, jira_message
-        confluence_ok, confluence_message = _verify_atlassian_product(
-            "confluence",
-            credentials,
-        )
-        if confluence_ok:
-            return confluence_ok, confluence_message
-        return False, f"jira: {jira_message}; confluence: {confluence_message}"
     if provider in ("jira", "confluence"):
         return _verify_atlassian_product(provider, credentials)
     if provider == "gitbucket":

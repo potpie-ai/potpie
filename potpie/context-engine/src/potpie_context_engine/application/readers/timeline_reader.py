@@ -208,7 +208,6 @@ class TimelineReader:
                     identity,
                     canonical_key=_activity_key(row),
                     explicit_identity=(row.source_ref, row.source_refs, row.properties),
-                    description=(row.fact, row.description),
                 )
             ]
         elif req.query:

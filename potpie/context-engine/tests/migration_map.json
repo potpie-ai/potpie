@@ -1,0 +1,1518 @@
+{
+  "schema_version": 1,
+  "modules": [
+    {
+      "old": "unit/test_required_acceptance.py",
+      "new": "unit/runtime/test_required_acceptance.py",
+      "domain": "runtime",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_claim_lifecycle_boundaries.py",
+      "new": "unit/mutations/test_claim_lifecycle_boundaries.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_falkordb_connection.py",
+      "new": "unit/backends/test_falkordb_connection.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_falkordb_inspection.py",
+      "new": "unit/backends/test_falkordb_inspection.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_deep_agent_containment.py",
+      "new": "unit/agents/test_deep_agent_containment.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 5
+    },
+    {
+      "old": "unit/test_sentry_metrics_runtime_attrs.py",
+      "new": "unit/observability/test_sentry_metrics_runtime_attrs.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_source_connector_registry.py",
+      "new": "unit/ingestion/test_source_connector_registry.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_snapshot_archive.py",
+      "new": "unit/durability/test_snapshot_archive.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 10
+    },
+    {
+      "old": "unit/test_timeline_endpoint.py",
+      "new": "unit/retrieval/test_timeline_endpoint.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_neo4j_snapshot_contract.py",
+      "new": "unit/durability/test_neo4j_snapshot_contract.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 4
+    },
+    {
+      "old": "unit/test_wait_ingestion_event.py",
+      "new": "unit/ingestion/test_wait_ingestion_event.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_context_graph_writer.py",
+      "new": "unit/mutations/test_context_graph_writer.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 4
+    },
+    {
+      "old": "unit/test_temporal_validity_reads.py",
+      "new": "unit/mutations/test_temporal_validity_reads.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 6
+    },
+    {
+      "old": "unit/test_context_status.py",
+      "new": "unit/retrieval/test_context_status.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 23
+    },
+    {
+      "old": "unit/test_plan_storage_reliability.py",
+      "new": "unit/durability/test_plan_storage_reliability.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/test_memory_embedded_lifecycle.py",
+      "new": "unit/backends/test_memory_embedded_lifecycle.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 16
+    },
+    {
+      "old": "unit/test_context_engine_facade.py",
+      "new": "unit/runtime/test_context_engine_facade.py",
+      "domain": "runtime",
+      "tier": "unit",
+      "test_definitions": 12
+    },
+    {
+      "old": "unit/test_claim_corrections.py",
+      "new": "unit/mutations/test_claim_corrections.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 14
+    },
+    {
+      "old": "unit/test_neo4j_claim_query.py",
+      "new": "unit/mutations/test_neo4j_claim_query.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/test_falkordb_native.py",
+      "new": "unit/backends/test_falkordb_native.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 10
+    },
+    {
+      "old": "unit/test_ladybug_windows_bootstrap.py",
+      "new": "unit/backends/test_ladybug_windows_bootstrap.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 10
+    },
+    {
+      "old": "unit/test_graph_correction_targets.py",
+      "new": "unit/mutations/test_graph_correction_targets.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/test_qdrant_http.py",
+      "new": "unit/resources/test_qdrant_http.py",
+      "domain": "resources",
+      "tier": "unit",
+      "test_definitions": 25
+    },
+    {
+      "old": "unit/test_graph_workbench_plans.py",
+      "new": "unit/mutations/test_graph_workbench_plans.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 47
+    },
+    {
+      "old": "unit/test_graph_workbench_inbox.py",
+      "new": "unit/mutations/test_graph_workbench_inbox.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 11
+    },
+    {
+      "old": "unit/test_policy_port.py",
+      "new": "unit/runtime/test_policy_port.py",
+      "domain": "runtime",
+      "tier": "unit",
+      "test_definitions": 17
+    },
+    {
+      "old": "unit/test_context_aware_ingestion_agent.py",
+      "new": "unit/ingestion/test_context_aware_ingestion_agent.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 13
+    },
+    {
+      "old": "unit/test_evidence_review_snapshot.py",
+      "new": "unit/durability/test_evidence_review_snapshot.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 5
+    },
+    {
+      "old": "unit/test_observability_cost_metrics.py",
+      "new": "unit/observability/test_observability_cost_metrics.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 6
+    },
+    {
+      "old": "unit/test_nudge_service.py",
+      "new": "unit/mutations/test_nudge_service.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 10
+    },
+    {
+      "old": "unit/test_memory_embedded_reset_receipts.py",
+      "new": "unit/durability/test_memory_embedded_reset_receipts.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_observability_tracing.py",
+      "new": "unit/observability/test_observability_tracing.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_process_batch.py",
+      "new": "unit/ingestion/test_process_batch.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 10
+    },
+    {
+      "old": "unit/test_process_batch_streaming.py",
+      "new": "unit/ingestion/test_process_batch_streaming.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 5
+    },
+    {
+      "old": "unit/test_event_admission.py",
+      "new": "unit/ingestion/test_event_admission.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 6
+    },
+    {
+      "old": "unit/test_github_agent_tools_dispatch.py",
+      "new": "unit/agents/test_github_agent_tools_dispatch.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_ingestion_submission_service.py",
+      "new": "unit/ingestion/test_ingestion_submission_service.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_commit_verification_contract.py",
+      "new": "unit/durability/test_commit_verification_contract.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 18
+    },
+    {
+      "old": "unit/test_embedded_metadata_integrity.py",
+      "new": "unit/backends/test_embedded_metadata_integrity.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 12
+    },
+    {
+      "old": "unit/test_graph_snapshot_v2.py",
+      "new": "unit/durability/test_graph_snapshot_v2.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 7
+    },
+    {
+      "old": "unit/test_repo_one_shot_ingestion_skill.py",
+      "new": "unit/ingestion/test_repo_one_shot_ingestion_skill.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 38
+    },
+    {
+      "old": "unit/test_queue_factory.py",
+      "new": "unit/ingestion/test_queue_factory.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 7
+    },
+    {
+      "old": "unit/test_scope_match.py",
+      "new": "unit/retrieval/test_scope_match.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_observability.py",
+      "new": "unit/observability/test_observability.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_agent_execution_log.py",
+      "new": "unit/agents/test_agent_execution_log.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 11
+    },
+    {
+      "old": "unit/test_resource_index_drain.py",
+      "new": "unit/resources/test_resource_index_drain.py",
+      "domain": "resources",
+      "tier": "unit",
+      "test_definitions": 16
+    },
+    {
+      "old": "unit/test_event_stream_publisher.py",
+      "new": "unit/observability/test_event_stream_publisher.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 16
+    },
+    {
+      "old": "unit/test_neo4j_temporal_reader.py",
+      "new": "unit/retrieval/test_neo4j_temporal_reader.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_memory_claim_incarnations.py",
+      "new": "unit/mutations/test_memory_claim_incarnations.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 27
+    },
+    {
+      "old": "unit/test_potpie_context_api_client.py",
+      "new": "unit/runtime/test_potpie_context_api_client.py",
+      "domain": "runtime",
+      "tier": "unit",
+      "test_definitions": 26
+    },
+    {
+      "old": "unit/test_falkordb_backend.py",
+      "new": "unit/backends/test_falkordb_backend.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/test_incident_record_identity.py",
+      "new": "unit/ontology/test_incident_record_identity.py",
+      "domain": "ontology",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_falkordb_analytics.py",
+      "new": "unit/backends/test_falkordb_analytics.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 6
+    },
+    {
+      "old": "unit/test_graph_contract.py",
+      "new": "unit/mutations/test_graph_contract.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 20
+    },
+    {
+      "old": "unit/test_settings_graph_backend.py",
+      "new": "unit/backends/test_settings_graph_backend.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 10
+    },
+    {
+      "old": "unit/test_otel_transport.py",
+      "new": "unit/observability/test_otel_transport.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_graph_surface_lite_contract.py",
+      "new": "unit/mutations/test_graph_surface_lite_contract.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 50
+    },
+    {
+      "old": "unit/test_exact_identity_search.py",
+      "new": "unit/ontology/test_exact_identity_search.py",
+      "domain": "ontology",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_telemetry_port.py",
+      "new": "unit/observability/test_telemetry_port.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 1
+    },
+    {
+      "old": "unit/test_semantic_temporal_contract.py",
+      "new": "unit/mutations/test_semantic_temporal_contract.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_resource_facade_from_runtime.py",
+      "new": "unit/resources/test_resource_facade_from_runtime.py",
+      "domain": "resources",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_extras_smoke.py",
+      "new": "unit/runtime/test_extras_smoke.py",
+      "domain": "runtime",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_retrieval_eval.py",
+      "new": "unit/retrieval/test_retrieval_eval.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_pydantic_deep_agent_batch.py",
+      "new": "unit/agents/test_pydantic_deep_agent_batch.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/test_record_retry_capture.py",
+      "new": "unit/durability/test_record_retry_capture.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 4
+    },
+    {
+      "old": "unit/test_embedding_calibration.py",
+      "new": "unit/retrieval/test_embedding_calibration.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 6
+    },
+    {
+      "old": "unit/test_mutation_apply_once.py",
+      "new": "unit/mutations/test_mutation_apply_once.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_postgres_session.py",
+      "new": "unit/ingestion/test_postgres_session.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_ranking.py",
+      "new": "unit/retrieval/test_ranking.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 17
+    },
+    {
+      "old": "unit/test_agent_read_efficiency.py",
+      "new": "unit/agents/test_agent_read_efficiency.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 4
+    },
+    {
+      "old": "unit/test_sentry_metrics_container_init.py",
+      "new": "unit/observability/test_sentry_metrics_container_init.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_record_recovery.py",
+      "new": "unit/durability/test_record_recovery.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 1
+    },
+    {
+      "old": "unit/test_observability_operate.py",
+      "new": "unit/observability/test_observability_operate.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 6
+    },
+    {
+      "old": "unit/test_neo4j_atomic_contract.py",
+      "new": "unit/backends/test_neo4j_atomic_contract.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 5
+    },
+    {
+      "old": "unit/test_falkordb_mutation_capabilities.py",
+      "new": "unit/mutations/test_falkordb_mutation_capabilities.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_memory_temporal_diagnostics.py",
+      "new": "unit/mutations/test_memory_temporal_diagnostics.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_agent_surface_contract.py",
+      "new": "unit/agents/test_agent_surface_contract.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 4
+    },
+    {
+      "old": "unit/test_memory_claim_corrections.py",
+      "new": "unit/mutations/test_memory_claim_corrections.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 15
+    },
+    {
+      "old": "unit/test_ingestion_db_status.py",
+      "new": "unit/ingestion/test_ingestion_db_status.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_process_batch_chunking.py",
+      "new": "unit/ingestion/test_process_batch_chunking.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/test_claim_lifecycle.py",
+      "new": "unit/mutations/test_claim_lifecycle.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 11
+    },
+    {
+      "old": "unit/test_memory_temporal_contract.py",
+      "new": "unit/mutations/test_memory_temporal_contract.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_submit_raw_episode.py",
+      "new": "unit/ingestion/test_submit_raw_episode.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_hatchet_env_bootstrap.py",
+      "new": "unit/ingestion/test_hatchet_env_bootstrap.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_github_agent_tools_repo_binding.py",
+      "new": "unit/agents/test_github_agent_tools_repo_binding.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 6
+    },
+    {
+      "old": "unit/test_sentry_settings.py",
+      "new": "unit/observability/test_sentry_settings.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_envelope.py",
+      "new": "unit/retrieval/test_envelope.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 21
+    },
+    {
+      "old": "unit/test_resources_reader.py",
+      "new": "unit/resources/test_resources_reader.py",
+      "domain": "resources",
+      "tier": "unit",
+      "test_definitions": 23
+    },
+    {
+      "old": "unit/test_hard_reset_pot.py",
+      "new": "unit/durability/test_hard_reset_pot.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 7
+    },
+    {
+      "old": "unit/test_graph_workbench_quality.py",
+      "new": "unit/mutations/test_graph_workbench_quality.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 16
+    },
+    {
+      "old": "unit/test_memory_embedded_atomicity.py",
+      "new": "unit/backends/test_memory_embedded_atomicity.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 11
+    },
+    {
+      "old": "unit/test_sentry_metrics_runtime.py",
+      "new": "unit/observability/test_sentry_metrics_runtime.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 11
+    },
+    {
+      "old": "unit/test_definition_retrieval.py",
+      "new": "unit/retrieval/test_definition_retrieval.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 10
+    },
+    {
+      "old": "unit/test_context_graph_jobs_metrics.py",
+      "new": "unit/observability/test_context_graph_jobs_metrics.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_noop_agent.py",
+      "new": "unit/agents/test_noop_agent.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/test_falkordb_reader.py",
+      "new": "unit/retrieval/test_falkordb_reader.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 14
+    },
+    {
+      "old": "unit/test_operator_audit.py",
+      "new": "unit/observability/test_operator_audit.py",
+      "domain": "observability",
+      "tier": "unit",
+      "test_definitions": 7
+    },
+    {
+      "old": "unit/test_use_case_readers.py",
+      "new": "unit/retrieval/test_use_case_readers.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 58
+    },
+    {
+      "old": "unit/test_mutation_recovery_contract.py",
+      "new": "unit/durability/test_mutation_recovery_contract.py",
+      "domain": "durability",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/test_resource_pending_review.py",
+      "new": "unit/resources/test_resource_pending_review.py",
+      "domain": "resources",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_public_api.py",
+      "new": "unit/runtime/test_public_api.py",
+      "domain": "runtime",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_source_resolution.py",
+      "new": "unit/runtime/test_source_resolution.py",
+      "domain": "runtime",
+      "tier": "unit",
+      "test_definitions": 8
+    },
+    {
+      "old": "unit/test_vector_candidate_k.py",
+      "new": "unit/retrieval/test_vector_candidate_k.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_reap_stale_batches.py",
+      "new": "unit/ingestion/test_reap_stale_batches.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 4
+    },
+    {
+      "old": "unit/test_read_orchestrator.py",
+      "new": "unit/retrieval/test_read_orchestrator.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/test_neo4j_admin_contract.py",
+      "new": "unit/backends/test_neo4j_admin_contract.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/test_backfill_seed.py",
+      "new": "unit/ingestion/test_backfill_seed.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 12
+    },
+    {
+      "old": "unit/test_useful_reads.py",
+      "new": "unit/retrieval/test_useful_reads.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 18
+    },
+    {
+      "old": "unit/test_prepared_mutation_contract.py",
+      "new": "unit/mutations/test_prepared_mutation_contract.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 11
+    },
+    {
+      "old": "unit/test_resource_mutation_recovery.py",
+      "new": "unit/resources/test_resource_mutation_recovery.py",
+      "domain": "resources",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/test_m_series_hardening.py",
+      "new": "unit/backends/test_m_series_hardening.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 5
+    },
+    {
+      "old": "unit/test_falkordb_writer.py",
+      "new": "unit/backends/test_falkordb_writer.py",
+      "domain": "backends",
+      "tier": "unit",
+      "test_definitions": 38
+    },
+    {
+      "old": "unit/test_reconciliation_factory.py",
+      "new": "unit/agents/test_reconciliation_factory.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 1
+    },
+    {
+      "old": "unit/test_windowed_admission.py",
+      "new": "unit/ingestion/test_windowed_admission.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 12
+    },
+    {
+      "old": "unit/test_protocols.py",
+      "new": "unit/mutations/test_protocols.py",
+      "domain": "mutations",
+      "tier": "unit",
+      "test_definitions": 20
+    },
+    {
+      "old": "unit/test_qdrant_resource_sync.py",
+      "new": "unit/resources/test_qdrant_resource_sync.py",
+      "domain": "resources",
+      "tier": "unit",
+      "test_definitions": 31
+    },
+    {
+      "old": "unit/test_agent_work_events.py",
+      "new": "unit/agents/test_agent_work_events.py",
+      "domain": "agents",
+      "tier": "unit",
+      "test_definitions": 7
+    },
+    {
+      "old": "unit/test_reader_details.py",
+      "new": "unit/retrieval/test_reader_details.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 7
+    },
+    {
+      "old": "unit/test_ledger_cursor_store.py",
+      "new": "unit/ingestion/test_ledger_cursor_store.py",
+      "domain": "ingestion",
+      "tier": "unit",
+      "test_definitions": 1
+    },
+    {
+      "old": "core/test_graph_definition.py",
+      "new": "core/ontology/test_graph_definition.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 5
+    },
+    {
+      "old": "core/test_agent_context_port.py",
+      "new": "core/agents/test_agent_context_port.py",
+      "domain": "agents",
+      "tier": "core",
+      "test_definitions": 3
+    },
+    {
+      "old": "core/test_semantic_mutations.py",
+      "new": "core/mutations/test_semantic_mutations.py",
+      "domain": "mutations",
+      "tier": "core",
+      "test_definitions": 16
+    },
+    {
+      "old": "core/test_repository_identity.py",
+      "new": "core/ontology/test_repository_identity.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 1
+    },
+    {
+      "old": "core/test_context_records.py",
+      "new": "core/ontology/test_context_records.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 26
+    },
+    {
+      "old": "core/test_adjustments.py",
+      "new": "core/ontology/test_adjustments.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 6
+    },
+    {
+      "old": "core/test_vocabulary.py",
+      "new": "core/ontology/test_vocabulary.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 7
+    },
+    {
+      "old": "core/test_context_events_scope.py",
+      "new": "core/ingestion/test_context_events_scope.py",
+      "domain": "ingestion",
+      "tier": "core",
+      "test_definitions": 2
+    },
+    {
+      "old": "core/test_graph_workbench_ontology.py",
+      "new": "core/ontology/test_graph_workbench_ontology.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 11
+    },
+    {
+      "old": "core/test_resource_import_files.py",
+      "new": "core/resources/test_resource_import_files.py",
+      "domain": "resources",
+      "tier": "core",
+      "test_definitions": 10
+    },
+    {
+      "old": "core/test_resource_to_semantic.py",
+      "new": "core/resources/test_resource_to_semantic.py",
+      "domain": "resources",
+      "tier": "core",
+      "test_definitions": 9
+    },
+    {
+      "old": "core/test_semantic_mutation_validation.py",
+      "new": "core/mutations/test_semantic_mutation_validation.py",
+      "domain": "mutations",
+      "tier": "core",
+      "test_definitions": 42
+    },
+    {
+      "old": "core/test_graph_views.py",
+      "new": "core/mutations/test_graph_views.py",
+      "domain": "mutations",
+      "tier": "core",
+      "test_definitions": 27
+    },
+    {
+      "old": "core/test_infer_context_intent.py",
+      "new": "core/retrieval/test_infer_context_intent.py",
+      "domain": "retrieval",
+      "tier": "core",
+      "test_definitions": 7
+    },
+    {
+      "old": "core/test_protocol_ontology.py",
+      "new": "core/ontology/test_protocol_ontology.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 3
+    },
+    {
+      "old": "core/test_library_isolation.py",
+      "new": "core/runtime/test_library_isolation.py",
+      "domain": "runtime",
+      "tier": "core",
+      "test_definitions": 1
+    },
+    {
+      "old": "core/test_agent_output_budget.py",
+      "new": "core/agents/test_agent_output_budget.py",
+      "domain": "agents",
+      "tier": "core",
+      "test_definitions": 5
+    },
+    {
+      "old": "core/test_label_inference.py",
+      "new": "core/ontology/test_label_inference.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 7
+    },
+    {
+      "old": "core/test_graph_quality.py",
+      "new": "core/mutations/test_graph_quality.py",
+      "domain": "mutations",
+      "tier": "core",
+      "test_definitions": 6
+    },
+    {
+      "old": "core/test_api_surface.py",
+      "new": "core/runtime/test_api_surface.py",
+      "domain": "runtime",
+      "tier": "core",
+      "test_definitions": 3
+    },
+    {
+      "old": "core/test_singleton_predicates.py",
+      "new": "core/ontology/test_singleton_predicates.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 8
+    },
+    {
+      "old": "core/test_record_types.py",
+      "new": "core/ontology/test_record_types.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 16
+    },
+    {
+      "old": "core/test_cli_commands.py",
+      "new": "core/runtime/test_cli_commands.py",
+      "domain": "runtime",
+      "tier": "core",
+      "test_definitions": 7
+    },
+    {
+      "old": "core/test_reconciliation_issues.py",
+      "new": "core/mutations/test_reconciliation_issues.py",
+      "domain": "mutations",
+      "tier": "core",
+      "test_definitions": 5
+    },
+    {
+      "old": "core/test_serialization.py",
+      "new": "core/runtime/test_serialization.py",
+      "domain": "runtime",
+      "tier": "core",
+      "test_definitions": 2
+    },
+    {
+      "old": "core/test_event_playbooks.py",
+      "new": "core/agents/test_event_playbooks.py",
+      "domain": "agents",
+      "tier": "core",
+      "test_definitions": 7
+    },
+    {
+      "old": "core/test_ontology.py",
+      "new": "core/ontology/test_ontology.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 37
+    },
+    {
+      "old": "core/test_graph_plan_compatibility.py",
+      "new": "core/mutations/test_graph_plan_compatibility.py",
+      "domain": "mutations",
+      "tier": "core",
+      "test_definitions": 1
+    },
+    {
+      "old": "core/test_reconciliation_validation_edge_cases.py",
+      "new": "core/mutations/test_reconciliation_validation_edge_cases.py",
+      "domain": "mutations",
+      "tier": "core",
+      "test_definitions": 10
+    },
+    {
+      "old": "core/test_reconciliation_config.py",
+      "new": "core/agents/test_reconciliation_config.py",
+      "domain": "agents",
+      "tier": "core",
+      "test_definitions": 4
+    },
+    {
+      "old": "core/test_entity_canonicalization.py",
+      "new": "core/ontology/test_entity_canonicalization.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 19
+    },
+    {
+      "old": "core/test_record_to_semantic.py",
+      "new": "core/ontology/test_record_to_semantic.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 11
+    },
+    {
+      "old": "core/test_soft_downgrade.py",
+      "new": "core/ontology/test_soft_downgrade.py",
+      "domain": "ontology",
+      "tier": "core",
+      "test_definitions": 7
+    },
+    {
+      "old": "integration/test_batch_retry_endpoint.py",
+      "new": "integration/ingestion/test_batch_retry_endpoint.py",
+      "domain": "ingestion",
+      "tier": "integration",
+      "test_definitions": 8
+    },
+    {
+      "old": "integration/test_neo4j_revision_integrity.py",
+      "new": "integration/backends/test_neo4j_revision_integrity.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 7
+    },
+    {
+      "old": "integration/test_falkordb_write_entrypoints.py",
+      "new": "integration/backends/test_falkordb_write_entrypoints.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 12
+    },
+    {
+      "old": "integration/test_e2e_batching.py",
+      "new": "integration/ingestion/test_e2e_batching.py",
+      "domain": "ingestion",
+      "tier": "integration",
+      "test_definitions": 5
+    },
+    {
+      "old": "integration/test_ingestion_config_endpoints.py",
+      "new": "integration/ingestion/test_ingestion_config_endpoints.py",
+      "domain": "ingestion",
+      "tier": "integration",
+      "test_definitions": 6
+    },
+    {
+      "old": "integration/test_falkordb_lite_server_lifecycle.py",
+      "new": "integration/backends/test_falkordb_lite_server_lifecycle.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 3
+    },
+    {
+      "old": "integration/test_falkordb_reliability.py",
+      "new": "integration/backends/test_falkordb_reliability.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 13
+    },
+    {
+      "old": "integration/test_sentry_defaults_build.py",
+      "new": "integration/observability/test_sentry_defaults_build.py",
+      "domain": "observability",
+      "tier": "integration",
+      "test_definitions": 1
+    },
+    {
+      "old": "integration/test_neo4j_write_entrypoints.py",
+      "new": "integration/backends/test_neo4j_write_entrypoints.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 25
+    },
+    {
+      "old": "integration/test_falkordb_verification.py",
+      "new": "integration/backends/test_falkordb_verification.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 11
+    },
+    {
+      "old": "integration/test_ingest_http_422.py",
+      "new": "integration/ingestion/test_ingest_http_422.py",
+      "domain": "ingestion",
+      "tier": "integration",
+      "test_definitions": 1
+    },
+    {
+      "old": "integration/test_falkordb_snapshot.py",
+      "new": "integration/durability/test_falkordb_snapshot.py",
+      "domain": "durability",
+      "tier": "integration",
+      "test_definitions": 5
+    },
+    {
+      "old": "integration/test_neo4j_temporal_reads.py",
+      "new": "integration/mutations/test_neo4j_temporal_reads.py",
+      "domain": "mutations",
+      "tier": "integration",
+      "test_definitions": 7
+    },
+    {
+      "old": "integration/test_scoped_claim_reads.py",
+      "new": "integration/retrieval/test_scoped_claim_reads.py",
+      "domain": "retrieval",
+      "tier": "integration",
+      "test_definitions": 1
+    },
+    {
+      "old": "integration/test_falkordb_roundtrip.py",
+      "new": "integration/backends/test_falkordb_roundtrip.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 7
+    },
+    {
+      "old": "integration/test_falkordb_temporal.py",
+      "new": "integration/mutations/test_falkordb_temporal.py",
+      "domain": "mutations",
+      "tier": "integration",
+      "test_definitions": 11
+    },
+    {
+      "old": "integration/test_falkordb_revision_integrity.py",
+      "new": "integration/backends/test_falkordb_revision_integrity.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 5
+    },
+    {
+      "old": "integration/test_e2e_http.py",
+      "new": "integration/runtime/test_e2e_http.py",
+      "domain": "runtime",
+      "tier": "integration",
+      "test_definitions": 6
+    },
+    {
+      "old": "integration/test_neo4j_claim_lifecycle.py",
+      "new": "integration/mutations/test_neo4j_claim_lifecycle.py",
+      "domain": "mutations",
+      "tier": "integration",
+      "test_definitions": 14
+    },
+    {
+      "old": "integration/test_list_events_search.py",
+      "new": "integration/ingestion/test_list_events_search.py",
+      "domain": "ingestion",
+      "tier": "integration",
+      "test_definitions": 4
+    },
+    {
+      "old": "integration/test_falkordb_atomic.py",
+      "new": "integration/backends/test_falkordb_atomic.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 7
+    },
+    {
+      "old": "integration/test_e2e_pipeline.py",
+      "new": "integration/runtime/test_e2e_pipeline.py",
+      "domain": "runtime",
+      "tier": "integration",
+      "test_definitions": 4
+    },
+    {
+      "old": "integration/test_neo4j_verification.py",
+      "new": "integration/backends/test_neo4j_verification.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 12
+    },
+    {
+      "old": "integration/test_falkordb_claim_lifecycle.py",
+      "new": "integration/mutations/test_falkordb_claim_lifecycle.py",
+      "domain": "mutations",
+      "tier": "integration",
+      "test_definitions": 23
+    },
+    {
+      "old": "integration/test_e2e_topology.py",
+      "new": "integration/runtime/test_e2e_topology.py",
+      "domain": "runtime",
+      "tier": "integration",
+      "test_definitions": 12
+    },
+    {
+      "old": "integration/test_qdrant_resource_index.py",
+      "new": "integration/resources/test_qdrant_resource_index.py",
+      "domain": "resources",
+      "tier": "integration",
+      "test_definitions": 3
+    },
+    {
+      "old": "integration/test_neo4j_execution_reliability.py",
+      "new": "integration/backends/test_neo4j_execution_reliability.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 16
+    },
+    {
+      "old": "integration/test_pydantic_deep_agent_run_batch.py",
+      "new": "integration/agents/test_pydantic_deep_agent_run_batch.py",
+      "domain": "agents",
+      "tier": "integration",
+      "test_definitions": 4
+    },
+    {
+      "old": "integration/test_correction_targets_falkordb.py",
+      "new": "integration/mutations/test_correction_targets_falkordb.py",
+      "domain": "mutations",
+      "tier": "integration",
+      "test_definitions": 1
+    },
+    {
+      "old": "integration/test_falkordb_claim_corrections.py",
+      "new": "integration/mutations/test_falkordb_claim_corrections.py",
+      "domain": "mutations",
+      "tier": "integration",
+      "test_definitions": 17
+    },
+    {
+      "old": "integration/test_neo4j_claim_corrections.py",
+      "new": "integration/mutations/test_neo4j_claim_corrections.py",
+      "domain": "mutations",
+      "tier": "integration",
+      "test_definitions": 15
+    },
+    {
+      "old": "integration/test_ladybug_roundtrip.py",
+      "new": "integration/backends/test_ladybug_roundtrip.py",
+      "domain": "backends",
+      "tier": "integration",
+      "test_definitions": 10
+    },
+    {
+      "old": "integration/test_neo4j_atomic_mutations.py",
+      "new": "integration/mutations/test_neo4j_atomic_mutations.py",
+      "domain": "mutations",
+      "tier": "integration",
+      "test_definitions": 8
+    },
+    {
+      "old": "conformance/test_public_graph_runtime.py",
+      "new": "conformance/runtime/test_public_graph_runtime.py",
+      "domain": "runtime",
+      "tier": "conformance",
+      "test_definitions": 18
+    },
+    {
+      "old": "conformance/test_resource_revision_acceptance.py",
+      "new": "conformance/resources/test_resource_revision_acceptance.py",
+      "domain": "resources",
+      "tier": "conformance",
+      "test_definitions": 4
+    },
+    {
+      "old": "conformance/test_graph_journal.py",
+      "new": "conformance/durability/test_graph_journal.py",
+      "domain": "durability",
+      "tier": "conformance",
+      "test_definitions": 35
+    },
+    {
+      "old": "conformance/test_public_semantic_mutation_reliability.py",
+      "new": "conformance/mutations/test_public_semantic_mutation_reliability.py",
+      "domain": "mutations",
+      "tier": "conformance",
+      "test_definitions": 3
+    },
+    {
+      "old": "conformance/test_graph_surface_lite_e2e.py",
+      "new": "conformance/mutations/test_graph_surface_lite_e2e.py",
+      "domain": "mutations",
+      "tier": "conformance",
+      "test_definitions": 10
+    },
+    {
+      "old": "conformance/test_resource_index_conformance.py",
+      "new": "conformance/resources/test_resource_index_conformance.py",
+      "domain": "resources",
+      "tier": "conformance",
+      "test_definitions": 5
+    },
+    {
+      "old": "conformance/test_record_capture_acceptance.py",
+      "new": "conformance/mutations/test_record_capture_acceptance.py",
+      "domain": "mutations",
+      "tier": "conformance",
+      "test_definitions": 1
+    },
+    {
+      "old": "conformance/test_protocol_backends.py",
+      "new": "conformance/mutations/test_protocol_backends.py",
+      "domain": "mutations",
+      "tier": "conformance",
+      "test_definitions": 5
+    },
+    {
+      "old": "conformance/test_journal_crash.py",
+      "new": "conformance/durability/test_journal_crash.py",
+      "domain": "durability",
+      "tier": "conformance",
+      "test_definitions": 1
+    },
+    {
+      "old": "conformance/test_resource_store_conformance.py",
+      "new": "conformance/resources/test_resource_store_conformance.py",
+      "domain": "resources",
+      "tier": "conformance",
+      "test_definitions": 40
+    },
+    {
+      "old": "conformance/test_embedding_host_runtime.py",
+      "new": "conformance/retrieval/test_embedding_host_runtime.py",
+      "domain": "retrieval",
+      "tier": "conformance",
+      "test_definitions": 7
+    },
+    {
+      "old": "conformance/test_graph_backend_conformance.py",
+      "new": "conformance/backends/test_graph_backend_conformance.py",
+      "domain": "backends",
+      "tier": "conformance",
+      "test_definitions": 14
+    },
+    {
+      "old": "conformance/test_nudge_e2e.py",
+      "new": "conformance/mutations/test_nudge_e2e.py",
+      "domain": "mutations",
+      "tier": "conformance",
+      "test_definitions": 5
+    },
+    {
+      "old": "conformance/test_temporal_backend_acceptance.py",
+      "new": "conformance/mutations/test_temporal_backend_acceptance.py",
+      "domain": "mutations",
+      "tier": "conformance",
+      "test_definitions": 3
+    },
+    {
+      "old": "conformance/test_graph_reliability.py",
+      "new": "conformance/backends/test_graph_reliability.py",
+      "domain": "backends",
+      "tier": "conformance",
+      "test_definitions": 2
+    },
+    {
+      "old": "conformance/test_journal_history.py",
+      "new": "conformance/durability/test_journal_history.py",
+      "domain": "durability",
+      "tier": "conformance",
+      "test_definitions": 11
+    },
+    {
+      "old": "conformance/test_answer_reliability_acceptance.py",
+      "new": "conformance/retrieval/test_answer_reliability_acceptance.py",
+      "domain": "retrieval",
+      "tier": "conformance",
+      "test_definitions": 3
+    },
+    {
+      "old": "conformance/test_public_commits.py",
+      "new": "conformance/durability/test_public_commits.py",
+      "domain": "durability",
+      "tier": "conformance",
+      "test_definitions": 6
+    },
+    {
+      "old": "unit/benchmarks/test_scenario_loader.py",
+      "new": "unit/benchmarks/test_scenario_loader.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 9
+    },
+    {
+      "old": "unit/benchmarks/test_smoke_pipeline.py",
+      "new": "unit/benchmarks/test_smoke_pipeline.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 1
+    },
+    {
+      "old": "unit/benchmarks/test_invariant_judge.py",
+      "new": "unit/benchmarks/test_invariant_judge.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 12
+    },
+    {
+      "old": "unit/benchmarks/test_baseline_diff.py",
+      "new": "unit/benchmarks/test_baseline_diff.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/benchmarks/test_must_cite_structured.py",
+      "new": "unit/benchmarks/test_must_cite_structured.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 5
+    },
+    {
+      "old": "unit/benchmarks/test_replay_distractors.py",
+      "new": "unit/benchmarks/test_replay_distractors.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 4
+    },
+    {
+      "old": "unit/benchmarks/test_reporting_panels.py",
+      "new": "unit/benchmarks/test_reporting_panels.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/benchmarks/test_evaluators_subaxes.py",
+      "new": "unit/benchmarks/test_evaluators_subaxes.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 6
+    },
+    {
+      "old": "unit/benchmarks/test_subaxis_gating.py",
+      "new": "unit/benchmarks/test_subaxis_gating.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/benchmarks/test_graph_evidence.py",
+      "new": "unit/benchmarks/test_graph_evidence.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 3
+    },
+    {
+      "old": "unit/benchmarks/test_difficulty_thresholds.py",
+      "new": "unit/benchmarks/test_difficulty_thresholds.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 2
+    },
+    {
+      "old": "unit/benchmarks/test_light_subset.py",
+      "new": "unit/benchmarks/test_light_subset.py",
+      "domain": "benchmarks",
+      "tier": "unit",
+      "test_definitions": 4
+    },
+    {
+      "old": "unit/test_native_claim_query_params.py",
+      "new": "unit/retrieval/test_native_claim_query_params.py",
+      "domain": "retrieval",
+      "tier": "unit",
+      "test_definitions": 1,
+      "introduced_by": "04e35f211dca75fb8e4388531472648e5d0be447"
+    }
+  ]
+}

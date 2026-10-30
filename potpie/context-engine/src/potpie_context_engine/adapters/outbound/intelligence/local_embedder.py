@@ -100,7 +100,7 @@ class HashingEmbedder:
 
 @dataclass(slots=True)
 class SentenceTransformerEmbedder:
-    """Legacy-compatible local embedder backed by ``sentence-transformers``."""
+    """Local embedder backed by ``sentence-transformers``."""
 
     model_name: str = DEFAULT_SENTENCE_TRANSFORMER_MODEL
     device: str = "cpu"
@@ -156,8 +156,8 @@ class SentenceTransformerEmbedder:
                     from sentence_transformers import SentenceTransformer
                 except Exception as exc:  # noqa: BLE001
                     raise RuntimeError(
-                        "CONTEXT_ENGINE_EMBEDDER=legacy requires sentence-transformers. "
-                        "Install the legacy Potpie dependencies or add an embeddings extra."
+                        "CONTEXT_ENGINE_EMBEDDER=sentence-transformers requires sentence-transformers. "
+                        "Install the embeddings extra."
                     ) from exc
                 kwargs = {"device": self.device}
                 if self.cache_folder:
@@ -308,12 +308,12 @@ def build_embedder() -> EmbedderPort | None:
 
     ``CONTEXT_ENGINE_EMBEDDER``:
       - unset with no setup config / ``local`` / ``hashing`` → :class:`HashingEmbedder`
-      - ``legacy`` / ``sentence-transformers`` → all-MiniLM-L6-v2 by default
+      - ``sentence-transformers`` → all-MiniLM-L6-v2 by default
       - ``auto`` → sentence-transformers when installed, otherwise hashing
       - ``none`` / ``off`` / ``lexical`` → ``None`` (labeled lexical fallback)
 
     ``CONTEXT_ENGINE_EMBEDDING_MODEL`` overrides the SentenceTransformer model
-    name when the legacy embedder is selected.
+    name when the sentence-transformers embedder is selected.
     """
     choice = normalize_embedding_mode(configured_embedder_choice() or "local")
     if choice in DISABLED_EMBEDDER_ALIASES:

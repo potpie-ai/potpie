@@ -21,7 +21,7 @@ from potpie_context_engine.core.ports.claim_query import ClaimRow
 from potpie_context_engine.core.reconciliation import MutationBatch, MutationResult
 from potpie_context_engine.core.reconciliation_config import ReconciliationConfig
 from potpie_context_engine.core.reconciliation_validation import (
-    validate_reconciliation_plan,
+    validate_mutation_batch,
 )
 
 from ._mutation_execution import (
@@ -35,7 +35,7 @@ from ._mutation_execution import (
     validate_new_preparation,
 )
 from .memory_journal import MemoryJournal, adopt_store, clone_store
-from .memory_legacy import validate_store_aliases
+from .memory_inventory import validate_store_aliases
 
 if TYPE_CHECKING:
     from .backends.in_memory_backend import _Mutation
@@ -89,7 +89,7 @@ def apply_transaction(
                 )
         applied_at = datetime.now(timezone.utc)
         validated = deepcopy(original)
-        validate_reconciliation_plan(
+        validate_mutation_batch(
             validated,
             expected_pot_id,
             definition=owner.definition,
@@ -149,11 +149,6 @@ def apply_transaction(
                     (
                         *_affected_claim_ids(
                             owner.store.rows, writer.store.rows, expected_pot_id
-                        ),
-                        *(
-                            effect.after().value("record_id")
-                            for effect in validated.record_repairs
-                            if effect.before.kind == "claim"
                         ),
                     )
                 )

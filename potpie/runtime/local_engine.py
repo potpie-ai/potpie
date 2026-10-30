@@ -501,16 +501,6 @@ class ServiceEngineOperations:
     async def repair(
         self, context: ContextIdentity, request: RepairRequest
     ) -> Outcome[object]:
-        if request.legacy_mode is not None:
-            return await self._authorized_graph_call(
-                "legacy_repair",
-                context,
-                lambda workbench: workbench.repair_legacy_async(
-                    pot_id=context.value,
-                    mode=request.legacy_mode,
-                    repair_id=request.repair_id,
-                ),
-            )
         return await self._call(
             lambda: self._services.backend.analytics.repair(
                 context.value,

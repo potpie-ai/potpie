@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections import abc
 from collections.abc import Iterable
-from dataclasses import MISSING, dataclass, fields, is_dataclass, replace
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import date, datetime
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -308,7 +308,6 @@ _SPECS = (
         RepairResult,
         _WRITE,
         destructive=True,
-        request_policy="legacy_repair_v1",
     ),
     OperationSpec(
         EngineOperation.RESET_CONTEXT,
@@ -705,14 +704,7 @@ def operation_schema(
 
 def effective_operation_spec(spec: OperationSpec, request: object) -> OperationSpec:
     """Resolve typed request policy once for confirmation, locking and retries."""
-    if spec.request_policy == "legacy_repair_v1":
-        if type(request) is not RepairRequest:
-            raise TypeError("repair policy requires a typed RepairRequest")
-        if request.legacy_mode == "dry_run":
-            return replace(
-                spec, safety=SafetyClass.SHARED_CONTEXT_READ, destructive=False
-            )
-    elif spec.request_policy is not None:
+    if spec.request_policy is not None:
         raise ValueError("unsupported operation request policy")
     return spec
 

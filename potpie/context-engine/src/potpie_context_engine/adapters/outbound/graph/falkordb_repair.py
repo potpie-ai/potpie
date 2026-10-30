@@ -21,7 +21,6 @@ from potpie_context_engine.core.mutation_execution import (
 from potpie_context_engine.core.ports.graph.analytics import RepairReport
 
 from .backends.claim_query_analytics import ClaimQueryAnalytics
-from .document_key_repair import DOCUMENT_KEY_TARGET, wants_document_key_repair
 from .entity_label_repair import wants_entity_label_repair
 from .entity_repair import prepare_entity_repairs
 from .entity_summary_repair import wants_entity_summary_repair
@@ -44,11 +43,7 @@ class FalkorDBRepair(ClaimQueryAnalytics):
 
     def repair(self, pot_id, *, targets=()):
         repaired = self._repair_entities(pot_id, targets)
-        report = (
-            super().repair(pot_id, targets=(DOCUMENT_KEY_TARGET,))
-            if wants_document_key_repair(targets)
-            else RepairReport(pot_id=pot_id, targets=tuple(targets))
-        )
+        report = RepairReport(pot_id=pot_id, targets=tuple(targets))
         parts = [
             f"repaired {count} {target.replace('_', ' ')}"
             for target, count in repaired.items()

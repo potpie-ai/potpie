@@ -5,7 +5,7 @@ This registrar bolts the credential-acquisition surface onto the root app:
 - ``potpie github|linear|jira|confluence …`` — integration OAuth/API-token flows;
 - ``potpie auth status [--verify]`` — local integration auth status;
 - top-level ``potpie login`` / ``potpie logout`` — Potpie account (Firebase/API key);
-- ``potpie auth …`` — deprecated aliases for the provider commands above.
+- ``potpie auth status`` — aggregate provider status.
 
 These flows are inbound-adapter credential acquisition (OAuth/device-flow/local
 files), so they do not cross the context-engine boundary; they read the shared

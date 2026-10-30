@@ -442,11 +442,3 @@ def gitbucket_repos(
             f"{full_name}\t{visibility}\t{branch}",
             as_json=False,
         )
-
-
-def _build_auth_compat_gitbucket() -> typer.Typer:
-    app = typer.Typer(help="[Deprecated] use `potpie gitbucket`.")
-    app.command("login")(gitbucket_login)
-    app.command("logout")(gitbucket_logout)
-    app.command("repos")(gitbucket_repos)
-    return app

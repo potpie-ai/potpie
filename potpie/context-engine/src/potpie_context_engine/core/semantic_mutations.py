@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Mapping
 from .claim_corrections import ClaimTarget
+from .graph_mutations import ProvenanceContext
 
 from potpie_context_engine.core.graph_contract import (
     GRAPH_CONTRACT_VERSION,
@@ -284,6 +285,8 @@ class SemanticMutationRequest:
     dry_run: bool = False
     allow_review_required: bool = False
     approved_by: str | None = None
+    provenance_context: ProvenanceContext | None = None
+    """Trusted host context. JSON mutation payloads cannot populate this field."""
 
     @classmethod
     def parse(
@@ -294,6 +297,7 @@ class SemanticMutationRequest:
         dry_run: bool = False,
         allow_review_required: bool = False,
         approved_by: str | None = None,
+        provenance_context: ProvenanceContext | None = None,
     ) -> "SemanticMutationRequest":
         """Parse a JSON payload (batch-shaped or single-op alias) into a request.
 
@@ -323,6 +327,7 @@ class SemanticMutationRequest:
             dry_run=dry_run,
             allow_review_required=allow_review_required,
             approved_by=approved_by,
+            provenance_context=provenance_context,
         )
 
 

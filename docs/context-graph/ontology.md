@@ -80,7 +80,7 @@ it as an endpoint.**
 | Category | Labels | Notes |
 |---|---|---|
 | Topology scope endpoints (`scope=True`) | `Repository`, `Service`, `Environment`, `DataStore`, `Cluster`, `DeploymentTarget` | match the `@Scope` endpoint sentinel |
-| Code-anchored topology | `Dependency`, `APIContract`, `Adapter`, `ConfigVariable`, `CodeAsset` | `CodeAsset` also matches legacy `FILE`/`FUNCTION`/`CLASS`/`NODE` labels |
+| Code-anchored topology | `Dependency`, `APIContract`, `Adapter`, `ConfigVariable`, `CodeAsset` | `CodeAsset` is the canonical engine label for code anchors |
 | Product | `Feature` | |
 | People | `Team`, `Person` | |
 | Timeline | `Activity` (`is_activity=True`), `Period` | |
@@ -101,8 +101,8 @@ Each `EdgeTypeSpec` declares `allowed_pairs`, `category`,
 `required_properties`, `singleton`, `predicate_family`, `exclusive_family`, and
 `source/target_inferred_labels`. Endpoint sentinels resolved in
 `_endpoint_matches`: `WILDCARD_ENDPOINT="*"`, `SCOPE_ENDPOINT="@Scope"` (any
-`scope=True` label), `ACTIVITY_ENDPOINT="@Activity"`, plus `CodeAsset` for the
-legacy code-graph labels.
+`scope=True` label), and `ACTIVITY_ENDPOINT="@Activity"`. Code anchors use
+the canonical `CodeAsset` label.
 
 | Category | Count | Predicates |
 |---|---:|---|
@@ -168,8 +168,7 @@ a second hand-maintained list:
 - **Singleton registry** (`domain/singleton_predicates.py`) — synced to
   `replace_singletons(SINGLETON_EDGE_TYPES)`; the live set is **exactly
   `{OWNED_BY, SECTION_OF}`** — one live owner per service, one parent document
-  per section. `_DEFAULT_SINGLETONS` lists legacy names but they are
-  overwritten at import.
+  per section. The registry initializes from the ontology flags.
 - **Classifier tables** — `ENTITY_TEXT_CLASSIFIERS`,
   `ENTITY_PROPERTY_SIGNATURES`, `EDGE_ENDPOINT_INFERRED_LABELS`, consumed by
   `domain/ontology_classifier.py` (deterministic, idempotent label inference;
@@ -471,11 +470,9 @@ Command sets:
 |---|---|
 | `GRAPH_WORKBENCH_COMMANDS` | `status`, `catalog`, `describe`, `search-entities`, `read`, `neighborhood`, `propose`, `commit`, `bulk`, `history`, `inbox`, `quality` |
 | `GRAPH_WORKBENCH_ADMIN_COMMANDS` | `repair`, `export`, `import` |
-| `GRAPH_WORKBENCH_LEGACY_COMMANDS` | `mutate`, `inspect`, `mutation-template`, `nudge` |
+| Additional helpers | `mutation-template`, `nudge` |
 
 The **canonical write door is `graph propose` → `graph commit --verify`.**
-`graph mutate` is a **legacy wrapper** that internally calls propose+commit and
-emits a steering warning; `graph inspect` is a legacy alias of `neighborhood`.
 There is no `graph admin` command and no `graph reset` (reset is `pot reset`).
 
 ## 10. Coherence guards

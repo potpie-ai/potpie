@@ -120,7 +120,7 @@ def _generated_claim_key(claim: Mapping[str, Any], target_pot_id: str) -> str:
 
 
 def _normalize_claim(
-    raw: Any, *, index: int, source_pot_id: str, target_pot_id: str, legacy: bool
+    raw: Any, *, index: int, source_pot_id: str, target_pot_id: str
 ) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         raise ValueError(f"claims[{index}] must be an object")
@@ -182,9 +182,7 @@ def _normalize_claim(
 
     key = claim.get("claim_key")
     if key is None:
-        if not legacy:
-            raise ValueError(f"claims[{index}].claim_key must be a non-empty string")
-        key = _generated_claim_key(claim, target_pot_id)
+        raise ValueError(f"claims[{index}].claim_key must be a non-empty string")
     prefix = f"claim:{source_pot_id}:"
     if source_pot_id != target_pot_id and key.startswith(prefix):
         key = f"claim:{target_pot_id}:{key[len(prefix) :]}"
@@ -217,7 +215,7 @@ def normalize_snapshot_payload(
     if not isinstance(payload, Mapping) or not payload:
         raise ValueError("snapshot payload must be a non-empty object")
     version = payload.get("format_version")
-    if not isinstance(version, str) or version not in {"1", SNAPSHOT_FORMAT_VERSION}:
+    if not isinstance(version, str) or version != SNAPSHOT_FORMAT_VERSION:
         raise ValueError(f"unsupported snapshot format_version: {version!r}")
     source_pot_id = payload.get("pot_id")
     if not isinstance(source_pot_id, str) or not source_pot_id:
@@ -228,40 +226,12 @@ def normalize_snapshot_payload(
     if not isinstance(claims_raw, list):
         raise ValueError("snapshot claims must be a list")
 
-    if version == "1":
-        unknown = set(payload) - {"format_version", "pot_id", "claims", "labels"}
-        if unknown:
-            raise ValueError(
-                f"version 1 snapshot has unknown fields: {sorted(unknown)!r}"
-            )
-        labels = payload.get("labels")
-        if not isinstance(labels, Mapping):
-            raise ValueError("version 1 snapshot labels must be an object")
-        entities_raw = [
-            {"key": key, "labels": value, "properties": {}}
-            for key, value in labels.items()
-        ]
-        labelled = {raw["key"] for raw in entities_raw}
-        endpoints = {
-            raw.get(field)
-            for raw in claims_raw
-            if isinstance(raw, Mapping)
-            for field in ("subject_key", "object_key")
-            if isinstance(raw.get(field), str) and raw.get(field)
-        }
-        entities_raw.extend(
-            {"key": key, "labels": ["Entity"], "properties": {}}
-            for key in endpoints - labelled
-        )
-    else:
-        unknown = set(payload) - {"format_version", "pot_id", "claims", "entities"}
-        if unknown:
-            raise ValueError(
-                f"version 2 snapshot has unknown fields: {sorted(unknown)!r}"
-            )
-        entities_raw = payload.get("entities")
-        if not isinstance(entities_raw, list):
-            raise ValueError("version 2 snapshot entities must be a list")
+    unknown = set(payload) - {"format_version", "pot_id", "claims", "entities"}
+    if unknown:
+        raise ValueError(f"version 2 snapshot has unknown fields: {sorted(unknown)!r}")
+    entities_raw = payload.get("entities")
+    if not isinstance(entities_raw, list):
+        raise ValueError("version 2 snapshot entities must be a list")
 
     entities = [_normalize_entity(raw, index=i) for i, raw in enumerate(entities_raw)]
     claims = [
@@ -270,7 +240,6 @@ def normalize_snapshot_payload(
             index=i,
             source_pot_id=source_pot_id,
             target_pot_id=target_pot_id,
-            legacy=version == "1",
         )
         for i, raw in enumerate(claims_raw)
     ]

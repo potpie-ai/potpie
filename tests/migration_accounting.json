@@ -1,0 +1,127 @@
+{
+  "baseline": "original task checkout",
+  "before": {
+    "modules": 174,
+    "test_definitions": 2299
+  },
+  "after": {
+    "modules": 166,
+    "test_definitions": 2082
+  },
+  "net_removed_definitions": 217,
+  "accounting": [
+    {
+      "category": "Auth shared suites into canonical storage/integration scenarios",
+      "before": 228,
+      "after": 43,
+      "coverage": "126 parametrized scenarios; canonical storage privacy/atomic publication/rollback, provider isolation and status, verification/HTTP errors, OAuth configuration and refresh. Duplicate shared helpers and removed combined/flat metadata/provider aliases retired.",
+      "previous_scenarios": [
+        "tests/unit/test_cli_atlassian_shared.py",
+        "tests/unit/test_cli_linear_shared.py",
+        "tests/unit/test_credential_store_contract.py",
+        "tests/unit/test_credentials_store.py",
+        "tests/unit/test_potpie_api_config.py"
+      ],
+      "current_contracts": [
+        "tests/auth/test_storage.py",
+        "tests/auth/test_integrations.py"
+      ]
+    },
+    {
+      "category": "Package ownership contracts",
+      "before": 28,
+      "after": 12,
+      "coverage": "Same ownership, forbidden imports/runtime symbols, assembly, entrypoint and distribution rules grouped into parametrized source contracts.",
+      "previous_scenarios": [
+        "tests/characterization/test_cli_package_boundary.py",
+        "tests/characterization/test_context_runtime_architecture.py",
+        "tests/characterization/test_daemon_package_boundary.py",
+        "tests/characterization/test_potpie_capability_ownership.py"
+      ],
+      "current_contracts": [
+        "tests/contracts/test_package_ownership.py"
+      ]
+    },
+    {
+      "category": "Removed legacy repair/premerge modules",
+      "before": 13,
+      "after": 0,
+      "coverage": "12 repair tests retire with removed endpoints. Old source-based premerge journey replaced by installed artifact setup/daemon/propose/commit/read smoke.",
+      "previous_scenarios": [
+        "tests/unit/test_cli_legacy_repair.py",
+        "tests/unit/test_legacy_repair_api.py",
+        "tests/integration/test_premerge_cli_journey.py"
+      ],
+      "current_contracts": [
+        "scripts/test_distributions.py::product_journey"
+      ]
+    },
+    {
+      "category": "Alias-only checks",
+      "before": 4,
+      "after": 0,
+      "coverage": "Old auth Legacy help panel, two deprecated GitHub aliases, and Atlassian fetch wrapper removed with their aliases.",
+      "previous_scenarios": [
+        "tests/unit/test_audit32_root_help.py::TestAudit32RootHelp.test_auth_lives_in_legacy_panel",
+        "tests/unit/test_cli_atlassian.py::test_fetch_accessible_resources_alias",
+        "tests/unit/test_github_cli_auth.py::test_deprecated_git_login_alias",
+        "tests/unit/test_github_cli_auth.py::test_github_test_repos_deprecated_alias"
+      ],
+      "current_contracts": []
+    },
+    {
+      "category": "Duplicate build/version/install assertions",
+      "before": 3,
+      "after": 0,
+      "coverage": "Weak build_stamp dict assertion subsumed by exact build stamp scenarios; obsolete version branding replaced by current root/engine version contracts; synthetic editable reinstall hint covered by real collection and published/editable diagnostics.",
+      "previous_scenarios": [
+        "tests/unit/test_build_info.py::test_build_stamp_is_a_dict_even_when_nothing_is_known",
+        "tests/unit/test_cli_bootstrap_status.py::test_root_version_option_exits_with_cli_and_python_details",
+        "tests/unit/test_cli_install_status.py::test_cli_install_human_uv_tool_includes_reinstall_hint"
+      ],
+      "current_contracts": [
+        "tests/packaging/test_build_info.py",
+        "tests/cli/test_cli_install_status.py"
+      ]
+    },
+    {
+      "category": "New mutation template and native-lifecycle regression definitions",
+      "before": 0,
+      "after": 3,
+      "coverage": "9 emitted-template context bindings and 3 prohibited payload-selector cases. One real native lifecycle case proves the owned server exits before temporary graph storage is removed.",
+      "previous_scenarios": [],
+      "current_contracts": [
+        "tests/cli/test_cli_ergonomics.py::test_emitted_mutation_template_uses_the_selected_context",
+        "tests/cli/test_cli_ergonomics.py::test_mutation_body_cannot_override_context_selection",
+        "tests/resources/test_pot_lifecycle_resources.py::test_embedded_graph_clients_close_before_temporary_storage_is_removed"
+      ]
+    },
+    {
+      "category": "Upstream current engine dispatch contract",
+      "before": 0,
+      "after": 1,
+      "coverage": "Retain upstream enum-parametrized dispatch checks proving each current operation calls exactly its typed engine method once.",
+      "previous_scenarios": [
+        "origin/main:tests/unit/test_engine_dispatch.py"
+      ],
+      "current_contracts": [
+        "tests/runtime/test_engine_dispatch.py::test_dispatch_reaches_the_named_engine_method"
+      ]
+    }
+  ],
+  "auth_baseline_file_counts": {
+    "tests/unit/test_cli_atlassian_shared.py": 72,
+    "tests/unit/test_cli_linear_shared.py": 95,
+    "tests/unit/test_credential_store_contract.py": 7,
+    "tests/unit/test_credentials_store.py": 43,
+    "tests/unit/test_potpie_api_config.py": 11
+  },
+  "limits": "Definition counts include duplicate Python definitions in the baseline; they are not collected case counts. Thin direct helper/delegation assertions are intentionally retired rather than recreated as implementation mirrors. No additional meaningful current-flow behavior gap was identified in the bounded audit.",
+  "baseline_commit": "baeb7c4e4f24575dc3ddda910c8b26c985ab7eeb",
+  "ownership_manifest": "ownership.json",
+  "merge_reconciliation": {
+    "auth": "Preserve upstream auth CLI, OAuth callback/browser, credential-store and HTTP-client fixture improvements in domain-owned provider suites; canonical storage/integration matrices supersede the upstream shared/legacy paths.",
+    "runtime": "Preserve the upstream removal of pass-through engine dispatch functions and its focused catalog dispatch contract.",
+    "baseline": "Counts remain relative to the original baseline_commit, including the additional current dispatch contract."
+  }
+}

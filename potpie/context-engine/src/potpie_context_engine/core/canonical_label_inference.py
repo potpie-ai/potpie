@@ -1,4 +1,4 @@
-"""Enrich a ``ReconciliationPlan`` with canonical labels inferred by the classifier.
+"""Enrich a ``MutationBatch`` with canonical labels inferred by the classifier.
 
 Plan path runs before structural writes; it shares the same
 ``ontology_classifier.classify_entity`` engine over the canonical Neo4j graph
@@ -22,7 +22,7 @@ from potpie_context_engine.core.ontology_classifier import (
     build_signals,
     classify_entity,
 )
-from potpie_context_engine.core.reconciliation import ReconciliationPlan
+from potpie_context_engine.core.reconciliation import MutationBatch
 
 
 def _default_for_required_property(prop_name: str, entity_key: str) -> Any:
@@ -61,7 +61,7 @@ def _ensure_required_properties_for_label(
 
 
 def enrich_reconciliation_plan_entity_labels(
-    plan: ReconciliationPlan,
+    plan: MutationBatch,
     *,
     definition: GraphDefinition = DEFAULT_GRAPH_DEFINITION,
 ) -> None:

@@ -61,7 +61,6 @@ def batch_has_work(batch: MutationBatch) -> bool:
         or batch.edge_upserts
         or batch.edge_deletes
         or batch.invalidations
-        or batch.record_repairs
     )
 
 
@@ -72,14 +71,13 @@ def execution_matches_batch(
     pot_id: str,
     mutation_id: str,
     prepared: PreparedMutation | None = None,
-    allow_legacy: bool = False,
 ) -> bool:
     """Validate execution binding at workflow boundaries, including recovery."""
     if result is None or result.ok is not True or result.mutation_id != mutation_id:
         return False
     execution = result.execution
     if execution is None:
-        return allow_legacy and prepared is None
+        return False
     if (
         execution.pot_id != pot_id
         or execution.batch_fingerprint != batch_fingerprint(batch)
@@ -145,7 +143,7 @@ class PreparedMutation:
         if (
             type(self.schema_version) is not int
             or type(self.fingerprint_version) is not int
-            or self.schema_version not in {1, 2, 3, PREPARATION_SCHEMA_VERSION}
+            or self.schema_version != PREPARATION_SCHEMA_VERSION
             or self.fingerprint_version != FINGERPRINT_VERSION
         ):
             raise MutationPersistenceError("unsupported prepared mutation version")
@@ -180,9 +178,7 @@ class PreparedMutation:
                 batch_fingerprint=raw["batch_fingerprint"],
                 expected_version=raw["expected_version"],
                 prepared_at=_utc(raw["prepared_at"]),
-                target_claim_record_ids=_identities(
-                    raw.get("target_claim_record_ids", ())
-                ),
+                target_claim_record_ids=_identities(raw["target_claim_record_ids"]),
                 schema_version=raw["schema_version"],
                 fingerprint_version=raw["fingerprint_version"],
             )

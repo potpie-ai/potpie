@@ -208,3 +208,6 @@ def test_e2e_confluence_api_token_login_and_list_spaces(
     payload = _parse_json_stdout(proc)
     assert payload.get("ok") is True
     assert isinstance(payload.get("spaces"), list)
+
+
+pytestmark = [*pytestmark, pytest.mark.source_contract]

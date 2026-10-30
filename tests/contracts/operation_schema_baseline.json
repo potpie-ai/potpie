@@ -1,0 +1,9626 @@
+{
+ "error_categories": [
+  "authentication",
+  "authorization",
+  "daemon_internal",
+  "dependency",
+  "domain",
+  "engine_lifecycle",
+  "protocol",
+  "protocol_transport",
+  "resource_lifecycle",
+  "selection"
+ ],
+ "format": 1,
+ "operations": {
+  "apply_preview": {
+   "context_required": true,
+   "destructive": true,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ApplyPreviewRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphJournalResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "catalog": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "CatalogRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphCatalogResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "commit": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "CommitRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphMutationCommitResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "commit_show": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "CommitShowRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphJournalResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "commit_status": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "CommitStatusRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphMutationCommitResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "commits": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "CommitsRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphJournalResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "data_plane_status": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "DataPlaneStatusRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "DataPlaneStatus"
+   },
+   "safety": "shared_context_read"
+  },
+  "describe": {
+   "context_required": false,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "DescribeRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "DescribeResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "disable_rollback": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "DisableRollbackRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphJournalResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "export_snapshot": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ExportSnapshotRequest"
+   },
+   "resource_identity_fields": [
+    "destination"
+   ],
+   "resource_type": "snapshot_destination",
+   "result": {
+    "kind": "ref",
+    "name": "ExportSnapshotResult"
+   },
+   "safety": "shared_context_read_exclusive_resource_write"
+  },
+  "graph_slice": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "GraphSliceRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphSlice"
+   },
+   "safety": "shared_context_read"
+  },
+  "history": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "HistoryRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphHistoryResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.grant_list": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "GrantListRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GrantListResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.grant_revoke": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "GrantRevokeRequest"
+   },
+   "resource_identity_fields": [
+    "actor_id"
+   ],
+   "resource_type": "pot_grant",
+   "result": {
+    "kind": "ref",
+    "name": "GrantRevokeResult"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.grant_set": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "GrantSetRequest"
+   },
+   "resource_identity_fields": [
+    "actor_id"
+   ],
+   "resource_type": "pot_grant",
+   "result": {
+    "kind": "ref",
+    "name": "PotGrantInfo"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.pot_create": {
+   "context_required": false,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "PotCreateRequest"
+   },
+   "resource_identity_fields": [
+    "name"
+   ],
+   "resource_type": "pot_name",
+   "result": {
+    "kind": "ref",
+    "name": "PotInfo"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.pot_list": {
+   "context_required": false,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "PotListRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "PotListResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.pot_status": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "PotStatusRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "PotAggregateStatus"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.pot_use": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "PotUseRequest"
+   },
+   "resource_identity_fields": [
+    "selector"
+   ],
+   "resource_type": "actor_pointer",
+   "result": {
+    "kind": "ref",
+    "name": "PotInfo"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.repo_default_clear": {
+   "context_required": false,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "RepoDefaultClearRequest"
+   },
+   "resource_identity_fields": [
+    "repo"
+   ],
+   "resource_type": "repo_binding",
+   "result": {
+    "kind": "ref",
+    "name": "RepoDefaultClearResult"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.repo_default_set": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "RepoDefaultSetRequest"
+   },
+   "resource_identity_fields": [
+    "repo"
+   ],
+   "resource_type": "repo_binding",
+   "result": {
+    "kind": "ref",
+    "name": "RepoDefaultResult"
+   },
+   "safety": "exclusive_resource_mutation"
+  },
+  "host.source_add": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "SourceAddRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "SourceInfo"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "host.source_list": {
+   "context_required": true,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "SourceListRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "SourceListResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "host.whoami": {
+   "context_required": false,
+   "destructive": false,
+   "family": "host",
+   "request": {
+    "kind": "ref",
+    "name": "WhoamiRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "WhoamiResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "import_snapshot": {
+   "context_required": true,
+   "destructive": true,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ImportSnapshotRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "SnapshotManifest"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "inbox_add": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "InboxAddRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphInboxResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "inbox_claim": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "InboxClaimRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphInboxResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "inbox_close": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "InboxCloseRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphInboxResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "inbox_list": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "InboxListRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphInboxResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "inbox_mark_applied": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "InboxMarkAppliedRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphInboxResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "inbox_mark_rejected": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "InboxMarkRejectedRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphInboxResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "inbox_show": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "InboxShowRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphInboxResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "inspect": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "InspectRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphSlice"
+   },
+   "safety": "shared_context_read"
+  },
+  "journal_status": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "JournalStatusRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphJournalResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "mutate": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "MutateRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "SemanticMutationResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "neighborhood": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "NeighborhoodRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphSlice"
+   },
+   "safety": "shared_context_read"
+  },
+  "nudge": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "NudgeRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphNudgeResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "processing_status": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ProcessingStatusRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "IngestionEvent"
+   },
+   "safety": "shared_context_read"
+  },
+  "propose": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ProposeRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphMutationProposal"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "quality": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "QualityRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphQualityResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "read": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ReadRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphReadResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "rebuild_commits": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "RebuildCommitsRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphJournalResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "record": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "RecordRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "RecordReceipt"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "repair": {
+   "context_required": true,
+   "destructive": true,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "RepairRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "RepairReport"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "reset_context": {
+   "context_required": true,
+   "destructive": true,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResetContextRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "ResetContextResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "resolve": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResolveRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "AgentEnvelope"
+   },
+   "safety": "shared_context_read"
+  },
+  "resource_get": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResourceGetRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "ResourceBatchResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "resource_import": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResourceImportRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "ResourceImportResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "resource_index_build": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResourceIndexBuildRequest"
+   },
+   "resource_identity_fields": [
+    "doc"
+   ],
+   "resource_type": "resource_index",
+   "result": {
+    "kind": "ref",
+    "name": "DrainReport"
+   },
+   "safety": "shared_context_read_exclusive_resource_write"
+  },
+  "resource_index_rebuild": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResourceIndexRebuildRequest"
+   },
+   "resource_identity_fields": [
+    "doc"
+   ],
+   "resource_type": "resource_index",
+   "result": {
+    "kind": "ref",
+    "name": "ResourceIndexRebuildResult"
+   },
+   "safety": "shared_context_read_exclusive_resource_write"
+  },
+  "resource_index_status": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResourceIndexStatusRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "ResourceIndexStatus"
+   },
+   "safety": "shared_context_read"
+  },
+  "resource_list": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResourceListRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "ResourceListResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "resource_rm": {
+   "context_required": true,
+   "destructive": true,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResourceRmRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "ResourceDeleteResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "resource_status": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "ResourceStatusRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "ResourceStoreStatus"
+   },
+   "safety": "shared_context_read"
+  },
+  "revert_preview": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "RevertPreviewRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphJournalResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "rollback_preview": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "RollbackPreviewRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphJournalResult"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "search": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "SearchRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "AgentEnvelope"
+   },
+   "safety": "shared_context_read"
+  },
+  "search_entities": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "SearchEntitiesRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphEntitySearchResult"
+   },
+   "safety": "shared_context_read"
+  },
+  "submit_artifact": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "SubmitArtifactRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "EventReceipt"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "submit_event": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "SubmitEventRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "EventReceipt"
+   },
+   "safety": "exclusive_context_mutation"
+  },
+  "verify_commit": {
+   "context_required": true,
+   "destructive": false,
+   "family": "engine",
+   "request": {
+    "kind": "ref",
+    "name": "VerifyCommitRequest"
+   },
+   "resource_identity_fields": [],
+   "resource_type": null,
+   "result": {
+    "kind": "ref",
+    "name": "GraphIngestionVerificationResult"
+   },
+   "safety": "shared_context_read"
+  }
+ },
+ "protocol_version": 3,
+ "types": {
+  "Actor": {
+   "fields": [
+    {
+     "name": "user_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "surface",
+     "required": true,
+     "schema": {
+      "kind": "literal",
+      "values": [
+       "cli",
+       "mcp",
+       "http",
+       "webhook",
+       "system"
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "client_name",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "api_key",
+     "name": "auth_method",
+     "schema": {
+      "kind": "literal",
+      "values": [
+       "api_key",
+       "session",
+       "webhook_signature",
+       "system"
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.actor.Actor"
+  },
+  "AgentEnvelope": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "intent",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "items",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "EvidenceItem"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "coverage",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "CoverageReport"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "unsupported_includes",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "UnsupportedInclude"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": "unknown",
+     "name": "overall_confidence",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "as_of",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.agent_envelope.AgentEnvelope"
+  },
+  "ApplyPreviewRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "preview_id",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ApplyPreviewRequest"
+  },
+  "CatalogRequest": {
+   "fields": [
+    {
+     "default": null,
+     "name": "task",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "subgraph",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.CatalogRequest"
+  },
+  "Chunk": {
+   "fields": [
+    {
+     "name": "resource_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "doc",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "section",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "seq",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "name": "text",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "chars",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "name": "revision",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "source_ref",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "page",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "offset",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_store.Chunk"
+  },
+  "ChunkRef": {
+   "fields": [
+    {
+     "name": "seq",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "name": "label",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "page",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "offset",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_store.ChunkRef"
+  },
+  "ClaimClosureResolution": {
+   "fields": [
+    {
+     "name": "target",
+     "required": true,
+     "schema": {
+      "kind": "ref",
+      "name": "ClaimTarget"
+     }
+    },
+    {
+     "name": "before",
+     "required": true,
+     "schema": {
+      "kind": "ref",
+      "name": "ClaimInterval"
+     }
+    },
+    {
+     "name": "after",
+     "required": true,
+     "schema": {
+      "kind": "ref",
+      "name": "ClaimInterval"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.claim_corrections.ClaimClosureResolution"
+  },
+  "ClaimInterval": {
+   "fields": [
+    {
+     "name": "valid_at",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "invalid_at",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "valid_until",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.claim_corrections.ClaimInterval"
+  },
+  "ClaimTarget": {
+   "fields": [
+    {
+     "name": "claim_key",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "record_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.claim_corrections.ClaimTarget"
+  },
+  "CommitRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "plan_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "approved_by",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "verify",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": false,
+     "name": "defer_verification",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": true,
+     "name": "recover_stale",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.CommitRequest"
+  },
+  "CommitShowRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "commit_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 0,
+     "name": "offset",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 100,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.CommitShowRequest"
+  },
+  "CommitStatusRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "plan_id",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.CommitStatusRequest"
+  },
+  "CommitsRequest": {
+   "fields": [
+    {
+     "default": null,
+     "name": "cursor",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 50,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "actor",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "origin",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "logical_key",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.CommitsRequest"
+  },
+  "CoverageReport": {
+   "fields": [
+    {
+     "name": "include",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 0,
+     "name": "candidate_pool",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "graph_view",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "best_relevance",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "number"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.agent_envelope.CoverageReport"
+  },
+  "DataPlaneStatus": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "backend_profile",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "backend_ready",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": [],
+     "name": "reader_backed_includes",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "counts",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "freshness",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "quality",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": "lexical",
+     "name": "match_mode",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph_service.DataPlaneStatus"
+  },
+  "DataPlaneStatusRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.DataPlaneStatusRequest"
+  },
+  "DescribeRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "subgraph",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "view",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "include_examples",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.DescribeRequest"
+  },
+  "DescribeResult": {
+   "fields": [
+    {
+     "default": {},
+     "name": "document",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.results.DescribeResult"
+  },
+  "DisableRollbackRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.DisableRollbackRequest"
+  },
+  "DocumentManifest": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "doc",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "revision",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "name": "source_ref",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "source_kind",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "sections",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "SectionManifest"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "sections_added",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "sections_kept",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "sections_removed",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "warnings",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "pending_review_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "pending_review_sections",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "pending_review_reason",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_store.DocumentManifest"
+  },
+  "DrainReport": {
+   "fields": [
+    {
+     "name": "profile",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 0,
+     "name": "embedded",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "remaining",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "batches",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "elapsed_ms",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 0,
+     "name": "processed",
+     "schema": {
+      "kind": "integer"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_index.DrainReport"
+  },
+  "EventReceipt": {
+   "fields": [
+    {
+     "name": "event_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "literal",
+      "values": [
+       "queued",
+       "processing",
+       "done",
+       "error"
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "terminal_event",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "IngestionEvent"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "error",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "duplicate",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "job_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "reconciliation",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "any"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "extras",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "keys": {
+         "kind": "string"
+        },
+        "kind": "map",
+        "values": {
+         "kind": "any"
+        }
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.domain.ingestion_event_models.EventReceipt"
+  },
+  "EvidenceItem": {
+   "fields": [
+    {
+     "name": "include",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "candidate_key",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "score",
+     "required": true,
+     "schema": {
+      "kind": "number"
+     }
+    },
+    {
+     "name": "payload",
+     "required": true,
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "name": "coverage_status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "breakdown",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "number"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.agent_envelope.EvidenceItem"
+  },
+  "ExecutionMetadata": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "applied_at",
+     "required": true,
+     "schema": {
+      "kind": "datetime"
+     }
+    },
+    {
+     "name": "version_before",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "name": "version_after",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "name": "batch_fingerprint",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "request_fingerprint",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "affected_claim_record_ids",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": 2,
+     "name": "schema_version",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 1,
+     "name": "fingerprint_version",
+     "schema": {
+      "kind": "integer"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.mutation_execution.ExecutionMetadata"
+  },
+  "ExportSnapshotRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "destination",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 1,
+     "name": "version",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": true,
+     "name": "include_resources",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ExportSnapshotRequest"
+  },
+  "ExportSnapshotResult": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "location",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "2",
+     "name": "format_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 0,
+     "name": "entity_count",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "claim_count",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "payload",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "keys": {
+         "kind": "string"
+        },
+        "kind": "map",
+        "values": {
+         "kind": "any"
+        }
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.results.ExportSnapshotResult"
+  },
+  "GrantListRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantListRequest"
+  },
+  "GrantListResult": {
+   "fields": [
+    {
+     "default": [],
+     "name": "grants",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "PotGrantInfo"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantListResult"
+  },
+  "GrantRevokeRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "actor_id",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantRevokeRequest"
+  },
+  "GrantRevokeResult": {
+   "fields": [
+    {
+     "default": "",
+     "name": "pot_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "actor_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": false,
+     "name": "revoked",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantRevokeResult"
+  },
+  "GrantSetRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "actor_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "writer",
+     "name": "role",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.GrantSetRequest"
+  },
+  "GraphCatalogResult": {
+   "fields": [
+    {
+     "name": "graph_contract_version",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "ontology_version",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "commands",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "truth_classes",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "mutation_operations",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "review_required_operations",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "deferred_operations",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "views",
+     "required": true,
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "entity_types",
+     "required": true,
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "predicates",
+     "required": true,
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": "lexical",
+     "name": "match_mode",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "source_authorities",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "extensions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "string"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph_service.GraphCatalogResult"
+  },
+  "GraphEdge": {
+   "fields": [
+    {
+     "name": "predicate",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "from_key",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "to_key",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "properties",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph.inspection.GraphEdge"
+  },
+  "GraphEntityCandidate": {
+   "fields": [
+    {
+     "name": "key",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "labels",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "name",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "summary",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "description",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 0.0,
+     "name": "score",
+     "schema": {
+      "kind": "number"
+     }
+    },
+    {
+     "default": [],
+     "name": "supporting_claims",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph_service.GraphEntityCandidate"
+  },
+  "GraphEntitySearchResult": {
+   "fields": [
+    {
+     "name": "entities",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "GraphEntityCandidate"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "match_mode",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "graph_contract_version",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "ontology_version",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "subgraph_versions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": "possible_matches",
+     "name": "match_status",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": false,
+     "name": "more_results_available",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": [],
+     "name": "matching_repositories",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph_service.GraphEntitySearchResult"
+  },
+  "GraphHistoryEntry": {
+   "fields": [
+    {
+     "name": "kind",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "status",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "occurred_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "plan_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "claim_key",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "entity_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "subgraph",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "truth",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "source_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "evidence",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "summary",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "payload",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_history.GraphHistoryEntry"
+  },
+  "GraphHistoryResult": {
+   "fields": [
+    {
+     "name": "ok",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "filters",
+     "required": true,
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": [],
+     "name": "entries",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "GraphHistoryEntry"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "warnings",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "unsupported",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "recommended_next_action",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "subgraph_versions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": "v2",
+     "name": "graph_contract_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "2026-06-graph",
+     "name": "ontology_version",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_history.GraphHistoryResult"
+  },
+  "GraphInboxItem": {
+   "fields": [
+    {
+     "name": "item_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "summary",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "details",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "evidence",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "source_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "suspected_subgraphs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "created_by",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default_factory": "potpie_context_engine.core.graph_inbox.GraphInboxItem.<lambda>",
+     "name": "created_at",
+     "schema": {
+      "kind": "datetime"
+     }
+    },
+    {
+     "default": null,
+     "name": "claimed_by",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "claimed_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "claim_expires_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "closed_by",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "closed_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "linked_plan_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "linked_mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "rejection_reason",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_inbox.GraphInboxItem"
+  },
+  "GraphInboxResult": {
+   "fields": [
+    {
+     "name": "ok",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "action",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "item",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "GraphInboxItem"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "items",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "GraphInboxItem"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "filters",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": [],
+     "name": "warnings",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "recommended_next_action",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "v2",
+     "name": "graph_contract_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "2026-06-graph",
+     "name": "ontology_version",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_inbox.GraphInboxResult"
+  },
+  "GraphIngestionVerificationResult": {
+   "fields": [
+    {
+     "name": "ok",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "plan_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "readback_claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "missing_claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": 0,
+     "name": "readback_count",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": {},
+     "name": "content_readback",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "quality_status",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "quality_counts",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "quality_delta",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "quality_regressions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "integer"
+       }
+      }
+     }
+    },
+    {
+     "default": [],
+     "name": "checked_reports",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "warnings",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "unsupported",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "recommended_next_action",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "subgraph_versions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": "deferred",
+     "name": "state",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "inconclusive",
+     "name": "outcome",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "checked_revision",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "verified_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_plans.GraphIngestionVerificationResult"
+  },
+  "GraphJournalResult": {
+   "fields": [
+    {
+     "default": {},
+     "name": "document",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.results.GraphJournalResult"
+  },
+  "GraphMutationApproval": {
+   "fields": [
+    {
+     "name": "approved_by",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "approved_at",
+     "required": true,
+     "schema": {
+      "kind": "datetime"
+     }
+    },
+    {
+     "default": null,
+     "name": "reason",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_plans.GraphMutationApproval"
+  },
+  "GraphMutationCommitResult": {
+   "fields": [
+    {
+     "name": "ok",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "plan_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "risk",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "applied_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "expected_subgraph_versions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "current_subgraph_versions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "new_subgraph_versions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": {
+      "claim_closures": [],
+      "claim_keys": [],
+      "edge_deletes": 0,
+      "edge_upserts": 0,
+      "entity_upserts": 0,
+      "invalidations": 0,
+      "retracted_claim_keys": []
+     },
+     "name": "diff",
+     "schema": {
+      "kind": "ref",
+      "name": "GraphMutationDiff"
+     }
+    },
+    {
+     "default": [],
+     "name": "claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "approval",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "GraphMutationApproval"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "verification",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "GraphIngestionVerificationResult"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "recommended_next_action",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "v1.5",
+     "name": "graph_contract_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "2026-06-graph",
+     "name": "ontology_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "execution",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "ExecutionMetadata"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "not_requested",
+     "name": "verification_state",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_plans.GraphMutationCommitResult"
+  },
+  "GraphMutationDiff": {
+   "fields": [
+    {
+     "default": 0,
+     "name": "entity_upserts",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "edge_upserts",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "edge_deletes",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "invalidations",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": [],
+     "name": "claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "retracted_claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "claim_closures",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "ClaimClosureResolution"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_plans.GraphMutationDiff"
+  },
+  "GraphMutationProposal": {
+   "fields": [
+    {
+     "name": "ok",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "plan_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "risk",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "auto_applicable",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "expires_at",
+     "required": true,
+     "schema": {
+      "kind": "datetime"
+     }
+    },
+    {
+     "name": "expected_subgraph_versions",
+     "required": true,
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "name": "current_subgraph_versions",
+     "required": true,
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "name": "diff",
+     "required": true,
+     "schema": {
+      "kind": "ref",
+      "name": "GraphMutationDiff"
+     }
+    },
+    {
+     "default": [],
+     "name": "warnings",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "issues",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "rejected_operations",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "review_required_operations",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "recommended_next_action",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "v1.5",
+     "name": "graph_contract_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "2026-06-graph",
+     "name": "ontology_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "approval",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "GraphMutationApproval"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_plans.GraphMutationProposal"
+  },
+  "GraphNode": {
+   "fields": [
+    {
+     "name": "key",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "labels",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "properties",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph.inspection.GraphNode"
+  },
+  "GraphNudgeResult": {
+   "fields": [
+    {
+     "name": "ok",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "silent",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "event",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "inject_context",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "instruction",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "injected_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "views_read",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "v1.5",
+     "name": "graph_contract_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "2026-06-graph",
+     "name": "ontology_version",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.domain.nudge.GraphNudgeResult"
+  },
+  "GraphQualityFinding": {
+   "fields": [
+    {
+     "name": "finding_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "kind",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "severity",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "summary",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "entity_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "predicates",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "subgraph",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "source_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "evidence",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "suggested_action",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "payload",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_quality.GraphQualityFinding"
+  },
+  "GraphQualityResult": {
+   "fields": [
+    {
+     "name": "ok",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "report",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "findings",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "GraphQualityFinding"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "metrics",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "filters",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": [],
+     "name": "warnings",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "unsupported",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "recommended_next_action",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "subgraph_versions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": "v2",
+     "name": "graph_contract_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "2026-06-graph",
+     "name": "ontology_version",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.graph_quality.GraphQualityResult"
+  },
+  "GraphReadResult": {
+   "fields": [
+    {
+     "name": "view",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "subgraph",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": true,
+     "name": "ok",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "status",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "message",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "items",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "coverage",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "freshness",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "quality",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": [],
+     "name": "source_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": "lexical",
+     "name": "match_mode",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": true,
+     "name": "backed",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": "flat_claims",
+     "name": "read_shape",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "inline_relations",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": 0,
+     "name": "inline_relation_count",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": "",
+     "name": "graph_contract_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "ontology_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "subgraph_versions",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": [],
+     "name": "unsupported",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "warnings",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "as_of",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "compact",
+     "name": "detail",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "summary",
+     "name": "relations",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "effective_request",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "fallback_context",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "output_budget",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph_service.GraphReadResult"
+  },
+  "GraphSlice": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "nodes",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "GraphNode"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "edges",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "GraphEdge"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": false,
+     "name": "truncated",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph.inspection.GraphSlice"
+  },
+  "GraphSliceRequest": {
+   "fields": [
+    {
+     "default": false,
+     "name": "include_invalidated",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "limit",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.GraphSliceRequest"
+  },
+  "HistoryRequest": {
+   "fields": [
+    {
+     "default": null,
+     "name": "entity_key",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "claim_key",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "subgraph",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "plan_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "since",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "until",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 50,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": true,
+     "name": "include_claims",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.HistoryRequest"
+  },
+  "ImportSnapshotRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "source",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 1,
+     "name": "version",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": {},
+     "name": "payload",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ImportSnapshotRequest"
+  },
+  "InboxAddRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "summary",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "details",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "evidence",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "source_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "suspected_subgraphs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "created_by",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.InboxAddRequest"
+  },
+  "InboxClaimRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "item_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "claimed_by",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.InboxClaimRequest"
+  },
+  "InboxCloseRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "item_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "closed_by",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "linked_plan_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "linked_mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "rejection_reason",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.InboxCloseRequest"
+  },
+  "InboxListRequest": {
+   "fields": [
+    {
+     "default": [],
+     "name": "status",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "claimed_by",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "suspected_subgraph",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "source_ref",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "since",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "until",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 50,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.InboxListRequest"
+  },
+  "InboxMarkAppliedRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "item_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "closed_by",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "linked_plan_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "linked_mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.InboxMarkAppliedRequest"
+  },
+  "InboxMarkRejectedRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "item_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "closed_by",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "rejection_reason",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.InboxMarkRejectedRequest"
+  },
+  "InboxShowRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "item_id",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.InboxShowRequest"
+  },
+  "IndexReport": {
+   "fields": [
+    {
+     "name": "doc",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "profile",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 0,
+     "name": "sections",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "chunks",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "windows",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "pending_embeddings",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "removed_chunks",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_index.IndexReport"
+  },
+  "IngestionEvent": {
+   "fields": [
+    {
+     "name": "event_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "ingestion_kind",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "source_channel",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "source_system",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "event_type",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "action",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "source_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "dedup_key",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "literal",
+      "values": [
+       "queued",
+       "processing",
+       "done",
+       "error"
+      ]
+     }
+    },
+    {
+     "name": "stage",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "literal",
+        "values": [
+         "accepted",
+         "planning",
+         "planned",
+         "executing",
+         "completed",
+         "failed"
+        ]
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "submitted_at",
+     "required": true,
+     "schema": {
+      "kind": "datetime"
+     }
+    },
+    {
+     "name": "started_at",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "completed_at",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "error",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "name": "payload",
+     "required": true,
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": 0,
+     "name": "step_total",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "step_done",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "step_error",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": "github",
+     "name": "provider",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "github.com",
+     "name": "provider_host",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "repo_name",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "source_event_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "job_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "correlation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "idempotency_key",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "occurred_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "raw_status",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "actor",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "Actor"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.domain.ingestion_event_models.IngestionEvent"
+  },
+  "InspectRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "entity_key",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 2,
+     "name": "depth",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": "both",
+     "name": "direction",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "predicates",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": 50,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.InspectRequest"
+  },
+  "JournalStatusRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.JournalStatusRequest"
+  },
+  "MutateRequest": {
+   "fields": [
+    {
+     "default": {},
+     "name": "mutation",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.MutateRequest"
+  },
+  "NeighborhoodRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "entity_key",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 2,
+     "name": "depth",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": "both",
+     "name": "direction",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "predicates",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": 50,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.NeighborhoodRequest"
+  },
+  "NudgeRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "event",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "session_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "scope",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "path",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "query",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 5,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.NudgeRequest"
+  },
+  "PotAggregateStatus": {
+   "fields": [
+    {
+     "name": "active_pot",
+     "required": true,
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "PotInfo"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 0,
+     "name": "pot_count",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": [],
+     "name": "sources",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "SourceInfo"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": false,
+     "name": "backend_ready",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.pots.contracts.PotAggregateStatus"
+  },
+  "PotCounts": {
+   "fields": [
+    {
+     "default": null,
+     "name": "source_count",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "counts",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotCounts"
+  },
+  "PotCreateRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "name",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "repo",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "use",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotCreateRequest"
+  },
+  "PotGrantInfo": {
+   "fields": [
+    {
+     "default": "",
+     "name": "pot_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "actor_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "role",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotGrantInfo"
+  },
+  "PotInfo": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "name",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": false,
+     "name": "active",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": false,
+     "name": "archived",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "created_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "created",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "boolean"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.pots.contracts.PotInfo"
+  },
+  "PotListRequest": {
+   "fields": [
+    {
+     "default": null,
+     "name": "repo",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "include_archived",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": false,
+     "name": "include_status",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotListRequest"
+  },
+  "PotListResult": {
+   "fields": [
+    {
+     "default": [],
+     "name": "pots",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "PotInfo"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "active_pot_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "repo_default_pot_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "status",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "ref",
+       "name": "PotCounts"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotListResult"
+  },
+  "PotStatusRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotStatusRequest"
+  },
+  "PotUseRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.PotUseRequest"
+  },
+  "ProcessingStatusRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "event_id",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ProcessingStatusRequest"
+  },
+  "ProposeRequest": {
+   "fields": [
+    {
+     "default": {},
+     "name": "mutation",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "ttl_seconds",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "approved_by",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ProposeRequest"
+  },
+  "QualityRequest": {
+   "fields": [
+    {
+     "default": "summary",
+     "name": "report",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "subgraph",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 50,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0.5,
+     "name": "confidence_threshold",
+     "schema": {
+      "kind": "number"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.QualityRequest"
+  },
+  "ReadRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "subgraph",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "view",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "query",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "scope",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": 12,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "as_of",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "since",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "until",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "include_invalidated",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": "balanced",
+     "name": "freshness_preference",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "depth",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "direction",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "environment",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "source_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": "compact",
+     "name": "detail",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "summary",
+     "name": "relations",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "query_threshold",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "number"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ReadRequest"
+  },
+  "RebuildCommitsRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.RebuildCommitsRequest"
+  },
+  "RecordReceipt": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "record_type",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "accepted",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "record_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "recorded",
+     "name": "status",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 0,
+     "name": "mutations_applied",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.agent_context.RecordReceipt"
+  },
+  "RecordRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "record_type",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "summary",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "details",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": {},
+     "name": "scope",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": [],
+     "name": "source_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "idempotency_key",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.RecordRequest"
+  },
+  "RepairFinding": {
+   "fields": [
+    {
+     "name": "target",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "count",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": [],
+     "name": "samples",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": "",
+     "name": "detail",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "recommended_next_action",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph.analytics.RepairFinding"
+  },
+  "RepairReport": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "targets",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "repaired",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "findings",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "RepairFinding"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": true,
+     "name": "ok",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": "completed",
+     "name": "status",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph.analytics.RepairReport"
+  },
+  "RepairRequest": {
+   "fields": [
+    {
+     "default": [],
+     "name": "targets",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.RepairRequest"
+  },
+  "RepoDefaultClearRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "repo",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.RepoDefaultClearRequest"
+  },
+  "RepoDefaultClearResult": {
+   "fields": [
+    {
+     "default": "",
+     "name": "repo",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": false,
+     "name": "cleared",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.RepoDefaultClearResult"
+  },
+  "RepoDefaultResult": {
+   "fields": [
+    {
+     "default": "",
+     "name": "repo",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "pot_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.RepoDefaultResult"
+  },
+  "RepoDefaultSetRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "repo",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.RepoDefaultSetRequest"
+  },
+  "ResetContextRequest": {
+   "fields": [
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResetContextRequest"
+  },
+  "ResetContextResult": {
+   "fields": [
+    {
+     "name": "context_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "reset",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "resources_purged",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "boolean"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "execution",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "ExecutionMetadata"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "not_configured",
+     "name": "resources_status",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.results.ResetContextResult"
+  },
+  "ResolveRequest": {
+   "fields": [
+    {
+     "default": null,
+     "name": "task",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "intent",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "include",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "exclude",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "scope",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": "fast",
+     "name": "mode",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "references_only",
+     "name": "source_policy",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 12,
+     "name": "max_items",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "as_of",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "since",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "until",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "include_invalidated",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": "balanced",
+     "name": "freshness_preference",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResolveRequest"
+  },
+  "ResourceBatchResult": {
+   "fields": [
+    {
+     "name": "chunks",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "Chunk"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "outcomes",
+     "required": true,
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "ResourceReadOutcome"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_store.ResourceBatchResult"
+  },
+  "ResourceDeleteResult": {
+   "fields": [
+    {
+     "name": "removed",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "graph",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "SemanticMutationResult"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "review_required_claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "review_marker_errors",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.resource_to_semantic.ResourceDeleteResult"
+  },
+  "ResourceGetRequest": {
+   "fields": [
+    {
+     "default": [],
+     "name": "resource_ids",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": false,
+     "name": "with_neighbors",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResourceGetRequest"
+  },
+  "ResourceImportRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "doc",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "files",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "string"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "source_ref",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "source_kind",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResourceImportRequest"
+  },
+  "ResourceImportResult": {
+   "fields": [
+    {
+     "name": "manifest",
+     "required": true,
+     "schema": {
+      "kind": "ref",
+      "name": "DocumentManifest"
+     }
+    },
+    {
+     "default": null,
+     "name": "graph",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "SemanticMutationResult"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "missing_claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "scope_claim_count",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "index",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "IndexReport"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "review_required_claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "review_marker_errors",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.resource_to_semantic.ResourceImportResult"
+  },
+  "ResourceIndexBuildRequest": {
+   "fields": [
+    {
+     "default": null,
+     "name": "doc",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "wait",
+     "schema": {
+      "kind": "boolean"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResourceIndexBuildRequest"
+  },
+  "ResourceIndexRebuildRequest": {
+   "fields": [
+    {
+     "default": null,
+     "name": "doc",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResourceIndexRebuildRequest"
+  },
+  "ResourceIndexRebuildResult": {
+   "fields": [
+    {
+     "default": [],
+     "name": "reports",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "IndexReport"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.results.ResourceIndexRebuildResult"
+  },
+  "ResourceIndexStatus": {
+   "fields": [
+    {
+     "name": "profile",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "ready",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": [],
+     "name": "capabilities",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": "disabled",
+     "name": "match_mode",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 0,
+     "name": "documents",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "chunks",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "windows",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "pending_embeddings",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "embedder",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "dimensions",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "location",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "replica",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "shared_store",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_index.ResourceIndexStatus"
+  },
+  "ResourceIndexStatusRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResourceIndexStatusRequest"
+  },
+  "ResourceListRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "doc",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "section",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResourceListRequest"
+  },
+  "ResourceListResult": {
+   "fields": [
+    {
+     "name": "doc",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "sections",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "SectionManifest"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.results.ResourceListResult"
+  },
+  "ResourceReadOutcome": {
+   "fields": [
+    {
+     "name": "resource_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "chunk_ids",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "errors",
+     "schema": {
+      "items": {
+       "keys": {
+        "kind": "string"
+       },
+       "kind": "map",
+       "values": {
+        "kind": "any"
+       }
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_store.ResourceReadOutcome"
+  },
+  "ResourceRmRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "doc",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResourceRmRequest"
+  },
+  "ResourceStatusRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.ResourceStatusRequest"
+  },
+  "ResourceStoreStatus": {
+   "fields": [
+    {
+     "name": "kind",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "ready",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "location",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "documents",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_store.ResourceStoreStatus"
+  },
+  "RevertPreviewRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "commit_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "expected_head",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.RevertPreviewRequest"
+  },
+  "RollbackPreviewRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "target_commit_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "expected_head",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.RollbackPreviewRequest"
+  },
+  "SearchEntitiesRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "query",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "type",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "predicate",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "subgraph",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "scope",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "truth",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "source_system",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "source_family",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "since",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "until",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "environment",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "external_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "source_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": 10,
+     "name": "limit",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "supporting_claims",
+     "schema": {
+      "kind": "integer"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.SearchEntitiesRequest"
+  },
+  "SearchRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "query",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "include",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": {},
+     "name": "scope",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": "fast",
+     "name": "mode",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "references_only",
+     "name": "source_policy",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 12,
+     "name": "max_items",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": null,
+     "name": "intent",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.SearchRequest"
+  },
+  "SectionManifest": {
+   "fields": [
+    {
+     "name": "slug",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "title",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "summary",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "ordinal",
+     "required": true,
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "name": "content_hash",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": [],
+     "name": "chunks",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "ChunkRef"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": false,
+     "name": "summary_pending",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "revision",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.resource_store.SectionManifest"
+  },
+  "SemanticMutationResult": {
+   "fields": [
+    {
+     "name": "ok",
+     "required": true,
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "name": "status",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "risk",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": false,
+     "name": "auto_committed",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "would_apply",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "boolean"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "mutation_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": 0,
+     "name": "operations_accepted",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "operations_applied",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": {},
+     "name": "mutations_applied",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "integer"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "preview",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "keys": {
+         "kind": "string"
+        },
+        "kind": "map",
+        "values": {
+         "kind": "integer"
+        }
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "subgraphs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "warnings",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": [],
+     "name": "issues",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "SemanticMutationValidationIssue"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "v1.5",
+     "name": "graph_contract_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "2026-06-graph",
+     "name": "ontology_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "plan_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "review_required_claim_keys",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.semantic_mutations.SemanticMutationResult"
+  },
+  "SemanticMutationValidationIssue": {
+   "fields": [
+    {
+     "name": "code",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "message",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "error",
+     "name": "severity",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "op_index",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "integer"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.semantic_mutations.SemanticMutationValidationIssue"
+  },
+  "SnapshotManifest": {
+   "fields": [
+    {
+     "name": "pot_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "location",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "2",
+     "name": "format_version",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": 0,
+     "name": "entity_count",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": 0,
+     "name": "claim_count",
+     "schema": {
+      "kind": "integer"
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.ports.graph.snapshot.SnapshotManifest"
+  },
+  "SourceAddRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "kind",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "location",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "name",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.SourceAddRequest"
+  },
+  "SourceInfo": {
+   "fields": [
+    {
+     "name": "source_id",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "kind",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "name",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "location",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "last_sync_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "sync_mode",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "unknown",
+     "name": "status",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.pots.contracts.SourceInfo"
+  },
+  "SourceListRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.SourceListRequest"
+  },
+  "SourceListResult": {
+   "fields": [
+    {
+     "default": [],
+     "name": "sources",
+     "schema": {
+      "items": {
+       "kind": "ref",
+       "name": "SourceInfo"
+      },
+      "kind": "array"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.SourceListResult"
+  },
+  "SubmitArtifactRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "source_system",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "artifact_type",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "artifact_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "artifact",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "source_ref",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": "engine",
+     "name": "source_channel",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "idempotency_key",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "provider",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "provider_host",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "repo_name",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "occurred_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "actor",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "Actor"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "wait",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "timeout_seconds",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "number"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.SubmitArtifactRequest"
+  },
+  "SubmitEventRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "source_system",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "event_type",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "action",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "source_id",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "payload",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": "agent_reconciliation",
+     "name": "ingestion_kind",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "engine",
+     "name": "source_channel",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": {},
+     "name": "metadata",
+     "schema": {
+      "keys": {
+       "kind": "string"
+      },
+      "kind": "map",
+      "values": {
+       "kind": "any"
+      }
+     }
+    },
+    {
+     "default": null,
+     "name": "idempotency_key",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "dedup_key",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "event_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "provider",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "provider_host",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "repo_name",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "source_event_id",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": [],
+     "name": "artifact_refs",
+     "schema": {
+      "items": {
+       "kind": "string"
+      },
+      "kind": "array"
+     }
+    },
+    {
+     "default": null,
+     "name": "occurred_at",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "datetime"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": null,
+     "name": "actor",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "ref",
+        "name": "Actor"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    },
+    {
+     "default": false,
+     "name": "wait",
+     "schema": {
+      "kind": "boolean"
+     }
+    },
+    {
+     "default": null,
+     "name": "timeout_seconds",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "number"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.SubmitEventRequest"
+  },
+  "UnsupportedInclude": {
+   "fields": [
+    {
+     "name": "name",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "name": "reason",
+     "required": true,
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.core.agent_envelope.UnsupportedInclude"
+  },
+  "VerifyCommitRequest": {
+   "fields": [
+    {
+     "default": "",
+     "name": "plan_id",
+     "schema": {
+      "kind": "string"
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie_context_engine.requests.VerifyCommitRequest"
+  },
+  "WhoamiRequest": {
+   "fields": [],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.WhoamiRequest"
+  },
+  "WhoamiResult": {
+   "fields": [
+    {
+     "default": "",
+     "name": "subject",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": "",
+     "name": "mode",
+     "schema": {
+      "kind": "string"
+     }
+    },
+    {
+     "default": null,
+     "name": "detail",
+     "schema": {
+      "kind": "union",
+      "options": [
+       {
+        "kind": "string"
+       },
+       {
+        "kind": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "kind": "object",
+   "python": "potpie.runtime.host_operations.WhoamiResult"
+  }
+ }
+}

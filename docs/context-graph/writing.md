@@ -18,7 +18,7 @@ Two framing rules up front:
   stamps `graph_contract_version="v2"` only as a transport version string). There is no
   "future Graph V2" write surface — propose/commit are live.
 - **The canonical write door is `graph propose` → `graph commit --verify`.**
-  `graph mutate`, direct semantic writes, and `record` / `context_record` use the
+  Direct semantic writes and `record` / `context_record` use the
   same persisted preparation and authoritative execution contract.
 
 ---
@@ -97,8 +97,7 @@ fictional (it survives only as a stale comment in `domain/reconciliation.py`).
 > are **both empty tuples**. Review/blocking is decided **at runtime** by `MutationRisk`
 > (low/medium/high) — see §3 — not by which op you used. Old docs that called `supersede_claim`
 > or `merge_duplicate_entities` "usually review-required" are wrong: they auto-apply when
-> `graph propose --approved-by <user-ref>` pre-approves the plan (the legacy `graph mutate`
-> spells it `--allow-review-required --approved-by`), otherwise they return `review_required`
+> `graph propose --approved-by <user-ref>` pre-approves the plan; otherwise they return `review_required`
 > because of their runtime risk and `graph commit <plan_id> --approved-by <user-ref> --verify`
 > applies them.
 
@@ -176,7 +175,7 @@ prints a schema-only skeleton (placeholders only — it never reads the repo or 
 The internal structural tier (`domain/graph_mutations.py`: `EntityUpsert`, `EdgeUpsert`,
 `EdgeDelete`, `InvalidationOp` + `ProvenanceRef`/`ProvenanceContext`) is what these flat ops
 *lower into*; agents never author it directly. Those compose a `MutationBatch`
-(= `ReconciliationPlan`, `domain/reconciliation.py`).
+(`core/reconciliation.py`).
 
 ---
 
@@ -340,15 +339,11 @@ allow recoverable retries.
 `record_to_semantic` maps each `record_type` to fixed semantic op(s): preference/policy →
 `assert_claim POLICY_APPLIES_TO` (truth=preference, `decisions` subgraph); bug_pattern/fix →
 REPRODUCES + RESOLVED/ATTEMPTED_FIX_FAILED (`debugging`); verification → VERIFIED;
-decision → DECIDED (+AFFECTS, truth=user_decision); unknown types → free-form `RELATED_TO`. It
+decision → DECIDED (+AFFECTS, truth=user_decision); doc_reference → DOCUMENTS;
+free-form notes → RELATED_TO. It
 sets `allow_review_required=True, approved_by="context_record"` so a deliberate record write
 (including medium-risk decisions) auto-applies; it never generates supersede/merge.
-The bridge is exposed by the `potpie record` compatibility command.
-
-> **`graph mutate` is a legacy wrapper, not Spine B.** The CLI `graph mutate`
-> (`commands/graph.py`) internally calls workbench **propose → commit** and emits a legacy
-> warning steering you to propose/commit. So `DefaultGraphService.mutate` is reached *only* via
-> `record`/`context_record`, never via `graph mutate`.
+The bridge is exposed by `potpie record`.
 
 ---
 
@@ -457,7 +452,6 @@ Full flags live in [cli-flow.md](./cli-flow.md); the write loop discipline is ta
 | `graph propose --file mutation.json [--ttl 1h]` | Spine A — validate + persist plan (no write) |
 | `graph commit <plan_id> --verify [--approved-by]` | Spine A — apply persisted plan, read-back verify |
 | `graph bulk apply --file <ndjson> [--chunk-size] [--verify]` | Spine A — chunked multi-plan apply |
-| `graph mutate --file … [--dry-run] [--allow-review-required] [--approved-by]` | **legacy wrapper** over propose+commit |
 | `graph mutation-template --kind <…>` | static schema-only skeleton (no host call) |
 | `record --type … --summary …` | Spine B — record→semantic bridge |
 | `graph history [--entity\|--claim\|--plan\|--mutation\|--subgraph]` | committed-write audit trail |

@@ -6,7 +6,6 @@ strategy means adding a profile here; it never means changing the reader, the
 facade, or the CLI.
 
     qdrant_hybrid  SQLite BM25 + Qdrant vectors               — the default
-    sqlite_hybrid compatibility name for qdrant_hybrid
     sqlite_fts     BM25 only, stdlib sqlite3 alone
     none           nothing; search returns match_mode="disabled"
 
@@ -46,15 +45,11 @@ from potpie_context_engine.adapters.outbound.resources.index.qdrant_hybrid impor
 
 KNOWN_PROFILES: tuple[str, ...] = (
     "qdrant_hybrid",
-    "sqlite_hybrid",
     "sqlite_fts",
     "none",
 )
 
 DEFAULT_PROFILE = "qdrant_hybrid"
-
-# Keep the existing public import and persisted profile spelling compatible.
-SqliteHybridResourceIndex = QdrantHybridResourceIndex
 
 #: Truthy values that turn on the shared-store honesty note in ``status``. The
 #: deployer is the only party that knows whether the resource *files* sit on a
@@ -152,7 +147,6 @@ __all__ = [
     "QdrantHybridResourceIndex",
     "ResourceIndexDrain",
     "SqliteFtsResourceIndex",
-    "SqliteHybridResourceIndex",
     "build_resource_index",
     "default_resource_index_profile",
     "resource_store_is_shared",

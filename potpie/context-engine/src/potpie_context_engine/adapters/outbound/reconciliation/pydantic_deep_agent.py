@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from potpie_context_engine.bootstrap import sentry_metrics_runtime
-from potpie_context_engine.core.context_events import ContextEvent, EventRef
+from potpie_context_engine.core.context_events import ContextEvent
 from potpie_context_engine.core.event_playbooks import (
     EventPlaybook,
     find_playbook,
@@ -44,7 +44,8 @@ from potpie_context_engine.domain.ports.agent_execution_log import (
     AgentExecutionLogPort,
     NoOpAgentExecutionLog,
 )
-from potpie_context_engine.domain.ports.context_graph import ContextGraphPort
+from potpie_context_engine.core.ports.graph_service import GraphService
+from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 from potpie_context_engine.domain.ports.event_stream import (
     EventStreamPublisherPort,
     NoOpEventStreamPublisher,
@@ -69,12 +70,6 @@ from potpie_context_engine.adapters.outbound.reconciliation.ontology_prompt impo
 from potpie_context_engine.adapters.outbound.reconciliation.context_graph_tools import (
     build_initial_context_snapshot,
 )
-from potpie_context_engine.adapters.outbound.reconciliation.llm_plan_convert import (
-    llm_plan_to_reconciliation_plan,
-)
-from potpie_context_engine.adapters.outbound.reconciliation.llm_plan_schema import (
-    LlmReconciliationPlan,
-)
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelMessage
@@ -98,18 +93,13 @@ Read tools — learn what's already in the graph before deciding what to write:
 
 Mutation tool — ``apply_graph_mutations(plan, event_id, summary)``. Call it
 once per logical group of mutations (typically once per event). ``plan`` is a
-structured object:
-    summary: str (one-line)
-    entity_upserts: list[{entity_key, labels, properties}]
-    edge_upserts: list[{edge_type, from_entity_key, to_entity_key, properties}]
-    edge_deletes: list[{edge_type, from_entity_key, to_entity_key}]
-    invalidations: list[{reason, target_entity_key?, edge_type?, from_entity_key?, to_entity_key?}]
-    evidence: list[{kind, ref, metadata?}]
-    confidence: float | null
-    warnings: list[str]
-It is idempotent on stable entity_keys — safe to retry the same plan if a
-prior run partially succeeded. For the stable-key cookbook, the label/edge
-reference, and worked plan examples, load the ``graph-mutation-plan`` skill.
+the canonical semantic-mutation object with an ``operations`` list. Each operation
+uses its declared ``op`` (for example ``upsert_entity``, ``link_entities`` or
+``assert_claim``), canonical subject/object types, predicate, description and
+source evidence. The runtime binds the pot and derives a stable event identity;
+retry the same operations after an uncertain response. High-risk corrections
+remain subject to their normal review gate. Load ``graph-mutation-plan`` for
+operation examples.
 
 Event-completion control:
 - ``mark_events_processed(event_ids, summary)``: PREFERRED — after applying
@@ -170,7 +160,7 @@ class _BatchRunState:
     pot_id: str
     repo_name: str | None
     events_by_id: dict[str, ContextEvent]
-    context_graph: ContextGraphPort
+    graph_service: GraphService
     completed_event_ids: list[str] = field(default_factory=list)
     finish_called: bool = False
     finish_summary: str | None = None
@@ -238,6 +228,8 @@ def _skills_enabled_for(ctx: BatchAgentContext) -> bool:
 def _provenance_from_event(ev: ContextEvent, *, agent_name: str) -> ProvenanceContext:
     actor = getattr(ev, "actor", None)
     return ProvenanceContext(
+        source_event_id=ev.event_id,
+        source_system=ev.source_system,
         source_kind=ev.event_type or ev.ingestion_kind,
         source_ref=ev.source_id or ev.source_event_id,
         event_occurred_at=ev.occurred_at,
@@ -669,7 +661,7 @@ class PydanticDeepReconciliationAgent:
         )
         self._instructions = instructions or _RECONCILIATION_INSTRUCTIONS
         self._tools_port: ReconciliationToolsPort | None = tools
-        self._context_graph: ContextGraphPort | None = None
+        self._graph_service: GraphService | None = None
         self._extra_tool_builders: list[Any] = []
         self._telemetry: TelemetryPort = telemetry or NoOpTelemetry()
         self._stream_publisher: EventStreamPublisherPort = (
@@ -680,9 +672,9 @@ class PydanticDeepReconciliationAgent:
         """Attach (or replace) the bounded read-only context tools."""
         self._tools_port = tools
 
-    def set_context_graph(self, context_graph: ContextGraphPort | None) -> None:
+    def set_graph_service(self, graph_service: GraphService | None) -> None:
         """Required for the mutation tool (``apply_graph_mutations``)."""
-        self._context_graph = context_graph
+        self._graph_service = graph_service
 
     def set_telemetry(self, telemetry: TelemetryPort | None) -> None:
         """Replace the cost/drift telemetry sink (default: NoOp)."""
@@ -709,7 +701,7 @@ class PydanticDeepReconciliationAgent:
             "toolset_version": "batch-tools-v1",
             "model": self._model,
             "has_context_tools": self._tools_port is not None,
-            "has_context_graph": self._context_graph is not None,
+            "has_graph_service": self._graph_service is not None,
         }
 
     def _agent_identity(self) -> tuple[str, str, str]:
@@ -731,10 +723,10 @@ class PydanticDeepReconciliationAgent:
         # it (message history + completion bookkeeping in one store).
         del checkpoints
         agent_name, agent_version, toolset_version = self._agent_identity()
-        if self._context_graph is None:
+        if self._graph_service is None:
             return BatchAgentOutcome(
                 ok=False,
-                error="context_graph_unavailable",
+                error="graph_service_unavailable",
                 agent_name=agent_name,
                 agent_version=agent_version,
                 toolset_version=toolset_version,
@@ -779,7 +771,7 @@ class PydanticDeepReconciliationAgent:
             pot_id=ctx.pot_id,
             repo_name=ctx.repo_name,
             events_by_id={ev.event_id: ev for ev in ctx.events},
-            context_graph=self._context_graph,  # type: ignore[arg-type]
+            graph_service=self._graph_service,  # type: ignore[arg-type]
             sink=sink,
         )
         # A resumed run already finished these events — seed them so the
@@ -1146,7 +1138,7 @@ class PydanticDeepReconciliationAgent:
             "attempt_number": ctx.attempt_number,
             "events": [_event_summary(ev) for ev in ctx.events],
         }
-        if self._tools_port is not None and self._context_graph is not None:
+        if self._tools_port is not None and self._graph_service is not None:
             try:
                 snapshot = build_initial_context_snapshot(
                     self._tools_port,
@@ -1216,8 +1208,6 @@ class PydanticDeepReconciliationAgent:
         except Exception:
             from pydantic_deep import Tool  # type: ignore[import-not-found, no-redef]
 
-        agent_name = "pydantic-deep"
-
         try:
             _apply_cap = int(
                 os.getenv(
@@ -1258,7 +1248,6 @@ class PydanticDeepReconciliationAgent:
                         f"finish_batch."
                     ),
                 }
-            del summary  # surfaced via plan.summary
             event = state.events_by_id.get(event_id)
             if event is None:
                 return {
@@ -1267,34 +1256,41 @@ class PydanticDeepReconciliationAgent:
                     "known_event_ids": sorted(state.events_by_id.keys()),
                 }
             try:
-                llm_plan = LlmReconciliationPlan.model_validate(plan)
-            except Exception as exc:
-                return {"ok": False, "error": f"invalid_plan: {exc}"}
-            ref = EventRef(
-                event_id=event.event_id,
-                source_system=event.source_system,
-                pot_id=state.pot_id,
-            )
-            try:
-                domain_plan = llm_plan_to_reconciliation_plan(llm_plan, event_ref=ref)
-            except Exception as exc:
-                return {"ok": False, "error": f"plan_conversion_failed: {exc}"}
-            prov = _provenance_from_event(event, agent_name=agent_name)
-            try:
-                result = await state.context_graph.apply_plan_async(
-                    domain_plan,
-                    expected_pot_id=state.pot_id,
-                    provenance_context=prov,
+                payload = dict(plan)
+                from potpie_context_engine.core.mutation_execution import (
+                    request_fingerprint,
                 )
+
+                payload.pop("idempotency_key", None)
+                group_fingerprint = request_fingerprint(payload)
+                payload["idempotency_key"] = (
+                    f"ingestion:{event.event_id}:{group_fingerprint}"
+                )
+                payload["created_by"] = {
+                    "surface": "ingestion",
+                    "harness": "pydantic-deep",
+                }
+                request = SemanticMutationRequest.parse(
+                    payload,
+                    pot_id=state.pot_id,
+                    provenance_context=_provenance_from_event(
+                        event, agent_name="pydantic-deep"
+                    ),
+                )
+                result = await state.graph_service.mutate_async(request)
             except Exception as exc:
-                logger.exception("apply_plan failed for batch event %s", event_id)
+                logger.exception(
+                    "semantic mutation failed for batch event %s", event_id
+                )
                 return {"ok": False, "error": f"apply_failed: {exc}"}
-            ms = result.mutation_summary
             counts = {
-                "entity_upserts_applied": ms.entity_upserts_applied,
-                "edge_upserts_applied": ms.edge_upserts_applied,
-                "edge_deletes_applied": ms.edge_deletes_applied,
-                "invalidations_applied": ms.invalidations_applied,
+                f"{name}_applied": result.mutations_applied.get(name, 0)
+                for name in (
+                    "entity_upserts",
+                    "edge_upserts",
+                    "edge_deletes",
+                    "invalidations",
+                )
             }
             # Semantic stream record: powers the live "graph updated +N
             # nodes / +M edges" surface + the stylized graph pulse. Emitted
@@ -1306,18 +1302,19 @@ class PydanticDeepReconciliationAgent:
                     {
                         "title": "Graph updated",
                         "counts": counts,
-                        "summary": llm_plan.summary,
+                        "summary": summary,
                         "mutation_id": result.mutation_id,
                     },
                     event_id=event_id,
                 )
             return {
                 "ok": result.ok,
-                "error": result.error,
+                "error": result.detail,
                 "mutation_id": result.mutation_id,
                 "mutation_counts": counts,
-                "downgrades": list(result.downgrades or []),
-                "warnings": list(domain_plan.warnings or []),
+                "status": result.status,
+                "warnings": list(result.warnings),
+                "issues": [issue.to_dict() for issue in result.issues],
             }
 
         return [
@@ -1325,8 +1322,7 @@ class PydanticDeepReconciliationAgent:
                 apply_graph_mutations,
                 name="apply_graph_mutations",
                 description=(
-                    "Apply a structured graph mutation plan (entity/edge upserts/deletes "
-                    "+ invalidations) for a single event in this batch. Idempotent on stable "
+                    "Apply a structured graph mutation plan (canonical semantic operations) for a single event in this batch. Idempotent on stable "
                     "entity_keys. Call once per event you process."
                 ),
             )

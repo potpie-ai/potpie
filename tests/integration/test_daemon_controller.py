@@ -287,6 +287,8 @@ async def test_controller_restart_composes_fresh_boot_identity(
     tmp_path: Path,
     short_socket_dir: Path,
 ) -> None:
+    from potpie.daemon.process_liveness import pid_alive
+
     boot_count = 0
 
     def boot_factory() -> DaemonBootSpec:
@@ -302,6 +304,7 @@ async def test_controller_restart_composes_fresh_boot_identity(
             launch=DaemonLaunchSpec(
                 command=(sys.executable, "-c", _CHILD_RUNTIME),
                 cwd=tmp_path,
+                log_path=tmp_path / f"restart-{boot_count}.log",
                 environment={
                     "TEST_DAEMON_SOCKET": endpoint.address,
                     "TEST_DAEMON_TOKEN": token,
@@ -323,16 +326,25 @@ async def test_controller_restart_composes_fresh_boot_identity(
         readiness_timeout_s=5,
         stop_timeout_s=2,
     )
-    first = await controller.start()
-    assert isinstance(first, Success)
+    try:
+        first = await controller.start()
+        assert isinstance(first, Success), (first, controller.logs())
+        first_pid = first.value.pid
+        assert first_pid is not None
 
-    restarted = await controller.restart()
+        restarted = await controller.restart()
 
-    assert isinstance(restarted, Success)
-    assert restarted.value.instance_id == "restart-instance-2"
-    assert restarted.value.instance_id != first.value.instance_id
-    assert boot_count == 2
-    assert isinstance(await controller.stop(), Success)
+        assert isinstance(restarted, Success), (restarted, controller.logs())
+        assert restarted.value.instance_id == "restart-instance-2"
+        assert restarted.value.instance_id != first.value.instance_id
+        assert restarted.value.pid != first_pid
+        assert not pid_alive(first_pid)
+        assert boot_count == 2
+    finally:
+        stopped = await controller.stop()
+
+    assert isinstance(stopped, Success)
+    assert controller.pid is None
 
 
 @pytest.mark.anyio

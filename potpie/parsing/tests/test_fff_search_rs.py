@@ -2,24 +2,10 @@
 
 from pathlib import Path
 import tomllib
-from typing import Protocol
 
 import pytest
 
-from parsing_rs import build_workspace_index
-
-
-class ReadonlyResult(Protocol):
-    pass
-
-
-def _assert_readonly_assignment(
-    result_name: str,
-    result: ReadonlyResult,
-    assignment: str,
-) -> None:
-    with pytest.raises(AttributeError):
-        exec(assignment, {}, {result_name: result})  # noqa: S102
+from parsing.parsing_rs import build_workspace_index
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -32,7 +18,9 @@ def _workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_build_workspace_index_returns_counts_and_indexes(tmp_path: Path) -> None:
+def test_workspace_index_exposes_counts_and_readonly_search_results(
+    tmp_path: Path,
+) -> None:
     workspace = _workspace(tmp_path)
     index = build_workspace_index(str(workspace))
 
@@ -42,18 +30,20 @@ def test_build_workspace_index_returns_counts_and_indexes(tmp_path: Path) -> Non
     files = index.search_files("auth", 10)
     assert len(files) == 1
     assert files[0].path == "src/auth.rs"
-
-
-def test_build_workspace_index_search_content_content_type(tmp_path: Path) -> None:
-    workspace = _workspace(tmp_path)
-    index = build_workspace_index(str(workspace))
-
-    results = index.search_content("login_handler", 10)
-    assert results
-    assert results[0].path == "src/auth.rs"
-    assert results[0].line == 1
-    assert "fn login_handler" in results[0].snippet
-    assert results[0].score >= 1000
+    assert isinstance(files[0].score, (int, float))
+    contents = index.search_content("login_handler", 10)
+    assert contents
+    assert contents[0].path == "src/auth.rs"
+    assert contents[0].line == 1
+    assert "fn login_handler" in contents[0].snippet
+    assert contents[0].score >= 1000
+    for result, assignments in (
+        (files[0], {"path": "mutated", "score": 0}),
+        (contents[0], {"path": "mutated", "line": 0, "snippet": "mutated", "score": 0}),
+    ):
+        for field, value in assignments.items():
+            with pytest.raises(AttributeError):
+                setattr(result, field, value)
 
 
 def test_build_workspace_index_returns_empty_on_empty_query(tmp_path: Path) -> None:
@@ -82,41 +72,7 @@ def test_build_workspace_index_error_message_on_file_root(tmp_path: Path) -> Non
         _ = build_workspace_index(str(file_root))
 
 
-def test_build_workspace_index_result_fields_are_readonly_and_present(
-    tmp_path: Path,
-) -> None:
-    workspace = _workspace(tmp_path)
-    index = build_workspace_index(str(workspace))
-    results = index.search_content("login_handler", 10)
-
-    file_result = index.search_files("auth", 10)[0]
-    assert hasattr(file_result, "path")
-    assert hasattr(file_result, "score")
-
-    content_result = results[0]
-    assert hasattr(content_result, "path")
-    assert hasattr(content_result, "line")
-    assert hasattr(content_result, "snippet")
-    assert hasattr(content_result, "score")
-
-    _assert_readonly_assignment(
-        "file_result", file_result, "file_result.path = 'mutated'"
-    )
-    _assert_readonly_assignment("file_result", file_result, "file_result.score = 0")
-    _assert_readonly_assignment(
-        "content_result", content_result, "content_result.path = 'mutated'"
-    )
-    _assert_readonly_assignment(
-        "content_result", content_result, "content_result.line = 0"
-    )
-    _assert_readonly_assignment(
-        "content_result", content_result, "content_result.snippet = 'mutated'"
-    )
-    _assert_readonly_assignment(
-        "content_result", content_result, "content_result.score = 0"
-    )
-
-
+@pytest.mark.source_contract
 def test_python_package_supports_python_3_12_to_3_14() -> None:
     pyproject = Path(__file__).parents[1] / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text())

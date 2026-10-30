@@ -68,25 +68,19 @@ def validate_prepared_execution(
 ) -> None:
     prepared = provenance.prepared if provenance else None
     closures = (*plan.edge_deletes, *plan.invalidations)
-    if (prepared is None or prepared.schema_version < 3) and any(
-        op.closures is not None for op in closures
-    ):
+    if prepared is None and any(op.closures is not None for op in closures):
         raise MutationExecutionReuseError(
-            "frozen closures require a version-3 prepared mutation"
+            "frozen closures require a current prepared mutation"
         )
-    if (
-        prepared is not None
-        and prepared.schema_version >= 3
-        and any(op.closures is None for op in closures)
-    ):
+    if prepared is not None and any(op.closures is None for op in closures):
         raise MutationExecutionReuseError(
             "prepared correction is missing its frozen closures"
         )
-    if (prepared is None or prepared.schema_version < 2) and any(
+    if prepared is None and any(
         edge.resolution is not None for edge in plan.edge_upserts
     ):
         raise MutationExecutionReuseError(
-            "frozen assertion resolutions require a version-2 prepared mutation"
+            "frozen assertion resolutions require a current prepared mutation"
         )
     if prepared is not None and (
         prepared.pot_id != pot_id
@@ -96,10 +90,8 @@ def validate_prepared_execution(
         raise MutationExecutionReuseError(
             "prepared execution identity or batch was changed"
         )
-    if (
-        prepared is not None
-        and prepared.schema_version >= 2
-        and any(edge.resolution is None for edge in plan.edge_upserts)
+    if prepared is not None and any(
+        edge.resolution is None for edge in plan.edge_upserts
     ):
         raise MutationExecutionReuseError(
             "prepared assertion is missing its frozen incarnation resolution"
@@ -111,11 +103,9 @@ def validate_new_preparation(provenance: ProvenanceContext | None) -> None:
     if (
         provenance
         and provenance.prepared
-        and provenance.prepared.schema_version < PREPARATION_SCHEMA_VERSION
+        and provenance.prepared.schema_version != PREPARATION_SCHEMA_VERSION
     ):
-        raise MutationExecutionReuseError(
-            "migration_required: unexecuted legacy preparation needs a fresh identity"
-        )
+        raise MutationExecutionReuseError("unsupported prepared mutation schema")
 
 
 def complete_execution(
@@ -464,6 +454,8 @@ def _require_same_fingerprint(
 
 
 def _mutation_result_to_dict(result: MutationResult) -> dict[str, Any]:
+    if result.execution is None:
+        raise MutationPersistenceError("execution receipt requires current metadata")
     summary = result.mutation_summary
     return {
         **(
@@ -471,11 +463,7 @@ def _mutation_result_to_dict(result: MutationResult) -> dict[str, Any]:
             if result.administrative_summary
             else {}
         ),
-        **(
-            {"execution": result.execution.to_dict()}
-            if result.execution is not None
-            else {}
-        ),
+        "execution": result.execution.to_dict(),
         "ok": result.ok,
         "mutation_id": result.mutation_id,
         "mutation_summary": {
@@ -537,12 +525,10 @@ def _mutation_result_from_dict(raw: object) -> MutationResult | None:
         for key, value in administrative.items()
     ):
         raise MutationPersistenceError("invalid administrative execution counts")
+    if "execution" not in raw:
+        raise MutationPersistenceError("execution receipt requires current metadata")
     return MutationResult(
-        execution=(
-            ExecutionMetadata.from_dict(raw["execution"])
-            if "execution" in raw
-            else None
-        ),
+        execution=ExecutionMetadata.from_dict(raw["execution"]),
         ok=True,
         administrative_summary=dict(administrative),
         mutation_id=raw["mutation_id"],

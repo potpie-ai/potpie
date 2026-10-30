@@ -1,7 +1,7 @@
 """Neo4j graph writer adapter.
 
 One writer, one substrate: the reconciliation agent emits a typed
-:class:`ReconciliationPlan` and ``apply_reconciliation_plan`` calls these
+:class:`MutationBatch` and ``apply_mutation_batch`` calls these
 methods directly. No episodic narrative tier, no LLM extraction, no
 sync→async bridge — the agent decides what changed, the writer executes
 the deterministic plan.
@@ -124,7 +124,7 @@ class Neo4jGraphWriter(GraphWriterPort):
             return 0
         if not provenance.mutation_id:
             provenance = replace(provenance, mutation_id=uuid4().hex)
-        from .neo4j_legacy import prepare_entities, validate_aliases
+        from .neo4j_inventory import prepare_entities, validate_aliases
 
         async def write(transaction):
             resolved = await prepare_entities(transaction, pot_id, items, provenance)

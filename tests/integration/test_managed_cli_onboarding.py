@@ -312,3 +312,6 @@ def test_the_explorer_reads_a_managed_pot_through_the_local_daemon(
         }
     finally:
         Daemon(home=runtime_home, in_process=False).stop()
+
+
+pytestmark = [pytest.mark.source_contract]

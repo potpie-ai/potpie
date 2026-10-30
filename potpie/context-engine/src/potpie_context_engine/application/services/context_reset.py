@@ -50,7 +50,6 @@ def reset_context(
                     MutationBatch(reset_pot=True),
                     pot_id=pot_id,
                     mutation_id=mutation_id,
-                    allow_legacy=True,
                 )
             ):
                 result = {

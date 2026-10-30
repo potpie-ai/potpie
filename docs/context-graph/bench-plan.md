@@ -46,10 +46,9 @@ Reads use the shipped V1.5 workbench (`potpie graph read` over named views; see
 stores the right facts, retrieves the right evidence, and gives an agent enough
 context to answer well.
 
-> The legacy `ContextGraphQuery`/`ContextGraphStrategy` model (`domain/graph_query.py`)
-> is vestigial in the live read trunk and now survives **only** to back this
-> harness (`benchmarks/core/local_engine.py`). Treat it as bench plumbing, not a
-> production read DTO.
+Canonical benchmark reads use `ResolveRequest` and the graph service. Offline
+scenario evaluation and reporting remain available; the retired application-specific
+in-process ingestion client is no longer supported.
 
 ## Goals
 
@@ -128,10 +127,9 @@ Aggregate is the weighted mean (default 30/30/20/20 — faithfulness + coverage
 dominate so cosmetic clarity/usefulness can't compensate for hallucination or
 omission). This decouples the agent-use axis from fixture ids and the engine's
 current include vocabulary, so the score doesn't move just because the ontology
-or query layer changed. The invariant judge is **on by default** for `run`; opt
-back into the legacy per-rubric synthesis judge with `--rubric` (deprecated, and
-it requires a server-synthesised answer). Ingestion and retrieval axes stay in
-the report as diagnostics but no longer gate.
+or query layer changed. The invariant evaluator is available as a library call. Ingestion and retrieval
+axes remain available as independent diagnostics. The retired live runner and
+per-rubric synthesis judge are no longer provided.
 
 ## Scenario Shape
 
@@ -207,20 +205,23 @@ Difficulty controls source mix and distractor ratio:
 | `hard` | Three+ sources, heavy near-miss distractors. |
 | `adversarial` | Conflicting facts, out-of-order arrival, near-duplicates. |
 
-## Running
+## Available tooling
 
-The harness is a small CLI (`python -m benchmarks ...` / `benchmarks/cli.py`):
+The CLI is `python -m potpie_context_engine.benchmarks ...`:
 
 | Command | What it does |
 |---|---|
-| `run` | Full/tiered run; invariant judge on by default (`--rubric` to opt out). |
-| `run-light` | Curated 5-scenario subset (one per dimension), concurrency 5, invariant judge — the PR-check tier. |
-| `list [--grid]` | List discovered scenarios (or a `use_case × difficulty` matrix). |
+| `list [--grid]` | List scenario definitions or their coverage matrix. |
+| `smoke` | Validate available fixtures and run synthetic evaluator checks. |
+| `fixture validate` / `fixture redact` | Inspect and prepare fixture data. |
+| `report` | Render or compare existing reports. |
+| `probe` | Check an explicitly configured ingestion server. |
 
-`--local` (or `POTPIE_BENCH_INPROCESS=1`) runs the engine in-process — no
-`:8001` HTTP server and no Celery worker, reconciling inline — and is the
-recommended mode for light runs. `--skip-judge` does cheap dry runs without the
-LLM axis.
+The `run`, `run-light`, and `--local` execution paths have been removed because
+they depended on retired application wiring and an unsupported query endpoint.
+Canonical query helpers now require an explicit `GraphService`. A replacement
+live benchmark must supply current ingestion and runtime dependencies before
+end-to-end measurements can be made.
 
 ## Report
 
@@ -248,13 +249,13 @@ The benchmark currently has:
   distractors, the `light` quick-tier flag, and per-dimension judge criteria;
 - an `acme` synthetic universe;
 - quick-tier scenarios across `PREF`, `INFRA`, `TIME`, `BUG`, and `COMBO`;
-- the schema-independent **invariant judge** (default for `run`) plus the
-  **`run-light`** 5-scenario PR-check subset;
+- the schema-independent **invariant evaluator** and a curated five-scenario
+  subset tagged `light: true`;
 - smoke and fixture-validation paths.
 
 ## Next Work
 
-1. Keep the quick tier (`run-light`) small enough for PR checks.
+1. Wire a current ingestion and graph runtime before restoring live execution.
 2. Keep the extended tier for nightly/backend comparison.
 3. Add conformance runs for every `GraphBackend` profile.
 4. Add external Event Ledger replay scenarios (GitHub/Linear-style event

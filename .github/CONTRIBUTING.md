@@ -151,67 +151,63 @@ behavior, follow the [specification change process](../spec/process.md).
 
 ## Testing
 
-Run tests for the code you changed. Root pytest configuration collects `tests/`;
-it does not collect every workspace package's suite.
-
-### CLI and daemon
-
-Run the root unit tests without Docker or external database services:
+Tests have two owners: the root product and the context engine. The root suite
+includes CLI, authentication, daemon, UI, documentation, parsing, and
+integration-package checks. The engine suite owns graph semantics, ingestion,
+retrieval, persistence, and recovery.
 
 ```bash
-uv run pytest tests/unit
+make test-root
+make test-context-engine
 ```
 
-Run the root suite used by the regression workflow:
+Each Python package runs in a separate process so its `tests` package cannot
+shadow another suite. Parsing also runs its Rust tests; docs and UI use their
+Node test runners. Focused package commands remain available:
 
 ```bash
-uv run pytest tests -m "not premerge_journey"
+make test-product TEST_CHECKS=python
+make test-parsing
+make test-integrations
+make test-context-engine TEST_TIER=graph
+make test-context-engine TEST_TIER=restart
 ```
+
+Use shared fixtures for stable interfaces and named parameter rows for input,
+provider, platform, or backend variations. Keep recovery scenarios explicit when
+they require ordered actions and intermediate assertions. Source-layout and
+packaging assertions use the `source_contract` marker; runtime behavior belongs
+in tests that can run against installed distributions.
+
+CI builds all four product distributions before test jobs begin: product,
+engine, integrations, and native parsing wheels and source archives, plus the
+repaired Linux ARM64 FalkorDB Lite wheel. A manifest records the commit, package
+version, wheel tags, and checksum. Smoke jobs install those exact artifacts in
+clean environments outside the checkout. Root and engine wheels are installed
+together when testing the product, and the engine is also installed independently.
+
+Deeper suites run on selected targets, with separate graph-acceptance and serial
+restart profiles. Required native acceptance cases fail if skipped. Source
+contracts run separately from installed runtime tests so source imports cannot
+mask missing files or dependency errors in a wheel.
 
 Live authentication tests are opt-in and need `RUN_CLI_AUTH_E2E=1` plus the
-provider credentials described in their test files. The `premerge_journey` tests
-run separately in CI. Check the [regression workflow](workflows/test.yml) for
-their setup.
-
-### Workspace packages
-
-Change into a package directory before running pytest so it loads the package's
-test configuration. For Context Engine:
-
-```bash
-(
-  cd potpie/context-engine
-  uv run --project . pytest tests -m "not premerge_journey"
-)
-```
-
-Backend and recovery tests may need external services. Read the relevant fixtures
-and [regression workflow](workflows/test.yml) for service configuration and
-environment variables.
-
-For the parser, run both the Rust and Python tests:
-
-```bash
-cargo test --manifest-path potpie/parsing/Cargo.toml --no-default-features
-(
-  cd potpie/parsing
-  uv run --project . pytest tests
-)
-```
+provider credentials described in their test files. Backend and recovery tests
+need the isolated services configured in the [regression workflow](workflows/test.yml).
 
 ### Database recovery tests
 
-Context Engine recovery tests kill and restart a disposable FalkorDB container.
-Install Docker and start its daemon before running these tests:
+Context Engine recovery tests kill and restart disposable FalkorDB and Neo4j
+containers. Install Docker and start its daemon before running these tests:
 
 ```bash
 docker info
 ```
 
-The [regression workflow](workflows/test.yml) creates the container and passes its
-name to the tests. Follow that workflow for the service configuration, environment
-variables, and test commands. The [journal crash tests](../potpie/context-engine/tests/conformance/test_journal_crash.py)
-exercise this recovery path.
+The [regression workflow](workflows/test.yml) creates the containers and passes
+their names and endpoints to the tests. Follow that workflow for the service
+configuration and environment variables. The [journal crash tests](../potpie/context-engine/tests/conformance/durability/test_journal_crash.py)
+exercise the crash-recovery path.
 
 ### Graph explorer UI
 

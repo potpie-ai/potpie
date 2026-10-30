@@ -17,7 +17,7 @@ export interface CommitPage {
   next_cursor: string | null;
   coverage: {
     head: string | null;
-    legacy_only: boolean;
+    saved_plans_only: boolean;
     complete: boolean;
     coverage_start?: number;
     indexing_lag: number;

@@ -113,13 +113,13 @@ export function CommitHistory({
               : "History could not be loaded. Try refreshing."}
           </p>
         )}
-        {page?.coverage.legacy_only && (
+        {page?.coverage.saved_plans_only && (
           <p className="commit-empty-note">
             Journal coverage has not started. Earlier plans are available
             through graph history.
           </p>
         )}
-        {page && !page.coverage.legacy_only && rows.length === 0 && (
+        {page && !page.coverage.saved_plans_only && rows.length === 0 && (
           <p className="commit-empty-note">
             {query
               ? "No loaded commits match your search."

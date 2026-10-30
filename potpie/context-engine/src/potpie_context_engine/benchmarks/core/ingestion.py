@@ -298,11 +298,6 @@ def replay_all(
     Returns outcomes in the same order as ``events`` so the evaluator
     can correlate by index.
     """
-    if getattr(client, "inprocess", False):
-        return _replay_all_inprocess(
-            client, pot_id, events, fallback_repo_name=fallback_repo_name
-        )
-
     from concurrent.futures import ThreadPoolExecutor
 
     # Phase 1: run parallel-eligible events (seeds + distractors) concurrently.
@@ -361,82 +356,3 @@ def replay_all(
             )
 
     return [outcomes[i] for i in range(len(events))]
-
-
-def _replay_all_inprocess(
-    client: Any,
-    pot_id: str,
-    events: list[ReplayEvent],
-    *,
-    fallback_repo_name: str | None = None,
-) -> list[IngestionOutcome]:
-    """In-process ingestion: submit all events, reconcile once, read back.
-
-    The in-process driver has no worker/flush timer, so we admit every event
-    into the pot's open batch (single-threaded — no asyncio-across-threads
-    race), then reconcile the batch(es) inline in one pass, then read each
-    event's terminal state. Order is preserved by index.
-    """
-    started = time.monotonic()
-    logger.info("in-process: submitting %d events into the batch queue...", len(events))
-    event_ids: list[str] = []
-    for ev in events:
-        body = _event_body(pot_id, ev, fallback_repo_name=fallback_repo_name)
-        try:
-            event_ids.append(str(client.submit_only(pot_id, body)))
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("in-process submit failed: %s: %s", ev.fixture_path, exc)
-            event_ids.append("")
-
-    logger.info(
-        "in-process: reconciling %d events inline (this is the slow step)...",
-        len(events),
-    )
-    try:
-        n = client.process_pending(pot_id)
-        logger.info(
-            "in-process: reconciled %d batch(es) in %.1fs",
-            n,
-            time.monotonic() - started,
-        )
-    except Exception:  # noqa: BLE001 — per-event status still read below
-        logger.exception("in-process process_pending failed for pot %s", pot_id)
-
-    dur = time.monotonic() - started
-    outcomes: list[IngestionOutcome] = []
-    for ev, eid in zip(events, event_ids):
-        if not eid:
-            outcomes.append(
-                IngestionOutcome(
-                    fixture_path=ev.fixture_path,
-                    event_id=None,
-                    terminal_status="submit_failed",
-                    duration_s=dur,
-                    error="in-process submit failed",
-                )
-            )
-            continue
-        row = client.get_event(eid)
-        if not row:
-            outcomes.append(
-                IngestionOutcome(
-                    fixture_path=ev.fixture_path,
-                    event_id=eid,
-                    terminal_status="unknown",
-                    duration_s=dur,
-                    error="event row not found after processing",
-                )
-            )
-            continue
-        outcome = _outcome_from_terminal(
-            fixture_path=ev.fixture_path, event_id=eid, terminal=row, duration_s=dur
-        )
-        if outcome.error:
-            logger.warning(
-                "in-process ingest issue: %s status=%s error=%s",
-                ev.fixture_path,
-                outcome.terminal_status,
-                outcome.error,
-            )
-        outcomes.append(outcome)
-    return outcomes

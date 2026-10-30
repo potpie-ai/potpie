@@ -1,36 +1,7 @@
-"""Schema-independent ("invariant") synthesis judge.
+"""Grade an answer against input events independently of graph schema.
 
-The default judge (`llm_judge.py`) grades the agent's answer against a
-per-scenario rubric that names specific fixture ids (OPS-218, ADR-021)
-and includes scenario-specific phrasing. The deterministic axes likewise
-check graph shape and the include vocabulary the engine happens to
-expose today. Both move when the ontology or query layer changes — even
-when the agent's answer is just as good.
-
-This evaluator removes both kinds of coupling:
-
-- It is given a list of **input events** (the scenario's `signal:`
-  envelopes, full JSON) plus the agent's full answer.
-- It asks one LLM call: *given these events as the only ground truth,
-  does this answer present a clear, faithful, useful picture of what
-  happened, with respect to the user's question?*
-- It scores on four dimensions that have nothing to do with the engine's
-  internals:
-
-  | Score          | What it asks |
-  |----------------|--------------|
-  | `faithfulness` | Every claim in the answer is supported by the events. No fabricated identifiers, no invented people, no invented facts. |
-  | `coverage`     | The answer surfaces the events / facts that a careful reader of the inputs would consider essential to answering the user's question. |
-  | `clarity`      | The answer is structured so a human can quickly understand what happened — chronology where it matters, attribution where it matters, no purple prose. |
-  | `usefulness`   | The answer concretely helps the user do whatever the question implies — diagnose, debug, follow a convention, plan a change. |
-
-  Each scored 0..100; aggregate is the weighted mean (default
-  30/30/20/20 — faithfulness + coverage dominate so cosmetic clarity /
-  usefulness gains can't compensate for hallucinations or omissions).
-
-Single LLM call, returns structured JSON. Tolerates either the
-`max_tokens` or `max_completion_tokens` parameter split (same as the
-default judge).
+The evaluator measures faithfulness, coverage, clarity, and usefulness using an
+explicitly supplied model client. It does not require server-side synthesis.
 """
 
 from __future__ import annotations

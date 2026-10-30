@@ -1024,7 +1024,6 @@ def _setup_embeddings_choice(raw: str | None) -> str:
         configured = configured_embedder_choice()
         choice = normalize_embedding_mode(configured or "auto")
     aliases = {
-        "legacy": "sentence-transformers",
         "sbert": "sentence-transformers",
         "minilm": "sentence-transformers",
         "all-minilm-l6-v2": "sentence-transformers",

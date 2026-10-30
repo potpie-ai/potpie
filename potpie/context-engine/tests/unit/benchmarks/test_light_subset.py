@@ -1,16 +1,4 @@
-"""Tests for the curated light subset used by ``benchmarks run-light``.
-
-Two contracts:
-
-1. The scenario loader picks up the optional ``light: true`` field and
-   exposes it on the ``Scenario`` dataclass (default ``False``).
-2. The shipped corpus has exactly one ``light: true`` scenario per
-   dimension (PREF / INFRA / TIME / BUG / COMBO) — five total — so a
-   ``benchmarks run-light`` always exercises every dimension once.
-
-These tests run in <1 s and are part of the smoke layer authors get
-back from ``pytest tests/unit/benchmarks/``.
-"""
+"""The curated light corpus contains one scenario per knowledge dimension."""
 
 from __future__ import annotations
 
@@ -21,6 +9,8 @@ from potpie_context_engine.benchmarks.core.scenario import (
     discover_scenarios,
     load_scenario,
 )
+
+import pytest
 
 # tests/unit/benchmarks/test_light_subset.py → ../../../ = context-engine/
 BENCHMARKS_ROOT = (
@@ -64,8 +54,9 @@ def test_loader_picks_up_light_false_explicit(tmp_path: Path):
     assert s.light is False
 
 
+@pytest.mark.source_contract
 def test_corpus_has_one_light_scenario_per_dimension():
-    """The shipped corpus must keep run-light at five scenarios — one
+    """The shipped light corpus has five scenarios — one
     per dimension. Editing this test is fine; let it remind you.
     """
     scenarios = discover_scenarios(BENCHMARKS_ROOT)

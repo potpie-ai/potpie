@@ -186,9 +186,9 @@ Sentry events must not contain:
 Default tests use fake or in-memory Sentry clients and do not call the network.
 
 ```bash
-UV_CACHE_DIR=/private/tmp/uv-cache uv run pytest tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py -q
-UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/test_sentry_daemon.py potpie/context-engine/tests/unit/test_sentry_metrics_*.py potpie/context-engine/tests/unit/test_telemetry_port.py -q
-UV_CACHE_DIR=/private/tmp/uv-cache uv run ruff check potpie/cli tests/unit/test_sentry_*.py tests/unit/test_telemetry_*.py
+UV_CACHE_DIR=/private/tmp/uv-cache uv run pytest tests/telemetry/test_sentry_*.py tests/telemetry/test_telemetry_*.py -q
+UV_CACHE_DIR=/private/tmp/uv-cache uv run --package potpie-context-engine pytest potpie/context-engine/tests/unit/observability/test_sentry_*.py potpie/context-engine/tests/unit/observability/test_telemetry_port.py -q
+UV_CACHE_DIR=/private/tmp/uv-cache uv run ruff check potpie/cli tests/telemetry/test_sentry_*.py tests/telemetry/test_telemetry_*.py
 ```
 
 Manual CLI smoke:

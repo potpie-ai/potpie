@@ -202,15 +202,6 @@ class InMemoryCredentialStore:
     def clear_confluence_credentials(self) -> None:
         self.atlassian.pop("confluence", None)
 
-    def get_atlassian_credentials(self) -> dict[str, Any]:
-        return dict(self.atlassian.get("atlassian", {}))
-
-    def save_atlassian_credentials(self, credentials: dict[str, Any]) -> None:
-        self.atlassian["atlassian"] = dict(credentials)
-
-    def clear_atlassian_credentials(self) -> None:
-        self.atlassian.pop("atlassian", None)
-
     def save_jira_workspace_prefs(self, *, project_key: str) -> None:
         self.workspace_prefs["jira"] = {"project_key": project_key}
 

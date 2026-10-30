@@ -241,11 +241,6 @@ def _describe_search_result(
                 item.payload.get("source_refs"),
                 item.payload.get("properties"),
             ),
-            description=(
-                item.payload.get("fact"),
-                item.payload.get("description"),
-                item.payload.get("summary"),
-            ),
         )
     ]
 

@@ -31,7 +31,6 @@ from potpie_context_engine.core.definition import (
 )
 from potpie_context_engine.core.graph_mutations import InvalidationOp, ProvenanceContext
 from potpie_context_engine.core.mutation_execution import MutationCapabilities
-from potpie_context_engine.core.legacy_records import LegacyInventory
 from potpie_context_engine.core.ports.claim_query import ClaimQueryPort
 from potpie_context_engine.core.ports.graph.backend import BackendCapabilities
 from potpie_context_engine.core.ports.graph.mutation import (
@@ -65,7 +64,7 @@ def _run_sync(coro: Any) -> Any:
     Loop-aware: outside a running loop we run it with ``asyncio.run``; inside one
     we refuse rather than bind the writer's async connection pool to a throwaway
     loop and corrupt it — async callers must use the ``*_async`` door. Mirrors
-    ``ContextGraphService.apply_plan``.
+    the canonical GraphService mutation surface.
     """
     import asyncio
 
@@ -231,20 +230,6 @@ class _Neo4jMutation:
 
     def current_version(self, pot_id: str) -> int:
         return _run_sync(self.current_version_async(pot_id))
-
-    async def legacy_inventory_async(self, pot_id: str) -> LegacyInventory:
-        from potpie_context_engine.adapters.outbound.graph.neo4j_legacy import (
-            legacy_inventory,
-        )
-
-        if not self.atomic_mutations_supported:
-            raise NotImplementedError(
-                "Neo4j legacy inventory requires native atomic mutations"
-            )
-        return await legacy_inventory(self._get_writer(), pot_id)
-
-    def legacy_inventory(self, pot_id: str) -> LegacyInventory:
-        return _run_sync(self.legacy_inventory_async(pot_id))
 
     async def compare_and_apply_async(
         self,
@@ -415,12 +400,13 @@ class Neo4jGraphBackend:
             definition=self.definition,
             execution_registry=self.execution_registry,
         )
+        self.writer = self._mutation._get_writer()
         self._semantic = ClaimQuerySemanticSearch(self._claim_query)
 
     @property
     def enabled(self) -> bool:
         # Cheap config probe (no driver build): graph availability for policy and
-        # ContextGraphService.enabled. Mirrors Neo4jGraphWriter.enabled.
+        # the ingestion enabled flag. Mirrors Neo4jGraphWriter.enabled.
         is_enabled = getattr(self.settings, "is_enabled", None)
         return bool(is_enabled()) if callable(is_enabled) else True
 
@@ -435,11 +421,6 @@ class Neo4jGraphBackend:
         )
 
         return UnavailableJournal("Neo4j journal and rollback are deferred")
-
-    @property
-    def graph_writer(self) -> Any:
-        """Compatibility alias for old ingestion paths that seed via writer."""
-        return self._mutation._get_writer()
 
     @property
     def claim_query(self) -> ClaimQueryPort:
@@ -495,7 +476,7 @@ class Neo4jGraphBackend:
                 metadata={"profile": _PROFILE},
             )
         try:
-            ok = bool(_run_sync(self.graph_writer.ensure_indexes()))
+            ok = bool(_run_sync(self.writer.ensure_indexes()))
         except Exception as exc:  # noqa: BLE001
             return BackendProvisionResult(
                 ok=False,

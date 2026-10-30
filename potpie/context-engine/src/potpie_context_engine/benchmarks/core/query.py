@@ -1,32 +1,27 @@
-"""Wrappers around context_resolve / context_status / context_search."""
+"""Benchmark reads through an explicitly supplied canonical graph service."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from potpie_context_engine.adapters.outbound.http.potpie_context_api_client import (
-    PotpieContextApiClient,
-)
-
+from potpie_context_engine.application.services.envelope_builder import envelope_to_dict
+from potpie_context_engine.core.ports.agent_context import ResolveRequest
+from potpie_context_engine.core.ports.graph_service import GraphService
 from potpie_context_engine.benchmarks.core.scenario import QuerySpec
 
 
 def resolve_context(
-    client: PotpieContextApiClient, pot_id: str, query: QuerySpec
+    service: GraphService, pot_id: str, query: QuerySpec
 ) -> dict[str, Any]:
-    """Issue a context_resolve call. Returns the agent envelope."""
-    # One mode-based read contract: request the canonical evidence envelope
-    # (goal=retrieve → _orchestrate → envelope_to_dict). There is no
-    # server-side answer synthesis; the invariant judge synthesises from the
-    # returned facts/evidence itself.
-    body: dict[str, Any] = {
-        "pot_id": pot_id,
-        "goal": "retrieve",
-        "intent": query.intent,
-        "include": list(query.include),
-        "mode": query.mode,
-        "source_policy": query.source_policy,
-    }
-    if query.scope:
-        body["scope"] = dict(query.scope)
-    return client.context_graph_query(body)
+    """Return an evidence envelope in the benchmark report's response field."""
+    envelope = service.resolve(
+        ResolveRequest(
+            pot_id=pot_id,
+            intent=query.intent,
+            include=tuple(query.include),
+            mode=query.mode,
+            source_policy=query.source_policy,
+            scope=dict(query.scope),
+        )
+    )
+    return {"result": envelope_to_dict(envelope)}

@@ -85,7 +85,6 @@ PLANNED_INCLUDES: frozenset[str] = CONTEXT_INCLUDE_VALUES - READER_BACKED_INCLUD
 
 # Keys the resolver honestly flags as not-yet-implemented (no backing reader).
 # Retained as an alias for back-compat.
-FALLBACK_ONLY_INCLUDES: frozenset[str] = PLANNED_INCLUDES
 
 DEFAULT_INTENT_INCLUDES: dict[str, tuple[str, ...]] = {
     "definition": ("docs", "resources", "features", "infra_topology"),

@@ -523,7 +523,7 @@ identically; the resource store in [architecture.md](./architecture.md) owns the
 retrieval index and the lifecycle.
 
 The default `qdrant_hybrid` profile combines SQLite text search with a Qdrant
-service; `sqlite_hybrid` remains a compatibility alias. Follow the
+service. Follow the
 [Qdrant setup instructions](../getting-started/installation.md#step-2-start-qdrant-for-resource-semantic-search),
 or select `sqlite_fts` for text search alone. SQLite keeps text and cached
 embeddings locally, with durable pending updates and deletions for Qdrant.
@@ -754,14 +754,11 @@ is never replaced by a fuzzy candidate.
 ### Write (route `host.graph_workbench`)
 
 The **canonical write door is `graph propose` → `graph commit --verify`** (Spine A;
-`application/services/graph_workbench.py`). `graph mutate` is a **legacy wrapper**
-that internally calls propose+commit.
+`application/services/graph_workbench.py`).
 
 ```bash
 potpie graph propose [--file <path> | (stdin)] [--ttl 1h] [--approved-by <who>] [--pot <ref>]
 potpie graph commit  <plan_id> [--approved-by <who>] [--verify] [--pot <ref>]
-
-potpie graph mutate  [--file <path> | (stdin)] [--dry-run] [--allow-review-required] [--approved-by <who>] [--pot <ref>]
 
 potpie graph bulk apply [--file <path> | (stdin: NDJSON/JSON)] \
   [--chunk-size 100] [--start-chunk 1] [--dry-run] [--continue-on-error] \
@@ -788,9 +785,6 @@ potpie graph nudge --event <e> --session <id> [--path <p>] [--scope <k:v>] [--qu
   and reports a quality regression alone as a warning. Medium/high-risk plans
   need `--approved-by`, either on the commit or on `propose`, which stores the
   approval with the plan.
-- **`graph mutate`** — legacy wrapper (emits a warning steering to propose/commit).
-  `--dry-run` previews; `--allow-review-required` + `--approved-by` auto-applies
-  medium/high-risk ops.
 - **`graph bulk apply`** — chunked NDJSON/JSON application with resumability
   (`--start-chunk`, `--manifest`), `--continue-on-error`, and idempotency.
 - **`graph mutation-template`** — emits a static schema-only skeleton (no host call).
@@ -866,7 +860,7 @@ Each command is one typed operation over the pot's native graph journal.
 - Locally, commits are attributed to actor `local:owner`, and the runtime
   authorizes these operations only for the selected pot.
 - No `potpie` command turns journal capture on yet, so on a local install
-  `commits` returns no headers and reports `coverage.legacy_only: true`.
+  `commits` returns no headers and reports `coverage.saved_plans_only: true`.
   `graph history` (plans and mutation receipts) is separate and unaffected.
 
 ### Backend-capability commands (route `host.backend`)
@@ -874,24 +868,14 @@ Each command is one typed operation over the pot's native graph journal.
 ```bash
 potpie graph neighborhood --entity <key> [--predicate <p>] [--depth 2] [--direction out|in|both] \
                           [--limit 50] [--detail summary|full] [--unbounded] [--pot <ref>]
-potpie graph inspect <entity_key> [--depth 2] [--pot <ref>]      # legacy alias of neighborhood
 
 potpie graph export <file|folder> [--overwrite] [--graph-only] [--pot <ref>]
 potpie graph import <file|folder> [--graph-only] [--yes/-y] [--pot <ref>]
 potpie graph repair [--semantic-index] [--entity-summaries] [--entity-labels] [--all] [--yes/-y] [--pot <ref>]
-potpie graph repair --legacy --dry-run [--repair-id <id>] [--pot <ref>]
-potpie graph repair --legacy --apply --repair-id <id> [--yes/-y] [--pot <ref>]
 ```
 
-- **Legacy repair** reserves a frozen timestamp/physical-ID repair for review.
-  Dry-run requires read access and displays bounded changes/findings; global
-  `--json` includes the entire run. Apply requires admin access, confirmation and
-  the reviewed ID. Retry that ID to recover completed child receipts. Expiry or a
-  revision conflict requires fresh preparation for remaining work. Before
-  migrating, stop all old writers, and do not rely on a schema marker to fence them.
 - **`graph neighborhood`** is the **Traverse** axis (first-class), backed by
-  `backend.inspection.neighborhood`. `graph inspect` is a legacy alias that warns
-  toward `neighborhood`. The normal JSON slice has a 32 KiB byte budget with
+  `backend.inspection.neighborhood`. The normal JSON slice has a 32 KiB byte budget with
   omitted node, relation and field counts and an exact `--unbounded` follow-up.
 - Unbuilt capabilities surface as the structured not-implemented contract from
   the backend that executes the operation. The CLI does not preflight snapshot
@@ -902,8 +886,7 @@ potpie graph repair --legacy --apply --repair-id <id> [--yes/-y] [--pot <ref>]
   `claims.json`, `resources/`, `README.md`) or as one `.json` file. The CLI
   writes and reads the files; the engine exchanges the snapshot as data through
   version 2 of `export_snapshot`/`import_snapshot` and never opens a caller's
-  path (version 1, the default when a request names no version, still takes
-  engine-side paths; a request mixing the two is refused). Export stages next to
+  path. Requests for older operation versions are refused. Export stages next to
   the destination and refuses an existing one without `--overwrite`.
   - Import validates the whole snapshot first and needs `--yes` outside a
     terminal. It merges into the target pot, skips identical records and fails
@@ -911,15 +894,15 @@ potpie graph repair --legacy --apply --repair-id <id> [--yes/-y] [--pot <ref>]
     restore. Pot-scoped claim keys are rewritten for the target; document
     revision numbers are kept, so `@rev<N>` citations still resolve. Import is
     refused while commit-history capture is active on the target.
-  - `--graph-only` leaves document text out on either side. Version-1 JSON
-    snapshots still import, without the properties and text they never held.
+  - `--graph-only` leaves document text out on either side. Only the current
+    snapshot format is accepted; older formats are refused.
   - A snapshot excludes credentials, source registrations, plans, inbox items,
     commit history and config. Document text is capped at 64 MiB and the whole
     snapshot is held in memory. Graph and documents don't share a transaction,
     so pause writers for a consistent backup.
 
 Snapshots (`graph export`/`import`) are supported on `in_memory`, `embedded`, `ladybug`,
-`falkordb_lite`, `falkordb`, and `neo4j`. `graph inspect`/`neighborhood` remains
+`falkordb_lite`, `falkordb`, and `neo4j`. `graph neighborhood` remains
 unavailable on `neo4j`.
 
 ---
@@ -947,10 +930,9 @@ through services and capability ports.
 |---|---|
 | `CONTEXT_ENGINE_BACKEND` | preferred backend selector (Windows default `ladybug`; macOS/Linux default `falkordb_lite`) |
 | `CONTEXT_ENGINE_LADYBUG_PATH` / `LADYBUG_PATH` | Ladybug database path (first wins); default `<home>/context_graph/ladybug.db` |
-| `GRAPH_DB_BACKEND` | legacy fallback selector (ingestion server default `neo4j`) |
 | `CONTEXT_ENGINE_HOST_MODE` | `daemon` (default) \| `in_process` |
 | `CONTEXT_ENGINE_EMBEDDER` | `none` disables the bundled local embedder |
-| `CONTEXT_ENGINE_RESOURCE_INDEX` | resource retrieval index profile: `qdrant_hybrid` (default) \| `sqlite_hybrid` (compatibility alias) \| `sqlite_fts` \| `none`; overrides the `resource_index` config key |
+| `CONTEXT_ENGINE_RESOURCE_INDEX` | resource retrieval index profile: `qdrant_hybrid` (default) \| `sqlite_fts` \| `none`; overrides the `resource_index` config key |
 | `CONTEXT_ENGINE_QDRANT_URL` | Qdrant HTTP service URL; default `http://127.0.0.1:6333` |
 | `CONTEXT_ENGINE_QDRANT_API_KEY` | optional API key for the Qdrant service |
 | `CONTEXT_ENGINE_ONTOLOGY_SOFT_FAIL` | downgrade-instead-of-fail validation |
@@ -962,7 +944,7 @@ through services and capability ports.
 The protocol ontology has no environment switch; it is the `graph.protocols`
 config key (see `config` under *Top-level commands*).
 
-Backend precedence: `CONTEXT_ENGINE_BACKEND` > `GRAPH_DB_BACKEND` >
+Backend precedence: `CONTEXT_ENGINE_BACKEND` >
 platform default (`ladybug` on Windows, `falkordb_lite` on macOS/Linux).
 There is **no `NotImplementedError` gate** on falkordb anywhere.
 
@@ -1053,7 +1035,7 @@ potpie graph propose --file mutation.json
 - [vision.md](./vision.md) — what the Context Graph is and the product boundaries.
 - [architecture.md](./architecture.md) — composition roots, daemon model, GraphBackend ports & coverage.
 - [ontology.md](./ontology.md) — the catalogs the `catalog`/`describe` commands return.
-- [querying.md](./querying.md) — the read trunk, views, ranking, and compatibility commands.
+- [querying.md](./querying.md) — the read trunk, views, ranking, and record/resolve/search commands.
 - [writing.md](./writing.md) — the semantic DSL, propose→commit, risk/validation, inbox, quality.
 - [ingestion-nudge.md](./ingestion-nudge.md) — event stores, connectors, and the nudge trigger model.
 - [skills.md](./skills.md) — the skill catalog, install/drift, and the harness loop.

@@ -1,7 +1,6 @@
 """Tests for the schema-independent ("invariant") synthesis judge.
 
-The invariant judge replaces the per-rubric LLM judge in
-``benchmarks run --invariant`` / ``benchmarks run-light``. It takes the
+The invariant evaluator grades evidence against input events. It takes the
 scenario's signal envelopes + the agent's answer and returns a single
 0..100 score on faithfulness / coverage / clarity / usefulness — with
 zero coupling to the engine's graph shape or include vocabulary.

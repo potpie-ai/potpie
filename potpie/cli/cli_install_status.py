@@ -400,9 +400,3 @@ def _uv_tool_list_status() -> dict[str, Any]:
         or versions.get("context-engine")
     )
     return {"installed": True, "version": preferred, "versions": versions}
-
-
-def _uv_tool_status() -> dict[str, Any]:
-    """Backward-compatible helper used by older callers/tests."""
-    status = _uv_tool_list_status()
-    return {"installed": status["installed"], "version": status["version"]}

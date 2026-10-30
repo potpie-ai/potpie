@@ -11,7 +11,7 @@ can reuse those facts across tasks instead of reading the same code, PRs, ticket
 and chats each time. Humans and agents use the same `potpie` CLI.
 
 The `potpie graph …` workbench ships with data-plane contract `v1.5` and ontology
-`2026-06-graph`. The legacy `resolve`, `search`, and `record` commands wrap the
+`2026-06-graph`. The `resolve`, `search`, and `record` commands use the
 same services. Pot Management, Graph, and Skill Manager service modules run in a
 local daemon or a managed backend API. State stays local by default.
 
@@ -19,7 +19,7 @@ local daemon or a managed backend API. State stays local by default.
 flowchart TB
   cg_human["Humans"]
   cg_agent["Agents<br/>(Claude Code, Codex, Cursor…)"]
-  cg_cli["potpie CLI<br/>(graph workbench + V1 wrappers)"]
+  cg_cli["potpie CLI<br/>(graph workbench + record/resolve/search)"]
 
   cg_human --> cg_cli
   cg_agent --> cg_cli
@@ -74,11 +74,10 @@ potpie status
 ```
 
 `setup` also registers your repo as a source. The agent ingests working-tree
-context into the graph when needed. The OSS/CLI default backend is `falkordb_lite`,
-an embedded FalkorDB over a local file. It requires no Docker, server, Neo4j, or cloud
-key; override it with `--backend` or `CONTEXT_ENGINE_BACKEND`
-(precedence: `CONTEXT_ENGINE_BACKEND` > legacy `GRAPH_DB_BACKEND` >
-the platform default). Full flags live in [`cli-flow.md`](./cli-flow.md).
+context into the graph when needed. The default backend is `ladybug` on Windows
+and `falkordb_lite` on macOS/Linux. Both use a local file and require no Docker,
+server, Neo4j, or cloud key. Override the platform default with `--backend` or
+`CONTEXT_ENGINE_BACKEND`. Full flags live in [`cli-flow.md`](./cli-flow.md).
 
 Windows installs Ladybug through the normal `pip install potpie` dependency set.
 Use x64 Python 3.12–3.14 and the Microsoft Visual C++ Redistributable. Potpie
@@ -104,12 +103,12 @@ and source management, grants, and status. See the [CLI reference](../reference/
 | [`vision.md`](./vision.md) | Product goals, sourced claims, agent-owned reasoning, pots, and local, managed, and Event Ledger boundaries. |
 | [`architecture.md`](./architecture.md) | Layers, runtime composition, daemon, backend capabilities, pot scoping, resource storage, and backend selection. |
 | [`ontology.md`](./ontology.md) | Entity types, predicates, record types, contract versions, truth classes, mutation operations, source authorities, subgraphs, views, and identity keys. |
-| [`querying.md`](./querying.md) | Graph reads, compatibility commands, the read orchestrator and readers, ranked evidence, filtering, and traversal. |
+| [`querying.md`](./querying.md) | Graph reads, record/resolve/search commands, the read orchestrator and readers, ranked evidence, filtering, and traversal. |
 | [`writing.md`](./writing.md) | Semantic mutations, validation, runtime risk, proposals, commits, concurrency, receipts, inbox, and quality. |
 | [`ingestion-nudge.md`](./ingestion-nudge.md) | Event admission, internal event storage, external Event Ledger clients, connectors, batching, and ingestion nudges. |
 | [`skills.md`](./skills.md) | Bundled CLI skills, agent responses to nudges, and separate server-side reconciliation skills. |
 | [`cli-flow.md`](./cli-flow.md) | Commands, flags, exit codes, snapshots, and the CLI workflow. |
-| [`bench-plan.md`](./bench-plan.md) | Graph quality validation across backends, the invariant judge, and `run-light`. |
+| [`bench-plan.md`](./bench-plan.md) | Graph quality goals, evidence budgets, and the remaining fixture and report tooling. |
 
 ## Vocabulary
 

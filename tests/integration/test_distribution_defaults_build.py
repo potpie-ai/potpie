@@ -135,3 +135,6 @@ def test_distribution_defaults_build_includes_generated_modules(tmp_path: Path) 
     generated_dir = product_root / "potpie" / "runtime"
     assert not (generated_dir / "_distribution_defaults.py").exists()
     assert not (generated_dir / "_build_info.py").exists()
+
+
+pytestmark = [pytest.mark.source_contract]

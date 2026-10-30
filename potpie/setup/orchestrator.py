@@ -8,8 +8,8 @@ rest, never crashing. **Hard** steps gate ``SetupReport.ok``; **soft** steps do
 not. See docs/context-graph/architecture.md "Component Lifecycle & Setup".
 
 One ``_SEAM_PLAN`` table is the single source of truth for the ordered steps,
-their owners, and their actions; ``preview`` (dry-run), ``plan`` (deprecated
-alias), and ``run`` all derive from it, and hardness is derived from
+their owners, and their actions; ``preview`` (dry-run) and ``run`` both derive
+from it, and hardness is derived from
 ``plan.host_mode`` so the daemon/installer steps are hard for a detached daemon
 and skipped for an in-process host.
 """
@@ -29,12 +29,11 @@ from potpie_context_engine.domain.embedding_modes import (
     normalize_embedding_mode,
 )
 from potpie_context_engine.domain.git_probe import current_git_remote
-from potpie_context_engine.domain.repo_identity import repo_identity_key
+from potpie_context_engine.core.repository_identity import repo_identity_key
 from potpie_context_engine.core.lifecycle import (
     DONE,
     FAILED,
     NOT_IMPLEMENTED,
-    PLANNED,
     SKIPPED,
     PlannedSetupStep,
     SetupPlan,
@@ -181,13 +180,6 @@ class DefaultSetupOrchestrator:
         return SetupPreview(
             plan=plan, steps=tuple(_planned_steps(plan)), ok_to_run=True
         )
-
-    def plan(self, plan: SetupPlan) -> list[StepResult]:
-        """Deprecated alias: the planned steps as ``PLANNED`` ``StepResult``s."""
-        return [
-            StepResult(p.step, PLANNED, p.action, hard=p.hard)
-            for p in _planned_steps(plan)
-        ]
 
     def run(self, plan: SetupPlan) -> SetupReport:
         def hard(step: str) -> bool:

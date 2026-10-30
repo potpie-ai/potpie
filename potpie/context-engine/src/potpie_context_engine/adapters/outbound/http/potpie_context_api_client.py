@@ -10,7 +10,6 @@ from urllib.parse import quote
 
 import httpx
 
-from potpie_context_engine.core.errors import CapabilityNotImplemented
 
 CONTEXT_API_PREFIX = "/api/v2/context"
 
@@ -359,17 +358,6 @@ class PotpieContextApiClient:
     ) -> httpx.Response:
         return self._get_with_auth_retry(self._url(path), params=params)
 
-    def context_graph_query(self, body: dict[str, Any]) -> dict[str, Any]:
-        del body
-        raise CapabilityNotImplemented(
-            "http.context_graph_query",
-            detail=(
-                "remote ContextGraphQuery is no longer a supported client "
-                "surface; use the context-bound ContextEngine/GraphService path."
-            ),
-            recommended_next_action="Use context_resolve/context_search or graph read locally.",
-        )
-
     def ingest(self, body: dict[str, Any], *, sync: bool) -> tuple[int, dict[str, Any]]:
         params = {"sync": "true"} if sync else None
         r = self.post_context("/ingest", json_body=body, params=params)
@@ -448,14 +436,3 @@ class PotpieContextApiClient:
         self._raise_for_status(r)
         out = r.json()
         return out if isinstance(out, dict) else {}
-
-    async def context_graph_query_async(self, body: dict[str, Any]) -> dict[str, Any]:
-        del body
-        raise CapabilityNotImplemented(
-            "http.context_graph_query_async",
-            detail=(
-                "remote ContextGraphQuery is no longer a supported client "
-                "surface; use the context-bound ContextEngine/GraphService path."
-            ),
-            recommended_next_action="Use context_resolve/context_search or graph read locally.",
-        )

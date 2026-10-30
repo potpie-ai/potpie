@@ -36,7 +36,7 @@ from potpie_context_engine.core.claim_storage import (
     preserve_claim_source,
     stored_claim_record_id,
 )
-from potpie_context_engine.core.legacy_records import resolve_entity_identity
+from potpie_context_engine.core.record_identity import resolve_entity_identity
 from potpie_context_engine.core.claim_corrections import apply_claim_closure
 from potpie_context_engine.core.graph_contract import evidence_strength_for_truth
 from potpie_context_engine.core.graph_entity_summary import (
@@ -140,15 +140,6 @@ class _Mutation:
         with self.state_lock:
             return self.revisions.get(pot_id, 0)
 
-    def legacy_inventory(self, pot_id: str):
-        from ..memory_legacy import legacy_inventory
-
-        with self.state_lock:
-            return legacy_inventory(self, pot_id)
-
-    async def legacy_inventory_async(self, pot_id: str):
-        return self.legacy_inventory(pot_id)
-
     def compare_and_apply(
         self,
         plan: MutationBatch,
@@ -231,16 +222,6 @@ class _Mutation:
             apply_reset,
             apply_snapshot_import,
         )
-
-        if plan.record_repairs:
-            from ..memory_legacy import apply_record_repairs
-
-            return apply_record_repairs(
-                self,
-                plan.record_repairs,
-                pot_id=expected_pot_id,
-                mutation_id=mutation_id,
-            )
 
         if plan.reset_pot:
             return apply_reset(self, pot_id=expected_pot_id, mutation_id=mutation_id)

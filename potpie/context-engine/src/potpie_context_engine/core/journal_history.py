@@ -149,7 +149,7 @@ async def reconcile_history(
             "indexed_through": 0,
             "indexing_lag": 0,
             "complete": False,
-            "legacy_only": True,
+            "saved_plans_only": True,
         }
     progress = await mirror.progress_async(pot_id=pot_id, generation=state.generation)
     if progress > state.sequence:
@@ -238,7 +238,7 @@ async def reconcile_history(
         "indexed_through": progress,
         "indexing_lag": max(0, state.sequence - progress),
         "complete": progress >= state.sequence,
-        "legacy_only": False,
+        "saved_plans_only": False,
         "resource_generation": state.resource_generation,
         "resource_operation_incomplete": state.resource_guard is not None,
         "max_page_size": min(200, state.limits.max_page_size),
@@ -257,7 +257,7 @@ async def list_history(
     if not 1 <= limit <= 200:
         raise JournalError("commit page size must be between 1 and 200")
     coverage = await reconcile_history(journal, mirror, pot_id=pot_id)
-    if coverage["legacy_only"]:
+    if coverage["saved_plans_only"]:
         return {"headers": (), "next_cursor": None, "coverage": coverage}
     if limit > coverage["max_page_size"]:
         raise JournalError("commit page exceeds configured page limit")

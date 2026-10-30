@@ -18,6 +18,7 @@ from potpie_context_engine.core.definition import (
 )
 from potpie_context_engine.core.entity_canonicalization import coherent_entity_labels
 from potpie_context_engine.core.errors import CapabilityNotImplemented
+from potpie_context_engine.core.graph_mutations import ProvenanceContext
 from potpie_context_engine.core.graph_contract import (
     EVIDENCE_REQUIRED_TRUTH_CLASSES,
 )
@@ -51,7 +52,6 @@ from potpie_context_engine.core.graph_workbench import (
     GRAPH_WORKBENCH_ADMIN_COMMANDS,
     GRAPH_WORKBENCH_COMMANDS,
     GRAPH_WORKBENCH_CONTRACT_VERSION,
-    GRAPH_WORKBENCH_LEGACY_COMMANDS,
     GraphCommandEnvelope,
     GraphCommandError,
     GraphUnsupported,
@@ -204,6 +204,7 @@ class GraphWorkbenchService(GraphCommitSurface):
         pot_id: str,
         ttl_seconds: int | None = None,
         approved_by: str | None = None,
+        provenance_context: ProvenanceContext | None = None,
         resolve_operations: SemanticOperationResolver | None = None,
     ) -> GraphMutationProposal:
         return propose_mutation(
@@ -212,6 +213,7 @@ class GraphWorkbenchService(GraphCommitSurface):
             pot_id=pot_id,
             ttl_seconds=ttl_seconds,
             approved_by=approved_by,
+            provenance_context=provenance_context,
             resolve_operations=resolve_operations,
         )
 
@@ -239,63 +241,6 @@ class GraphWorkbenchService(GraphCommitSurface):
 
     def commit_status(self, plan_id: str, *, pot_id: str) -> GraphMutationCommitResult:
         return mutation_commit_status(self, plan_id, pot_id=pot_id)
-
-    def repair_legacy(self, *, pot_id: str, mode: str, repair_id: str | None = None):
-        from .runtime import run_async_from_sync
-
-        return run_async_from_sync(
-            self.repair_legacy_async, pot_id=pot_id, mode=mode, repair_id=repair_id
-        )
-
-    def _repair_legacy(
-        self,
-        *,
-        pot_id: str,
-        mode: str,
-        repair_id: str | None = None,
-        approved_by: str | None = None,
-    ):
-        from .legacy_repair_service import prepare_legacy_repair, apply_legacy_repair
-
-        if mode == "dry_run":
-            return prepare_legacy_repair(
-                self.backend, self.plan_store, pot_id=pot_id, repair_id=repair_id
-            )
-        if mode != "apply" or not repair_id or not approved_by:
-            raise ValueError(
-                "repair apply requires a reviewed identity and administrative approval"
-            )
-
-        def execute(run, child):
-            return commit_mutation(
-                self,
-                child.plan_id,
-                pot_id=pot_id,
-                approved_by=approved_by,
-                verify_receipt=_verify_ingestion_commit,
-                quality_snapshot=_verification_quality_snapshot,
-                _repair_run=run,
-            )
-
-        return apply_legacy_repair(
-            self.plan_store, pot_id=pot_id, repair_id=repair_id, commit_child=execute
-        )
-
-    async def repair_legacy_async(
-        self, *, pot_id: str, mode: str, repair_id: str | None = None
-    ):
-        from .runtime import run_in_worker_thread
-
-        await self.commit_service.authorize(
-            pot_id, "read" if mode == "dry_run" else "admin"
-        )
-        return await run_in_worker_thread(
-            self._repair_legacy,
-            pot_id=pot_id,
-            mode=mode,
-            repair_id=repair_id,
-            approved_by=self.commit_service.actor() if mode == "apply" else None,
-        )
 
     def verify_commit(
         self, plan_id: str, *, pot_id: str
@@ -848,7 +793,6 @@ def normalize_catalog_result(
     result["workbench_graph_contract_version"] = GRAPH_WORKBENCH_CONTRACT_VERSION
     result["commands"] = list(GRAPH_WORKBENCH_COMMANDS)
     result["admin_commands"] = list(GRAPH_WORKBENCH_ADMIN_COMMANDS)
-    result["legacy_commands"] = list(GRAPH_WORKBENCH_LEGACY_COMMANDS)
     views, ranking = ranked_catalog_views(
         result.get("views", ()),
         task,
@@ -857,11 +801,6 @@ def normalize_catalog_result(
     if task:
         result["task"] = task
         result["task_ranking"] = ranking
-    result["transition"] = {
-        "legacy_commands_callable": True,
-        "mutate_replacement": "propose + commit",
-        "inspect_replacement": "neighborhood",
-    }
     return result
 
 

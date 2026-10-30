@@ -18,36 +18,10 @@ import typer
 
 import click
 
-from potpie.auth.adapters.atlassian_client import (  # noqa: F401  (re-export)
+from potpie.auth.adapters.atlassian_client import (
     AtlassianAuthErrorKind,
-    AtlassianAuthScheme,
-    AtlassianVerifyResult,
-    _auth_header_variants,
-    _candidate_subdomains_from_email,
-    _classify_gateway_status,
-    _fetch_accessible_resources,
-    _finalize_atlassian_site_unscoped,
     _finalize_selected_site,
-    _gateway_base_url,
-    _gateway_probe_paths,
-    _merge_site_candidate,
-    _parse_accessible_resources,
-    _parse_gateway_probe_success,
-    _parse_profile_name,
     _resolve_site_from_subdomain,
-    _site_record,
-    atlassian_basic_auth_header,
-    atlassian_bearer_auth_header,
-    collect_login_site_candidates,
-    collect_site_candidates,
-    discover_sites_with_api_token,
-    fetch_accessible_resources,
-    fetch_cloud_id_for_site,
-    normalize_site_url,
-    site_url_from_subdomain,
-    token_style_from_succeeded_scheme,
-    verify_gateway_product,
-    verify_site_with_api_token,
 )
 from potpie.auth.adapters.credentials_store import (
     ProviderCredentialError,
@@ -215,7 +189,7 @@ def _get_product_credentials(product: AtlassianAuthTarget) -> dict[str, Any]:
     if product == "jira":
         return store.get_jira_credentials()
     if product == "atlassian":
-        return store.get_atlassian_credentials()
+        return store.get_jira_credentials() or store.get_confluence_credentials()
     return store.get_confluence_credentials()
 
 
@@ -225,10 +199,10 @@ def _save_product_credentials(
     store = get_store()
     if product == "jira":
         store.save_jira_credentials(payload)
-    elif product == "atlassian":
-        store.save_atlassian_credentials(payload)
-    else:
+    elif product == "confluence":
         store.save_confluence_credentials(payload)
+    else:
+        raise ValueError("Choose Jira or Confluence before storing credentials.")
 
 
 def _finalize_atlassian_auth_site(
@@ -349,8 +323,9 @@ def run_atlassian_api_token_auth(
         "site_name": site["site_name"],
         "stored_at": time.time(),
     }
+    stored_product = verified_product or product
     try:
-        _save_product_credentials(product, payload)
+        _save_product_credentials(stored_product, payload)
     except ProviderCredentialError as exc:
         emit_error(
             f"{product_label} credential storage failed", str(exc), verbose=verbose
@@ -358,7 +333,7 @@ def run_atlassian_api_token_auth(
         raise typer.Exit(code=EXIT_AUTH) from exc
 
     token_storage = integration_token_storage()
-    stored = get_integration_status(product)
+    stored = get_integration_status(stored_product)
     if stored.get("token_storage"):
         token_storage = str(stored["token_storage"])
     storage_label = "local credentials file"

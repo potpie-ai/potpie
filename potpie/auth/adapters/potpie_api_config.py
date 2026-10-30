@@ -104,7 +104,7 @@ def resolve_potpie_auth_config(*, force_refresh: bool = False) -> PotpieAuthConf
     refresh_token = get_potpie_firebase_refresh_token()
     stored_api_key = get_stored_api_key()
 
-    if auth_type in {"potpie", "firebase_session"} and refresh_token:
+    if auth_type == "potpie" and refresh_token:
         session = resolve_potpie_firebase_session(refresh_token, force=force_refresh)
         return PotpieAuthConfig(
             mode="potpie",
@@ -113,13 +113,6 @@ def resolve_potpie_auth_config(*, force_refresh: bool = False) -> PotpieAuthConf
 
     if stored_api_key:
         return PotpieAuthConfig(mode="api_key", headers={"X-API-Key": stored_api_key})
-
-    if refresh_token:
-        session = resolve_potpie_firebase_session(refresh_token, force=force_refresh)
-        return PotpieAuthConfig(
-            mode="potpie",
-            headers={"Authorization": f"Bearer {session.id_token}"},
-        )
 
     raise ValueError(
         "Potpie auth missing. Set POTPIE_API_KEY, run `potpie login-api-key <key>`, "

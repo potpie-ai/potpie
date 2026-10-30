@@ -12,11 +12,6 @@ from datetime import datetime
 import threading
 from .graph_plans import GraphMutationPlanRecord
 from .mutation_execution import request_fingerprint as _request_fingerprint
-from .legacy_repair_run import (
-    RepairRun,
-    validate_repair_reservation,
-    validate_repair_child_reservations,
-)
 
 
 @dataclass(slots=True)
@@ -25,47 +20,6 @@ class InMemoryGraphPlanStore:
         default_factory=dict
     )
     _lock: threading.Lock = field(default_factory=threading.Lock)
-    _repair_runs: dict[tuple[str, str], RepairRun] = field(default_factory=dict)
-
-    def reserve_repair_run(
-        self, run: RepairRun, child_records: tuple[GraphMutationPlanRecord, ...]
-    ) -> tuple[RepairRun, bool]:
-        with self._lock:
-            key = (run.pot_id, run.repair_id)
-            existing = self._repair_runs.get(key)
-            if not validate_repair_reservation(run, child_records, existing):
-                return deepcopy(existing), False
-            if any(
-                (record.pot_id, record.plan_id) in self._records
-                for record in child_records
-            ):
-                raise ValueError("repair child plan identity is already reserved")
-            validate_repair_child_reservations(self._records.values(), child_records)
-            records = deepcopy(child_records)
-            stored = deepcopy(run)
-            self._records.update(
-                {(record.pot_id, record.plan_id): record for record in records}
-            )
-            self._repair_runs[key] = stored
-            return deepcopy(stored), True
-
-    def get_repair_run(self, *, pot_id: str, repair_id: str) -> RepairRun | None:
-        with self._lock:
-            run = self._repair_runs.get((pot_id, repair_id))
-            if run is not None:
-                run.validate_children(
-                    [
-                        self._records.get((pot_id, child.plan_id))
-                        for child in run.children
-                    ]
-                )
-            return deepcopy(run)
-
-    async def reserve_repair_run_async(self, run, child_records):
-        return self.reserve_repair_run(run, child_records)
-
-    async def get_repair_run_async(self, **kwargs):
-        return self.get_repair_run(**kwargs)
 
     def save(self, record: GraphMutationPlanRecord) -> None:
         with self._lock:

@@ -5,7 +5,7 @@ SQLite rather than a server-backed engine for one deployment reason: the hosted
 service image is single-process by design so uvicorn receives ``SIGTERM``
 directly, and Qdrant/Weaviate/Elastic would each need a second container or a
 supervisor. FTS5 ships with CPython's ``sqlite3``; the vector arm
-(``sqlite_hybrid``) is one loadable extension on top of *this* schema, not a
+(``qdrant_hybrid``) is one loadable extension on top of *this* schema, not a
 different one — which is why the table definitions live here and the hybrid
 profile subclasses rather than forks.
 
@@ -406,7 +406,7 @@ class SqliteFtsResourceIndex:
 
     @property
     def semantic_arm(self) -> Any:
-        """The vector half — fail-closed here, real in ``sqlite_hybrid``."""
+        """The vector half — fail-closed here, real in ``qdrant_hybrid``."""
         return UnimplementedSemanticArm(self.profile)
 
     # --- connection ---------------------------------------------------------
@@ -922,7 +922,7 @@ class SqliteFtsResourceIndex:
         limit: int,
         doc: str | None,
     ) -> dict[int, ArmMatch]:
-        """Vector arm — empty here; ``sqlite_hybrid`` overrides it."""
+        """Vector arm — empty here; ``qdrant_hybrid`` overrides it."""
         del conn, pot_id, query, limit, doc
         return {}
 

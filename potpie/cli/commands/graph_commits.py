@@ -124,7 +124,7 @@ def _human(payload: Mapping[str, Any], *, pot_id: str) -> str:
         )
     coverage = payload.get("coverage")
     if isinstance(coverage, Mapping):
-        if coverage.get("legacy_only"):
+        if coverage.get("saved_plans_only"):
             lines.append(
                 "No journal coverage. Earlier changes remain in graph history."
             )

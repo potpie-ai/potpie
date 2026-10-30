@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
-from potpie_context_engine.domain.repo_identity import normalize_repo_ref
+from potpie_context_engine.core.repository_identity import normalize_repo_ref
 
 #: ``subprocess.CREATE_NO_WINDOW`` by value; the name exists only on Windows.
 _WINDOWS_CREATE_NO_WINDOW: Final[int] = 0x08000000
