@@ -184,6 +184,109 @@ def test_hostile_query_text_becomes_a_legal_match_expression():
     assert fts_match_expression("") is None
 
 
+def test_non_ascii_words_stay_whole_tokens():
+    """``unicode61`` indexes ``Zürich`` as one word; the query must search for it."""
+    assert fts_match_expression("Zürich office") == '"Zürich"* OR "office"*'
+    assert fts_match_expression("résumé") == '"résumé"*'
+    assert fts_match_expression("日本語") == '"日本語"*'
+    assert term_coverage("Moved to the Zürich office.", ("Zürich",)) == 1.0
+
+
+def test_non_ascii_query_finds_the_chunk_that_contains_it(tmp_path):
+    import dataclasses
+
+    manifest, chunks = build_conformance_document(pot_id="p")
+    chunks = (
+        dataclasses.replace(
+            chunks[0], text="Disputes are heard by the courts of Zürich."
+        ),
+        *chunks[1:],
+    )
+    index = build_resource_index("sqlite_fts", home=tmp_path)
+    index.index_document(pot_id="p", manifest=manifest, chunks=chunks)
+    result = index.search(pot_id="p", query="Zürich")
+    assert [hit.seq for hit in result.hits] == [chunks[0].seq]
+    assert [hit.section for hit in result.hits] == [chunks[0].section]
+    index.close()
+
+
+def test_coverage_folds_diacritics_like_the_index(tmp_path):
+    """``unicode61`` matches ``fiance`` to ``fiancé``; coverage must agree."""
+    import dataclasses
+
+    from potpie_context_engine.application.readers.resources import _relevance
+
+    assert term_coverage("Your fiancé owns the archive.", ("fiance",)) == 1.0
+    assert term_coverage("Your fiance owns the archive.", ("fiancé",)) == 1.0
+    assert term_coverage("Moved to Zurich.", ("ZÜRICH",)) == 1.0
+
+    manifest, chunks = build_conformance_document(pot_id="p")
+    chunks = (
+        dataclasses.replace(chunks[0], text="Your fiancé owns the archive."),
+        *chunks[1:],
+    )
+    index = build_resource_index("sqlite_fts", home=tmp_path)
+    index.index_document(pot_id="p", manifest=manifest, chunks=chunks)
+    result = index.search(pot_id="p", query="fiance")
+    assert [hit.seq for hit in result.hits] == [chunks[0].seq]
+    hit = result.hits[0]
+    assert hit.lexical_rank == 1
+    assert hit.term_coverage == 1.0
+    assert _relevance(hit, calibrated=result.similarity_calibrated) == 1.0
+    index.close()
+
+
+def test_decomposed_text_is_tokenized_like_the_index(tmp_path):
+    """``unicode61`` reads ``u`` plus U+0308 as ``u``; it is not a word break."""
+    import dataclasses
+
+    decomposed = "Zu\u0308rich"
+    assert fts_match_expression(decomposed) == f'"{decomposed}"*'
+    assert term_coverage(f"The courts of {decomposed}.", ("zurich",)) == 1.0
+    assert term_coverage("The courts of Zürich.", (decomposed,)) == 1.0
+
+    manifest, chunks = build_conformance_document(pot_id="p")
+    chunks = (
+        dataclasses.replace(chunks[0], text=f"Disputes are heard in {decomposed}."),
+        *chunks[1:],
+    )
+    index = build_resource_index("sqlite_fts", home=tmp_path)
+    index.index_document(pot_id="p", manifest=manifest, chunks=chunks)
+    for query in ("Zürich", decomposed, "zurich"):
+        result = index.search(pot_id="p", query=query)
+        assert [hit.seq for hit in result.hits] == [chunks[0].seq], query
+        assert result.hits[0].term_coverage == 1.0, query
+    index.close()
+
+
+def test_coverage_keeps_the_accents_the_index_keeps():
+    """``unicode61`` folds ``é`` but not Greek ``ά`` or a doubly accented ``ǖ``."""
+    assert term_coverage("άλφα office", ("αλφα", "office")) == 0.5
+    assert term_coverage("ǖber", ("uber",)) == 0.0
+    assert term_coverage("ǖber", ("ǖber",)) == 1.0
+    assert term_coverage("\u03b1\u0301\u03bb\u03c6\u03b1 office", ("αλφα",)) == 1.0
+
+
+def test_short_cjk_terms_match_inside_a_run(tmp_path):
+    """``日本語の文書です`` is one ``unicode61`` token, so ``日本語`` needs a prefix."""
+    import dataclasses
+
+    assert term_coverage("日本語の文書です", ("日本語",)) == 1.0
+    assert term_coverage("日本語の文書です", ("日",)) == 0.0
+
+    manifest, chunks = build_conformance_document(pot_id="p")
+    chunks = (
+        dataclasses.replace(chunks[0], text="日本語の文書です"),
+        *chunks[1:],
+    )
+    index = build_resource_index("sqlite_fts", home=tmp_path)
+    index.index_document(pot_id="p", manifest=manifest, chunks=chunks)
+    result = index.search(pot_id="p", query="日本語")
+    assert [hit.seq for hit in result.hits] == [chunks[0].seq]
+    assert result.hits[0].term_coverage == 1.0
+    index.close()
+
+
 def test_function_words_are_dropped_so_a_question_does_not_match_everything():
     """Measured, not stylistic: OR-ing 'why/did/we' retrieves the whole corpus.
 
