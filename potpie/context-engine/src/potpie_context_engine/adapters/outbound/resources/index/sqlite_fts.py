@@ -175,10 +175,20 @@ _SCHEMA = (
     "CREATE INDEX IF NOT EXISTS windows_pending ON windows(pot_id) WHERE embedding IS NULL",
 )
 
+# The combining marks ``unicode61`` drops as diacritics. Every other combining
+# mark separates tokens, as it does for ``\w``. Measured against SQLite 3.34 and
+# 3.51 for every BMP letter and mark; the two agree.
+_DIACRITICS = (
+    "\u0300-\u0304\u0306-\u030c\u030f\u0311\u031b\u0323-\u0328\u032d\u032e\u0330\u0331"
+)
+_DIACRITIC_RE = re.compile(f"[{_DIACRITICS}]")
+
 # ``\w`` rather than ``[A-Za-z0-9_]``: ``unicode61`` keeps letters and digits of
 # every script inside one token, so an ASCII-only split would turn ``Zürich``
-# into ``Z`` and ``rich`` and search for words the index never stored.
-_TOKEN_RE = re.compile(r"\w+")
+# into ``Z`` and ``rich`` and search for words the index never stored. The
+# diacritics are included so a decomposed ``Zu\u0308rich`` stays one word too;
+# ``\w`` alone does not match a combining mark.
+_TOKEN_RE = re.compile(f"[\\w{_DIACRITICS}]+")
 
 # Function words, dropped from the lexical arm's MATCH expression.
 #
@@ -234,7 +244,7 @@ def query_terms(query: str) -> tuple[str, ...]:
     disagree about what counts as a term — a coverage denominator that included
     words the expression never searched would score every hit short.
     """
-    tokens = [token for token in _TOKEN_RE.findall(query or "") if token]
+    tokens = [token for token in _TOKEN_RE.findall(query or "") if _fold(token)]
     content = [token for token in tokens if token.lower() not in _STOPWORDS]
     return tuple(content or tokens)
 
@@ -244,6 +254,19 @@ def query_terms(query: str) -> tuple[str, ...]:
 #: cover "identity". At four the shortest real casualties are words like "fail",
 #: which is exactly the case prefixes exist to catch.
 _PREFIX_MIN_CHARS = 4
+
+#: The same floor for Chinese, Japanese and Korean terms. ``unicode61`` keeps an
+#: unspaced run such as ``日本語の文書です`` as one token, and a two or three
+#: character term is often a whole word, so it has to reach the run as a prefix.
+_CJK_PREFIX_MIN_CHARS = 2
+
+_CJK_SCRIPTS = ("CJK", "HIRAGANA", "KATAKANA", "HANGUL")
+
+
+def _prefix_min_chars(term: str) -> int:
+    if term and unicodedata.name(term[0], "").startswith(_CJK_SCRIPTS):
+        return _CJK_PREFIX_MIN_CHARS
+    return _PREFIX_MIN_CHARS
 
 
 def term_coverage(text: str, terms: Sequence[str]) -> float | None:
@@ -279,24 +302,32 @@ def _fold(token: str) -> str:
 
     The index folds ``fiancé`` to ``fiance``, so a query for either retrieves
     the chunk. Coverage has to fold the same way, or it scores a hit that MATCH
-    found as missing every term. Only the combining diacritical marks block is
-    removed, which is what ``remove_diacritics`` does to Latin letters; marks in
-    other scripts are part of the word and stay.
+    found as missing every term. ``remove_diacritics`` only folds a precomposed
+    letter that is an ASCII letter plus one diacritic, so ``άλφα`` and ``ǖ``
+    keep their accents. A diacritic stored as a separate mark is always dropped,
+    which turns a decomposed ``ά`` into ``α``.
     """
-    decomposed = unicodedata.normalize("NFD", token.lower())
-    return unicodedata.normalize(
-        "NFC", "".join(ch for ch in decomposed if not "\u0300" <= ch <= "\u036f")
-    )
+    folded = []
+    for ch in _DIACRITIC_RE.sub("", token.lower()):
+        decomposed = unicodedata.normalize("NFD", ch)
+        if (
+            len(decomposed) == 2
+            and decomposed[0].isascii()
+            and _DIACRITIC_RE.fullmatch(decomposed[1])
+        ):
+            ch = decomposed[0]
+        folded.append(ch)
+    return "".join(folded)
 
 
 def _covers(present: frozenset[str] | set[str], term: str) -> bool:
     if term in present:
         return True
-    if len(term) < _PREFIX_MIN_CHARS:
+    if len(term) < _prefix_min_chars(term):
         return False
     return any(
         token.startswith(term)
-        or (len(token) >= _PREFIX_MIN_CHARS and term.startswith(token))
+        or (len(token) >= _prefix_min_chars(token) and term.startswith(token))
         for token in present
     )
 
@@ -333,7 +364,7 @@ def fts_match_expression(query: str) -> str | None:
     # Bound the expression: a pasted paragraph is a legal query and a
     # thousand-term OR is a pathological one.
     return " OR ".join(
-        f'"{token}"*' if len(token) >= _PREFIX_MIN_CHARS else f'"{token}"'
+        f'"{token}"*' if len(_fold(token)) >= _prefix_min_chars(token) else f'"{token}"'
         for token in tokens[:64]
     )
 
