@@ -38,6 +38,7 @@ import re
 import sqlite3
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -174,7 +175,48 @@ _SCHEMA = (
     "CREATE INDEX IF NOT EXISTS windows_pending ON windows(pot_id) WHERE embedding IS NULL",
 )
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+# The combining marks ``unicode61`` drops as diacritics. Every other combining
+# mark separates tokens, as it does for ``\w``. Measured against SQLite 3.34 and
+# 3.51 for every BMP letter and mark; the two agree.
+_DIACRITICS = (
+    "\u0300-\u0304\u0306-\u030c\u030f\u0311\u031b\u0323-\u0328\u032d\u032e\u0330\u0331"
+)
+_DIACRITIC_RE = re.compile(f"[{_DIACRITICS}]")
+
+# Lowercase letters ``unicode61`` folds onto another letter, as ``casefold()``
+# does. ``casefold()`` itself would go further than the index (``ß`` to ``ss``).
+_LETTER_FOLDS = str.maketrans(
+    {
+        "\u00b5": "\u03bc",  # µ to μ
+        "\u017f": "s",  # ſ
+        "\u03c2": "\u03c3",  # ς to σ
+        "\u03d0": "\u03b2",  # ϐ to β
+        "\u03d1": "\u03b8",  # ϑ to θ
+        "\u03d5": "\u03c6",  # ϕ to φ
+        "\u03d6": "\u03c0",  # ϖ to π
+        "\u03f0": "\u03ba",  # ϰ to κ
+        "\u03f1": "\u03c1",  # ϱ to ρ
+        "\u03f5": "\u03b5",  # ϵ to ε
+        "\u1e9b": "s",  # ẛ
+        "\u1fbe": "\u03b9",  # ι to ι
+    }
+)
+
+# Capitals ``str.lower()`` lowercases but ``unicode61`` keeps, because its case
+# table predates them: Cherokee, Georgian Mtavruli and some Greek, Cyrillic and
+# Latin additions. Measured the same way as ``_DIACRITICS``.
+_UNCASED_RE = re.compile(
+    "[\u037f\u0528\u052a\u052c\u052e\u13a0-\u13f5\u1c90-\u1cba\u1cbd-\u1cbf"
+    "\ua698\ua69a\ua796\ua798\ua79a\ua79c\ua79e\ua7ab-\ua7ae\ua7b0-\ua7b4"
+    "\ua7b6\ua7b8\ua7ba\ua7bc\ua7be\ua7c2\ua7c4-\ua7c7\ua7c9\ua7f5]"
+)
+
+# ``\w`` rather than ``[A-Za-z0-9_]``: ``unicode61`` keeps letters and digits of
+# every script inside one token, so an ASCII-only split would turn ``Zürich``
+# into ``Z`` and ``rich`` and search for words the index never stored. The
+# diacritics are included so a decomposed ``Zu\u0308rich`` stays one word too;
+# ``\w`` alone does not match a combining mark.
+_TOKEN_RE = re.compile(f"[\\w{_DIACRITICS}]+")
 
 # Function words, dropped from the lexical arm's MATCH expression.
 #
@@ -230,7 +272,7 @@ def query_terms(query: str) -> tuple[str, ...]:
     disagree about what counts as a term — a coverage denominator that included
     words the expression never searched would score every hit short.
     """
-    tokens = [token for token in _TOKEN_RE.findall(query or "") if token]
+    tokens = [token for token in _TOKEN_RE.findall(query or "") if _fold(token)]
     content = [token for token in tokens if token.lower() not in _STOPWORDS]
     return tuple(content or tokens)
 
@@ -240,6 +282,19 @@ def query_terms(query: str) -> tuple[str, ...]:
 #: cover "identity". At four the shortest real casualties are words like "fail",
 #: which is exactly the case prefixes exist to catch.
 _PREFIX_MIN_CHARS = 4
+
+#: The same floor for Chinese, Japanese and Korean terms. ``unicode61`` keeps an
+#: unspaced run such as ``日本語の文書です`` as one token, and a two or three
+#: character term is often a whole word, so it has to reach the run as a prefix.
+_CJK_PREFIX_MIN_CHARS = 2
+
+_CJK_SCRIPTS = ("CJK", "HIRAGANA", "KATAKANA", "HANGUL")
+
+
+def _prefix_min_chars(term: str) -> int:
+    if term and unicodedata.name(term[0], "").startswith(_CJK_SCRIPTS):
+        return _CJK_PREFIX_MIN_CHARS
+    return _PREFIX_MIN_CHARS
 
 
 def term_coverage(text: str, terms: Sequence[str]) -> float | None:
@@ -266,18 +321,43 @@ def term_coverage(text: str, terms: Sequence[str]) -> float | None:
     """
     if not terms:
         return None
-    present = {token.lower() for token in _TOKEN_RE.findall(text or "")}
-    return sum(1 for term in terms if _covers(present, term.lower())) / len(terms)
+    present = {_fold(token) for token in _TOKEN_RE.findall(text or "")}
+    return sum(1 for term in terms if _covers(present, _fold(term))) / len(terms)
+
+
+def _fold(token: str) -> str:
+    """Lowercase ``token`` and drop the diacritics ``unicode61`` drops.
+
+    The index folds ``fiancé`` to ``fiance``, so a query for either retrieves
+    the chunk. Coverage has to fold the same way, or it scores a hit that MATCH
+    found as missing every term. ``remove_diacritics`` only folds a precomposed
+    letter that is an ASCII letter plus one diacritic, so ``άλφα`` and ``ǖ``
+    keep their accents. A diacritic stored as a separate mark is always dropped,
+    which turns a decomposed ``ά`` into ``α``. Case follows ``unicode61`` too, so
+    ``κοσμος`` and ``κοσμοσ`` fold alike.
+    """
+    lowered = "".join(ch if _UNCASED_RE.match(ch) else ch.lower() for ch in token)
+    folded = []
+    for ch in _DIACRITIC_RE.sub("", lowered.translate(_LETTER_FOLDS)):
+        decomposed = unicodedata.normalize("NFD", ch)
+        if (
+            len(decomposed) == 2
+            and decomposed[0].isascii()
+            and _DIACRITIC_RE.fullmatch(decomposed[1])
+        ):
+            ch = decomposed[0]
+        folded.append(ch)
+    return "".join(folded)
 
 
 def _covers(present: frozenset[str] | set[str], term: str) -> bool:
     if term in present:
         return True
-    if len(term) < _PREFIX_MIN_CHARS:
+    if len(term) < _prefix_min_chars(term):
         return False
     return any(
         token.startswith(term)
-        or (len(token) >= _PREFIX_MIN_CHARS and term.startswith(token))
+        or (len(token) >= _prefix_min_chars(token) and term.startswith(token))
         for token in present
     )
 
@@ -314,7 +394,7 @@ def fts_match_expression(query: str) -> str | None:
     # Bound the expression: a pasted paragraph is a legal query and a
     # thousand-term OR is a pathological one.
     return " OR ".join(
-        f'"{token}"*' if len(token) >= _PREFIX_MIN_CHARS else f'"{token}"'
+        f'"{token}"*' if len(_fold(token)) >= _prefix_min_chars(token) else f'"{token}"'
         for token in tokens[:64]
     )
 
