@@ -267,6 +267,29 @@ def test_coverage_keeps_the_accents_the_index_keeps():
     assert term_coverage("\u03b1\u0301\u03bb\u03c6\u03b1 office", ("αλφα",)) == 1.0
 
 
+def test_coverage_folds_case_like_the_index(tmp_path):
+    """``unicode61`` folds a final ``ς`` to ``σ`` but keeps the case of ``Ꭰ``."""
+    import dataclasses
+
+    assert term_coverage("ο κοσμος", ("κοσμοσ",)) == 1.0
+    assert term_coverage("ο κοσμοσ", ("ΚΟΣΜΟΣ",)) == 1.0
+    assert term_coverage("Straße", ("strasse",)) == 0.0
+    assert term_coverage("Ꭰ", ("ꭰ",)) == 0.0
+    assert term_coverage("Ꭰ", ("Ꭰ",)) == 1.0
+
+    manifest, chunks = build_conformance_document(pot_id="p")
+    chunks = (
+        dataclasses.replace(chunks[0], text="ο κοσμος"),
+        *chunks[1:],
+    )
+    index = build_resource_index("sqlite_fts", home=tmp_path)
+    index.index_document(pot_id="p", manifest=manifest, chunks=chunks)
+    result = index.search(pot_id="p", query="κοσμοσ")
+    assert [hit.seq for hit in result.hits] == [chunks[0].seq]
+    assert result.hits[0].term_coverage == 1.0
+    index.close()
+
+
 def test_short_cjk_terms_match_inside_a_run(tmp_path):
     """``日本語の文書です`` is one ``unicode61`` token, so ``日本語`` needs a prefix."""
     import dataclasses

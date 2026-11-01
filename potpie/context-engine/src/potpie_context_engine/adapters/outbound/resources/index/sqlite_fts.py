@@ -183,6 +183,34 @@ _DIACRITICS = (
 )
 _DIACRITIC_RE = re.compile(f"[{_DIACRITICS}]")
 
+# Lowercase letters ``unicode61`` folds onto another letter, as ``casefold()``
+# does. ``casefold()`` itself would go further than the index (``ß`` to ``ss``).
+_LETTER_FOLDS = str.maketrans(
+    {
+        "\u00b5": "\u03bc",  # µ to μ
+        "\u017f": "s",  # ſ
+        "\u03c2": "\u03c3",  # ς to σ
+        "\u03d0": "\u03b2",  # ϐ to β
+        "\u03d1": "\u03b8",  # ϑ to θ
+        "\u03d5": "\u03c6",  # ϕ to φ
+        "\u03d6": "\u03c0",  # ϖ to π
+        "\u03f0": "\u03ba",  # ϰ to κ
+        "\u03f1": "\u03c1",  # ϱ to ρ
+        "\u03f5": "\u03b5",  # ϵ to ε
+        "\u1e9b": "s",  # ẛ
+        "\u1fbe": "\u03b9",  # ι to ι
+    }
+)
+
+# Capitals ``str.lower()`` lowercases but ``unicode61`` keeps, because its case
+# table predates them: Cherokee, Georgian Mtavruli and some Greek, Cyrillic and
+# Latin additions. Measured the same way as ``_DIACRITICS``.
+_UNCASED_RE = re.compile(
+    "[\u037f\u0528\u052a\u052c\u052e\u13a0-\u13f5\u1c90-\u1cba\u1cbd-\u1cbf"
+    "\ua698\ua69a\ua796\ua798\ua79a\ua79c\ua79e\ua7ab-\ua7ae\ua7b0-\ua7b4"
+    "\ua7b6\ua7b8\ua7ba\ua7bc\ua7be\ua7c2\ua7c4-\ua7c7\ua7c9\ua7f5]"
+)
+
 # ``\w`` rather than ``[A-Za-z0-9_]``: ``unicode61`` keeps letters and digits of
 # every script inside one token, so an ASCII-only split would turn ``Zürich``
 # into ``Z`` and ``rich`` and search for words the index never stored. The
@@ -305,10 +333,12 @@ def _fold(token: str) -> str:
     found as missing every term. ``remove_diacritics`` only folds a precomposed
     letter that is an ASCII letter plus one diacritic, so ``άλφα`` and ``ǖ``
     keep their accents. A diacritic stored as a separate mark is always dropped,
-    which turns a decomposed ``ά`` into ``α``.
+    which turns a decomposed ``ά`` into ``α``. Case follows ``unicode61`` too, so
+    ``κοσμος`` and ``κοσμοσ`` fold alike.
     """
+    lowered = "".join(ch if _UNCASED_RE.match(ch) else ch.lower() for ch in token)
     folded = []
-    for ch in _DIACRITIC_RE.sub("", token.lower()):
+    for ch in _DIACRITIC_RE.sub("", lowered.translate(_LETTER_FOLDS)):
         decomposed = unicodedata.normalize("NFD", ch)
         if (
             len(decomposed) == 2
