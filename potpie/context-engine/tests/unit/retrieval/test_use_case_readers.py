@@ -1347,6 +1347,82 @@ def test_new_use_case_readers_owners_reader_returns_owner_and_team_context() -> 
     assert {"OWNED_BY", "MEMBER_OF"} <= predicates
 
 
+def test_owners_reader_person_owner_does_not_pull_in_unrelated_team_memberships() -> (
+    None
+):
+    store = InMemoryClaimQueryStore()
+    store.add(
+        _row(
+            predicate="OWNED_BY",
+            subject_key="service:context-engine",
+            object_key="person:alice",
+        )
+    )
+    store.add(
+        _row(
+            predicate="MEMBER_OF",
+            subject_key="person:alice",
+            object_key="team:platform",
+        )
+    )
+    store.add(
+        _row(
+            predicate="MEMBER_OF",
+            subject_key="person:bob",
+            object_key="team:other",
+        )
+    )
+    reader = OwnersReader(claim_query=store, ranker=RankingService())
+
+    response = reader.read(
+        ReadRequest(pot_id="pot-1", scope={"service": "context-engine"}, max_items=10)
+    )
+
+    members = {
+        (r.candidate.payload["subject_key"], r.candidate.payload["object_key"])
+        for r in response.items
+        if r.candidate.payload["predicate"] == "MEMBER_OF"
+    }
+    assert members == {("person:alice", "team:platform")}
+
+
+def test_owners_reader_team_owner_does_not_pull_in_unrelated_memberships() -> None:
+    store = InMemoryClaimQueryStore()
+    store.add(
+        _row(
+            predicate="OWNED_BY",
+            subject_key="service:context-engine",
+            object_key="team:platform",
+        )
+    )
+    store.add(
+        _row(
+            predicate="MEMBER_OF",
+            subject_key="person:carol",
+            object_key="team:platform",
+        )
+    )
+    store.add(
+        _row(
+            predicate="MEMBER_OF",
+            subject_key="person:bob",
+            object_key="team:other",
+        )
+    )
+    reader = OwnersReader(claim_query=store, ranker=RankingService())
+
+    response = reader.read(
+        ReadRequest(pot_id="pot-1", scope={"service": "context-engine"}, max_items=10)
+    )
+
+    members = {
+        (r.candidate.payload["subject_key"], r.candidate.payload["object_key"])
+        for r in response.items
+        if r.candidate.payload["predicate"] == "MEMBER_OF"
+    }
+    assert members == {("person:carol", "team:platform")}
+
+
 def test_new_use_case_readers_docs_reader_returns_document_references_for_scope() -> (
     None
 ):
