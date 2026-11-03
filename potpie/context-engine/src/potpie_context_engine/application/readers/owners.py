@@ -102,37 +102,29 @@ class OwnersReader:
             ClaimQueryFilter(**base, predicate_in=("OWNED_BY",), subject_key_in=anchors)
         )
         owner_keys = sorted({row.object_key for row in rows})
-        if owner_keys:
+        # An empty key tuple means "no filter" to the claim store, so only
+        # query MEMBER_OF for owner kinds that are actually present.
+        person_keys = tuple(key for key in owner_keys if key.startswith("person:"))
+        team_keys = tuple(key for key in owner_keys if key.startswith("team:"))
+        member_of = {
+            "pot_id": req.pot_id,
+            "predicate_in": ("MEMBER_OF",),
+            "include_invalidated": req.include_invalidated,
+            "as_of": req.as_of,
+            "source_ref_in": req.source_refs,
+            "subgraph_not_in": EXCLUDE_KNOWLEDGE_SUBGRAPH,
+            "limit": max(req.max_items * 8, 64),
+        }
+        if person_keys:
             rows.extend(
                 self.claim_query.find_claims(
-                    ClaimQueryFilter(
-                        pot_id=req.pot_id,
-                        predicate_in=("MEMBER_OF",),
-                        subject_key_in=tuple(
-                            key for key in owner_keys if key.startswith("person:")
-                        ),
-                        include_invalidated=req.include_invalidated,
-                        as_of=req.as_of,
-                        source_ref_in=req.source_refs,
-                        subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
-                        limit=max(req.max_items * 8, 64),
-                    )
+                    ClaimQueryFilter(**member_of, subject_key_in=person_keys)
                 )
             )
+        if team_keys:
             rows.extend(
                 self.claim_query.find_claims(
-                    ClaimQueryFilter(
-                        pot_id=req.pot_id,
-                        predicate_in=("MEMBER_OF",),
-                        object_key_in=tuple(
-                            key for key in owner_keys if key.startswith("team:")
-                        ),
-                        include_invalidated=req.include_invalidated,
-                        as_of=req.as_of,
-                        source_ref_in=req.source_refs,
-                        subgraph_not_in=EXCLUDE_KNOWLEDGE_SUBGRAPH,
-                        limit=max(req.max_items * 8, 64),
-                    )
+                    ClaimQueryFilter(**member_of, object_key_in=team_keys)
                 )
             )
         return dedupe_claim_rows(rows)
