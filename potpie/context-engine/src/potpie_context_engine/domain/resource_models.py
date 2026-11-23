@@ -7,7 +7,7 @@ next to the ports that speak them. Import from there in new code.
 
 from __future__ import annotations
 
-from potpie_context_core.resource_models import (
+from potpie_context_engine.core.resource_models import (
     CHUNK_HARD_CAP,
     CHUNK_TARGET_DEFAULT,
     LABEL_MAX,

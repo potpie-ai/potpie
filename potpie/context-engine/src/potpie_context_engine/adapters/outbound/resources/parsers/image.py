@@ -31,19 +31,21 @@ _SECTION_SLUG = "visual"
 
 def _caption_image(path: Path, vision_provider: str) -> str:
     provider = vision_provider.strip().lower()
+    if provider in {"none", "disabled", ""}:
+        return ""
     if provider == "openai":
         return caption_image_openai(path)
-    if provider in {"local", "ollama", ""}:
+    if provider in {"local", "ollama"}:
         return caption_image_local(path)
     raise ValueError(
-        f"unsupported vision provider: {vision_provider!r} (use local or openai)"
+        f"unsupported vision provider: {vision_provider!r} (use none, local, or openai)"
     )
 
 
 def parse_image(
     path: Path,
     *,
-    vision_provider: str = "local",
+    vision_provider: str = "none",
 ) -> tuple[ResourceManifest, dict[str, list[str]], dict[str, list[str]]]:
     suffix = path.suffix.lower()
     if suffix not in _IMAGE_SUFFIXES:
@@ -76,6 +78,22 @@ def parse_image(
     manifest = ResourceManifest(
         source_ref=f"file://{path.resolve()}",
         source_kind="image",
+        ingestion_diagnostics={
+            "image_enrichment": {
+                "ocr_observed": bool(ocr_text.strip()),
+                "visual_caption_observed": bool(caption.strip()),
+                "vision_provider": (vision_provider or "none").strip().lower()
+                or "none",
+                "warnings": [
+                    warning
+                    for warning, missing in (
+                        ("no_image_ocr_observed", not ocr_text.strip()),
+                        ("no_image_visual_caption_observed", not caption.strip()),
+                    )
+                    if missing
+                ],
+            }
+        },
         sections=[section],
     )
     section_texts = {_SECTION_SLUG: [content]}
@@ -87,7 +105,7 @@ def parse_image_to_staging(
     source: Path,
     out_dir: Path,
     *,
-    vision_provider: str = "local",
+    vision_provider: str = "none",
     artifact_name: str | None = None,
 ) -> ResourceManifest:
     manifest, section_texts, section_ocr = parse_image(

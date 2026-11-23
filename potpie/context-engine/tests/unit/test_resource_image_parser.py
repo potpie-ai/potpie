@@ -43,3 +43,30 @@ def test_parse_image_to_staging_writes_ocr_sidecar(tmp_path: Path) -> None:
     assert "diagram" in chunk_txt.read_text(encoding="utf-8").lower()
     assert ocr_txt.read_text(encoding="utf-8") == "Hello from OCR"
     assert (out / "artifacts" / "source.png").is_file()
+    observations = manifest.ingestion_diagnostics["image_enrichment"]
+    assert observations["ocr_observed"] is True
+    assert observations["visual_caption_observed"] is True
+    assert observations["warnings"] == []
+
+
+def test_default_image_ingest_uses_ocr_without_llm(tmp_path: Path) -> None:
+    source = tmp_path / "slide.png"
+    source.write_bytes(b"image bytes")
+    with (
+        patch(
+            "potpie_context_engine.adapters.outbound.resources.parsers.image.ocr_image_text",
+            return_value="Payments uses Redis",
+        ),
+        patch(
+            "potpie_context_engine.adapters.outbound.resources.parsers.image.caption_image_local"
+        ) as local_caption,
+        patch(
+            "potpie_context_engine.adapters.outbound.resources.parsers.image.caption_image_openai"
+        ) as cloud_caption,
+    ):
+        manifest = parse_image_to_staging(source, tmp_path / "staging")
+
+    local_caption.assert_not_called()
+    cloud_caption.assert_not_called()
+    assert manifest.ingestion_diagnostics["image_enrichment"]["vision_provider"] == "none"
+    assert (tmp_path / "staging" / "visual" / "0000.txt").read_text() == "OCR: Payments uses Redis"

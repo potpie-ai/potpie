@@ -155,11 +155,16 @@ class ResourceImportReport(BaseModel):
     elements_removed: list[str] = Field(default_factory=list)
     provenance_version: int = 0
     parser_tier: str | None = None
+    ingestion_diagnostics: dict[str, Any] = Field(default_factory=dict)
     summary_pending: list[str] = Field(default_factory=list)
     graph_written: bool = False
     missing_claim_keys: list[str] = Field(default_factory=list)
     recommended_next_action: str | None = None
     errors: list[dict[str, Any]] = Field(default_factory=list)
+    facts_verified: int = 0
+    facts_proposed: int = 0
+    facts_suppressed: int = 0
+    fact_extraction_error: str | None = None
 
 
 def validate_doc_slug(slug: str) -> str:

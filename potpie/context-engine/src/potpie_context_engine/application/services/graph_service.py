@@ -141,7 +141,16 @@ class DefaultGraphService:
     )
     validator: Callable[[SemanticMutationRequest], Any] | None = None
     lowerer: Callable[[SemanticMutationRequest, Any], Any] | None = None
-    chunk_search: Callable[[str, str, int], list[dict[str, Any]]] | None = None
+    record_workbench: GraphWorkbenchService | None = None
+    resource_store: Any = None
+    resource_index: Any = None
+    """Backs the ``resources`` include family. ``None`` degrades it, labeled.
+
+    A ``ResourceIndexPort``. It rides on the graph service because the read
+    trunk is one orchestrator and ``resources`` is one of its include families
+    — routing it anywhere else would mean a second read path and a second
+    envelope shape for the same ``--include`` flag."""
+
     _orchestrator: ReadOrchestrator = field(init=False)
     _mutation_workbench: GraphWorkbenchService = field(init=False)
 
@@ -151,7 +160,8 @@ class DefaultGraphService:
         self._orchestrator = ReadOrchestrator(
             claim_query=self.backend.claim_query,
             reader_registry=self.definition.readers,
-            chunk_search=self.chunk_search,
+            resource_index=self.resource_index,
+            resource_store=self.resource_store,
         )
         self._orchestrator.builder.view_by_include = self.definition.view_by_include
         if self.validator is None:
@@ -185,15 +195,6 @@ class DefaultGraphService:
     @property
     def backed_includes(self) -> frozenset[str]:
         return self._orchestrator.backed_includes
-
-    def wire_chunk_search(
-        self,
-        fn: Callable[[str, str, int], list[dict[str, Any]]],
-    ) -> None:
-        """Attach FTS chunk search to the docs reader (post-composition hook)."""
-        reader = self._orchestrator._routing.get("docs")
-        if reader is not None:
-            reader.chunk_search = fn
 
     # --- reads --------------------------------------------------------------
     def resolve(self, request: ResolveRequest) -> AgentEnvelope:

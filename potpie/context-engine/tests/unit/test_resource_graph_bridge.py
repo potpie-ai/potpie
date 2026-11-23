@@ -16,7 +16,7 @@ from potpie_context_engine.adapters.outbound.resources.graph_bridge import (
 from potpie_context_engine.application.services.graph_service import DefaultGraphService
 from potpie_context_engine.application.services.resource_service import ResourceService
 from potpie_context_engine.testing import InMemoryGraphBackend
-from potpie_context_core.ports.claim_query import ClaimQueryFilter
+from potpie_context_engine.core.ports.claim_query import ClaimQueryFilter
 
 pytestmark = pytest.mark.unit
 

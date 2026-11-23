@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
+from potpie_context_engine.adapters.outbound.resources.parsers import (
+    pdf_docling_provenance,
+)
 from potpie_context_engine.adapters.outbound.resources.parsers.pdf_docling_provenance import (
     _chunk_elements,
     _LedgerElement,
@@ -85,3 +91,57 @@ def test_chunk_provenance_record_charspan() -> None:
         char_end=12,
     )
     assert row.char_end == 12
+
+
+def test_pdf_picture_caption_stays_between_surrounding_paragraphs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Table:
+        pass
+
+    class Picture:
+        label = "picture"
+        text = "System architecture"
+        prov = [SimpleNamespace(page_no=2, bbox=[1, 2, 3, 4], charspan=None)]
+
+        def get_image(self, _document: object) -> object:
+            return SimpleNamespace(save=lambda fp, _format: fp.write(b"image"))
+
+    first = SimpleNamespace(
+        label="text", text="The request enters the gateway.", prov=[]
+    )
+    picture = Picture()
+    last = SimpleNamespace(label="text", text="The worker stores the result.", prov=[])
+    document = SimpleNamespace(
+        iterate_items=lambda: iter([(first, 0), (picture, 0), (last, 0)])
+    )
+    seen: list[tuple[Path, str]] = []
+
+    monkeypatch.setattr(
+        pdf_docling_provenance,
+        "_require_docling_types",
+        lambda: (None, None, None, None, None, None, object, object, Table, Picture),
+    )
+    monkeypatch.setattr(pdf_docling_provenance, "_try_ocr_picture", lambda _path: "")
+
+    def caption_image(path: Path, provider: str) -> str:
+        seen.append((path, provider))
+        return "Gateway sends work to the worker."
+
+    monkeypatch.setattr(pdf_docling_provenance, "_try_vision_caption", caption_image)
+
+    sections, elements, provenance, _ = (
+        pdf_docling_provenance.build_sections_from_docling(
+            document,
+            chunk_target=4000,
+            artifacts_dir=tmp_path / "artifacts",
+            vision_provider="local",
+        )
+    )
+
+    body = "\n\n".join(section.text for section in sections)
+    assert body.index(first.text) < body.index("Visual caption: Gateway sends work")
+    assert body.index("Visual caption: Gateway sends work") < body.index(last.text)
+    assert seen == [(tmp_path / "artifacts" / "img-0001.png", "local")]
+    assert elements[1].visual_caption == "Gateway sends work to the worker."
+    assert any(row.page_number == 2 for rows in provenance.values() for row in rows)

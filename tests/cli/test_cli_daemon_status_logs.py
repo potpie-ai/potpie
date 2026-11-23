@@ -71,9 +71,24 @@ def test_status_exits_unavailable_for_a_process_that_does_not_answer(
     payload = json.loads(result.stdout)
     assert payload["pid"] == 4242
     assert "4242" in payload["message"]
-    assert payload["recommended_next_action"] == (
-        "restart it with 'potpie daemon restart'"
-    )
+    assert "inspect daemon status" in payload["recommended_next_action"]
+
+
+def test_restart_reports_backend_ownership_error_instead_of_internal_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Unresponsive:
+        def restart(self):
+            raise RuntimeError(
+                "cannot determine running daemon backend; refusing restart to avoid backend drift"
+            )
+
+    _use(monkeypatch, Unresponsive())
+    result = runner.invoke(host_cli.app, ["--json", "daemon", "restart"])
+    assert result.exit_code == _common.EXIT_UNAVAILABLE
+    payload = json.loads(result.stdout)
+    assert payload["code"] == "daemon_backend_unknown"
+    assert "backend drift" in payload["message"]
 
 
 def test_status_exits_zero_only_when_the_daemon_serves(

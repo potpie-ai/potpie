@@ -467,6 +467,8 @@ def register(root: typer.Typer) -> None:
             default_pot_id = repo_default_pot_id(host, repo_identity)
 
             cli_install = collect_cli_install_status()
+            embedded_servers = _embedded_graph_servers(host.backend.profile)
+            resources, resource_index = _resource_doctor_blocks(pot_id)
             try:
                 from potpie_context_engine.adapters.outbound.resources.capabilities import (
                     collect_documents_doctor_report,

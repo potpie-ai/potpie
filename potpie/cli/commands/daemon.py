@@ -56,6 +56,15 @@ def _restart(daemon: Daemon) -> dict[str, int | str]:
         )
     except DaemonStopError as exc:
         _fail_stop(exc)
+    except RuntimeError as exc:
+        if "cannot determine running daemon backend" not in str(exc):
+            raise
+        fail(
+            code="daemon_backend_unknown",
+            message=str(exc),
+            next_action="inspect daemon status and runtime records before manual recovery",
+            exit_code=EXIT_UNAVAILABLE,
+        )
 
 
 def _fail_stop(exc: DaemonStopError) -> NoReturn:
@@ -117,7 +126,9 @@ def daemon_status() -> None:
                 f"detached daemon process {st.get('pid')} exists but is not "
                 "answering (stopped, wedged, or still starting)"
             )
-            next_action = "restart it with 'potpie daemon restart'"
+            next_action = (
+                "inspect daemon status and runtime records before manual recovery"
+            )
         else:
             message = str(st.get("detail") or "detached daemon not running")
             next_action = "start it with 'potpie daemon start'"

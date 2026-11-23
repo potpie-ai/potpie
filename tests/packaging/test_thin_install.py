@@ -35,6 +35,7 @@ EXPECTED_EXTRAS = {
     "auth",
     "embeddings",
     "ingest",
+    "documents",
     "telemetry",
     "ui",
     "all",

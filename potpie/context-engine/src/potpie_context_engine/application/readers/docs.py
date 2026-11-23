@@ -1,22 +1,30 @@
 """DocsReader.
 
-Returns document-reference claims. The current write path stores doc_reference
-records as ``Document RELATED_TO scope`` fallback claims, so this reader keeps
-the slice narrow to Document-subject RELATED_TO edges.
+Returns reference-material claims: an ingested ``Document`` or one of its
+``DocumentSection``s pointed at a scope through ``DOCUMENTS``. Matching sections
+are expanded one hop over ``SECTION_OF`` to carry their parent document.
 
-When a query is present and ``chunk_search`` is wired, FTS5 chunk hits are
-merged with graph claim candidates via reciprocal rank fusion (RRF).
+``ClaimQueryFilter.subject_label`` takes one label, so document and section
+queries are merged by :func:`dedupe_claim_rows`.
+
+An unscoped read also returns the ``SECTION_OF`` claims themselves — the rows
+``resource import`` writes, whose fact is the section's summary and whose source
+refs are that section's chunk ids. That is what makes a search land on a section
+and come back already holding the ids ``resource get`` takes, with no ``list``
+hop in between.
+
+A read carrying a query then drops everything that scored far below the best
+match in the pool — see :func:`_rows_clearing_relevance_floor`. A KNN returns
+*k* rows whether or not any of them is an answer, so without a floor the reply
+is padded to the limit with whatever the corpus happens to hold.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import dataclasses
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from potpie_context_engine.adapters.outbound.resources.graph_bridge import (
-    section_entity_key,
-)
 from potpie_context_engine.application.readers._common import (
     ReadRequest,
     ReadResponse,
@@ -42,10 +50,8 @@ from potpie_context_engine.core.ports.claim_query import (
     ClaimQueryPort,
     ClaimRow,
 )
-from potpie_context_engine.domain.ranking import Candidate, RankedItem, RankingService
-from potpie_context_engine.domain.resource_models import chunk_uri
-
-ChunkSearchFn = Callable[[str, str, int], list[dict[str, Any]]]
+from potpie_context_engine.core.ports.resource_store import RESOURCE_URI_PREFIX
+from potpie_context_engine.domain.ranking import Candidate, RankingService
 
 
 _DOCUMENT_LABEL = "Document"
@@ -60,7 +66,6 @@ class DocsReader:
     claim_query: ClaimQueryPort
     ranker: RankingService
     family: str = "docs"
-    chunk_search: ChunkSearchFn | None = None
 
     def read(self, req: ReadRequest) -> ReadResponse:
         anchor_keys = scoped_entity_keys(
@@ -72,12 +77,12 @@ class DocsReader:
             self._rows(req, anchor_keys=anchor_keys), req
         )
 
-        claim_candidates: list[Candidate] = []
+        candidates: list[Candidate] = []
         for row in rows:
             overlap = _scope_overlap(row, anchor_keys=anchor_keys)
             if anchor_keys and overlap == 0.0:
                 continue
-            claim_candidates.append(
+            candidates.append(
                 Candidate(
                     candidate_key=claim_candidate_key(row),
                     payload=_payload_from_row(row),
@@ -89,26 +94,16 @@ class DocsReader:
                 )
             )
 
-        fts_candidates = self._fts_candidates(req)
-        if fts_candidates and claim_candidates:
-            claim_ranked = rank_candidates(
-                service=self.ranker, candidates=claim_candidates, req=req
-            )
-            fts_ranked = rank_candidates(
-                service=self.ranker, candidates=fts_candidates, req=req
-            )
-            ranked = _rrf_merge_ranked(
-                [claim_ranked, fts_ranked], max_items=req.max_items
-            )
-        elif fts_candidates:
-            ranked = rank_candidates(
-                service=self.ranker, candidates=fts_candidates, req=req
-            )
-        else:
-            ranked = rank_candidates(
-                service=self.ranker, candidates=claim_candidates, req=req
-            )
-
+        ranking_req = (
+            dataclasses.replace(req, max_items=0) if req.intent == "definition" else req
+        )
+        ranked = rank_candidates(
+            service=self.ranker, candidates=candidates, req=ranking_req
+        )
+        if req.intent == "definition":
+            ranked = rank_definitions(ranked, req.query)
+            if req.max_items > 0:
+                ranked = ranked[: req.max_items]
         return ReadResponse(
             family=self.family,
             items=tuple(ranked),
@@ -116,58 +111,24 @@ class DocsReader:
                 found=len(ranked), requested=req.max_items
             ),
             meta={
+                "ranking_omitted": max(0, len(candidates) - len(ranked)),
+                "candidate_pool_unit": "claims",
                 "anchor_keys": list(anchor_keys),
                 "candidate_pool": len(rows),
-                "fts_hits": len(fts_candidates),
+                **(
+                    {
+                        "definition_subject": definition_subject(
+                            req.query, allow_bare=True
+                        ),
+                        "warnings": [
+                            "Definition wording indicates relevance, not corroboration; verify the source refs and truth metadata, especially for competing expansions."
+                        ],
+                    }
+                    if req.intent == "definition"
+                    else {}
+                ),
             },
         )
-
-    def _fts_candidates(self, req: ReadRequest) -> list[Candidate]:
-        query = (req.query or "").strip()
-        if not query or self.chunk_search is None:
-            return []
-        limit = max(req.max_items * 4, 32)
-        hits = self.chunk_search(req.pot_id, query, limit)
-        candidates: list[Candidate] = []
-        for rank, hit in enumerate(hits):
-            doc_slug = str(hit.get("doc_slug") or "")
-            section_slug = str(hit.get("section_slug") or "")
-            seq = int(hit.get("seq") or 0)
-            if not doc_slug or not section_slug:
-                continue
-            sec_key = section_entity_key(doc_slug, section_slug)
-            uri = hit.get("uri") or chunk_uri(doc_slug, section_slug, seq)
-            similarity = _fts_rank_similarity(rank, len(hits))
-            properties: dict[str, Any] = {
-                "doc_slug": doc_slug,
-                "section_slug": section_slug,
-                "seq": seq,
-            }
-            if hit.get("content"):
-                content = str(hit["content"])
-                properties["content_preview"] = content[:500]
-            if hit.get("provenance") is not None:
-                properties["provenance"] = hit["provenance"]
-            if hit.get("ocr_text"):
-                properties["ocr_text"] = hit["ocr_text"]
-            candidates.append(
-                Candidate(
-                    candidate_key=f"fts:{sec_key}:{seq}",
-                    payload={
-                        "subject_key": sec_key,
-                        "subject_label": "DocumentSection",
-                        "object_key": f"document:{doc_slug}",
-                        "predicate": "RELATED_TO",
-                        "chunk_uri": uri,
-                        "retrieval_source": "fts",
-                        "properties": properties,
-                    },
-                    strength="stated",
-                    semantic_similarity=similarity,
-                    scope_overlap=0.5,
-                )
-            )
-        return candidates
 
     def _rows(self, req: ReadRequest, *, anchor_keys: Iterable[str]) -> list[ClaimRow]:
         anchors = tuple(anchor_keys)
@@ -179,24 +140,147 @@ class DocsReader:
         )
         base: dict[str, Any] = {
             "pot_id": req.pot_id,
-            "predicate_in": ("RELATED_TO",),
             "include_invalidated": req.include_invalidated,
             "as_of": req.as_of,
             "source_ref_in": req.source_refs,
             "limit": max(req.max_items * 8, 64),
         }
-        all_rows: list[ClaimRow] = []
-        for label in ("Document", "DocumentSection"):
-            filt: dict[str, Any] = {**base, "subject_label": label}
-            if anchors:
-                all_rows.extend(
-                    self.claim_query.find_claims(
-                        ClaimQueryFilter(**filt, object_key_in=anchors)
+        scoped: dict[str, Any] = {"object_key_in": anchors} if anchors else {}
+
+        rows: list[ClaimRow] = []
+        section_keys: set[str] = set()
+        for label in _DOC_SUBJECT_LABELS:
+            found = self.claim_query.find_claims(
+                ClaimQueryFilter(
+                    **base,
+                    **scoped,
+                    predicate_in=_DOC_PREDICATES,
+                    subject_label=label,
+                    fact_query=query,
+                )
+            )
+            if label == _SECTION_LABEL:
+                section_keys.update(row.subject_key for row in found)
+            rows.extend(found)
+
+        if not anchors:
+            # ``SECTION_OF`` is a section's own claim — it carries the
+            # agent-authored summary as its fact and that section's chunk ids as
+            # its source refs, which is the whole search-then-get path (R13).
+            # Only unscoped: its object is the parent document, so it can never
+            # match an ``object_key_in`` filter naming a service or repo, and
+            # asking for it under a scope would just cost a query that returns
+            # nothing.
+            sections = self.claim_query.find_claims(
+                ClaimQueryFilter(
+                    **base,
+                    predicate_in=(_STRUCTURE_PREDICATE,),
+                    subject_label=_SECTION_LABEL,
+                    fact_query=query,
+                )
+            )
+            section_keys.update(row.subject_key for row in sections)
+            rows.extend(sections)
+
+        if section_keys:
+            rows.extend(
+                self.claim_query.find_claims(
+                    ClaimQueryFilter(
+                        **base,
+                        predicate_in=(_STRUCTURE_PREDICATE,),
+                        subject_key_in=tuple(sorted(section_keys)),
                     )
                 )
-            else:
-                all_rows.extend(self.claim_query.find_claims(ClaimQueryFilter(**filt)))
-        return dedupe_claim_rows(all_rows)
+            )
+        return dedupe_claim_rows(rows)
+
+
+def _rows_clearing_relevance_floor(
+    rows: list[ClaimRow], req: ReadRequest
+) -> list[ClaimRow]:
+    """Drop rows the query gives no reason to return.
+
+    Without this the read hands back the ANN's top-k however distant every
+    neighbor is, because a KNN always returns *k* rows — which is how a cloud
+    cost spreadsheet came to answer a database-incident question, filling
+    10 of 12 slots while the runbook section holding the literal error string
+    ranked nowhere.
+
+    Two rules, and the second is the one that matters:
+
+    - A row survives on a **lexical** match even below the floor. An exact
+      identifier is the strongest relevance signal there is and the weakest
+      embedding signal — ``DBConnectionPoolExhausted`` is one token to a
+      reader and noise to MiniLM.
+    - A ``SECTION_OF`` row fetched by the one-hop expansion in :meth:`_rows`
+      was never scored against the query — it is fetched by key, to carry the
+      parent document and the chunk ids ``resource get`` takes. Judging it by a
+      floor it never had a chance to clear would drop the section's fetchable
+      ids on the floor with it, so it rides on its section instead. That is the
+      same "structural rows hang off a section that already matched" rule
+      :func:`_scope_overlap` applies, and unscoped reads are unaffected: there
+      ``SECTION_OF`` *is* the queried row, it carries a score, and it is judged
+      on it.
+
+    ``req.query_threshold`` is deliberately not consulted by this claim reader.
+    The former shared 0.70 default exceeded measured scores in the corpus, so
+    the floor is derived from the pool instead. Explicit threshold support
+    here remains separate from the resource index's passage threshold.
+    """
+    if not (req.query and req.query.strip()):
+        return rows
+    floor = relative_relevance_floor(rows)
+    kept: list[ClaimRow] = []
+    unscored_structure: list[ClaimRow] = []
+    for row in rows:
+        if (
+            row.predicate.upper() == _STRUCTURE_PREDICATE
+            and claim_semantic_similarity(row) is None
+        ):
+            unscored_structure.append(row)
+        elif (
+            req.intent == "definition"
+            and has_definition(row.fact, definition_subject(req.query, allow_bare=True))
+        ) or row_matches_query(row, req.query, threshold=floor):
+            kept.append(row)
+    # Admission and scoring are separate questions: a structural row is
+    # admitted because its section survived, and scored from that section's
+    # relevance *if it has one* — a section kept on a lexical match alone has
+    # no similarity to lend, and that is no reason to drop its chunk ids.
+    admitted = {row.subject_key for row in kept}
+    relevance = _relevance_by_subject(kept)
+    for row in unscored_structure:
+        if row.subject_key not in admitted:
+            continue
+        similarity = relevance.get(row.subject_key)
+        kept.append(row if similarity is None else _with_similarity(row, similarity))
+    return kept
+
+
+def _relevance_by_subject(rows: Iterable[ClaimRow]) -> dict[str, float]:
+    """Best stamped similarity per subject among rows that were scored."""
+    best: dict[str, float] = {}
+    for row in rows:
+        similarity = claim_semantic_similarity(row)
+        if similarity is None:
+            continue
+        if similarity > best.get(row.subject_key, -1.0):
+            best[row.subject_key] = similarity
+    return best
+
+
+def _with_similarity(row: ClaimRow, similarity: float) -> ClaimRow:
+    """Lend a kept-on-behalf structural row its section's relevance.
+
+    Without this it reaches the ranker with no similarity at all and takes the
+    neutral 0.5 default, which on a corpus whose real scores top out near 0.6
+    means an unscored row outranks every measured one — "never compared to the
+    query" beating "compared and matched". It was admitted because its section
+    matched, so it is scored the same way.
+    """
+    return dataclasses.replace(
+        row, properties={**dict(row.properties), "semantic_similarity": similarity}
+    )
 
 
 def _scope_overlap(row: ClaimRow, *, anchor_keys: Iterable[str]) -> float:
@@ -221,40 +305,6 @@ def _payload_from_row(row: ClaimRow) -> dict[str, Any]:
     if chunk_ids:
         extra["chunk_ids"] = chunk_ids
     return claim_payload(row, extra=extra)
-
-
-def _fts_rank_similarity(rank: int, total: int) -> float:
-    if total <= 0:
-        return 0.5
-    return max(0.55, 1.0 - (rank / max(total, 1)) * 0.45)
-
-
-def _subject_key_from_ranked(item: RankedItem) -> str:
-    payload = item.candidate.payload
-    key = payload.get("subject_key")
-    if key:
-        return str(key)
-    return item.candidate.candidate_key
-
-
-def _rrf_merge_ranked(
-    lists: list[list[RankedItem]],
-    *,
-    max_items: int,
-    k: int = 60,
-) -> list[RankedItem]:
-    scores: dict[str, float] = {}
-    best: dict[str, RankedItem] = {}
-    for lst in lists:
-        for rank, item in enumerate(lst):
-            key = _subject_key_from_ranked(item)
-            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank + 1)
-            if key not in best or item.score > best[key].score:
-                best[key] = item
-    ordered = sorted(scores.keys(), key=lambda sk: scores[sk], reverse=True)
-    if max_items > 0:
-        ordered = ordered[:max_items]
-    return [best[sk] for sk in ordered]
 
 
 __all__ = ["DocsReader"]

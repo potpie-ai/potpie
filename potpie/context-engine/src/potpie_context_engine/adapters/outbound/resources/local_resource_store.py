@@ -41,6 +41,7 @@ from potpie_context_engine.core.ports.resource_store import (
     import_source,
     RECOMMENDED_MAX_SECTION_CHUNKS,
     RESOURCE_CHUNK_MAX_CHARS,
+    RESOURCE_IMPORT_MAX_BYTES,
     RESOURCE_CHUNK_TOO_LARGE,
     RESOURCE_LABEL_MAX_CHARS,
     RESOURCE_MANIFEST_INVALID,
@@ -52,6 +53,7 @@ from potpie_context_engine.core.ports.resource_store import (
     RESOURCE_TEXT_TOO_LARGE,
     Chunk,
     ChunkRef,
+    DocumentInfo,
     DocumentManifest,
     ResourceId,
     ResourceStoreError,
@@ -62,6 +64,7 @@ from potpie_context_engine.core.ports.resource_store import (
     require_resource_slug,
 )
 from potpie_context_engine.adapters.outbound.local_paths import default_home
+from potpie_context_engine.core.resource_models import DocumentElementRecord
 from potpie_context_engine.core.resource_reads import read_batch, resource_choices
 
 META_FILENAME = "meta.json"
@@ -112,6 +115,12 @@ class SourceDocument:
     sections: tuple[SectionManifest, ...]
     texts: Mapping[tuple[str, int], str]
     warnings: tuple[str, ...] = ()
+    auxiliary_files: Mapping[str, bytes] = field(default_factory=dict)
+    source_content_hash: str = ""
+    mime_type: str = ""
+    provenance_version: int = 0
+    parser_tier: str = ""
+    ingestion_diagnostics: Mapping[str, Any] = field(default_factory=dict)
 
 
 def read_source_document(source_dir: Path) -> SourceDocument:
@@ -183,13 +192,64 @@ def read_source_document(source_dir: Path) -> SourceDocument:
         warnings.extend(_section_warnings(slug, refs))
 
     sections.sort(key=lambda section: (section.ordinal, section.slug))
+    diagnostics = raw.get("ingestion_diagnostics", {})
+    if not isinstance(diagnostics, dict):
+        raise ResourceStoreError(
+            RESOURCE_MANIFEST_INVALID, "ingestion_diagnostics must be an object"
+        )
     return SourceDocument(
         source_ref=_optional_text(raw, "source_ref"),
         source_kind=_optional_text(raw, "source_kind"),
         sections=tuple(sections),
         texts=texts,
         warnings=tuple(warnings),
+        auxiliary_files=_read_auxiliary_files(root, tuple(sections)),
+        source_content_hash=_optional_text(raw, "source_content_hash") or "",
+        mime_type=_optional_text(raw, "mime_type") or "",
+        provenance_version=_int_field(
+            raw, "provenance_version", where=META_FILENAME, default=0
+        ),
+        parser_tier=_optional_text(raw, "parser_tier") or "",
+        ingestion_diagnostics=diagnostics,
     )
+
+
+def _read_auxiliary_files(
+    root: Path, sections: tuple[SectionManifest, ...]
+) -> dict[str, bytes]:
+    """Keep parser provenance beside revisioned chunks, with bounded input."""
+    paths = [root / "elements.jsonl"]
+    for section in sections:
+        for ref in section.chunks:
+            chunk = f"{ref.seq:0{RESOURCE_SEQ_WIDTH}d}"
+            paths.extend((
+                root / section.slug / f"{chunk}.prov.json",
+                root / section.slug / f"{chunk}.ocr.txt",
+            ))
+    artifacts = root / "artifacts"
+    if artifacts.is_symlink():
+        raise ResourceStoreError(RESOURCE_MANIFEST_INVALID, "artifacts directory cannot be a symlink")
+    if artifacts.is_dir():
+        for path in artifacts.iterdir():
+            if path.is_dir() or path.name.startswith(".") or "\\" in path.name:
+                raise ResourceStoreError(RESOURCE_MANIFEST_INVALID, f"invalid artifact: {path}")
+            paths.append(path)
+    saved: dict[str, bytes] = {}
+    total = 0
+    for path in paths:
+        if path.is_symlink():
+            raise ResourceStoreError(RESOURCE_MANIFEST_INVALID, f"invalid document sidecar: {path}")
+        if not path.exists():
+            continue
+        if not path.is_file():
+            raise ResourceStoreError(RESOURCE_MANIFEST_INVALID, f"invalid document sidecar: {path}")
+        relative = path.relative_to(root).as_posix()
+        size = path.stat().st_size
+        if size > 20_000_000 or total + size > RESOURCE_IMPORT_MAX_BYTES:
+            raise ResourceStoreError(RESOURCE_MANIFEST_INVALID, f"document sidecars too large: {relative}")
+        saved[relative] = path.read_bytes()
+        total += size
+    return saved
 
 
 def build_import_manifest(
@@ -242,6 +302,11 @@ def build_import_manifest(
         revision=_next_revision(prior, moved=bool(added or changed or removed)),
         source_ref=source_ref if source_ref is not None else source.source_ref,
         source_kind=source_kind if source_kind is not None else source.source_kind,
+        source_content_hash=source.source_content_hash,
+        mime_type=source.mime_type,
+        provenance_version=source.provenance_version,
+        parser_tier=source.parser_tier,
+        ingestion_diagnostics=source.ingestion_diagnostics,
         sections=tuple(
             _with_carried_summary(row, prior_sections.get(row.slug))
             if row.slug in unchanged
@@ -355,6 +420,12 @@ def build_chunk(
         chars=len(text),
         revision=manifest.revision,
         source_ref=manifest.source_ref,
+        source_kind=manifest.source_kind,
+        parser_tier=manifest.parser_tier or None,
+        section_title=next(
+            (section.title for section in manifest.sections if section.slug == resource.section),
+            None,
+        ),
         page=ref.page,
         offset=ref.offset,
     )
@@ -481,8 +552,12 @@ class LocalResourceStore:
         if (
             prior is not None
             and manifest.revision == prior.revision
-            and _document_fingerprint(manifest, source.texts)
-            != _document_fingerprint(prior, _read_document_texts(final, prior))
+            and (
+                _document_fingerprint(manifest, source.texts)
+                != _document_fingerprint(prior, _read_document_texts(final, prior))
+                or source.auxiliary_files
+                != _read_auxiliary_files(final, prior.sections)
+            )
         ):
             # The extractor's content_hash is advisory.  When the actual bytes
             # or citation-visible metadata differ, no section may be reported
@@ -505,7 +580,7 @@ class LocalResourceStore:
         # the swap below is a rename and not a copy.
         staging = Path(tempfile.mkdtemp(dir=pot_root, prefix=f".{doc}.staging."))
         try:
-            _write_document(staging, manifest, source.texts)
+            _write_document(staging, manifest, source.texts, source.auxiliary_files)
             if final.exists():
                 _carry_revision_history(
                     final=final,
@@ -634,7 +709,27 @@ class LocalResourceStore:
             text = _read_text(path)
         except OSError as exc:
             raise chunk_not_found(resource_id) from exc
-        return build_chunk(manifest=manifest, resource=resource, ref=ref, text=text)
+        chunk = build_chunk(manifest=manifest, resource=resource, ref=ref, text=text)
+        stem = f"{resource.seq:0{RESOURCE_SEQ_WIDTH}d}"
+        sidecar = root / resource.section / f"{stem}.prov.json"
+        ocr_path = root / resource.section / f"{stem}.ocr.txt"
+        provenance = None
+        if sidecar.is_file():
+            raw = _read_json(sidecar)
+            rows = raw.get("provenance", [])
+            if isinstance(rows, list):
+                provenance = [row for row in rows if isinstance(row, dict)]
+        pages = tuple(sorted({
+            row["page_number"] for row in provenance or ()
+            if isinstance(row.get("page_number"), int)
+        }))
+        return replace(
+            chunk,
+            provenance=provenance,
+            ocr_text=ocr_path.read_text(encoding="utf-8") if ocr_path.is_file() else "",
+            page_numbers=pages or chunk.page_numbers,
+            parser_tier=manifest.parser_tier or None,
+        )
 
     def list(
         self,
@@ -674,6 +769,64 @@ class LocalResourceStore:
         if manifest is None:
             raise document_not_found(doc)
         return manifest
+
+    def list_documents(self, *, pot_id: str) -> tuple[DocumentInfo, ...]:
+        """List local document identities for the parser-oriented CLI."""
+        pot_root = self._pot_root(pot_id)
+        if not pot_root.is_dir():
+            return ()
+        with _pot_lock(pot_root, exclusive=False):
+            docs = []
+            for path in sorted(pot_root.iterdir()):
+                if not path.is_dir() or path.name.startswith("."):
+                    continue
+                manifest = _load_manifest(path, pot_id=pot_id, doc=path.name)
+                if manifest is None:
+                    continue
+                docs.append(DocumentInfo(
+                    doc_slug=manifest.doc,
+                    source_ref=manifest.source_ref,
+                    source_kind=manifest.source_kind,
+                    revision=manifest.revision,
+                    section_count=len(manifest.sections),
+                ))
+            return tuple(docs)
+
+    def read_elements(self, *, pot_id: str, slug: str) -> tuple[DocumentElementRecord, ...]:
+        """Read the parser's page regions for the current document revision."""
+        doc = require_resource_slug(slug, kind="document")
+        path = self._pot_root(pot_id) / doc / "elements.jsonl"
+        if not path.is_file():
+            return ()
+        return tuple(
+            DocumentElementRecord.model_validate_json(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+
+    def figure_artifacts(
+        self, *, pot_id: str, slug: str, element_ids: set[str]
+    ) -> list[dict[str, Any]]:
+        """Return safe local figure paths for cited elements in the current revision."""
+        root = (self._pot_root(pot_id) / require_resource_slug(slug, kind="document")).resolve()
+        figures: list[dict[str, Any]] = []
+        for element in self.read_elements(pot_id=pot_id, slug=slug):
+            if element.element_id not in element_ids or element.element_type != "picture":
+                continue
+            if not element.artifact_ref:
+                continue
+            path = (root / element.artifact_ref).resolve()
+            if not path.is_relative_to(root) or not path.is_file():
+                continue
+            figures.append(
+                {
+                    "figure_number": element.figure_number,
+                    "page_number": element.page_number,
+                    "path": str(path),
+                    "visual_caption_unverified": True,
+                }
+            )
+        return figures
 
     def set_pending_review(
         self,
@@ -1047,6 +1200,11 @@ def _load_manifest(doc_dir: Path, *, pot_id: str, doc: str) -> DocumentManifest 
         revision=revision,
         source_ref=data.get("source_ref"),
         source_kind=data.get("source_kind"),
+        source_content_hash=data.get("source_content_hash") or "",
+        mime_type=data.get("mime_type") or "",
+        provenance_version=int(data.get("provenance_version") or 0),
+        parser_tier=data.get("parser_tier") or "",
+        ingestion_diagnostics=data.get("ingestion_diagnostics") or {},
         sections=sections,
         pending_review_refs=tuple(data.get("pending_review_refs") or ()),
         pending_review_sections=tuple(data.get("pending_review_sections") or ()),
@@ -1055,7 +1213,7 @@ def _load_manifest(doc_dir: Path, *, pot_id: str, doc: str) -> DocumentManifest 
 
 
 def _manifest_to_json(manifest: DocumentManifest) -> dict[str, Any]:
-    return {
+    result = {
         "doc": manifest.doc,
         "revision": manifest.revision,
         "source_ref": manifest.source_ref,
@@ -1084,13 +1242,25 @@ def _manifest_to_json(manifest: DocumentManifest) -> dict[str, Any]:
         "pending_review_sections": list(manifest.pending_review_sections),
         "pending_review_reason": manifest.pending_review_reason,
     }
+    if manifest.source_content_hash:
+        result["source_content_hash"] = manifest.source_content_hash
+    if manifest.mime_type:
+        result["mime_type"] = manifest.mime_type
+    if manifest.provenance_version:
+        result["provenance_version"] = manifest.provenance_version
+    if manifest.parser_tier:
+        result["parser_tier"] = manifest.parser_tier
+    if manifest.ingestion_diagnostics:
+        result["ingestion_diagnostics"] = dict(manifest.ingestion_diagnostics)
+    return result
 
 
 # --- atomic write -----------------------------------------------------------
 
 
 def _write_document(
-    staging: Path, manifest: DocumentManifest, texts: Mapping[tuple[str, int], str]
+    staging: Path, manifest: DocumentManifest, texts: Mapping[tuple[str, int], str],
+    auxiliary_files: Mapping[str, bytes] | None = None,
 ) -> None:
     for section in manifest.sections:
         section_dir = staging / section.slug
@@ -1100,6 +1270,13 @@ def _write_document(
                 section_dir / chunk_filename(ref.seq), texts[(section.slug, ref.seq)]
             )
         _sync_dir(section_dir)
+    for relative, content in (auxiliary_files or {}).items():
+        path = staging / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
     _write_text(
         staging / META_FILENAME,
         json.dumps(_manifest_to_json(manifest), indent=2, sort_keys=True),
@@ -1211,6 +1388,11 @@ def _document_fingerprint(
     payload = {
         "source_ref": manifest.source_ref,
         "source_kind": manifest.source_kind,
+        "source_content_hash": manifest.source_content_hash,
+        "mime_type": manifest.mime_type,
+        "provenance_version": manifest.provenance_version,
+        "parser_tier": manifest.parser_tier,
+        "ingestion_diagnostics": dict(manifest.ingestion_diagnostics),
         "sections": [asdict(section) for section in manifest.sections],
         "texts": [
             [section, seq, text] for (section, seq), text in sorted(texts.items())

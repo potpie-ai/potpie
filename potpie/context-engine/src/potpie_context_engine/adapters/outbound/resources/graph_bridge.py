@@ -9,7 +9,7 @@ from potpie_context_engine.domain.resource_models import (
     ResourceManifest,
     chunk_uri,
 )
-from potpie_context_core.semantic_mutations import SemanticMutationRequest
+from potpie_context_engine.core.semantic_mutations import SemanticMutationRequest
 
 
 def document_entity_key(doc_slug: str) -> str:
@@ -17,7 +17,7 @@ def document_entity_key(doc_slug: str) -> str:
 
 
 def section_entity_key(doc_slug: str, section_slug: str) -> str:
-    return f"document-section:{doc_slug}/{section_slug}"
+    return f"docsection:{doc_slug}:{section_slug}"
 
 
 def element_entity_key(doc_slug: str, element_id: str) -> str:

@@ -12,6 +12,7 @@ from potpie_context_engine.core.mutation_execution import (
 )
 
 from io import StringIO
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,7 @@ from potpie_context_engine.core.mutation_execution import MutationPersistenceErr
 class LocalJsonGraphPlanStore:
     home: Path = field(default_factory=default_home)
     _observed_state: bool = field(default=False, init=False, repr=False)
+    _legacy_observed: bool = field(default=False, init=False, repr=False)
 
     @property
     def _path(self) -> Path:
@@ -55,12 +57,17 @@ class LocalJsonGraphPlanStore:
         with locked_json_store(self._path):
             state = self._load()
             by_pot = state.setdefault("plans", {}).setdefault(record.pot_id, {})
+            matches: list[GraphMutationPlanRecord] = []
             for raw in by_pot.values():
                 existing = GraphMutationPlanRecord.from_dict(raw)
                 key = str(
                     existing.original_payload.get("idempotency_key") or ""
                 ).strip()
-                if key != idempotency_key or not existing.reserves_idempotency:
+                if (
+                    key != idempotency_key
+                    or not existing.reserves_idempotency
+                    or existing.status == "invalid"
+                ):
                     continue
                 same_request = (
                     _request_fingerprint(existing.original_payload)
@@ -71,7 +78,17 @@ class LocalJsonGraphPlanStore:
                         f"idempotency_key {idempotency_key!r} is already bound to "
                         f"plan {existing.plan_id!r} with different content"
                     )
-                return existing, False
+                matches.append(existing)
+            if matches:
+                selected = max(
+                    matches,
+                    key=lambda item: (
+                        item.status == "committed",
+                        item.status == "committing",
+                        item.created_at,
+                    ),
+                )
+                return selected, False
             by_pot[record.plan_id] = record.to_dict()
             self._save(state)
             return record, True
@@ -152,10 +169,12 @@ class LocalJsonGraphPlanStore:
             ) from exc
         try:
             data = strict_json_load(StringIO(raw))
-            if (
-                not isinstance(data, dict)
-                or type(data.get("schema_version")) is not int
-                or data.get("schema_version") != 1
+            if not isinstance(data, dict):
+                raise ValueError("unsupported graph plan store schema")
+            legacy = "schema_version" not in data
+            if not legacy and (
+                type(data.get("schema_version")) is not int
+                or data["schema_version"] != 1
             ):
                 raise ValueError("unsupported graph plan store schema")
             if not isinstance(data.get("plans"), dict):
@@ -167,7 +186,7 @@ class LocalJsonGraphPlanStore:
                     or not isinstance(plans, dict)
                 ):
                     raise ValueError("invalid pot plan collection")
-                reservations = set()
+                reservations: dict[str, str] = {}
                 for plan_id, payload in plans.items():
                     record = GraphMutationPlanRecord.from_dict(payload)
                     if (record.pot_id, record.plan_id) != (pot_id, plan_id):
@@ -175,11 +194,16 @@ class LocalJsonGraphPlanStore:
                     key = str(
                         record.original_payload.get("idempotency_key") or ""
                     ).strip()
-                    if key and record.reserves_idempotency:
-                        if key in reservations:
-                            raise ValueError("duplicate permanent request reservation")
-                        reservations.add(key)
+                    if key and record.reserves_idempotency and record.status != "invalid":
+                        fingerprint = _request_fingerprint(record.original_payload)
+                        previous = reservations.get(key)
+                        if previous is not None and previous != fingerprint:
+                            raise ValueError("conflicting permanent request reservation")
+                        reservations[key] = fingerprint
+            if legacy:
+                data["schema_version"] = 1
             self._observed_state = True
+            self._legacy_observed = legacy
             return data
         except (ValueError, TypeError, KeyError, AttributeError) as exc:
             raise MutationPersistenceError(
@@ -187,8 +211,27 @@ class LocalJsonGraphPlanStore:
             ) from exc
 
     def _save(self, data: dict[str, Any]) -> None:
+        if self._legacy_observed:
+            backup = self._path.with_name(self._path.name + ".legacy-backup")
+            try:
+                fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                if backup.read_bytes() != self._path.read_bytes():
+                    raise MutationPersistenceError(
+                        f"legacy backup differs from current plan store: {backup}"
+                    )
+            else:
+                try:
+                    with os.fdopen(fd, "wb") as stream:
+                        stream.write(self._path.read_bytes())
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                except Exception:
+                    backup.unlink(missing_ok=True)
+                    raise
         durable_json_replace(self._path, data)
         self._observed_state = True
+        self._legacy_observed = False
 
 
 def _record_in_window(

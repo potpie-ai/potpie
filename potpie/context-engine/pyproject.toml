@@ -71,11 +71,13 @@ documents = [
     "docling[rapidocr]>=2.59",
     "pypdfium2>=4.0",
     "httpx>=0.28.0",
+    "torch>=2.13,<2.14",
+    "torchvision>=0.28,<0.29",
 ]
 # OSS distribution convenience set: everything the local potpie experience
 # uses. Excludes benchmarks (development harness) and dev tooling.
 all = [
-    "potpie-context-engine[http,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent]",
+    "potpie-context-engine[http,local,neo4j,postgres,hatchet,observability,embeddings,github,reconciliation-agent,documents]",
 ]
 dev = [
     "pytest>=9.0.3",

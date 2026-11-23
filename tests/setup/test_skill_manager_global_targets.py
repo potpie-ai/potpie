@@ -23,6 +23,7 @@ EXPECTED_CATALOG = {
     "potpie-change-timeline": "3",
     "potpie-cli": "6",
     "potpie-debug-memory": "5",
+    "potpie-document-ingestion": "1",
     "potpie-graph": "9",
     "potpie-infra-architecture": "5",
     "potpie-project-preferences": "3",

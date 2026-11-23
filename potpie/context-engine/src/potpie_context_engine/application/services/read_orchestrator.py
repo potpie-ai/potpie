@@ -72,7 +72,16 @@ class ReadOrchestrator:
     ranker: RankingService = field(default_factory=RankingService)
     builder: EnvelopeBuilder = field(default_factory=EnvelopeBuilder)
     reader_registry: Mapping[str, GraphReaderSpec] = field(default_factory=dict)
-    chunk_search: Any | None = None
+    resource_store: Any = None
+    resource_index: ResourceIndexPort | None = None
+    """Backs ``resources``. ``None`` wires the fail-closed ``none`` profile.
+
+    Optional because a graph runtime can be composed with no document store at
+    all (an ingestion pipeline, a test), and mandatory-by-substitution because
+    the include family is always registered: the substitute answers zero hits
+    with ``match_mode="disabled"`` instead of the family vanishing from the
+    contract, which is what keeps the coherence check meaningful."""
+
     _routing: dict[str, _ReaderT] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -86,8 +95,14 @@ class ReadOrchestrator:
             "prior_bugs": PriorBugsReader(claim_query=cq, ranker=rk),
             "decisions": DecisionsReader(claim_query=cq, ranker=rk),
             "owners": OwnersReader(claim_query=cq, ranker=rk),
-            "docs": DocsReader(
-                claim_query=cq, ranker=rk, chunk_search=self.chunk_search
+            "docs": DocsReader(claim_query=cq, ranker=rk),
+            # The one reader that does not read the claim store: document
+            # payloads come from the resource index. ``docs`` answers "what did
+            # we say about this document", ``resources`` answers "which passage
+            # says it" — a fact no section summary mentions is reachable only
+            # through the second.
+            "resources": ResourcesReader(
+                index=self.resource_index or _disabled_resource_index(), ranker=rk
             ),
             # Visualization read: the whole canonical partition (all RELATES_TO,
             # incl. generic RELATED_TO) for the graph explorer — not a UC slice.

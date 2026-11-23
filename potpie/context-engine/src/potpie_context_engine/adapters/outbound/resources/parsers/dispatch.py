@@ -30,7 +30,7 @@ _HTML_SUFFIXES = {".html", ".htm"}
 @dataclass(slots=True)
 class ParseOptions:
     chunk_target: int = CHUNK_TARGET_DEFAULT
-    vision_provider: str = "local"
+    vision_provider: str = "none"
     prefer_docling: bool = True
     allow_degraded: bool = False
 
@@ -107,6 +107,7 @@ def _parse_pdf_to_staging(
     out_dir: Path,
     *,
     chunk_target: int,
+    vision_provider: str,
     allow_degraded: bool,
 ) -> ResourceManifest:
     caps = documents_capabilities()
@@ -117,7 +118,10 @@ def _parse_pdf_to_staging(
         )
 
         return parse_pdf_docling_provenance_to_staging(
-            source, out_dir, chunk_target=chunk_target
+            source,
+            out_dir,
+            chunk_target=chunk_target,
+            vision_provider=vision_provider,
         )
 
     if allow_degraded:
@@ -168,7 +172,7 @@ def parse_file_to_staging(
     out_dir: Path,
     *,
     chunk_target: int = CHUNK_TARGET_DEFAULT,
-    vision_provider: str = "local",
+    vision_provider: str = "none",
     options: ParseOptions | None = None,
 ) -> ResourceManifest:
     opts = options or ParseOptions(
@@ -184,6 +188,7 @@ def parse_file_to_staging(
             source,
             out_dir,
             chunk_target=opts.chunk_target,
+            vision_provider=opts.vision_provider,
             allow_degraded=opts.allow_degraded,
         )
 

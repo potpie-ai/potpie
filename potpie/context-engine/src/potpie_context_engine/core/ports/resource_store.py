@@ -19,11 +19,18 @@ from __future__ import annotations
 import shutil
 import tempfile
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Protocol
 
+from pydantic import BaseModel
+
 from potpie_context_engine.core.identity import is_valid_slug_body
+from potpie_context_engine.core.resource_models import (
+    DocumentElementRecord,
+    ResourceImportReport,
+    ResourceManifest,
+)
 
 # --- Contract constants -----------------------------------------------------
 
@@ -196,6 +203,11 @@ class DocumentManifest:
     pending_review_refs: tuple[str, ...] = ()
     pending_review_sections: tuple[str, ...] = ()
     pending_review_reason: str | None = None
+    source_content_hash: str = ""
+    mime_type: str = ""
+    provenance_version: int = 0
+    parser_tier: str = ""
+    ingestion_diagnostics: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,27 +222,168 @@ class ResourceStoreStatus:
     was named or the store cannot count cheaply.
     """
 
-    kind: str
-    ready: bool
+    kind: str = "local"
+    ready: bool = False
     location: str | None = None
     documents: int | None = None
     detail: str | None = None
+    backend: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.backend is None:
+            object.__setattr__(self, "backend", self.kind)
+        elif self.kind == "local":
+            object.__setattr__(self, "kind", self.backend)
+
+
+class ChunkWrite(BaseModel):
+    """Legacy direct-write DTO retained for the PDF resource adapter."""
+
+    section_slug: str
+    seq: int
+    content: str
+    ocr_text: str = ""
+
+
+class DocumentInfo(BaseModel):
+    """Legacy catalog DTO retained alongside the revisioned manifest API."""
+
+    doc_slug: str
+    source_ref: str | None = None
+    source_kind: str | None = None
+    revision: int | None = None
+    updated_at: str | None = None
+    section_count: int = 0
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.model_dump()
+
+
+class SectionInfo(BaseModel):
+    slug: str
+    title: str = ""
+    summary: str = ""
+    ordinal: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class Chunk:
     """One chunk's text plus the provenance a reader needs to cite it."""
 
-    resource_id: str
-    doc: str
-    section: str
-    seq: int
-    text: str
-    chars: int
-    revision: int
+    resource_id: str = ""
+    doc: str = ""
+    section: str = ""
+    seq: int = 0
+    text: str = ""
+    chars: int = 0
+    revision: int = 0
     source_ref: str | None = None
     page: int | None = None
     offset: int | None = None
+    # Compatibility fields for the original PDF/resource adapter. The newer
+    # resource facade uses the fields above; the legacy local store uses these
+    # aliases while callers migrate to the typed facade.
+    uri: str | None = None
+    pot_id: str | None = None
+    doc_slug: str | None = None
+    section_slug: str | None = None
+    content: str | None = None
+    ocr_text: str = ""
+    provenance: list[dict[str, Any]] | None = None
+    neighbors: list[dict[str, Any]] | None = None
+    source_kind: str | None = None
+    section_title: str | None = None
+    parser_tier: str | None = None
+    page_numbers: tuple[int, ...] = ()
+    score: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.resource_id and self.uri:
+            object.__setattr__(self, "resource_id", self.uri)
+        if not self.doc and self.doc_slug:
+            object.__setattr__(self, "doc", self.doc_slug)
+        if not self.section and self.section_slug:
+            object.__setattr__(self, "section", self.section_slug)
+        if not self.doc_slug and self.doc:
+            object.__setattr__(self, "doc_slug", self.doc)
+        if not self.section_slug and self.section:
+            object.__setattr__(self, "section_slug", self.section)
+        if not self.text and self.content is not None:
+            object.__setattr__(self, "text", self.content)
+        if self.content is None:
+            object.__setattr__(self, "content", self.text)
+        if not self.chars:
+            object.__setattr__(self, "chars", len(self.text))
+        if self.page is None and self.page_numbers:
+            object.__setattr__(self, "page", self.page_numbers[0])
+        if not self.page_numbers and self.page is not None:
+            object.__setattr__(self, "page_numbers", (self.page,))
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return the legacy wire shape while exposing modern aliases."""
+        payload: dict[str, Any] = {
+            "uri": self.uri or self.resource_id,
+            "pot_id": self.pot_id,
+            "doc_slug": self.doc_slug or self.doc,
+            "section_slug": self.section_slug or self.section,
+            "seq": self.seq,
+            "content": self.content if self.content is not None else self.text,
+            "source_ref": self.source_ref,
+            "source_kind": self.source_kind,
+            "section_title": self.section_title,
+            "parser_tier": self.parser_tier,
+            "page_numbers": list(self.page_numbers),
+            "provenance": self.provenance,
+        }
+        payload["evidence_text"] = _evidence_text(
+            section_title=self.section_title,
+            content=str(payload["content"] or ""),
+            provenance=self.provenance,
+        )
+        payload["citation"] = {
+            "chunk_uri": payload["uri"],
+            "source_ref": self.source_ref,
+            "source_kind": self.source_kind,
+            "pages": list(self.page_numbers),
+            "pages_available": bool(self.page_numbers),
+            "provenance_available": bool(self.provenance),
+            "parser_tier": self.parser_tier,
+        }
+        if self.ocr_text:
+            payload["ocr_text"] = self.ocr_text
+        if self.neighbors is not None:
+            payload["neighbors"] = self.neighbors
+        if self.score is not None:
+            payload["score"] = self.score
+        return payload
+
+
+def _evidence_text(
+    *,
+    section_title: str | None,
+    content: str,
+    provenance: list[dict[str, Any]] | None,
+) -> str:
+    """Build one searchable/evidence-facing passage from chunk metadata."""
+    parts: list[str] = []
+    if section_title:
+        parts.append(section_title.strip())
+    for row in provenance or []:
+        for key in (
+            "element_type",
+            "caption",
+            "visual_caption",
+            "ocr_text",
+            "figure_number",
+            "table_number",
+            "page_number",
+        ):
+            value = row.get(key)
+            if value not in (None, ""):
+                parts.append(f"{key.replace('_', ' ').title()}: {value}")
+    if content:
+        parts.append(content.strip())
+    return "\n\n".join(part for part in parts if part)
 
 
 # --- Resource ids -----------------------------------------------------------
@@ -598,9 +751,11 @@ class ResourceStorePort(Protocol):
 
 __all__ = [
     "Chunk",
+    "ChunkWrite",
     "ChunkRef",
     "DEFAULT_SECTION_SLUG",
     "DocumentManifest",
+    "DocumentInfo",
     "ImportFiles",
     "RECOMMENDED_MAX_SECTION_CHUNKS",
     "RESOURCE_CHUNK_MAX_CHARS",
@@ -628,6 +783,10 @@ __all__ = [
     "ResourceStoreError",
     "ResourceStorePort",
     "ResourceStoreStatus",
+    "ResourceManifest",
+    "DocumentElementRecord",
+    "ResourceImportReport",
+    "SectionInfo",
     "SectionManifest",
     "format_resource_id",
     "import_source",

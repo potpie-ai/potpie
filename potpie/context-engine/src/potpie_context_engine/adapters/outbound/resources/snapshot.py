@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -40,24 +41,56 @@ def _read_files(root: Path) -> dict[str, str]:
             if path.is_symlink():
                 raise ValueError("resource snapshot cannot include symlinks")
             if path.is_file():
+                if "artifacts" in path.relative_to(document).parts:
+                    continue
                 with path.open(encoding="utf-8", newline="") as handle:
                     files[path.relative_to(root).as_posix()] = handle.read()
     return files
+
+
+def _read_binary_files(root: Path) -> dict[str, str]:
+    binary: dict[str, str] = {}
+    if not root.exists():
+        return binary
+    for document in sorted(root.iterdir()):
+        if document.name.startswith(".") or not document.is_dir():
+            continue
+        for path in sorted(document.rglob("artifacts/*")):
+            if path.is_symlink():
+                raise ValueError("resource snapshot cannot include symlinks")
+            if path.is_file():
+                binary[path.relative_to(root).as_posix()] = base64.b64encode(
+                    path.read_bytes()
+                ).decode("ascii")
+    return binary
 
 
 def export_resources(store: LocalResourceStore, *, pot_id: str) -> dict[str, Any]:
     root = store._pot_root(pot_id)
     with _pot_lock(root, exclusive=True):
         payload = normalize_resource_snapshot(
-            {"format_version": "1", "files": _read_files(root)}
+            {
+                "format_version": "1",
+                "files": _read_files(root),
+                "binary_files": _read_binary_files(root),
+            }
         )
-        _validate_documents(root, payload["files"], pot_id=pot_id)
+        _validate_documents(
+            root, payload["files"], payload.get("binary_files", {}), pot_id=pot_id
+        )
         return payload
 
 
-def _validate_documents(root: Path, files: Mapping[str, str], *, pot_id: str) -> None:
+def _validate_documents(
+    root: Path,
+    files: Mapping[str, str],
+    binary_files: Mapping[str, str],
+    *,
+    pot_id: str,
+) -> None:
     documents = {name.split("/", 1)[0] for name in files}
     expected: set[str] = set()
+    expected_binary: set[str] = set()
     for doc in documents:
         if f"{doc}/{META_FILENAME}" not in files:
             raise ValueError(f"snapshot document {doc!r} has no current manifest")
@@ -88,8 +121,17 @@ def _validate_documents(root: Path, files: Mapping[str, str], *, pot_id: str) ->
             for section in source.sections
             for ref in section.chunks
         )
+        for relative in source.auxiliary_files:
+            name = f"{prefix}/{relative}"
+            (expected_binary if relative.startswith("artifacts/") else expected).add(
+                name
+            )
     if expected != set(files):
         raise ValueError("resource snapshot contains files absent from its manifests")
+    if expected_binary != set(binary_files):
+        raise ValueError(
+            "resource snapshot binary files disagree with document artifacts"
+        )
 
 
 @contextmanager
@@ -103,6 +145,7 @@ def restore_resources(
     """
     payload = normalize_resource_snapshot(payload)
     incoming = payload["files"]
+    incoming_binary = payload.get("binary_files", {})
     root = store._pot_root(pot_id)
     root.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".snapshot-stage-", dir=root.parent))
@@ -113,16 +156,27 @@ def restore_resources(
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("w", encoding="utf-8", newline="") as handle:
                 handle.write(text)
-        _validate_documents(staging, incoming, pot_id=pot_id)
+        for name, encoded in incoming_binary.items():
+            path = staging / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(base64.b64decode(encoded, validate=True))
+        _validate_documents(staging, incoming, incoming_binary, pot_id=pot_id)
         with _pot_lock(root, exclusive=True):
             existing = _read_files(root)
+            existing_binary = _read_binary_files(root)
             incoming_docs = {name.split("/", 1)[0] for name in incoming}
             existing_docs = {name.split("/", 1)[0] for name in existing}
             for doc in incoming_docs & existing_docs:
                 prefix = f"{doc}/"
                 before = {k: v for k, v in existing.items() if k.startswith(prefix)}
                 after = {k: v for k, v in incoming.items() if k.startswith(prefix)}
-                if before != after:
+                before_binary = {
+                    k: v for k, v in existing_binary.items() if k.startswith(prefix)
+                }
+                after_binary = {
+                    k: v for k, v in incoming_binary.items() if k.startswith(prefix)
+                }
+                if before != after or before_binary != after_binary:
                     raise ValueError(f"snapshot document conflicts with target: {doc}")
             if incoming_docs <= existing_docs:
                 yield
