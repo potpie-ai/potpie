@@ -62,18 +62,18 @@ pip install 'potpie[documents]'
 | Image caption missing | `--vision-provider local` needs Ollama; or `openai` + `OPENAI_API_KEY` |
 | `invalid document slug` | Lowercase alphanumeric + hyphens only (`payments-oncall`, not `Payments_OnCall`) |
 
-## Distinction: `potpie ingest` vs `potpie document ingest`
+## Distinction: `potpie record` vs `potpie document ingest`
 
 | Command | Purpose |
 |---------|---------|
-| `potpie ingest "note"` | Episodic ledger / graph notes (text episodes) |
+| `potpie record --type doc_reference --summary "note"` | A durable project-memory note |
 | `potpie document ingest file.pdf` | Structured document payload + FTS + graph sections |
 
 Do not use ledger ingest for PDFs or uploaded files.
 
-## Deprecated CLI
+## CLI surfaces
 
-`potpie resource *` mirrors `potpie document *` but prints a deprecation notice. Prefer `document` commands.
+Use `potpie document ingest` for parser-backed ingestion. The resource commands expose the typed resource store and index.
 
 ## Verification commands
 
