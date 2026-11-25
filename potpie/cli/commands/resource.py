@@ -228,6 +228,11 @@ def resource_get(
             )
             typer.echo(_chunk_header(source, resolved_roots))
             typer.echo(chunk["text"])
+            if chunk.get("visual_review_command"):
+                typer.echo(
+                    "Visual diagram details need review: "
+                    + chunk["visual_review_command"]
+                )
             if chunk.get("omitted_characters"):
                 typer.echo(
                     f"  … {chunk['omitted_characters']} characters omitted by output budget"
@@ -781,7 +786,7 @@ def _is_requested_chunk(chunk: Chunk, requested: Sequence[str]) -> bool:
 
 
 def _chunk_payload(chunk: Chunk, requested: Sequence[str]) -> dict[str, Any]:
-    return {
+    payload = {
         "resource_id": chunk.resource_id,
         "doc": chunk.doc,
         "section": chunk.section,
@@ -795,6 +800,14 @@ def _chunk_payload(chunk: Chunk, requested: Sequence[str]) -> dict[str, Any]:
         # False marks a chunk pulled in by --with-neighbors.
         "requested": _is_requested_chunk(chunk, requested),
     }
+    if chunk.source_kind == "pdf" and any(
+        line.startswith("Figure ") and line[7:].strip().isdigit()
+        for line in chunk.text.splitlines()
+    ):
+        payload["visual_review_command"] = (
+            f"potpie document show {chunk.resource_id}"
+        )
+    return payload
 
 
 def _bound_resource_payload(payload: dict[str, Any], *, pot_id: str) -> dict[str, Any]:

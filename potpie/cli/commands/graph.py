@@ -39,6 +39,7 @@ from potpie.cli.commands._common import (
     emit,
     fail,
     get_engine_client,
+    get_runtime,
     get_root_runtime,
     get_pot_service,
     is_json,
@@ -150,6 +151,112 @@ timeline_app = typer.Typer(help="Timeline reads over the active project pot.")
 graph_app.add_typer(inbox_app, name="inbox")
 graph_app.add_typer(quality_app, name="quality")
 graph_app.add_typer(bulk_app, name="bulk")
+
+
+def _document_fact_inbox():
+    from potpie_context_engine.adapters.outbound.resources.fact_inbox import FactInbox
+
+    resources = getattr(get_runtime().engine, "resources", None)
+    if resources is None:
+        fail(code="resource_service_unavailable", message="local document resources are unavailable")
+    return FactInbox(home=resources.store.home)
+
+
+def _document_fact_extractor():
+    from potpie_context_engine.application.services.fact_extraction import FactExtractor
+
+    resources = getattr(get_runtime().engine, "resources", None)
+    if resources is None:
+        fail(code="resource_service_unavailable", message="local document resources are unavailable")
+    return FactExtractor(resources)
+
+
+def _age_days(value: str) -> int:
+    match = re.fullmatch(r"(\d+)d", value.strip())
+    if not match:
+        raise ValueError("--older-than must be a duration such as 30d")
+    return int(match.group(1))
+
+
+@inbox_app.callback(invoke_without_command=True)
+def document_fact_inbox(
+    ctx: typer.Context,
+    pot: str | None = typer.Option(None, "--pot"),
+    status: str = typer.Option("pending", "--status"),
+) -> None:
+    """Show staged document facts when no inbox subcommand is given."""
+    if ctx.invoked_subcommand is not None:
+        return
+    with contract():
+        if status not in {"pending", "verified", "rejected", "closed"}:
+            raise ValueError("--status must be pending, verified, rejected, or closed")
+        pot_id = resolve_pot_id(get_root_runtime(), pot)
+        items = _document_fact_inbox().list(pot_id=pot_id, status=status)
+        human = "\n".join(
+            f"{item['id']}  {item['fact']['subject']} {item['fact']['predicate']} "
+            f"{item['fact']['object']}  ({item['reason']})\n"
+            f"  evidence: {item['fact']['chunk_uri']}  page={item['fact']['page']}\n"
+            f"  quote: {item['fact']['quote']}"
+            for item in items
+        ) or f"no {status} document facts"
+        emit({"items": items, "item_count": len(items)}, human=human)
+
+
+@inbox_app.command("clear")
+def document_fact_inbox_clear(
+    older_than: str = typer.Option("30d", "--older-than"),
+    pot: str | None = typer.Option(None, "--pot"),
+) -> None:
+    with contract():
+        pot_id = resolve_pot_id(get_root_runtime(), pot)
+        count = _document_fact_inbox().clear(
+            pot_id=pot_id, older_than_days=_age_days(older_than)
+        )
+        emit({"closed": count}, human=f"closed {count} stale document facts")
+
+
+@inbox_app.command("prune")
+def document_fact_inbox_prune(
+    older_than: str = typer.Option("90d", "--older-than"),
+    pot: str | None = typer.Option(None, "--pot"),
+) -> None:
+    with contract():
+        pot_id = resolve_pot_id(get_root_runtime(), pot)
+        count = _document_fact_inbox().prune(
+            pot_id=pot_id, older_than_days=_age_days(older_than)
+        )
+        emit({"pruned": count}, human=f"pruned {count} closed or rejected facts")
+
+
+@graph_app.command("approve")
+def document_fact_approve(
+    item_id: str = typer.Argument(...),
+    subject_key: str | None = typer.Option(None, "--subject-key"),
+    object_key: str | None = typer.Option(None, "--object-key"),
+    pot: str | None = typer.Option(None, "--pot"),
+) -> None:
+    with contract():
+        pot_id = resolve_pot_id(get_root_runtime(), pot)
+        item = _document_fact_extractor().approve(
+            pot_id=pot_id, item_id=item_id,
+            subject_key=subject_key, object_key=object_key,
+        )
+        emit(item, human=f"approved {item_id}")
+
+
+@graph_app.command("reject")
+def document_fact_reject(
+    item_id: str = typer.Argument(...),
+    reason: str | None = typer.Option(None, "--reason"),
+    pot: str | None = typer.Option(None, "--pot"),
+) -> None:
+    with contract():
+        pot_id = resolve_pot_id(get_root_runtime(), pot)
+        inbox = _document_fact_inbox()
+        if not inbox.transition(pot_id=pot_id, item_id=item_id, status="rejected", reason=reason):
+            raise ValueError("pending fact candidate not found")
+        item = inbox.get(pot_id=pot_id, item_id=item_id)
+        emit(item, human=f"rejected {item_id}")
 
 # Graph command bodies are bounded to the shared agent output budget minus a
 # reserve for the workbench envelope wrapped around them, so the emitted JSON

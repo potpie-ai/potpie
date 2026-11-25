@@ -113,6 +113,97 @@ def test_corrupt_plan_store_fails_closed_without_overwriting(tmp_path, payload):
         assert store._path.read_bytes() == original
 
 
+def test_legacy_plan_store_preserves_records_and_backs_up_before_upgrade(tmp_path):
+    store = LocalJsonGraphPlanStore(tmp_path)
+    record = _proposal(store)
+    legacy = json.loads(store._path.read_text())
+    legacy.pop("schema_version")
+    original = json.dumps(legacy).encode()
+    store._path.write_bytes(original)
+
+    assert store.get(pot_id="p", plan_id=record.plan_id) == record
+    store.save(record)
+    assert (tmp_path / "graph_plans.json.legacy-backup").read_bytes() == original
+    assert json.loads(store._path.read_text())["schema_version"] == 1
+
+
+def test_legacy_upgrade_refuses_unrelated_existing_backup(tmp_path):
+    store = LocalJsonGraphPlanStore(tmp_path)
+    record = _proposal(store)
+    legacy = json.loads(store._path.read_text())
+    legacy.pop("schema_version")
+    store._path.write_text(json.dumps(legacy))
+    before = store._path.read_bytes()
+    (tmp_path / "graph_plans.json.legacy-backup").write_bytes(b"other")
+
+    with pytest.raises(MutationPersistenceError, match="legacy backup differs"):
+        store.save(record)
+    assert store._path.read_bytes() == before
+
+
+def test_same_request_duplicate_reservations_prefer_committed_plan(tmp_path):
+    store = LocalJsonGraphPlanStore(tmp_path)
+    record = _proposal(store)
+    data = json.loads(store._path.read_text())
+    committed = deepcopy(data["plans"]["p"][record.plan_id])
+    committed["plan_id"] = "mutation-plan:committed-copy"
+    committed["status"] = "committed"
+    data["plans"]["p"][committed["plan_id"]] = committed
+    store._path.write_text(json.dumps(data))
+
+    existing, inserted = store.reserve_idempotency(
+        record=record,
+        idempotency_key="reserved",
+        request_fingerprint=record.prepared.request_fingerprint,
+    )
+    assert not inserted
+    assert existing.plan_id == committed["plan_id"]
+
+
+def test_invalid_legacy_attempt_does_not_own_later_committed_key(tmp_path):
+    store = LocalJsonGraphPlanStore(tmp_path)
+    record = _proposal(store)
+    data = json.loads(store._path.read_text())
+    invalid = deepcopy(data["plans"]["p"][record.plan_id])
+    invalid["plan_id"] = "mutation-plan:invalid-attempt"
+    invalid["status"] = "invalid"
+    invalid["original_payload"]["idempotency_key"] = "reserved"
+    data["plans"]["p"][invalid["plan_id"]] = invalid
+    data.pop("schema_version")
+    store._path.write_text(json.dumps(data))
+
+    assert len(store.list(pot_id="p")) == 2
+
+
+def test_distinct_valid_requests_with_same_reservation_still_fail_closed(tmp_path):
+    first = LocalJsonGraphPlanStore(tmp_path / "first")
+    _proposal(first)
+    second = LocalJsonGraphPlanStore(tmp_path / "second")
+    other = GraphWorkbenchService(
+        backend=InMemoryGraphBackend(), plan_store=second
+    ).propose(
+        {
+            "idempotency_key": "reserved",
+            "operations": [
+                {
+                    "op": "upsert_entity",
+                    "subject": {"key": "service:b", "type": "Service"},
+                }
+            ],
+        },
+        pot_id="p",
+    )
+    data = json.loads(first._path.read_text())
+    other_data = json.loads(second._path.read_text())
+    data["plans"]["p"][other.plan_id] = other_data["plans"]["p"][other.plan_id]
+    first._path.write_text(json.dumps(data))
+    before = first._path.read_bytes()
+
+    with pytest.raises(MutationPersistenceError, match="conflicting permanent"):
+        first.list(pot_id="p")
+    assert first._path.read_bytes() == before
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

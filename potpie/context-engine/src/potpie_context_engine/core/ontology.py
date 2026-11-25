@@ -642,6 +642,16 @@ ENTITY_TYPES: dict[str, EntityTypeSpec] = {
         freshness_ttl_hours=12 * WEEK,
         property_signatures=("chunk_count",),
     ),
+    "DocumentElement": _e(
+        "DocumentElement",
+        "evidence",
+        "A page region, table, figure, or text block from an ingested document.",
+        identity_class=IdentityClass.CONTENT_HASH,
+        key_prefix="document-element",
+        fact_family="documents",
+        source_of_truth=SOT_MEMORY,
+        freshness_ttl_hours=12 * WEEK,
+    ),
     # --- Generic fail-open fallbacks (soft-fail downgrade targets) ----------
     # The agent reconciliation path coerces unrecognized output onto these two
     # rather than rejecting the batch. ``public=False`` keeps them out of the
@@ -961,6 +971,15 @@ EDGE_TYPES: dict[str, EdgeTypeSpec] = {
         exclusive_family="document_structure",
         singleton=True,
         source_inferred=("DocumentSection",),
+        target_inferred=("Document",),
+    ),
+    "ELEMENT_OF": _x(
+        "ELEMENT_OF",
+        "A document element belongs to its parent document.",
+        [("DocumentElement", "Document")],
+        category="knowledge",
+        predicate_family="document_structure",
+        source_inferred=("DocumentElement",),
         target_inferred=("Document",),
     ),
     "DOCUMENTS": _x(

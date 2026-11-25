@@ -46,6 +46,13 @@ KNOWN_CONFIG_KEYS: tuple[str, ...] = (
     # Opt-in protocol ontology (``on``/``off``, default off); read once when the
     # local runtime is composed, see ``LocalConfigService.graph_protocols_enabled``.
     "graph.protocols",
+    # One-time document setup defaults; the API key lives in the credential store.
+    "document.vision_provider",
+    "document.vision_model",
+    "document.extract_facts",
+    "document.facts_provider",
+    "document.facts_model",
+    "document.facts_base_url",
 )
 
 #: The config key that switches on the protocol ontology extension.

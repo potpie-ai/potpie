@@ -41,6 +41,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+documents = ["potpie-context-engine[documents]==0.2.0"]
 daemon = ["potpie-context-engine[http]"]
 local = ["potpie-context-engine[local]"]
 auth = ["keyring>=25.0.0"]
@@ -56,7 +57,7 @@ telemetry = [
 ]
 ui = ["pillow>=12.3.0"]
 all = [
-    "potpie[daemon,local,auth,embeddings,ingest,telemetry,ui]",
+    "potpie[daemon,local,auth,embeddings,ingest,telemetry,ui,documents]",
     "potpie-context-engine[all]",
     "pydantic-settings>=2.14.2",
 ]
@@ -132,6 +133,7 @@ override-dependencies = [
     "pydantic-settings>=2.14.2",
     "pydantic-ai-slim>=2.53.0",
     "torch>=2.13.0",
+    "torchvision>=0.28,<0.29",
     "httpx2>=2.12.0",
     "httpcore2>=2.10.0",
     "anyio>=4.14.2",

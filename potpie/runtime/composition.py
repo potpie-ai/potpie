@@ -179,6 +179,11 @@ def _configured_definition(config: LocalConfigService) -> GraphDefinition:
     return DEFAULT_GRAPH_DEFINITION
 
 
+def build_local_config_service() -> LocalConfigService:
+    """Build local config without starting the graph runtime."""
+    return LocalConfigService()
+
+
 def build_local_runtime(
     *,
     backend: ProvisionableGraphBackend | None = None,
@@ -217,7 +222,7 @@ def build_local_runtime(
         resource_index = _resource_index()
         resource_drain = ResourceIndexDrain(index=resource_index)
         home = default_home()
-        config = LocalConfigService()
+        config = build_local_config_service()
         if definition is None:
             definition = _configured_definition(config)
         graph_runtime = build_graph_runtime(

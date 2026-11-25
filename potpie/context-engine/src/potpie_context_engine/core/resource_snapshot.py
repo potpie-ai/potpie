@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from collections.abc import Mapping
 from pathlib import PurePosixPath
 from typing import Any
@@ -45,16 +47,25 @@ def normalize_resource_snapshot(payload: Any) -> dict[str, Any]:
             if int(tail[1]) < 1 or str(int(tail[1])) != tail[1]:
                 raise ValueError(f"invalid resource revision: {name!r}")
             tail = tail[2:]
-        if tail != ("meta.json",):
+        if tail not in {("meta.json",), ("elements.jsonl",)}:
             if len(tail) != 2:
                 raise ValueError(f"invalid resource snapshot path: {name!r}")
             require_resource_slug(tail[0], kind="section")
-            seq = tail[1].removesuffix(".txt")
+            filename = tail[1]
+            suffix = next(
+                (
+                    suffix
+                    for suffix in (".prov.json", ".ocr.txt", ".txt")
+                    if filename.endswith(suffix)
+                ),
+                None,
+            )
+            seq = filename.removesuffix(suffix) if suffix else ""
             if (
-                not tail[1].endswith(".txt")
+                suffix is None
                 or not seq.isascii()
                 or not seq.isdigit()
-                or f"{int(seq):04d}.txt" != tail[1]
+                or f"{int(seq):04d}{suffix}" != filename
             ):
                 raise ValueError(f"invalid resource chunk filename: {name!r}")
         try:
@@ -66,7 +77,49 @@ def normalize_resource_snapshot(payload: Any) -> dict[str, Any]:
                 f"resource snapshot exceeds {RESOURCE_IMPORT_MAX_BYTES} bytes"
             )
         result[name] = text
-    return {
+    normalized = {
         "format_version": RESOURCE_SNAPSHOT_VERSION,
         "files": dict(sorted(result.items())),
     }
+    binary = payload.get("binary_files", {})
+    if not isinstance(binary, Mapping) or len(binary) > 100_000:
+        raise ValueError("snapshot binary_files must be an object")
+    safe_binary: dict[str, str] = {}
+    for name, encoded in binary.items():
+        if not isinstance(name, str) or not isinstance(encoded, str):
+            raise ValueError("binary snapshot paths and contents must be strings")
+        parts = PurePosixPath(name).parts
+        if (
+            PurePosixPath(name).is_absolute()
+            or str(PurePosixPath(name)) != name
+            or "\\" in name
+            or any(part in {".", ".."} for part in parts)
+            or len(parts) < 3
+        ):
+            raise ValueError(f"unsafe binary resource snapshot path: {name!r}")
+        require_resource_slug(parts[0], kind="document")
+        tail = parts[1:]
+        if tail and tail[0] == ".versions":
+            if len(tail) < 4 or not tail[1].isdigit() or int(tail[1]) < 1:
+                raise ValueError(f"invalid binary resource revision: {name!r}")
+            tail = tail[2:]
+        if (
+            len(tail) != 2
+            or tail[0] != "artifacts"
+            or not tail[1]
+            or tail[1].startswith(".")
+        ):
+            raise ValueError(f"invalid binary resource snapshot path: {name!r}")
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+        except binascii.Error as exc:
+            raise ValueError("binary resource snapshot is not valid base64") from exc
+        total += len(decoded)
+        if total > RESOURCE_IMPORT_MAX_BYTES:
+            raise ValueError(
+                f"resource snapshot exceeds {RESOURCE_IMPORT_MAX_BYTES} bytes"
+            )
+        safe_binary[name] = encoded
+    if safe_binary:
+        normalized["binary_files"] = dict(sorted(safe_binary.items()))
+    return normalized
